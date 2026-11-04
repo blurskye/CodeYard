@@ -14,8 +14,8 @@ use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::shared::repos::access::check_repo_read_access;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
-use codeyard_app::issues::COMMENTS_PER_PAGE;
-use codeyard_app::issues::MAX_COMMENT_PAGE;
+use codeyard_repos_pulls::issues::COMMENTS_PER_PAGE;
+use codeyard_repos_pulls::issues::MAX_COMMENT_PAGE;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::allowed_merge_methods;
 use codeyard_repos_core::store_types::MergeMethod;
@@ -206,7 +206,7 @@ pub(crate) async fn issue_reference(
     scope: (&str, &str),
     reference: &str,
 ) -> ResultPage<i64> {
-    codeyard_app::issues::references::resolve(
+    codeyard_repos_pulls::issues::references::resolve(
         &ctx.state.pool,
         ctx.require_user()?.id,
         scope,
@@ -623,7 +623,7 @@ async fn item_with_comparison(
             // Only a writer sees the button, so readers do not pay for the check.
             let restack = match &stack {
                 Some(stack) if repo.view.can_write => {
-                    codeyard_app::repositories::pull_requests::restack::restack_pending(
+                    codeyard_repos_pulls::repositories::pull_requests::restack::restack_pending(
                         &ctx.state.ci_runs,
                         &repo.record,
                         &value,
@@ -1089,7 +1089,7 @@ pub(crate) async fn render_detail(
                     _ => Err(anyhow::anyhow!("Comment not found")),
                 },
             };
-            Some(codeyard_app::issues::discussion_page(position))
+            Some(codeyard_repos_pulls::issues::discussion_page(position))
         }
         None => None,
     };
@@ -1204,7 +1204,7 @@ pub(crate) async fn render_detail(
         (Vec::new(), Vec::new())
     };
     let mut ctx = ctx.clone();
-    ctx.return_to = Some(codeyard_app::issues::discussion_link(
+    ctx.return_to = Some(codeyard_repos_pulls::issues::discussion_link(
         &format!("{}/{}", repo.view.family_url(kind), value.number),
         comments.page,
         "",
@@ -1356,7 +1356,7 @@ async fn fill_merge_blockers(
         return;
     };
     let blockers = |method| {
-        codeyard_app::repositories::pull_requests::merge::page_blockers(
+        codeyard_repos_pulls::repositories::pull_requests::merge::page_blockers(
             &ctx.state.pool,
             &ctx.state.ci_runs,
             &repo.record,

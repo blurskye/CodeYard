@@ -12,7 +12,7 @@ use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::user::responses::PublicUserResponse as UserResponse;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
+use codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -23,7 +23,7 @@ pub async fn create_pull_request_comment(
     Json(req): Json<CreatePullRequestCommentRequest>,
 ) -> Result<(StatusCode, Json<PullRequestCommentResponse>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let comment = codeyard_app::repositories::pull_requests::comments::create_pull_request_comment(
+    let comment = codeyard_repos_pulls::repositories::pull_requests::comments::create_pull_request_comment(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
@@ -68,7 +68,7 @@ async fn set_resolved(
     resolved: bool,
 ) -> Result<Json<PullRequestCommentResponse>, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
-    let comment = codeyard_app::repositories::pull_requests::comments::set_comment_resolved(
+    let comment = codeyard_repos_pulls::repositories::pull_requests::comments::set_comment_resolved(
         &state.pool,
         actor.id,
         &owner,

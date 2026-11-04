@@ -21,6 +21,7 @@ backend/
     core/                      DbPool, connection, migrations, models, native_operation!
     identity/ orgs/ repos/ actions/ security/ cluster/     queries by domain
   repos-core/                  repository store, CI engine and repository RPC runtime
+  repos-pulls/                 pull mutations, repository operations and security workers
   repos/                       repository policy, imports, traffic, templates, Git editor
   ci/                          configuration, credentials, logs, environment values
     runner/                    the Actions runner
@@ -127,6 +128,8 @@ and results stay the same. A stage can be the last one.
    home. The coupled runtime is in the app library so adapters do not depend on
    binary wiring. All workspace targets check.
 8. **`app`.** Source layout complete. `backend/app/src` is the app library;
+   `backend/repos-pulls/` owns pull mutations, repository operations, issues and
+   security workers. Their resource trait is implemented by `AppState`.
    `backend/app/wiring` contains the existing binary package's entry points, CLI
    and node startup. Backups live in the app library. Storage and file operations
    live in `backend/storage/`. SSH lives in `backend/ssh/`. The source stages are

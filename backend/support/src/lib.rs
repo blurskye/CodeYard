@@ -40,3 +40,5 @@ pub mod secret_detection;
 
 #[cfg(unix)]
 pub mod outbound;
+
+pub mod zip_archives;

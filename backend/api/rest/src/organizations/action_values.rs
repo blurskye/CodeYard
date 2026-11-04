@@ -232,7 +232,7 @@ async fn change(
         } else {
             String::new()
         };
-        Some(codeyard_app::repositories::files::native_text(
+        Some(codeyard_repos_pulls::repositories::files::native_text(
             field(&form, "value").to_owned(),
             &original,
         ))

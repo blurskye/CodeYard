@@ -79,11 +79,11 @@ async fn contract(postgres: bool) {
         .await
         .unwrap();
     let advisory = serde_json::json!({"id":"GHSA-2345-6789-cfgh","modified":"2026-10-01T00:00:00Z","summary":"An advisory","affected":[{"package":{"ecosystem":"npm","name":"foo"},"ranges":[{"type":"SEMVER","events":[{"introduced":"0"},{"fixed":"1.2.4"}]}]}]});
-    codeyard_app::vulnerabilities::ingest(f.pool(), &serde_json::to_vec(&advisory).unwrap())
+    codeyard_repos_pulls::vulnerabilities::ingest(f.pool(), &serde_json::to_vec(&advisory).unwrap())
         .await
         .unwrap();
     let sha = "a".repeat(40);
-    let inventory = codeyard_app::repositories::dependency_graph::snapshot(
+    let inventory = codeyard_repos_pulls::repositories::dependency_graph::snapshot(
         sha.clone(),
         "refs/heads/main".into(),
         vec![codeyard_model::repositories::Package {

@@ -1,6 +1,6 @@
 use super::*;
-use codeyard_app::repositories::pull_requests::mutations::update_pull_request;
-use codeyard_app::repositories::pull_requests::mutations::UpdatePullRequestRequest;
+use codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request;
+use codeyard_repos_pulls::repositories::pull_requests::mutations::UpdatePullRequestRequest;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_repos::repositories::dependencies as records;
 use codeyard_db_repos::repositories::dependencies::AlertState;
@@ -61,7 +61,7 @@ async fn save(w: &World, path: &str, bytes: &[u8]) {
         .unwrap();
 }
 async fn scan(w: &World) {
-    codeyard_app::vulnerabilities::ingest(w.f.pool(), &provider::advisory())
+    codeyard_repos_pulls::vulnerabilities::ingest(w.f.pool(), &provider::advisory())
         .await
         .unwrap();
     codeyard_db_security::vulnerabilities::enqueue(w.f.pool(), w.repo.id)
@@ -79,7 +79,7 @@ async fn scan(w: &World) {
         }
     };
     let repo = w.f.repository(id).await;
-    codeyard_app::vulnerabilities::scan(&w.state, &repo, generation)
+    codeyard_repos_pulls::vulnerabilities::scan(&w.state, &repo, generation)
         .await
         .unwrap();
 }

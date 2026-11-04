@@ -12,8 +12,8 @@ use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::user::responses::PublicUserResponse as UserResponse;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::pull_requests::reviews::CreatePullRequestReviewRequest;
-use codeyard_app::repositories::pull_requests::reviews::DismissPullRequestReviewRequest;
+use codeyard_repos_pulls::repositories::pull_requests::reviews::CreatePullRequestReviewRequest;
+use codeyard_repos_pulls::repositories::pull_requests::reviews::DismissPullRequestReviewRequest;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ pub async fn create_pull_request_review(
     Json(req): Json<CreatePullRequestReviewRequest>,
 ) -> Result<(StatusCode, Json<PullRequestReviewResponse>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let review = codeyard_app::repositories::pull_requests::reviews::create_pull_request_review(
+    let review = codeyard_repos_pulls::repositories::pull_requests::reviews::create_pull_request_review(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
@@ -55,7 +55,7 @@ pub async fn dismiss_pull_request_review(
 ) -> Result<Json<PullRequestReviewResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
     let dismissed =
-        codeyard_app::repositories::pull_requests::reviews::dismiss_pull_request_review(
+        codeyard_repos_pulls::repositories::pull_requests::reviews::dismiss_pull_request_review(
             &state.pool,
             current_actor.id,
             owner,

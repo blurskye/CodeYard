@@ -29,7 +29,7 @@ pub(super) async fn download(
             Ok(loaded) => loaded,
             Err(response) => return response,
         };
-    let found = match codeyard_app::repositories::releases::detail_by_id(
+    let found = match codeyard_repos_pulls::repositories::releases::detail_by_id(
         &ctx.state.pool,
         ctx.user.as_ref().map(|user| user.id),
         loaded.repository.id,

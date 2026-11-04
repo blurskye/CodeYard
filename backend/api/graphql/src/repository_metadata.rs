@@ -113,7 +113,7 @@ pub(super) async fn resolve(
             ))
         }
         "isBlankIssuesEnabled" | "issueTemplates" => {
-            let files = codeyard_app::repositories::issue_templates::issue_templates(
+            let files = codeyard_repos_pulls::repositories::issue_templates::issue_templates(
                 &store,
                 &repo.default_branch,
             )
@@ -134,7 +134,7 @@ pub(super) async fn resolve(
             let files = texts(
                 &store,
                 &repo.default_branch,
-                &codeyard_app::repositories::issue_templates::PULL_REQUEST_TEMPLATE_PATHS,
+                &codeyard_repos_pulls::repositories::issue_templates::PULL_REQUEST_TEMPLATE_PATHS,
             )
             .await?;
             Ok(json!(files

@@ -17,7 +17,7 @@ async fn get_profile(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let profile = codeyard_app::repositories::community::load(
+    let profile = codeyard_repos_pulls::repositories::community::load(
         &state.pool,
         &repo,
         &owner,
@@ -26,7 +26,7 @@ async fn get_profile(
     .await
     .map_err(store_error)?;
     Ok(Json(
-        codeyard_app::webhook_payloads::repository::community_profile(&profile),
+        codeyard_repos_pulls::webhook_payloads::repository::community_profile(&profile),
     ))
 }
 pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

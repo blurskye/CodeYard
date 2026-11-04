@@ -53,7 +53,7 @@ pub(super) async fn fixed_revision(
         202,
     )
     .await;
-    assert!(codeyard_app::code_scanning::process_next(pool)
+    assert!(codeyard_repos_pulls::code_scanning::process_next(pool)
         .await
         .unwrap());
     let mut delivered = false;
@@ -101,7 +101,7 @@ pub(super) async fn fixed_revision(
         202,
     )
     .await;
-    assert!(codeyard_app::code_scanning::process_next(pool)
+    assert!(codeyard_repos_pulls::code_scanning::process_next(pool)
         .await
         .unwrap());
 }

@@ -12,7 +12,7 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::pull_requests::restack;
+use codeyard_repos_pulls::repositories::pull_requests::restack;
 use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::RestackMove;

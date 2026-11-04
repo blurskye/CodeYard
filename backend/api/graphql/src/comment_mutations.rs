@@ -4,8 +4,8 @@ use crate::mutations::pull_error;
 use crate::mutations::text;
 use crate::RequestContext;
 use crate::Result;
-use codeyard_app::issues::comments::CommentTarget;
-use codeyard_app::issues::comments::CreateCommentRequest;
+use codeyard_repos_pulls::issues::comments::CommentTarget;
+use codeyard_repos_pulls::issues::comments::CreateCommentRequest;
 use codeyard_model::node_id;
 use serde_json::json;
 use serde_json::Value;
@@ -36,13 +36,13 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     let mut payload = json!({"clientMutationId":input["clientMutationId"]});
     if field == "deleteIssueComment" {
         if pull {
-            codeyard_app::repositories::pull_requests::comments::delete_pull_request_comment(
+            codeyard_repos_pulls::repositories::pull_requests::comments::delete_pull_request_comment(
                 pool, actor, target,
             )
             .await
             .map_err(pull_error)?;
         } else {
-            codeyard_app::issues::comments::delete_issue_comment(pool, actor, &credential, target)
+            codeyard_repos_pulls::issues::comments::delete_issue_comment(pool, actor, &credential, target)
                 .await
                 .map_err(issue_error)?;
         }
@@ -50,7 +50,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         let body = text(input, "body")?.to_owned();
         payload["issueComment"] = if pull {
             let row =
-                codeyard_app::repositories::pull_requests::comments::edit_pull_request_comment(
+                codeyard_repos_pulls::repositories::pull_requests::comments::edit_pull_request_comment(
                     pool,
                     &request.state.notification_broadcaster,
                     actor,
@@ -62,7 +62,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 .map_err(pull_error)?;
             crate::issue::pull_comment(&row, request).await?
         } else {
-            let row = codeyard_app::issues::comments::edit_issue_comment(
+            let row = codeyard_repos_pulls::issues::comments::edit_issue_comment(
                 pool,
                 &request.state.notification_broadcaster,
                 actor,

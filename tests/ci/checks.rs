@@ -9,7 +9,7 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
-use codeyard_app::repositories;
+use codeyard_repos_pulls::repositories;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};

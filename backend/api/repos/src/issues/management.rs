@@ -109,7 +109,7 @@ pub(crate) async fn native_change(
             return Ok(ctx.redirect(&format!("/{owner}/{}/issues/{}", target.name, moved.number)));
         }
         "duplicate" => {
-            let duplicate = codeyard_app::issues::references::resolve(
+            let duplicate = codeyard_repos_pulls::issues::references::resolve(
                 &ctx.state.pool,
                 actor,
                 (&owner, &name),
@@ -122,7 +122,7 @@ pub(crate) async fn native_change(
                     "Issue not found. Use a number or owner/repository#number.",
                 )
             })?;
-            codeyard_app::issues::mutations::close_duplicate(
+            codeyard_repos_pulls::issues::mutations::close_duplicate(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
                 authority(),
@@ -152,7 +152,7 @@ pub(crate) async fn native_change(
                     "The repository needs a default branch.",
                 )
             })?;
-            codeyard_app::issues::branches::create(
+            codeyard_repos_pulls::issues::branches::create(
                 &ctx.state,
                 authority(),
                 &issue,
@@ -264,7 +264,7 @@ pub(crate) async fn load(
             ),
         ));
     }
-    for pull in codeyard_app::issues::closing::references(
+    for pull in codeyard_repos_pulls::issues::closing::references(
         pool,
         ctx.user.as_ref(),
         issue,

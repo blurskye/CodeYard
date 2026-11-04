@@ -16,8 +16,8 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::engagement::Engagement;
-use codeyard_app::repositories::engagement::EngagementError;
+use codeyard_repos_pulls::repositories::engagement::Engagement;
+use codeyard_repos_pulls::repositories::engagement::EngagementError;
 use codeyard_identity::repository_access::AccessError;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
@@ -71,7 +71,7 @@ async fn change_star(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
-    codeyard_app::repositories::engagement::change(
+    codeyard_repos_pulls::repositories::engagement::change(
         &state.pool,
         &state.notification_broadcaster,
         auth.database_actor(),

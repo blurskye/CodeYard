@@ -110,14 +110,14 @@ async fn create(
         );
     }
     if review_state.is_some() && prepared.is_empty() {
-        let review = codeyard_app::repositories::pull_requests::reviews::create_pull_request_review(
+        let review = codeyard_repos_pulls::repositories::pull_requests::reviews::create_pull_request_review(
             &state.pool,
             state.cluster.as_ref(),
             &state.notification_broadcaster,
             actor.id,
             &auth.credential(),
             (owner.clone(), name, number),
-            codeyard_app::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
+            codeyard_repos_pulls::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
                 state: review_state,
                 body: input.body,
                 commit_sha: Some(commit),
@@ -129,15 +129,15 @@ async fn create(
         .map_err(failure)?;
         return Ok(Json(document(&state, &owner, &repo, &pull, &review).await?));
     }
-    let review = codeyard_app::repositories::pull_requests::reviews::create_pull_request_review_batch(
+    let review = codeyard_repos_pulls::repositories::pull_requests::reviews::create_pull_request_review_batch(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
         actor.id,
         &auth.credential(),
         (owner.clone(), name, number),
-        codeyard_app::repositories::pull_requests::reviews::CreatePullRequestReviewBatchRequest {
-            review: codeyard_app::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
+        codeyard_repos_pulls::repositories::pull_requests::reviews::CreatePullRequestReviewBatchRequest {
+            review: codeyard_repos_pulls::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
                 state: review_state,
                 body: input.body,
                 commit_sha: Some(commit),
@@ -168,7 +168,7 @@ async fn update(
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Body = serde_json::from_slice(&body).map_err(json_parse_error)?;
-    let review = codeyard_app::repositories::pull_requests::reviews::edit_review(
+    let review = codeyard_repos_pulls::repositories::pull_requests::reviews::edit_review(
         &state.pool,
         &state.notification_broadcaster,
         actor.id,
@@ -238,14 +238,14 @@ async fn submit(
     if draft.state != "pending" {
         return Err(Error::invalid_simple("Review is not pending"));
     }
-    let review = codeyard_app::repositories::pull_requests::reviews::create_pull_request_review(
+    let review = codeyard_repos_pulls::repositories::pull_requests::reviews::create_pull_request_review(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
         actor.id,
         &auth.credential(),
         (owner.clone(), name, number),
-        codeyard_app::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
+        codeyard_repos_pulls::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
             state: state_for(Some(&input.event))?,
             body: input.body,
             commit_sha: draft.commit_sha,
@@ -357,7 +357,7 @@ async fn change_reviewers(
                 .iter()
                 .any(|u| u.username.eq_ignore_ascii_case(&username))
             {
-                codeyard_app::repositories::pull_requests::reviews::remove_requested_reviewer(
+                codeyard_repos_pulls::repositories::pull_requests::reviews::remove_requested_reviewer(
                     &state.pool,
                     actor.id,
                     owner.clone(),
@@ -370,14 +370,14 @@ async fn change_reviewers(
             }
         }
         if !remove {
-            codeyard_app::repositories::pull_requests::reviews::request_reviewer(
+            codeyard_repos_pulls::repositories::pull_requests::reviews::request_reviewer(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
                 owner.clone(),
                 name.clone(),
                 number,
-                codeyard_app::repositories::pull_requests::reviews::RequestReviewerRequest {
+                codeyard_repos_pulls::repositories::pull_requests::reviews::RequestReviewerRequest {
                     username,
                 },
             )

@@ -18,7 +18,7 @@ use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::issues::comments::CommentTarget;
+use codeyard_repos_pulls::issues::comments::CommentTarget;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git::DiffFileInfo;
 use codeyard_model::github_error::Error;
@@ -157,7 +157,7 @@ pub(super) async fn prepare(
     pull: &codeyard_db_core::models::PullRequest,
     input: Create,
     pending: bool,
-) -> Result<codeyard_app::repositories::pull_requests::comments::CreatePullRequestCommentRequest> {
+) -> Result<codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest> {
     prepare_with_diff(state, headers, repo, pull, input, pending, None).await
 }
 
@@ -169,7 +169,7 @@ pub(super) async fn prepare_with_diff(
     input: Create,
     pending: bool,
     cached: Option<&codeyard_git::DiffInfo>,
-) -> Result<codeyard_app::repositories::pull_requests::comments::CreatePullRequestCommentRequest> {
+) -> Result<codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest> {
     let mut line = input.line;
     let mut side = input.side;
     if let Some(parent) = input.in_reply_to {
@@ -180,7 +180,7 @@ pub(super) async fn prepare_with_diff(
             ));
         }
         return Ok(
-            codeyard_app::repositories::pull_requests::comments::CreatePullRequestCommentRequest {
+            codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest {
                 body: input.body,
                 repository_id: Some(repo.id),
                 path: None,
@@ -254,7 +254,7 @@ pub(super) async fn prepare_with_diff(
         }
     }
     Ok(
-        codeyard_app::repositories::pull_requests::comments::CreatePullRequestCommentRequest {
+        codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest {
             body: input.body,
             repository_id: Some(repo.id),
             path: input.path,
@@ -285,7 +285,7 @@ async fn create(
     let input =
         serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?;
     let request = prepare(&state, &headers, &repo, &pull, input, false).await?;
-    let comment = codeyard_app::repositories::pull_requests::comments::create_pull_request_comment(
+    let comment = codeyard_repos_pulls::repositories::pull_requests::comments::create_pull_request_comment(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
@@ -349,7 +349,7 @@ async fn update(
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
     let input: Body =
         serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?;
-    let comment = codeyard_app::repositories::pull_requests::comments::edit_pull_request_comment(
+    let comment = codeyard_repos_pulls::repositories::pull_requests::comments::edit_pull_request_comment(
         &state.pool,
         &state.notification_broadcaster,
         actor.id,
@@ -378,7 +378,7 @@ async fn remove(
         .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
-    codeyard_app::repositories::pull_requests::comments::delete_pull_request_comment(
+    codeyard_repos_pulls::repositories::pull_requests::comments::delete_pull_request_comment(
         &state.pool,
         actor.id,
         CommentTarget {

@@ -115,7 +115,7 @@ pub(crate) async fn native_assign(
     crate::discussion::require_item_binding(&ctx, &form, repo.record.id, value.id)?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     let username = field(&form, "username");
-    let target = codeyard_app::issues::assignments::Target {
+    let target = codeyard_repos_pulls::issues::assignments::Target {
         actor: ctx.require_user()?,
         repository: &repo.record,
         owner: &owner,
@@ -130,7 +130,7 @@ pub(crate) async fn native_assign(
     .await
     .map_err(|_| unavailable(&ctx))?
     {
-        Some(assignee) => codeyard_app::issues::assignments::assign(
+        Some(assignee) => codeyard_repos_pulls::issues::assignments::assign(
             &ctx.state.pool,
             &ctx.state.notification_broadcaster,
             &target,
@@ -160,7 +160,7 @@ pub(crate) async fn native_unassign(
     crate::discussion::require_item_binding(&ctx, &form, repo.record.id, value.id)?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     // A name that is no user, or is not assigned, leaves the item as it is and records nothing.
-    let target = codeyard_app::issues::assignments::Target {
+    let target = codeyard_repos_pulls::issues::assignments::Target {
         actor: ctx.require_user()?,
         repository: &repo.record,
         owner: &owner,
@@ -168,7 +168,7 @@ pub(crate) async fn native_unassign(
         number,
         title: &value.title,
     };
-    let outcome = codeyard_app::issues::assignments::unassign(
+    let outcome = codeyard_repos_pulls::issues::assignments::unassign(
         &ctx.state.pool,
         &target,
         authority(&ctx)?,

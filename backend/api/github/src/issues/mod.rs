@@ -239,8 +239,8 @@ async fn list(
     page.response(&uri, items, next)
 }
 
-pub(super) fn operation_error(error: codeyard_app::issues::OperationError) -> Error {
-    use codeyard_app::issues::OperationError;
+pub(super) fn operation_error(error: codeyard_repos_pulls::issues::OperationError) -> Error {
+    use codeyard_repos_pulls::issues::OperationError;
     match error {
         OperationError::Invalid { message, .. } => Error::invalid(message),
         OperationError::Missing { .. } => Error::missing(),
@@ -350,7 +350,7 @@ pub async fn apply_metadata(
     }
     if let Some(users) = metadata.assignees {
         let (owner, number, title) = detail;
-        let target = codeyard_app::issues::assignments::Target {
+        let target = codeyard_repos_pulls::issues::assignments::Target {
             actor,
             repository: repo,
             owner,
@@ -364,7 +364,7 @@ pub async fn apply_metadata(
             .into_iter()
             .filter(|name| !users.iter().any(|user| user.username == *name))
             .collect();
-        codeyard_app::issues::assignments::unassign(
+        codeyard_repos_pulls::issues::assignments::unassign(
             &state.pool,
             &target,
             authentication.database_actor(),
@@ -372,7 +372,7 @@ pub async fn apply_metadata(
         )
         .await
         .map_err(assignment_error)?;
-        codeyard_app::issues::assignments::assign(
+        codeyard_repos_pulls::issues::assignments::assign(
             &state.pool,
             &state.notification_broadcaster,
             &target,
@@ -419,13 +419,13 @@ async fn create(
     };
     let body = text(&input, "body")?;
     let metadata = metadata(&state.pool, &repo, actor, &input).await?;
-    let issue = codeyard_app::issues::mutations::create_issue_with_metadata(
+    let issue = codeyard_repos_pulls::issues::mutations::create_issue_with_metadata(
         &state.pool,
         &state.notification_broadcaster,
         authentication.database_actor(),
         p["owner"].clone(),
         repo.name.clone(),
-        codeyard_app::issues::mutations::CreateIssueRequest {
+        codeyard_repos_pulls::issues::mutations::CreateIssueRequest {
             title,
             body,
             repository_id: Some(repo.id),
@@ -501,13 +501,13 @@ async fn update(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            let saved = codeyard_app::issues::mutations::update_issue_latest(
+            let saved = codeyard_repos_pulls::issues::mutations::update_issue_latest(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
                 repo.id,
                 issue.number,
-                codeyard_app::issues::mutations::UpdateIssueRequest {
+                codeyard_repos_pulls::issues::mutations::UpdateIssueRequest {
                     expected_state: issue.state,
                     expected_updated: issue.updated_at.to_rfc3339(),
                     title,
@@ -526,7 +526,7 @@ async fn update(
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?;
-            let saved = codeyard_app::repositories::pull_requests::mutations::update_pull_request_latest(&state.pool, &state.ci_runs, &state.notification_broadcaster, actor.id, (repo.id, pull.number), codeyard_app::repositories::pull_requests::mutations::UpdatePullRequestRequest { expected_state: pull.state, expected_updated: pull.updated_at.to_rfc3339(), title, body, state: requested_state, base: None, maintainer_can_modify: None }).await.map_err(pull_error)?;
+            let saved = codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request_latest(&state.pool, &state.ci_runs, &state.notification_broadcaster, actor.id, (repo.id, pull.number), codeyard_repos_pulls::repositories::pull_requests::mutations::UpdatePullRequestRequest { expected_state: pull.state, expected_updated: pull.updated_at.to_rfc3339(), title, body, state: requested_state, base: None, maintainer_can_modify: None }).await.map_err(pull_error)?;
             (saved.number, saved.title)
         }
     };
@@ -586,7 +586,7 @@ async fn change_assignees(
         .as_str()
         .ok_or_else(|| Error::unavailable(()))?;
 
-    let target = codeyard_app::issues::assignments::Target {
+    let target = codeyard_repos_pulls::issues::assignments::Target {
         actor,
         repository: &repo,
         owner: &p["owner"],
@@ -595,7 +595,7 @@ async fn change_assignees(
         title,
     };
     if remove {
-        codeyard_app::issues::assignments::unassign(
+        codeyard_repos_pulls::issues::assignments::unassign(
             &state.pool,
             &target,
             authentication.database_actor(),
@@ -605,7 +605,7 @@ async fn change_assignees(
         .map_err(assignment_error)?;
     } else {
         let users = resolve_assignees(&state.pool, &names).await?;
-        codeyard_app::issues::assignments::assign(
+        codeyard_repos_pulls::issues::assignments::assign(
             &state.pool,
             &state.notification_broadcaster,
             &target,

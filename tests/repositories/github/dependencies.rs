@@ -1,7 +1,7 @@
 use super::*;
 use codeyard_repos_core::ci::runs::CiRuns;
-use codeyard_app::repositories::dependencies::registry;
-use codeyard_app::repositories::dependencies::worker;
+use codeyard_repos_pulls::repositories::dependencies::registry;
+use codeyard_repos_pulls::repositories::dependencies::worker;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 mod provider;
 mod workers;

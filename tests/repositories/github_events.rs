@@ -7,8 +7,8 @@ use axum::{
     Router,
 };
 
-use codeyard_app::repositories::engagement;
-use codeyard_app::repositories::engagement::Engagement;
+use codeyard_repos_pulls::repositories::engagement;
+use codeyard_repos_pulls::repositories::engagement::Engagement;
 use codeyard_repos_core::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;

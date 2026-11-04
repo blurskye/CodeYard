@@ -300,7 +300,7 @@ async fn resolve(
         Ok(alert) => alert,
         Err(error) => return failure(&ctx, &loaded, error),
     };
-    if let Err(error) = codeyard_app::repositories::secret_scanning::jobs::emit_alert(
+    if let Err(error) = codeyard_repos_pulls::repositories::secret_scanning::jobs::emit_alert(
         &ctx.state,
         &loaded.repository,
         &alert,

@@ -20,7 +20,7 @@ use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::merges::BranchMerge;
+use codeyard_repos_pulls::repositories::merges::BranchMerge;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_actions::deployments::Deployment;
 use codeyard_db_actions::deployments::Filter;
@@ -207,7 +207,7 @@ async fn create(
                 auth.repository_scope(&state.pool, repo.id, "contents", true)
                     .await
                     .map_err(crate::auth::scope_error)?;
-                codeyard_app::repositories::merges::merge_branch(
+                codeyard_repos_pulls::repositories::merges::merge_branch(
                     &state.pool,
                     state.cluster.as_ref(),
                     &state.ci_runs,

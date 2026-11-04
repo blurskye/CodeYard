@@ -160,7 +160,7 @@ async fn target(
         ..Default::default()
     };
     if let Some(user) = ctx.user.as_ref() {
-        form.protected = codeyard_app::repositories::files::direct_commit_refused(
+        form.protected = codeyard_repos_pulls::repositories::files::direct_commit_refused(
             &ctx.state.pool,
             &loaded.repository,
             user,
@@ -169,7 +169,7 @@ async fn target(
         )
         .await;
         form.new_branch =
-            codeyard_app::repositories::files::free_branch_name(&user.username, &loaded.refs);
+            codeyard_repos_pulls::repositories::files::free_branch_name(&user.username, &loaded.refs);
     }
     Ok(form)
 }
@@ -366,7 +366,7 @@ pub(crate) async fn post(
         files,
     };
     let actor = ctx.database_actor(ctx.user.as_ref().expect("authenticated upload").id);
-    let saved = codeyard_app::repositories::files::upload_files(
+    let saved = codeyard_repos_pulls::repositories::files::upload_files(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
@@ -388,7 +388,7 @@ pub(crate) async fn post(
         }),
         Err(error) => {
             form.saved =
-                error.kind == codeyard_app::repositories::files::WriteFailure::SavedFollowupFailed;
+                error.kind == codeyard_repos_pulls::repositories::files::WriteFailure::SavedFollowupFailed;
             refusal(&ctx, &loaded, form, write_status(&error), &error.message)
         }
     }

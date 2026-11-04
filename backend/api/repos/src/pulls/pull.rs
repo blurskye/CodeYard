@@ -11,7 +11,7 @@ use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::user::responses::PublicUserResponse as UserResponse;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::pull_requests::mutations::UpdatePullRequestRequest;
+use codeyard_repos_pulls::repositories::pull_requests::mutations::UpdatePullRequestRequest;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ pub async fn update_pull_request(
     let current_actor = get_current_user(&state.pool, &headers).await?;
     let repository =
         crate::access::readable_repository(&state.pool, &owner, &repo, &headers).await?;
-    let pull_request = codeyard_app::repositories::pull_requests::mutations::update_pull_request(
+    let pull_request = codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,

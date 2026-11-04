@@ -228,7 +228,7 @@ pub(super) async fn create(
             )
         }
     };
-    match codeyard_app::repositories::imports::start(
+    match codeyard_repos_pulls::repositories::imports::start(
         ctx.state.clone(),
         repo,
         credential,
@@ -339,7 +339,7 @@ pub(super) async fn submit(
         None => return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again."),
     };
     let credentials = source_credentials(&input);
-    let result = codeyard_app::repositories::imports::start(
+    let result = codeyard_repos_pulls::repositories::imports::start(
         ctx.state.clone(),
         loaded.repository.clone(),
         credential,

@@ -151,7 +151,7 @@ async fn change(
         None => pulls[0].id,
     };
     let ids: Vec<i64> = pulls.iter().map(|p| p.id).collect();
-    codeyard_app::repositories::pull_requests::mutations::join_stack_batch(
+    codeyard_repos_pulls::repositories::pull_requests::mutations::join_stack_batch(
         &state.pool,
         &state.ci_runs,
         actor.id,
@@ -209,7 +209,7 @@ async fn unstack(
         .ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?
         .user;
     let meta = metadata(&state, repo.id, number).await?;
-    let count = codeyard_app::repositories::pull_requests::mutations::unstack_named_stack(
+    let count = codeyard_repos_pulls::repositories::pull_requests::mutations::unstack_named_stack(
         &state.pool,
         &state.ci_runs,
         actor.id,

@@ -144,7 +144,7 @@ async fn contract(pg: bool) {
     .unwrap());
 
     // Uploading an unchanged source alongside changed documentation must not run source CI.
-    use codeyard_app::repositories::files;
+    use codeyard_repos_pulls::repositories::files;
     use codeyard_repos::editor::FileWrite;
     use codeyard_repos::editor::UploadFile;
     use codeyard_repos::editor::UploadWrite;
@@ -341,7 +341,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .len();
-    codeyard_app::repositories::files::upload_files(
+    codeyard_repos_pulls::repositories::files::upload_files(
         f.pool(),
         None,
         &service,

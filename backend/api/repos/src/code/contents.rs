@@ -60,7 +60,7 @@ pub struct CreateFileResponse {
     pub path: String,
 }
 
-fn commit_response(saved: codeyard_app::repositories::files::FileSave) -> Json<UpdateFileResponse> {
+fn commit_response(saved: codeyard_repos_pulls::repositories::files::FileSave) -> Json<UpdateFileResponse> {
     let user = saved.actor;
     let author = AuthorInfo {
         id: Some(user.id),
@@ -75,9 +75,9 @@ fn commit_response(saved: codeyard_app::repositories::files::FileSave) -> Json<U
 }
 
 fn decode_content(content: &str) -> Result<Vec<u8>, ApiFailure> {
-    codeyard_app::repositories::files::decode_base64(content, MAX_EDITOR_BYTES).map_err(|error| {
+    codeyard_repos_pulls::repositories::files::decode_base64(content, MAX_EDITOR_BYTES).map_err(|error| {
         match error {
-            codeyard_app::repositories::files::WriteFailure::TooLarge => ApiError::failure(
+            codeyard_repos_pulls::repositories::files::WriteFailure::TooLarge => ApiError::failure(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "too_large",
                 "File writes support at most 1 MiB.",
@@ -98,16 +98,16 @@ async fn write_file(
     (owner, repo, path): (String, String, String),
     req: WriteFileRequest,
     creating: bool,
-) -> Result<codeyard_app::repositories::files::FileSave, ApiFailure> {
+) -> Result<codeyard_repos_pulls::repositories::files::FileSave, ApiFailure> {
     let actor = codeyard_api_http::session::get_current_user(&state.pool, headers).await?;
     let repository_id =
-        codeyard_app::repositories::files::ensure_readable(&state.pool, &actor, &owner, &repo)
+        codeyard_repos_pulls::repositories::files::ensure_readable(&state.pool, &actor, &owner, &repo)
             .await
             .map_err(|error| {
                 ApiError::failure(write_status(&error), "file_write_rejected", &error.message)
             })?;
     let content = decode_content(&req.content)?;
-    codeyard_app::repositories::files::write_file_bytes(
+    codeyard_repos_pulls::repositories::files::write_file_bytes(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -151,12 +151,12 @@ pub async fn delete_file_content(
 ) -> Result<Json<UpdateFileResponse>, ApiFailure> {
     let actor = codeyard_api_http::session::get_current_user(&state.pool, &headers).await?;
     let repository =
-        codeyard_app::repositories::files::named_repository(&state.pool, &owner, &repo)
+        codeyard_repos_pulls::repositories::files::named_repository(&state.pool, &owner, &repo)
             .await
             .map_err(|error| {
                 ApiError::failure(write_status(&error), "file_write_rejected", &error.message)
             })?;
-    let saved = codeyard_app::repositories::files::delete_file(
+    let saved = codeyard_repos_pulls::repositories::files::delete_file(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -237,7 +237,7 @@ fn write_target(
 fn new_branch_for(ctx: &PageContext, loaded: &Loaded) -> String {
     match ctx.user.as_ref() {
         Some(user) => {
-            codeyard_app::repositories::files::free_branch_name(&user.username, &loaded.refs)
+            codeyard_repos_pulls::repositories::files::free_branch_name(&user.username, &loaded.refs)
         }
         None => String::new(),
     }
@@ -292,7 +292,7 @@ async fn editor_page(
             ));
         }
         editor.content =
-            codeyard_app::repositories::files::editor_text(&blob.bytes, blob.is_binary)
+            codeyard_repos_pulls::repositories::files::editor_text(&blob.bytes, blob.is_binary)
                 .map_err(|error| ctx.error(write_status(&error), &error.message))?
                 .to_owned();
         editor.message = format!("Update {}", editor.path);
@@ -380,7 +380,7 @@ async fn refuses_direct_commit(
 ) -> bool {
     match ctx.user.as_ref() {
         Some(user) => {
-            codeyard_app::repositories::files::direct_commit_refused(
+            codeyard_repos_pulls::repositories::files::direct_commit_refused(
                 &ctx.state.pool,
                 &loaded.repository,
                 user,
@@ -441,7 +441,7 @@ pub(crate) async fn write_form(
     };
     // The description goes after the subject, so a blank message gets its default first.
     if input.message.trim().is_empty() {
-        input.message = codeyard_app::repositories::files::default_commit_message(&input);
+        input.message = codeyard_repos_pulls::repositories::files::default_commit_message(&input);
     }
     if !editor.description.trim().is_empty() {
         input.message = format!("{}\n\n{}", input.message, editor.description.trim_end());
@@ -449,7 +449,7 @@ pub(crate) async fn write_form(
     // The choice of a protected branch: the commit lands on a new branch, which starts there.
     let new_branch =
         (field(form, "commit_target") == "new_branch").then(|| editor.new_branch.clone());
-    match codeyard_app::repositories::files::write_file(
+    match codeyard_repos_pulls::repositories::files::write_file(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
@@ -477,7 +477,7 @@ pub(crate) async fn write_form(
         Err(error) => {
             let status = write_status(&error);
             editor.saved =
-                error.kind == codeyard_app::repositories::files::WriteFailure::SavedFollowupFailed;
+                error.kind == codeyard_repos_pulls::repositories::files::WriteFailure::SavedFollowupFailed;
             let title = if editor.saved {
                 view::editor::SAVED_FOLLOWUP_FAILED
             } else {
@@ -602,7 +602,7 @@ pub(crate) async fn delete_form(
         creating: false,
         deleting: true,
     };
-    match codeyard_app::repositories::files::delete_file_web(
+    match codeyard_repos_pulls::repositories::files::delete_file_web(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
@@ -626,7 +626,7 @@ pub(crate) async fn delete_form(
         Err(error) => {
             let status = write_status(&error);
             file.saved =
-                error.kind == codeyard_app::repositories::files::WriteFailure::SavedFollowupFailed;
+                error.kind == codeyard_repos_pulls::repositories::files::WriteFailure::SavedFollowupFailed;
             let title = if file.saved {
                 view::editor::SAVED_FOLLOWUP_FAILED
             } else {
@@ -649,8 +649,8 @@ pub(crate) async fn delete_form(
     }
 }
 
-pub(crate) fn write_status(error: &codeyard_app::repositories::files::WriteError) -> StatusCode {
-    use codeyard_app::repositories::files::WriteFailure;
+pub(crate) fn write_status(error: &codeyard_repos_pulls::repositories::files::WriteError) -> StatusCode {
+    use codeyard_repos_pulls::repositories::files::WriteFailure;
     match error.kind {
         WriteFailure::Invalid => StatusCode::BAD_REQUEST,
         WriteFailure::Conflict => StatusCode::CONFLICT,

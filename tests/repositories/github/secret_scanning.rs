@@ -4,7 +4,7 @@ use axum::{http::StatusCode, Router};
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_repos_core::repositories::lifecycle;
-use codeyard_app::repositories::secret_scanning::jobs;
+use codeyard_repos_pulls::repositories::secret_scanning::jobs;
 use codeyard_ci::config::CiConfig;
 use codeyard_db_security::secret_scanning as records;
 use codeyard_identity::tokens;

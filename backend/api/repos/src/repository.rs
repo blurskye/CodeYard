@@ -1606,8 +1606,8 @@ async fn mutate(
     let authority = || ctx.database_actor(actor.id);
     match action {
         "star" | "unstar" | "watch" | "unwatch" => {
-            use codeyard_app::repositories::engagement::change;
-            use codeyard_app::repositories::engagement::Engagement;
+            use codeyard_repos_pulls::repositories::engagement::change;
+            use codeyard_repos_pulls::repositories::engagement::Engagement;
             let kind = if matches!(action, "star" | "unstar") {
                 Engagement::Star
             } else {
@@ -1630,7 +1630,7 @@ async fn mutate(
                 .into_iter()
                 .filter(|name| checkbox(form, &format!("events_{name}")))
                 .collect();
-            codeyard_app::repositories::engagement::set_level(
+            codeyard_repos_pulls::repositories::engagement::set_level(
                 pool,
                 ctx.database_actor(actor.id),
                 repository.id,

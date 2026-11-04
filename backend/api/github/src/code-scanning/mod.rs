@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 pub(super) mod databases;
 
-const BODY_LIMIT: usize = codeyard_app::code_scanning::MAX_COMPRESSED.div_ceil(3) * 4 + 64 * 1024;
+const BODY_LIMIT: usize = codeyard_repos_pulls::code_scanning::MAX_COMPRESSED.div_ceil(3) * 4 + 64 * 1024;
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
@@ -126,7 +126,7 @@ async fn upload(
     {
         return Err(Error::validation("Sarif", "commit_sha", "invalid"));
     }
-    if input.ref_name.len() > codeyard_app::code_scanning::MAX_REFERENCE_BYTES
+    if input.ref_name.len() > codeyard_repos_pulls::code_scanning::MAX_REFERENCE_BYTES
         || !["refs/heads/", "refs/tags/", "refs/pull/"]
             .iter()
             .any(|p| input.ref_name.starts_with(p))
@@ -135,7 +135,7 @@ async fn upload(
     {
         return Err(Error::validation("Sarif", "ref", "invalid"));
     }
-    if input.sarif.len() > codeyard_app::code_scanning::MAX_COMPRESSED.div_ceil(3) * 4
+    if input.sarif.len() > codeyard_repos_pulls::code_scanning::MAX_COMPRESSED.div_ceil(3) * 4
         || STANDARD.decode(&input.sarif).is_err()
     {
         return Err(Error::validation("Sarif", "sarif", "invalid"));
@@ -279,7 +279,7 @@ async fn update_alert(
     input
         .validate()
         .map_err(|e| Error::invalid(e.to_string()))?;
-    let row = codeyard_app::code_scanning::dismiss(
+    let row = codeyard_repos_pulls::code_scanning::dismiss(
         &state.pool,
         auth.database_actor(),
         repo.id,

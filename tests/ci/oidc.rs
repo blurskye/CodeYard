@@ -1,7 +1,7 @@
 //! Called workflows retain their own OIDC identity and cannot borrow a caller's permission.
 use crate::support::database::Database;
 
-use codeyard_app::repositories;
+use codeyard_repos_pulls::repositories;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 

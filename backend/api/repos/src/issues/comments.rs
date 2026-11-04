@@ -24,8 +24,8 @@ use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::user::responses::PublicUserResponse as UserResponse;
 use codeyard_app::app::AppState;
-use codeyard_app::issues::comment_link;
-use codeyard_app::issues::comments::CreateCommentRequest;
+use codeyard_repos_pulls::issues::comment_link;
+use codeyard_repos_pulls::issues::comments::CreateCommentRequest;
 use codeyard_webui::pages::repos::issues::DetailDraft;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ pub async fn create_issue_comment(
 ) -> Result<(StatusCode, Json<CommentResponse>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
     let session = codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default();
-    let comment = codeyard_app::issues::comments::create_issue_comment(
+    let comment = codeyard_repos_pulls::issues::comments::create_issue_comment(
         &state.pool,
         &state.notification_broadcaster,
         current_actor.id,
@@ -184,7 +184,7 @@ pub(crate) async fn native_comment(
     if draft.preview {
         return render_detail(&ctx, &repo, kind, &value, &draft, None, StatusCode::OK).await;
     }
-    let result = codeyard_app::issues::comments::create_issue_comment(
+    let result = codeyard_repos_pulls::issues::comments::create_issue_comment(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         ctx.require_user()?.id,
@@ -194,7 +194,7 @@ pub(crate) async fn native_comment(
         owner,
         name,
         number,
-        codeyard_app::issues::comments::CreateCommentRequest {
+        codeyard_repos_pulls::issues::comments::CreateCommentRequest {
             body: draft.comment.clone(),
             repository_id: Some(repo.record.id),
             issue_id: Some(value.id),
@@ -258,20 +258,20 @@ pub(crate) async fn native_edit_comment(
         )
         .await;
     }
-    let result = codeyard_app::issues::comments::edit_issue_comment(
+    let result = codeyard_repos_pulls::issues::comments::edit_issue_comment(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         ctx.require_user()?.id,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
-        codeyard_app::issues::comments::CommentTarget {
+        codeyard_repos_pulls::issues::comments::CommentTarget {
             owner,
             repo: name,
             number,
             comment_id,
         },
-        codeyard_app::issues::comments::CreateCommentRequest {
+        codeyard_repos_pulls::issues::comments::CreateCommentRequest {
             body: draft.comment.clone(),
             ..Default::default()
         },
@@ -315,13 +315,13 @@ pub(crate) async fn native_delete_comment(
     authorize_post(&ctx, &form)?;
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
-    let result = codeyard_app::issues::comments::delete_issue_comment(
+    let result = codeyard_repos_pulls::issues::comments::delete_issue_comment(
         &ctx.state.pool,
         ctx.require_user()?.id,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
-        codeyard_app::issues::comments::CommentTarget {
+        codeyard_repos_pulls::issues::comments::CommentTarget {
             owner,
             repo: name,
             number,

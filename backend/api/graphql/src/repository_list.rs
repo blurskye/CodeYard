@@ -234,7 +234,7 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
             .await
             .ok_or_else(|| async_graphql::Error::new("Search is busy. Try again shortly."))?;
     let (search, _) = if search.needs_git() {
-        codeyard_app::repositories::catalog_search::prepare(
+        codeyard_repos_pulls::repositories::catalog_search::prepare(
             pool,
             request.state.cluster.as_ref(),
             viewer,

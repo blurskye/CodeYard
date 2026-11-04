@@ -4122,7 +4122,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
         .await
         .unwrap()
         .unwrap();
-    let error = codeyard_app::repositories::pull_requests::reviews::create_pull_request_review(
+    let error = codeyard_repos_pulls::repositories::pull_requests::reviews::create_pull_request_review(
         &database.pool,
         Some(&web.context),
         &codeyard_notifications::broadcast::NotificationBroadcaster::new(&database.pool),
@@ -4131,7 +4131,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
             &crate::support::live_session(&database.pool, repo.actor).await,
         ),
         (actor.username, repo.repository.name.clone(), pull.number),
-        codeyard_app::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
+        codeyard_repos_pulls::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
             state: Some("commented".into()),
             body: Some("Old revision".into()),
             commit_sha: Some(head),

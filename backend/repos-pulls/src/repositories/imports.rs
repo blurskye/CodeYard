@@ -1,5 +1,5 @@
 //! Git source imports retain no source credentials and publish only into empty repositories.
-use crate::app::AppState;
+use crate::services::RepositoryServices;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::Repository;
 use codeyard_db_repos::source_imports::SourceImport;
@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub async fn start(
-    state: Arc<AppState>,
+    state: Arc<impl RepositoryServices + 'static>,
     repo: Repository,
     credential: ImportCredential,
     url: &str,
@@ -20,12 +20,12 @@ pub async fn start(
         return Err(ImportError::Credentials);
     }
     let user = credential
-        .user(&state.pool)
+        .user(&state.pool())
         .await
         .map_err(|_| ImportError::Unavailable)?
         .ok_or(ImportError::Denied)?;
     let url = source_url(url).map_err(|_| ImportError::Source)?;
-    if !repo_store(&repo, state.cluster.as_ref())
+    if !repo_store(&repo, state.cluster())
         .refs_from_primary()
         .await
         .map_err(|_| ImportError::Unavailable)?
@@ -34,7 +34,7 @@ pub async fn start(
         return Err(ImportError::NotEmpty);
     }
     let import = codeyard_db_repos::source_imports::start(
-        &state.pool,
+        &state.pool(),
         user.id,
         repo.id,
         url.as_str(),
@@ -59,7 +59,7 @@ pub async fn start(
         credential,
         credentials,
     ) {
-        codeyard_db_repos::source_imports::finish(&state.pool, repo.id, &import.generation, false)
+        codeyard_db_repos::source_imports::finish(&state.pool(), repo.id, &import.generation, false)
             .await
             .map_err(|_| ImportError::Unavailable)?;
         return Err(ImportError::Unavailable);
@@ -80,35 +80,35 @@ async fn cancelled(pool: &codeyard_db_core::DbPool, import: &SourceImport) -> an
 }
 
 fn spawn(
-    state: Arc<AppState>,
+    state: Arc<impl RepositoryServices + 'static>,
     repo: Repository,
     import: SourceImport,
     credential: ImportCredential,
     credentials: Option<Credentials>,
 ) -> bool {
-    let Ok(permit) = state.repository_downloads.clone().try_acquire_owned() else {
+    let Ok(permit) = state.repository_downloads().clone().try_acquire_owned() else {
         return false;
     };
-    let tasks = state.git_tasks.clone();
+    let tasks = state.git_tasks().clone();
     tasks.spawn(async move {
         let _permit = permit;
         let result = async {
             let (refs, default_branch, pack) = tokio::time::timeout(Duration::from_secs(900), async {
                 tokio::select! {
                     result = codeyard_repos::source::fetch(&import.vcs_url, credentials) => result,
-                    result = cancelled(&state.pool, &import) => {
+                    result = cancelled(&state.pool(), &import) => {
                         result?;
                         anyhow::bail!("Import cancelled");
                     }
                 }
             }).await??;
             let actor = credential
-                .user(&state.pool)
+                .user(&state.pool())
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Import credential expired"))?;
-            repo_store(&repo, state.cluster.as_ref())
+            repo_store(&repo, state.cluster())
                 .import_git_as(
-                    &state.pool,
+                    &state.pool(),
                     repo.id,
                     actor.id,
                     GitImport {
@@ -129,7 +129,7 @@ fn spawn(
             tracing::warn!(repo_id = repo.id, "source import failed");
         }
         if let Err(error) =
-            codeyard_db_repos::source_imports::finish(&state.pool, repo.id, &import.generation, success).await
+            codeyard_db_repos::source_imports::finish(&state.pool(), repo.id, &import.generation, success).await
         {
             tracing::error!(repo_id = repo.id, error = %error, "record source import result");
         }

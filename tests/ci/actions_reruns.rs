@@ -9,7 +9,7 @@ use codeyard_app::app::AppState;
 use codeyard_repos_core::ci::queue::RunQueue;
 use codeyard_repos_core::ci::runs::CiRunRequest;
 use codeyard_repos_core::ci::workers::CiWorkers;
-use codeyard_app::repositories;
+use codeyard_repos_pulls::repositories;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;

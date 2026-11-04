@@ -71,7 +71,7 @@ pub(super) async fn contract(
         202,
     )
     .await;
-    assert!(codeyard_app::code_scanning::process_next(pool)
+    assert!(codeyard_repos_pulls::code_scanning::process_next(pool)
         .await
         .unwrap());
     let status = call(
@@ -242,7 +242,7 @@ pub(super) async fn contract(
         202,
     )
     .await;
-    assert!(codeyard_app::code_scanning::process_next(pool)
+    assert!(codeyard_repos_pulls::code_scanning::process_next(pool)
         .await
         .unwrap());
     let alerts = call(

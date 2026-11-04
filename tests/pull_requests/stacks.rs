@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::pull_requests::merge;
+use codeyard_repos_pulls::repositories::pull_requests::merge;
 use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_db_repos::pull_requests::records::StackJoin;
 use codeyard_db_repos::pull_requests::records::StackRefusal;

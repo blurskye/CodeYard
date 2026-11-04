@@ -130,7 +130,7 @@ async fn start(
             "Only an open, non-draft pull request can be merged",
         ));
     }
-    let request = codeyard_app::repositories::pull_requests::merge::MergeRequest {
+    let request = codeyard_repos_pulls::repositories::pull_requests::merge::MergeRequest {
         expected_head: pull.head_sha,
         expected_base: pull.base_sha,
         expected_base_branch: Some(pull.base_branch),
@@ -140,9 +140,9 @@ async fn start(
         commit_message: input.commit_message,
         author_email: None,
     };
-    match codeyard_app::repositories::pull_requests::async_merge::start(
+    match codeyard_repos_pulls::repositories::pull_requests::async_merge::start(
         &state,
-        codeyard_app::repositories::pull_requests::async_merge::Job {
+        codeyard_repos_pulls::repositories::pull_requests::async_merge::Job {
             repo_id: repo.id,
             pull_request_id: pull.id,
             authority: auth.database_actor(),

@@ -1,6 +1,6 @@
 //! Temporary remediation forks reuse repository storage placement and checked fork initialization.
 
-use crate::app::AppState;
+use crate::services::RepositoryServices;
 use codeyard_repos_core::context::NodeContext;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
@@ -11,15 +11,15 @@ use codeyard_model::advisories::Refusal;
 use std::path::Path;
 
 pub async fn private_fork(
-    state: &AppState,
+    state: &dyn RepositoryServices,
     actor: impl Into<Actor>,
     repo: &Repository,
     ghsa: &str,
 ) -> Result<Repository> {
     let (pool, context, path, repo, ghsa, authority) = (
-        state.pool.clone(),
-        state.cluster.clone(),
-        state.repos_path.clone(),
+        state.pool().clone(),
+        state.cluster().cloned(),
+        state.repos_path().clone(),
         repo.clone(),
         ghsa.to_owned(),
         actor.into(),

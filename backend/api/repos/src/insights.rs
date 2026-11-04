@@ -310,7 +310,7 @@ async fn community(
         Ok(opened) => opened,
         Err(response) => return response,
     };
-    let profile = match codeyard_app::repositories::community::load(
+    let profile = match codeyard_repos_pulls::repositories::community::load(
         &ctx.state.pool,
         &loaded.repository,
         &owner,

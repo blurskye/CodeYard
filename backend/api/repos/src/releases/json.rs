@@ -15,7 +15,7 @@ use codeyard_api_http::session::get_current_user;
 use codeyard_api_http::session::get_optional_user;
 use codeyard_app::app::AppState;
 use codeyard_repos_core::repositories::releases::ReleaseError;
-use codeyard_app::repositories::releases::ReleaseInput;
+use codeyard_repos_pulls::repositories::releases::ReleaseInput;
 use codeyard_db_core::models::ReleaseAsset;
 use codeyard_db_core::models::ReleaseRow;
 use codeyard_db_repos::releases::ReleaseChanges;
@@ -184,7 +184,7 @@ pub(super) async fn list(
         .map(|user| user.id);
     let (offset, limit) = json_page(query.page, query.per_page)?;
     let page = (offset / limit + 1) as i64;
-    let listing = codeyard_app::repositories::releases::list(
+    let listing = codeyard_repos_pulls::repositories::releases::list(
         &state.pool,
         viewer,
         crate::access::find_repository(&state.pool, &owner, &name)
@@ -217,7 +217,7 @@ pub(super) async fn get_one(
     let viewer = get_optional_user(&state.pool, &headers)
         .await?
         .map(|user| user.id);
-    let found = codeyard_app::repositories::releases::detail_by_id(
+    let found = codeyard_repos_pulls::repositories::releases::detail_by_id(
         &state.pool,
         viewer,
         crate::access::find_repository(&state.pool, &owner, &name)
@@ -243,7 +243,7 @@ pub(super) async fn get_by_tag(
     let viewer = get_optional_user(&state.pool, &headers)
         .await?
         .map(|user| user.id);
-    let found = codeyard_app::repositories::releases::detail_by_tag(
+    let found = codeyard_repos_pulls::repositories::releases::detail_by_tag(
         &state.pool,
         viewer,
         crate::access::find_repository(&state.pool, &owner, &name)
@@ -294,7 +294,7 @@ pub(super) async fn create(
         },
         new_tag_denied: false,
     };
-    let release = codeyard_app::repositories::releases::create(
+    let release = codeyard_repos_pulls::repositories::releases::create(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -306,7 +306,7 @@ pub(super) async fn create(
     )
     .await
     .map_err(json_error)?;
-    let found = codeyard_app::repositories::releases::detail_by_id(
+    let found = codeyard_repos_pulls::repositories::releases::detail_by_id(
         &state.pool,
         Some(actor.id),
         release.repo_id,
@@ -335,7 +335,7 @@ pub(super) async fn update(
     let actor = get_current_user(&state.pool, &headers).await?;
     // A release keeps its tag and target. Echoing the current values back is accepted.
     if request.tag_name.is_some() || request.target_commitish.is_some() {
-        let current = codeyard_app::repositories::releases::detail_by_id(
+        let current = codeyard_repos_pulls::repositories::releases::detail_by_id(
             &state.pool,
             Some(actor.id),
             crate::access::find_repository(&state.pool, &owner, &name)
@@ -378,7 +378,7 @@ pub(super) async fn update(
         expected_draft: None,
         new_tag_denied: false,
     };
-    let release = codeyard_app::repositories::releases::update(
+    let release = codeyard_repos_pulls::repositories::releases::update(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -391,7 +391,7 @@ pub(super) async fn update(
     )
     .await
     .map_err(json_error)?;
-    let found = codeyard_app::repositories::releases::detail_by_id(
+    let found = codeyard_repos_pulls::repositories::releases::detail_by_id(
         &state.pool,
         Some(actor.id),
         release.repo_id,
@@ -413,7 +413,7 @@ pub(super) async fn delete(
     headers: HeaderMap,
 ) -> Result<StatusCode, Failure> {
     let actor = get_current_user(&state.pool, &headers).await?;
-    codeyard_app::repositories::releases::delete(
+    codeyard_repos_pulls::repositories::releases::delete(
         &state.pool,
         &state.storage,
         actor.id,

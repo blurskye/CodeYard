@@ -257,7 +257,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 return Err(missing());
             }
             let owner = crate::repository::owner(&repo, request).await?;
-            let target = codeyard_app::issues::assignments::Target {
+            let target = codeyard_repos_pulls::issues::assignments::Target {
                 actor: &request.auth.user,
                 repository: &repo,
                 owner: &owner,
@@ -268,11 +268,11 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             };
             if remove {
                 let names: Vec<_> = users.into_iter().map(|user| user.username).collect();
-                codeyard_app::issues::assignments::unassign(pool, &target, authority, &names)
+                codeyard_repos_pulls::issues::assignments::unassign(pool, &target, authority, &names)
                     .await
                     .map_err(|e| codeyard_api_github::issues::assignment_error(e).graphql())?;
             } else {
-                codeyard_app::issues::assignments::assign(
+                codeyard_repos_pulls::issues::assignments::assign(
                     pool,
                     &request.state.notification_broadcaster,
                     &target,

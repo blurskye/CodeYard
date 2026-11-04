@@ -221,7 +221,7 @@ async fn list_org(
             .map(|repo| (repo.id, repo))
             .collect::<HashMap<_, _>>();
     let documents =
-        codeyard_app::repositories::secret_scanning::jobs::Documents::load(&state, &alerts)
+        codeyard_repos_pulls::repositories::secret_scanning::jobs::Documents::load(&state, &alerts)
             .await
             .map_err(Error::unavailable)?;
     let mut items = Vec::new();
@@ -272,7 +272,7 @@ async fn list(
     let has_next = alerts.len() > limit;
     let alerts = alerts.into_iter().take(limit).collect::<Vec<_>>();
     let documents =
-        codeyard_app::repositories::secret_scanning::jobs::Documents::load(&state, &alerts)
+        codeyard_repos_pulls::repositories::secret_scanning::jobs::Documents::load(&state, &alerts)
             .await
             .map_err(Error::unavailable)?;
     let items = alerts
@@ -311,7 +311,7 @@ async fn get_alert(
     .next()
     .ok_or_else(Error::missing)?;
     Ok(Json(
-        codeyard_app::repositories::secret_scanning::jobs::document(
+        codeyard_repos_pulls::repositories::secret_scanning::jobs::document(
             &state,
             &alert,
             owner,
@@ -367,7 +367,7 @@ async fn update(
     )
     .await
     .map_err(error)?;
-    codeyard_app::repositories::secret_scanning::jobs::emit_alert(
+    codeyard_repos_pulls::repositories::secret_scanning::jobs::emit_alert(
         &state,
         &repo,
         &alert,
@@ -388,7 +388,7 @@ async fn update(
     .await
     .map_err(Error::unavailable)?;
     Ok(Json(
-        codeyard_app::repositories::secret_scanning::jobs::document(
+        codeyard_repos_pulls::repositories::secret_scanning::jobs::document(
             &state, &alert, owner, name, false,
         )
         .await

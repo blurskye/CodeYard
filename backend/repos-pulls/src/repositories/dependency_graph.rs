@@ -1,5 +1,5 @@
 //! Dependency inventories pin Git before reading either file and never execute package managers.
-use crate::app::AppState;
+use crate::services::RepositoryServices;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::Repository;
 use codeyard_db_security::dependency_graph::Reader;
@@ -122,7 +122,7 @@ pub fn is_native(snapshot: &codeyard_model::dependency_graph::Snapshot) -> bool 
 
 /// The submitted snapshots of `reference` at `sha`, as their JSON documents.
 async fn snapshot_values(
-    state: &AppState,
+    state: &dyn RepositoryServices,
     reader: &Reader,
     repo: &Repository,
     reference: &str,
@@ -130,7 +130,7 @@ async fn snapshot_values(
 ) -> Result<Vec<serde_json::Value>, RepoError> {
     let branch = reference.starts_with("refs/heads/").then_some(reference);
     codeyard_db_security::dependency_graph::snapshots(
-        &state.pool,
+        &state.pool(),
         reader,
         repo.id,
         branch,
@@ -146,15 +146,15 @@ async fn snapshot_values(
 /// Every dependency file in the tree at `reference`. Any unreadable or unsupported file fails the
 /// inventory, unless a submitted snapshot of the commit covers that manifest.
 pub(crate) async fn native_inventory(
-    state: &AppState,
+    state: &dyn RepositoryServices,
     reader: &Reader,
     repo: &Repository,
     reference: &str,
 ) -> Result<(String, Vec<Package>), RepoError> {
-    codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(&state.pool(), reader, repo.id)
         .await
         .map_err(graph_error)?;
-    let store = repo_store(repo, state.cluster.as_ref());
+    let store = repo_store(repo, state.cluster());
     let sha = if codeyard_git::is_full_commit_id(reference) {
         store.commit(reference).await?
     } else {
@@ -167,13 +167,13 @@ pub(crate) async fn native_inventory(
 /// The same scan of an already pinned commit. `reference` still decides which submitted
 /// snapshots cover a manifest, so a branch that shares the commit cannot hide another's files.
 pub(crate) async fn native_inventory_at(
-    state: &AppState,
+    state: &dyn RepositoryServices,
     reader: &Reader,
     repo: &Repository,
     reference: &str,
     sha: &str,
 ) -> Result<(String, Vec<Package>), RepoError> {
-    let store = repo_store(repo, state.cluster.as_ref());
+    let store = repo_store(repo, state.cluster());
     let sha = sha.to_owned();
     let listing = store.file_paths(&sha, MAX_LISTED_PATHS).await?;
     // A partial listing could hide a lockfile, and a scan that saved it would mark its alerts fixed.
@@ -186,7 +186,7 @@ pub(crate) async fn native_inventory_at(
     // Codeyard's own earlier scan of this commit is not a submission, so it covers nothing. A
     // manifest is named by its source location, as `dependency_graph::packages` reads it.
     let covered: HashSet<String> = codeyard_db_security::dependency_graph::snapshots(
-        &state.pool,
+        &state.pool(),
         reader,
         repo.id,
         branch,
@@ -268,14 +268,14 @@ pub(crate) async fn native_inventory_at(
             }
         }
     }
-    codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(&state.pool(), reader, repo.id)
         .await
         .map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
 }
 
 pub async fn inventory(
-    state: &AppState,
+    state: &dyn RepositoryServices,
     reader: &Reader,
     repo: &Repository,
     reference: &str,
@@ -336,7 +336,7 @@ pub async fn inventory(
             "Dependency inventory exceeds its limit",
         ));
     }
-    codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(&state.pool(), reader, repo.id)
         .await
         .map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
@@ -399,12 +399,12 @@ pub fn snapshot(
 /// The default branch's submitted snapshots and Codeyard's own scan, pinned to one commit.
 /// A repository without commits has none.
 pub async fn pinned_snapshots(
-    state: &AppState,
+    state: &dyn RepositoryServices,
     reader: &Reader,
     repo: &Repository,
     reference: &str,
 ) -> Result<Vec<codeyard_model::dependency_graph::Snapshot>, RepoError> {
-    let sha = match repo_store(repo, state.cluster.as_ref())
+    let sha = match repo_store(repo, state.cluster())
         .commit_from_primary(reference)
         .await
     {
@@ -415,7 +415,7 @@ pub async fn pinned_snapshots(
         Err(error) => return Err(error),
     };
     let mut snapshots = codeyard_db_security::dependency_graph::snapshots(
-        &state.pool,
+        &state.pool(),
         reader,
         repo.id,
         Some(reference),
@@ -430,7 +430,7 @@ pub async fn pinned_snapshots(
 /// Adds Codeyard's own scan to the submitted snapshots already chosen for the same reference and
 /// commit, so every export shares one typed projection. A repository without commits has none.
 pub async fn append_native_snapshot(
-    state: &AppState,
+    state: &dyn RepositoryServices,
     reader: &Reader,
     repo: &Repository,
     reference: &str,

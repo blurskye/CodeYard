@@ -734,7 +734,7 @@ async fn merge_and_revert(
         json!({"input":{"pullRequestId":revert["id"],"mergeMethod":"MERGE"}}),
     )
     .await;
-    codeyard_app::repositories::pull_requests::auto_merge::run_due(state)
+    codeyard_repos_pulls::repositories::pull_requests::auto_merge::run_due(state)
         .await
         .unwrap();
     assert!(

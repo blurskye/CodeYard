@@ -77,7 +77,7 @@ async fn submit(
         body.map_err(|_| Error::validation("Snapshot", "snapshot", "invalid"))?;
     snapshot.validate().map_err(error)?;
     // Only Codeyard's own scan saves under its detector and job, so alerts follow real scans.
-    if codeyard_app::repositories::dependency_graph::is_native(&snapshot) {
+    if codeyard_repos_pulls::repositories::dependency_graph::is_native(&snapshot) {
         return Err(Error::validation("Snapshot", "detector", "invalid"));
     }
     // A submission may describe an older commit, but never an object outside this repository.
@@ -153,7 +153,7 @@ async fn compare(
         (&comparison.merge_base_commit.sha, &mut base),
         (&comparison.head_sha, &mut head),
     ] {
-        codeyard_app::repositories::dependency_graph::append_native_snapshot(
+        codeyard_repos_pulls::repositories::dependency_graph::append_native_snapshot(
             &state, &reader, &repo, sha, None, snapshots,
         )
         .await
@@ -191,7 +191,7 @@ async fn compare(
             change["vulnerabilities"] = json!([]);
             continue;
         }
-        let mut vulnerabilities = codeyard_app::vulnerabilities::findings(&state.pool,&package)
+        let mut vulnerabilities = codeyard_repos_pulls::vulnerabilities::findings(&state.pool,&package)
             .await.map_err(Error::unavailable)?.iter().map(|a|json!({
                 "severity":a.severity(),
                 "advisory_ghsa_id":a.catalogue_id(),
@@ -268,7 +268,7 @@ async fn current(
     .map_err(error)?;
     // The native scan keeps the branch that selected the submitted snapshots, so snapshots of
     // other branches at the same commit neither hide nor join its manifests.
-    codeyard_app::repositories::dependency_graph::append_native_snapshot(
+    codeyard_repos_pulls::repositories::dependency_graph::append_native_snapshot(
         state,
         reader,
         repo,

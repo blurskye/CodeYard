@@ -97,7 +97,7 @@ async fn prepare_application(
     if serves_web {
         storage.prepare().await?;
     }
-    codeyard_app::repositories::pull_requests::async_merge::recover(
+    codeyard_repos_pulls::repositories::pull_requests::async_merge::recover(
         &pool,
         cluster.as_ref().map(|n| n.node_id),
     )
@@ -466,14 +466,14 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     ));
     let (stop_vulnerabilities, vulnerabilities_stop) = tokio::sync::watch::channel(false);
     let vulnerabilities = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(codeyard_app::vulnerabilities::run(
+        tokio::spawn(codeyard_repos_pulls::vulnerabilities::run(
             Arc::new(state.clone()),
             vulnerabilities_stop,
         ))
     });
     let (stop_scanning, scanning_stop) = tokio::sync::watch::channel(false);
     let scanning = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(codeyard_app::code_scanning::run(
+        tokio::spawn(codeyard_repos_pulls::code_scanning::run(
             pool.clone(),
             scanning_stop,
         ))
@@ -502,14 +502,14 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     // Every web node sends queued email; each claims its own messages.
     let (stop_secret_scanning, secret_scanning_stop) = tokio::sync::watch::channel(false);
     let secret_scanning = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(codeyard_app::repositories::secret_scanning::jobs::run(
+        tokio::spawn(codeyard_repos_pulls::repositories::secret_scanning::jobs::run(
             Arc::new(state.clone()),
             secret_scanning_stop,
         ))
     });
     let (stop_auto_merge, auto_merge_stop) = tokio::sync::watch::channel(false);
     let auto_merge = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(codeyard_app::repositories::pull_requests::auto_merge::run(
+        tokio::spawn(codeyard_repos_pulls::repositories::pull_requests::auto_merge::run(
             Arc::new(state.clone()),
             auto_merge_stop,
         ))

@@ -622,7 +622,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                     .and_then(|value| serde_json::from_str(value).ok())
                     .ok_or(codeyard_model::project_query::Refusal::Invalid)?;
                 let value = if f.data_type == "text" {
-                    codeyard_app::repositories::files::native_text(value.clone(), &original)
+                    codeyard_repos_pulls::repositories::files::native_text(value.clone(), &original)
                 } else {
                     value.clone()
                 };

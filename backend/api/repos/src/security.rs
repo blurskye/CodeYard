@@ -318,7 +318,7 @@ async fn dismiss(
     let Some(session) = codeyard_api_http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::FORBIDDEN, "Sign in again to change this alert.");
     };
-    match codeyard_app::code_scanning::dismiss(
+    match codeyard_repos_pulls::code_scanning::dismiss(
         &ctx.state.pool,
         (ctx.user.as_ref().expect("authorized user").id, session),
         loaded.repository.id,

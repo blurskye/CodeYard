@@ -70,7 +70,7 @@ pub(super) async fn review_comment(
         "createdAt":row.created_at,"updatedAt":row.updated_at,"author":crate::user::retained_author(row.author_id,request).await?,
         "pullRequest":crate::issue::pull_object(&pull),"outdated":row.commit_sha.as_ref().is_some_and(|s|s!=&pull.head_sha),
         "isMinimized":false,"minimizedReason":null,"viewerDidAuthor":row.author_id==request.auth.user.id,
-        "url":url(&codeyard_app::repositories::pull_requests::comments::pull_request_comment_link(&crate::repository::owner(&repo,request).await?,&repo.name,&pull,row))}),
+        "url":url(&codeyard_repos_pulls::repositories::pull_requests::comments::pull_request_comment_link(&crate::repository::owner(&repo,request).await?,&repo.name,&pull,row))}),
     )
 }
 

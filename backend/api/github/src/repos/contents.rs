@@ -32,8 +32,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-fn file_error(error: codeyard_app::repositories::files::WriteError) -> Error {
-    use codeyard_app::repositories::files::WriteFailure;
+fn file_error(error: codeyard_repos_pulls::repositories::files::WriteError) -> Error {
+    use codeyard_repos_pulls::repositories::files::WriteFailure;
     let status = match error.kind {
         WriteFailure::Invalid | WriteFailure::Encoding => StatusCode::UNPROCESSABLE_ENTITY,
         WriteFailure::Conflict => StatusCode::CONFLICT,
@@ -412,9 +412,9 @@ async fn save(
             .content
             .as_deref()
             .ok_or_else(|| Error::invalid("content is required"))?;
-        codeyard_app::repositories::files::decode_base64(content, MAX_EDITOR_BYTES).map_err(
+        codeyard_repos_pulls::repositories::files::decode_base64(content, MAX_EDITOR_BYTES).map_err(
             |error| match error {
-                codeyard_app::repositories::files::WriteFailure::TooLarge => {
+                codeyard_repos_pulls::repositories::files::WriteFailure::TooLarge => {
                     Error::new(StatusCode::PAYLOAD_TOO_LARGE, "File exceeds 1 MiB")
                 }
                 _ => Error::invalid("Invalid base64 content"),
@@ -430,7 +430,7 @@ async fn save(
         deleting,
     };
     let saved = if deleting {
-        codeyard_app::repositories::files::delete_file(
+        codeyard_repos_pulls::repositories::files::delete_file(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
@@ -443,7 +443,7 @@ async fn save(
         )
         .await
     } else {
-        codeyard_app::repositories::files::write_file_bytes(
+        codeyard_repos_pulls::repositories::files::write_file_bytes(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,

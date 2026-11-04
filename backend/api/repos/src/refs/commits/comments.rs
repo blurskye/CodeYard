@@ -15,7 +15,7 @@ use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::commit_comments::CommentError;
+use codeyard_repos_pulls::repositories::commit_comments::CommentError;
 use codeyard_webui::pages::repos::commits::comments::Comment;
 use codeyard_webui::pages::repos::commits::comments::Discussion;
 use codeyard_webui::pages::repos::commits::comments::Draft;
@@ -120,7 +120,7 @@ pub(super) async fn discussion(
         }
         None => false,
     };
-    let entries = codeyard_app::repositories::commit_comments::comment_details(
+    let entries = codeyard_repos_pulls::repositories::commit_comments::comment_details(
         pool,
         ctx.state.cluster.as_ref(),
         &loaded.repository,
@@ -401,7 +401,7 @@ pub(super) async fn submit(
         }
         if let Some(id) = id {
             if route.as_str().ends_with("/delete") {
-                codeyard_app::repositories::commit_comments::delete(
+                codeyard_repos_pulls::repositories::commit_comments::delete(
                     &ctx.state.pool,
                     ctx.database_actor(actor),
                     loaded.repository.id,
@@ -411,7 +411,7 @@ pub(super) async fn submit(
                 .await
                 .map(|_| None)
             } else {
-                codeyard_app::repositories::commit_comments::edit(
+                codeyard_repos_pulls::repositories::commit_comments::edit(
                     &ctx.state.pool,
                     ctx.state.cluster.as_ref(),
                     &ctx.state.notification_broadcaster,
@@ -427,14 +427,14 @@ pub(super) async fn submit(
                 .map(Some)
             }
         } else {
-            codeyard_app::repositories::commit_comments::create(
+            codeyard_repos_pulls::repositories::commit_comments::create(
                 &ctx.state.pool,
                 ctx.state.cluster.as_ref(),
                 &ctx.state.notification_broadcaster,
                 ctx.database_actor(actor),
                 loaded.repository.id,
                 sha,
-                codeyard_app::repositories::commit_comments::CreateComment {
+                codeyard_repos_pulls::repositories::commit_comments::CreateComment {
                     body: draft.body.clone(),
                     path: None,
                     position: None,

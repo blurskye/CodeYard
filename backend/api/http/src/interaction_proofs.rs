@@ -110,7 +110,7 @@ pub async fn prepare(
                     };
                     if let Some(actor) = actor {
                         if let Err(error) =
-                            codeyard_app::repositories::identity_interactions::prepare(
+                            codeyard_repos_pulls::repositories::identity_interactions::prepare(
                                 &state,
                                 &actor,
                                 &repository,

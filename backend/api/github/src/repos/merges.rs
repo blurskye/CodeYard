@@ -13,7 +13,7 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::merges::BranchMerge;
+use codeyard_repos_pulls::repositories::merges::BranchMerge;
 use codeyard_repos_core::repositories::refs::RefError;
 use codeyard_git::error::ErrorKind;
 use codeyard_identity::repository_access::AccessError;
@@ -55,7 +55,7 @@ async fn merge(
     let Json(input) = Json::<Input>::from_request(request, &state)
         .await
         .map_err(codeyard_model::github_error::json_error)?;
-    let result = codeyard_app::repositories::merges::merge_branch(
+    let result = codeyard_repos_pulls::repositories::merges::merge_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,

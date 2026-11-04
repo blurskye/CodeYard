@@ -136,14 +136,14 @@ pub fn page_router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>
 }
 
 pub(crate) fn operation_error(
-    error: codeyard_app::issues::OperationError,
+    error: codeyard_repos_pulls::issues::OperationError,
 ) -> (
     axum::http::StatusCode,
     axum::Json<codeyard_api_http::error::ApiError>,
 ) {
     use axum::{http::StatusCode, Json};
     use codeyard_api_http::error::ApiError;
-    use codeyard_app::issues::OperationError;
+    use codeyard_repos_pulls::issues::OperationError;
     let (status, code, message) = match error {
         OperationError::Invalid { code, message } => (StatusCode::BAD_REQUEST, code, message),
         OperationError::Missing { code, message } => (StatusCode::NOT_FOUND, code, message),

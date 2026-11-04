@@ -11,8 +11,8 @@ use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_repos_core::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::repositories::commit_pulls::AssociationError;
-use codeyard_app::repositories::commit_pulls::CommitPullQuery;
+use codeyard_repos_pulls::repositories::commit_pulls::AssociationError;
+use codeyard_repos_pulls::repositories::commit_pulls::CommitPullQuery;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
@@ -177,7 +177,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let result = codeyard_app::repositories::commit_pulls::associated_pulls(
+    let result = codeyard_repos_pulls::repositories::commit_pulls::associated_pulls(
         &state.pool,
         state.cluster.as_ref(),
         CommitPullQuery {
@@ -202,7 +202,7 @@ async fn list(
         .iter()
         .map(|pull| pull.author_id)
         .collect::<Vec<_>>();
-    let associations = codeyard_app::repositories::commit_comments::author_associations(
+    let associations = codeyard_repos_pulls::repositories::commit_comments::author_associations(
         &state.pool,
         state.cluster.as_ref(),
         &result.repository,

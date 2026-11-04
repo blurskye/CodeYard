@@ -7,8 +7,8 @@ use axum::{
     Router,
 };
 
-use codeyard_app::issues::comments;
-use codeyard_app::issues::comments::CreateCommentRequest;
+use codeyard_repos_pulls::issues::comments;
+use codeyard_repos_pulls::issues::comments::CreateCommentRequest;
 use codeyard_repos_core::repositories::lifecycle;
 use codeyard_identity::tokens;
 use codeyard_identity::tokens::TokenInput;

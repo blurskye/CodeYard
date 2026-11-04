@@ -1731,7 +1731,7 @@ async fn close_linked_issues(
 /// shutdown waits for, so a cancelled request cannot leave a merged base with an open pull
 /// request.
 pub async fn merge_pull_request(
-    state: &crate::app::AppState,
+    state: &dyn crate::services::RepositoryServices,
     actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
@@ -1742,15 +1742,15 @@ pub async fn merge_pull_request(
 /// `merge_pull_request` for a merge whose repository and pull request ids the caller already
 /// read, so a renamed or replaced one is refused.
 pub async fn merge_pull_request_checked(
-    state: &crate::app::AppState,
+    state: &dyn crate::services::RepositoryServices,
     actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
     expected: Option<(i64, i64)>,
 ) -> Result<MergeResponse, OperationError> {
     let prepared = prepare_pull_request_merge_checked(
-        &state.pool,
-        &state.ci_runs,
+        &state.pool(),
+        &state.ci_runs(),
         actor.into(),
         repository,
         request,
@@ -1762,12 +1762,12 @@ pub async fn merge_pull_request_checked(
         message: "The merge worker is unavailable".into(),
     };
     let (pool, ci, broadcaster) = (
-        state.pool.clone(),
-        state.ci_runs.clone(),
-        state.notification_broadcaster.clone(),
+        state.pool().clone(),
+        state.ci_runs().clone(),
+        state.notification_broadcaster().clone(),
     );
     let (sender, receiver) = tokio::sync::oneshot::channel();
-    if !state.git_tasks.spawn(async move {
+    if !state.git_tasks().spawn(async move {
         let _ = sender.send(publish_prepared_merge_owned(&pool, &ci, &broadcaster, prepared).await);
     }) {
         return Err(unavailable());

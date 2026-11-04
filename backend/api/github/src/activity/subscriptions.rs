@@ -95,7 +95,7 @@ async fn set_value(
             "A subscription cannot be both subscribed and ignored",
         ));
     }
-    codeyard_app::repositories::engagement::set_subscription(
+    codeyard_repos_pulls::repositories::engagement::set_subscription(
         &state.pool,
         &state.notification_broadcaster,
         actor.database_actor(),
@@ -122,7 +122,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(codeyard_repos_core::api_shared::github::auth::required)?;
-    codeyard_app::repositories::engagement::set_level(
+    codeyard_repos_pulls::repositories::engagement::set_level(
         &state.pool,
         actor.database_actor(),
         repo.id,

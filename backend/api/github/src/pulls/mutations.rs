@@ -73,14 +73,14 @@ async fn create_value(
         serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?;
     let source = match input.issue {
         Some(number) => {
-            codeyard_app::repositories::pull_requests::mutations::PullRequestSource::Issue {
+            codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::Issue {
                 issue: i32::try_from(number)
                     .ok()
                     .filter(|number| *number > 0)
                     .ok_or_else(|| Error::invalid("issue must be a positive discussion number"))?,
             }
         }
-        None => codeyard_app::repositories::pull_requests::mutations::PullRequestSource::New {
+        None => codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::New {
             title: input
                 .title
                 .ok_or_else(|| Error::invalid("title is required"))?,
@@ -117,7 +117,7 @@ async fn create_value(
         .repository_scope(&state.pool, head.id, "contents", false)
         .await
         .map_err(crate::auth::scope_error)?;
-    let pull = codeyard_app::repositories::pull_requests::mutations::create_pull_request(
+    let pull = codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,
@@ -127,7 +127,7 @@ async fn create_value(
         },
         owner.clone(),
         name,
-        codeyard_app::repositories::pull_requests::mutations::CreatePullRequestRequest {
+        codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
             suppress_ci: false,
             head_repo_id: Some(head.id),
             source,
@@ -200,13 +200,13 @@ async fn update_value(
     } else {
         serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?
     };
-    let pull = codeyard_app::repositories::pull_requests::mutations::update_pull_request_latest(
+    let pull = codeyard_repos_pulls::repositories::pull_requests::mutations::update_pull_request_latest(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,
         actor.id,
         (repo.id, number),
-        codeyard_app::repositories::pull_requests::mutations::UpdatePullRequestRequest {
+        codeyard_repos_pulls::repositories::pull_requests::mutations::UpdatePullRequestRequest {
             expected_state: pull.state,
             expected_updated: pull.updated_at.to_rfc3339(),
             title: input.title,

@@ -131,7 +131,7 @@ async fn resolve(
     let actor = &authentication.user;
     let issue = crate::issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
     let id = p["suggestion_id"].parse().map_err(|_| Error::missing())?;
-    let row = codeyard_app::issues::suggestions::resolve(
+    let row = codeyard_repos_pulls::issues::suggestions::resolve(
         &state.pool,
         &state.notification_broadcaster,
         actor,

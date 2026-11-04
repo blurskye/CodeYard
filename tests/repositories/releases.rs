@@ -118,8 +118,8 @@ async fn upload(
 
 async fn release_creation_uses_the_checked_repository_id(pg: bool) {
     use codeyard_repos_core::repositories::lifecycle;
-    use codeyard_app::repositories::releases;
-    use codeyard_app::repositories::releases::ReleaseInput;
+    use codeyard_repos_pulls::repositories::releases;
+    use codeyard_repos_pulls::repositories::releases::ReleaseInput;
     let mut world = setup(pg).await;
     let pool = world.database.pool();
     let original = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")

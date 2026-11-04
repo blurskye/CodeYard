@@ -122,12 +122,12 @@ async fn contract(pg: bool) {
     let late_head = alice.save("late-policy", "late.txt", &base).await;
     let late_pull = alice.open_pull("Late policy", "late-policy", "main").await;
     let late_number = late_pull["number"].as_i64().unwrap() as i32;
-    let prepared = codeyard_app::repositories::pull_requests::merge::prepare_pull_request_merge(
+    let prepared = codeyard_repos_pulls::repositories::pull_requests::merge::prepare_pull_request_merge(
         f.pool(),
         &state.ci_runs,
         merger,
         ("alice".into(), "proj".into(), late_number),
-        codeyard_app::repositories::pull_requests::merge::MergeRequest {
+        codeyard_repos_pulls::repositories::pull_requests::merge::MergeRequest {
             expected_head: late_head.clone(),
             expected_base: base.clone(),
             expected_base_branch: None,
@@ -146,7 +146,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     assert!(matches!(
-        codeyard_app::repositories::pull_requests::merge::publish_prepared_merge(
+        codeyard_repos_pulls::repositories::pull_requests::merge::publish_prepared_merge(
             f.pool(),
             &state.ci_runs,
             &state.notification_broadcaster,
@@ -179,12 +179,12 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
     );
-    let prepared = codeyard_app::repositories::pull_requests::merge::prepare_pull_request_merge(
+    let prepared = codeyard_repos_pulls::repositories::pull_requests::merge::prepare_pull_request_merge(
         f.pool(),
         &state.ci_runs,
         merger,
         ("alice".into(), "proj".into(), late_number),
-        codeyard_app::repositories::pull_requests::merge::MergeRequest {
+        codeyard_repos_pulls::repositories::pull_requests::merge::MergeRequest {
             expected_head: late_head.clone(),
             expected_base: base.clone(),
             expected_base_branch: None,
@@ -203,7 +203,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(matches!(
-        codeyard_app::repositories::pull_requests::merge::publish_prepared_merge(
+        codeyard_repos_pulls::repositories::pull_requests::merge::publish_prepared_merge(
             f.pool(),
             &state.ci_runs,
             &state.notification_broadcaster,

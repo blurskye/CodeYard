@@ -16,9 +16,9 @@ use chrono::Utc;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
-use codeyard_app::issues::comments::CommentTarget;
-use codeyard_app::issues::comments::CreateCommentRequest;
-use codeyard_app::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
+use codeyard_repos_pulls::issues::comments::CommentTarget;
+use codeyard_repos_pulls::issues::comments::CreateCommentRequest;
+use codeyard_repos_pulls::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
 use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
@@ -198,7 +198,7 @@ async fn create(
     let number = p["issue_number"].parse().map_err(|_| Error::missing())?;
     let (id, pull) = match item {
         AssignedItem::Issue(_) => {
-            let comment = codeyard_app::issues::comments::create_issue_comment(
+            let comment = codeyard_repos_pulls::issues::comments::create_issue_comment(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
@@ -218,7 +218,7 @@ async fn create(
         }
         AssignedItem::PullRequest(_) => {
             let comment =
-                codeyard_app::repositories::pull_requests::comments::create_pull_request_comment(
+                codeyard_repos_pulls::repositories::pull_requests::comments::create_pull_request_comment(
                     &state.pool,
                     state.cluster.as_ref(),
                     &state.notification_broadcaster,
@@ -277,7 +277,7 @@ async fn update(
     };
     match comment.item {
         AssignedItem::Issue(_) => {
-            codeyard_app::issues::comments::edit_issue_comment(
+            codeyard_repos_pulls::issues::comments::edit_issue_comment(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
@@ -294,7 +294,7 @@ async fn update(
             .map_err(crate::issues::operation_error)?;
         }
         AssignedItem::PullRequest(_) => {
-            codeyard_app::repositories::pull_requests::comments::edit_pull_request_comment(
+            codeyard_repos_pulls::repositories::pull_requests::comments::edit_pull_request_comment(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
@@ -333,7 +333,7 @@ async fn remove(
         comment_id: comment.id,
     };
     match comment.item {
-        AssignedItem::Issue(_) => codeyard_app::issues::comments::delete_issue_comment(
+        AssignedItem::Issue(_) => codeyard_repos_pulls::issues::comments::delete_issue_comment(
             &state.pool,
             actor.id,
             &credential,
@@ -342,7 +342,7 @@ async fn remove(
         .await
         .map_err(crate::issues::operation_error)?,
         AssignedItem::PullRequest(_) => {
-            codeyard_app::repositories::pull_requests::comments::delete_pull_request_comment(
+            codeyard_repos_pulls::repositories::pull_requests::comments::delete_pull_request_comment(
                 &state.pool,
                 actor.id,
                 target,

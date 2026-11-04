@@ -109,11 +109,11 @@ async fn merge_pull(
             json!({"sha": sha, "merged": true, "message": "Pull request is already merged"}),
         ));
     }
-    let result = codeyard_app::repositories::pull_requests::merge::merge_pull_request(
+    let result = codeyard_repos_pulls::repositories::pull_requests::merge::merge_pull_request(
         &state,
         authority,
         (owner, name, number),
-        codeyard_app::repositories::pull_requests::merge::MergeRequest {
+        codeyard_repos_pulls::repositories::pull_requests::merge::MergeRequest {
             expected_head: pull.head_sha,
             expected_base: pull.base_sha,
             expected_base_branch: Some(pull.base_branch),
@@ -168,7 +168,7 @@ async fn update_branch(
         serde_json::from_slice(&body).map_err(codeyard_model::github_error::json_parse_error)?
     };
     let input = input.unwrap_or_default();
-    codeyard_app::repositories::pull_requests::update_branch::update_branch(
+    codeyard_repos_pulls::repositories::pull_requests::update_branch::update_branch(
         &state.pool,
         &state.ci_runs,
         actor.id,

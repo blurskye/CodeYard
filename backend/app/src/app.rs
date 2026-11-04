@@ -108,3 +108,11 @@ impl codeyard_repos_core::request_context::RequestContext for AppState {
     fn pool(&self) -> &DbPool { &self.pool }
     fn cluster(&self) -> Option<&codeyard_repos_core::context::NodeContext> { self.cluster.as_ref() }
 }
+
+impl codeyard_repos_pulls::services::RepositoryServices for AppState {
+    fn ci_runs(&self) -> &std::sync::Arc<codeyard_repos_core::ci::runs::CiRuns> { &self.ci_runs }
+    fn notification_broadcaster(&self) -> &std::sync::Arc<codeyard_notifications::broadcast::NotificationBroadcaster> { &self.notification_broadcaster }
+    fn git_tasks(&self) -> &std::sync::Arc<codeyard_repos_core::repositories::git_sessions::GitTasks> { &self.git_tasks }
+    fn repository_downloads(&self) -> &std::sync::Arc<tokio::sync::Semaphore> { &self.repository_downloads }
+    fn repos_path(&self) -> &std::path::PathBuf { &self.repos_path }
+}

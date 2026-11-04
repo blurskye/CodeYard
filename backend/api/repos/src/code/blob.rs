@@ -352,10 +352,10 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         && size <= MAX_EDITOR_BYTES as u64
     {
         if start == 0 && end == size {
-            codeyard_app::repositories::files::editor_text(&bytes, false).is_ok()
+            codeyard_repos_pulls::repositories::files::editor_text(&bytes, false).is_ok()
         } else {
             store.blob_by_id(&id).await.is_ok_and(|bytes| {
-                codeyard_app::repositories::files::editor_text(&bytes, binary).is_ok()
+                codeyard_repos_pulls::repositories::files::editor_text(&bytes, binary).is_ok()
             })
         }
     } else {

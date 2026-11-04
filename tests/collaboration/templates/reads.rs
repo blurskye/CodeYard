@@ -82,8 +82,8 @@ async fn templates_use_exact_default_branch_even_when_it_resembles_a_full_ref() 
     )
     .unwrap();
     let store = codeyard_repos_core::repositories::store::repo_store(&repo, None);
-    use codeyard_app::repositories::issue_templates::issue_templates;
-    use codeyard_app::repositories::issue_templates::pull_request_template;
+    use codeyard_repos_pulls::repositories::issue_templates::issue_templates;
+    use codeyard_repos_pulls::repositories::issue_templates::pull_request_template;
     assert_eq!(
         issue_templates(&store, branch).await.unwrap().templates[0].body,
         "Branch issue text"

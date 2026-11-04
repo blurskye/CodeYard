@@ -54,7 +54,7 @@ pub(super) async fn field(field: &str, parent: &Value, request: &RequestContext)
     .await
     .map_err(unavailable)?
     .ok_or_else(missing)?;
-    let details = codeyard_app::repositories::commit_comments::comment_details(
+    let details = codeyard_repos_pulls::repositories::commit_comments::comment_details(
         &request.state.pool,
         request.state.cluster.as_ref(),
         &repo,
@@ -94,7 +94,7 @@ pub(super) async fn list(
         .await
         .map_err(unavailable)?
     };
-    let details = codeyard_app::repositories::commit_comments::comment_details(
+    let details = codeyard_repos_pulls::repositories::commit_comments::comment_details(
         &request.state.pool,
         request.state.cluster.as_ref(),
         &repository,

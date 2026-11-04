@@ -39,15 +39,15 @@ use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_api_http::shared::user::responses::PublicUserResponse;
 use codeyard_app::app::AppState;
-use codeyard_app::issues::mutations::CreateIssueRequest;
-use codeyard_app::repositories::issue_templates::compose_form_body;
-use codeyard_app::repositories::issue_templates::first_missing_answer;
-use codeyard_app::repositories::issue_templates::issue_templates;
-use codeyard_app::repositories::issue_templates::pull_request_template;
-use codeyard_app::repositories::issue_templates::FormElement;
-use codeyard_app::repositories::issue_templates::FormKind;
-use codeyard_app::repositories::issue_templates::IssueTemplate;
-use codeyard_app::repositories::issue_templates::IssueTemplates;
+use codeyard_repos_pulls::issues::mutations::CreateIssueRequest;
+use codeyard_repos_pulls::repositories::issue_templates::compose_form_body;
+use codeyard_repos_pulls::repositories::issue_templates::first_missing_answer;
+use codeyard_repos_pulls::repositories::issue_templates::issue_templates;
+use codeyard_repos_pulls::repositories::issue_templates::pull_request_template;
+use codeyard_repos_pulls::repositories::issue_templates::FormElement;
+use codeyard_repos_pulls::repositories::issue_templates::FormKind;
+use codeyard_repos_pulls::repositories::issue_templates::IssueTemplate;
+use codeyard_repos_pulls::repositories::issue_templates::IssueTemplates;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_repos::discussions::ListFilter;
 use codeyard_db_repos::discussions::ListSort;
@@ -67,7 +67,7 @@ pub async fn create_issue(
     Json(req): Json<CreateIssueRequest>,
 ) -> Result<(StatusCode, Json<IssueResponse>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let issue = codeyard_app::issues::mutations::create_issue(
+    let issue = codeyard_repos_pulls::issues::mutations::create_issue(
         &state.pool,
         &state.notification_broadcaster,
         codeyard_db_core::queries::credentials::Actor::from((
@@ -1250,13 +1250,13 @@ pub(crate) async fn native_create(
                 .iter()
                 .filter_map(|id| id.parse().ok())
                 .collect();
-            let created = codeyard_app::issues::mutations::create_issue_with_metadata(
+            let created = codeyard_repos_pulls::issues::mutations::create_issue_with_metadata(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
                 ctx.database_actor(actor.id),
                 owner.clone(),
                 name.clone(),
-                codeyard_app::issues::mutations::CreateIssueRequest {
+                codeyard_repos_pulls::issues::mutations::CreateIssueRequest {
                     title: draft.title.clone(),
                     body: Some(draft.body.clone()),
                     repository_id: Some(repo.record.id),
@@ -1274,18 +1274,18 @@ pub(crate) async fn native_create(
             .map_err(crate::issues::operation_error);
             created.map(|value| value.number)
         }
-        Kind::Pull => codeyard_app::repositories::pull_requests::mutations::create_pull_request(
+        Kind::Pull => codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
             &ctx.state.pool,
             &ctx.state.ci_runs,
             &ctx.state.notification_broadcaster,
             ctx.require_user()?.id,
             owner,
             name,
-            codeyard_app::repositories::pull_requests::mutations::CreatePullRequestRequest {
+            codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
                 suppress_ci: false,
                 head_repo_id: Some(head_repo.id),
                 source:
-                    codeyard_app::repositories::pull_requests::mutations::PullRequestSource::New {
+                    codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::New {
                         title: draft.title.clone(),
                         body: Some(draft.body.clone()),
                     },

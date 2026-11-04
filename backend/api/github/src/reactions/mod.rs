@@ -35,7 +35,7 @@ async fn target(
     viewer: Option<i64>,
 ) -> Result<Target> {
     if let Some(id) = p.get("release_id") {
-        let detail = codeyard_app::repositories::releases::detail_by_id(
+        let detail = codeyard_repos_pulls::repositories::releases::detail_by_id(
             pool,
             viewer,
             repo_id,

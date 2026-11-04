@@ -131,7 +131,7 @@ async fn begin(
     input: Input,
     url: &str,
 ) -> Result<SourceImport> {
-    codeyard_app::repositories::imports::start(
+    codeyard_repos_pulls::repositories::imports::start(
         state,
         repo,
         codeyard_repos::imports::ImportCredential::Token(actor.token.id),

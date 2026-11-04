@@ -33,7 +33,7 @@ pub async fn post_stack(
     Path((owner, repo, number)): Path<(String, String, i32)>,
 ) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let pull_request = codeyard_app::repositories::pull_requests::mutations::join_stack(
+    let pull_request = codeyard_repos_pulls::repositories::pull_requests::mutations::join_stack(
         &state.pool,
         &state.ci_runs,
         current_actor.id,
@@ -52,7 +52,7 @@ pub async fn delete_stack(
     Path((owner, repo, number)): Path<(String, String, i32)>,
 ) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let pull_request = codeyard_app::repositories::pull_requests::mutations::unstack_pull_request(
+    let pull_request = codeyard_repos_pulls::repositories::pull_requests::mutations::unstack_pull_request(
         &state.pool,
         &state.ci_runs,
         current_actor.id,
@@ -70,11 +70,11 @@ pub async fn post_rebase(
     headers: HeaderMap,
     Path((owner, repo, number)): Path<(String, String, i32)>,
 ) -> Result<
-    Json<codeyard_app::repositories::pull_requests::restack::RestackResponse>,
+    Json<codeyard_repos_pulls::repositories::pull_requests::restack::RestackResponse>,
     (StatusCode, Json<ApiError>),
 > {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    codeyard_app::repositories::pull_requests::restack::rebase_stack(
+    codeyard_repos_pulls::repositories::pull_requests::restack::rebase_stack(
         &state.pool,
         &state.ci_runs,
         codeyard_db_core::queries::credentials::Actor::from((
@@ -125,7 +125,7 @@ pub(crate) async fn native_join(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let result = codeyard_app::repositories::pull_requests::mutations::join_stack(
+    let result = codeyard_repos_pulls::repositories::pull_requests::mutations::join_stack(
         &ctx.state.pool,
         &ctx.state.ci_runs,
         ctx.require_user()?.id,
@@ -149,7 +149,7 @@ pub(crate) async fn native_unstack(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let result = codeyard_app::repositories::pull_requests::mutations::unstack_pull_request(
+    let result = codeyard_repos_pulls::repositories::pull_requests::mutations::unstack_pull_request(
         &ctx.state.pool,
         &ctx.state.ci_runs,
         ctx.require_user()?.id,
@@ -173,7 +173,7 @@ pub(crate) async fn native_rebase(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let result = codeyard_app::repositories::pull_requests::restack::rebase_stack(
+    let result = codeyard_repos_pulls::repositories::pull_requests::restack::rebase_stack(
         &ctx.state.pool,
         &ctx.state.ci_runs,
         ctx.database_actor(ctx.require_user()?.id),

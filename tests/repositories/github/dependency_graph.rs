@@ -480,7 +480,7 @@ async fn vulnerability_contract(pg: bool) {
     use base64::{engine::general_purpose::STANDARD, Engine};
     use codeyard_api_rest::create_router;
     use codeyard_app::app::AppState;
-    use codeyard_app::vulnerabilities;
+    use codeyard_repos_pulls::vulnerabilities;
     use codeyard_ci::config::CiConfig;
     use codeyard_db_core::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::profiles::NewOrganization;
