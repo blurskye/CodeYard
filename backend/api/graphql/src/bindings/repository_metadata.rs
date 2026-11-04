@@ -1,7 +1,6 @@
 //! Fields exported by gh's repository JSON selection.
 use super::*;
 use crate::bindings::Object;
-use crate::node;
 
 impl gql::LanguageResolver for Object {
     fields!("Language"; name() -> String; color() -> Option<String>;);

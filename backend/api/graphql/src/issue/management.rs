@@ -1,6 +1,5 @@
 use super::*;
 use crate::arguments::Arguments;
-use crate::connection::Page;
 use crate::issue::object;
 use crate::issue::pull_object;
 use crate::missing;

@@ -1,6 +1,5 @@
 use super::*;
 use crate::bindings::Object;
-use crate::node;
 
 impl gql::SearchResultItemConnectionResolver for Object {
     fields!("SearchResultItemConnection";

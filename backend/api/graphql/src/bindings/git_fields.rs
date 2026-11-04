@@ -1,7 +1,6 @@
 //! Typed Git and status fields selected by the upstream CLI query builder.
 use super::*;
 use crate::bindings::Object;
-use crate::node;
 use async_graphql::ID;
 
 impl gql::CommitResolver for Object {
