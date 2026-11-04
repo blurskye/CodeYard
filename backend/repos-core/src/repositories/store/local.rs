@@ -4681,7 +4681,7 @@ impl LocalStore {
 /// The binary Git runs as the receive hooks. Rust unit tests are not the application, so they
 /// get the integrated binary from the environment.
 fn hook_executable() -> anyhow::Result<PathBuf> {
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     {
         use anyhow::Context;
         Ok(PathBuf::from(
@@ -4689,7 +4689,7 @@ fn hook_executable() -> anyhow::Result<PathBuf> {
                 .context("set GITSERV_TEST_OPENSSH_HELPER to the integrated application")?,
         ))
     }
-    #[cfg(not(test))]
+    #[cfg(not(any(test, feature = "test-hooks")))]
     {
         Ok(std::env::current_exe()?)
     }

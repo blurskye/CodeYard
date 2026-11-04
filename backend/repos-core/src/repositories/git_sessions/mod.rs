@@ -10,6 +10,7 @@ use tokio::task::JoinSet;
 
 #[cfg(target_os = "linux")]
 pub mod broker;
+#[cfg(any(test, feature = "test-hooks"))]
 #[cfg(target_os = "linux")]
 pub mod hook_barrier;
 #[cfg(target_os = "linux")]

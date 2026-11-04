@@ -410,6 +410,7 @@ impl Gateway {
         quarantine: Option<&str>,
     ) -> Result<()> {
         codeyard_repos::validation::validate_updates(updates)?;
+        #[cfg(any(test, feature = "test-hooks"))]
         crate::repositories::git_sessions::hook_barrier::before_authorize(operation, post).await;
         if post {
             self.post_receive(operation, updates).await
