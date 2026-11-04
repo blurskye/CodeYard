@@ -1,7 +1,3 @@
-use axum::extract::Path;
-use axum::extract::State;
-use axum::http::HeaderMap;
-use axum::Json;
 use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_identity::database_context::DatabaseContext;
 use codeyard_model::github_error::Error;
@@ -9,7 +5,6 @@ use codeyard_model::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::sync::Arc;
 /// Who reads an issue document. Its sub-issue and dependency counts include related issues in
 /// other repositories only where this reader may read them; the issue's own repository always
 /// counts.

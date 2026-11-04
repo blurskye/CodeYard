@@ -646,7 +646,7 @@ impl RepoStore {
         }
     }
 
-    pub(crate) async fn existing_commits(
+    pub async fn existing_commits(
         &self,
         ids: &[String],
     ) -> Result<std::collections::HashSet<String>, RepoError> {
@@ -1849,7 +1849,7 @@ impl RepoStore {
     }
 
     /// Publishes release metadata/proof while its tag is pinned by the primary Git lock.
-    pub(crate) async fn mutate_release_as(
+    pub async fn mutate_release_as(
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
@@ -2195,7 +2195,7 @@ impl RepoStore {
         }
     }
 
-    pub(crate) async fn publish_dependency_update_as(
+    pub async fn publish_dependency_update_as(
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,

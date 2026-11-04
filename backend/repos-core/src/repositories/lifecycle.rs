@@ -909,7 +909,7 @@ pub async fn delete(
     remove_deleted_repository(cluster, &deleted).await
 }
 
-pub(crate) async fn remove_deleted_repository(
+pub async fn remove_deleted_repository(
     cluster: Option<&NodeContext>,
     deleted: &Repository,
 ) -> Result<(), StorageError> {

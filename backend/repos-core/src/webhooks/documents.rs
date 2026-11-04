@@ -413,7 +413,7 @@ pub async fn auto_merge(pool: &DbPool, pull_request_id: i64) -> anyhow::Result<V
 }
 
 /// The documents of a release's assets whose stored files remain.
-pub(crate) async fn release_assets(
+pub async fn release_assets(
     pool: &DbPool,
     repo: &Repository,
     owner: &str,

@@ -111,6 +111,11 @@ impl codeyard_repos_core::request_context::RequestContext for AppState {
 }
 
 impl codeyard_repos_pulls::services::RepositoryServices for AppState {
+    fn secret_encryptor(
+        &self,
+    ) -> &Option<std::sync::Arc<codeyard_support::secrets::SecretEncryptor>> {
+        &self.secret_encryptor
+    }
     fn ci_runs(&self) -> &std::sync::Arc<codeyard_repos_core::ci::runs::CiRuns> {
         &self.ci_runs
     }

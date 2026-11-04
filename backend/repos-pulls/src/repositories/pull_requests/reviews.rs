@@ -6,6 +6,9 @@ use codeyard_notifications::mentions::notify_mentions;
 use codeyard_notifications::mentions::MentionSource;
 use codeyard_repos_core::context::NodeContext;
 use codeyard_repos_core::repositories::pull_requests::database_error;
+use codeyard_repos_core::repositories::pull_requests::reviewers::{
+    emit_reviewer_event, notify_review_request,
+};
 use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_webhooks::payloads::Scope;

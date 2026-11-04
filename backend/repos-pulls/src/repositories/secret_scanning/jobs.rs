@@ -80,7 +80,7 @@ impl Documents {
             String::new()
         } else {
             let encryptor = state
-                .secret_encryptor
+                .secret_encryptor()
                 .as_ref()
                 .context("Secret encryption is unavailable")?;
             String::from_utf8(encryptor.decrypt(&alert.encrypted_secret, &alert.nonce)?)?
@@ -162,7 +162,7 @@ async fn scan_job(
             .await?
             .context("Repository unavailable")?;
     let encryptor = state
-        .secret_encryptor
+        .secret_encryptor()
         .as_ref()
         .context("Secret encryption unavailable")?;
     let store = repo_store(&repo, state.cluster());

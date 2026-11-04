@@ -5,7 +5,7 @@ use codeyard_db_core::models::Repository;
 use codeyard_identity::repository_access::can_write;
 
 /// Recheck the credential retained by a native publication, after preparation and lock waits.
-pub(crate) async fn check_publication_actor(
+pub async fn check_publication_actor(
     pool: &codeyard_db_core::DbPool,
     actor: &codeyard_db_core::queries::credentials::Actor,
     repository: &Repository,
