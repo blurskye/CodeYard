@@ -49,7 +49,7 @@ pub(crate) fn validate_identity(name: &str, email: &str) -> std::result::Result<
 }
 
 impl Signature {
-    pub(crate) fn validate(&self) -> std::result::Result<(), RepoError> {
+    pub fn validate(&self) -> std::result::Result<(), RepoError> {
         validate_identity(&self.name, &self.email)?;
         // libgit2 writes object dates as unsigned 32-bit seconds, so other dates would wrap.
         if self
