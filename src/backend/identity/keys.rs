@@ -38,7 +38,7 @@ pub async fn enroll(
 ) -> Result<SshKey, KeyError> {
     validate_name(name)?;
     let session_id = session_id.ok_or(KeyError::InvalidSession)?;
-    crate::backend::db::users::ssh_keys::add_ssh_key_for_session(
+    codeyard_db_identity::users::ssh_keys::add_ssh_key_for_session(
         pool, actor, session_id, name, public_key,
     )
     .await
@@ -62,11 +62,11 @@ pub async fn enroll(
 pub async fn delete(
     pool: &DbPool,
     actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     key: i64,
 ) -> Result<(), KeyError> {
     let deleted =
-        crate::backend::db::users::ssh_keys::delete_user_ssh_key(pool, actor, credential, key)
+        codeyard_db_identity::users::ssh_keys::delete_user_ssh_key(pool, actor, credential, key)
             .await
             .map_err(|error| {
                 match error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>() {
@@ -100,12 +100,12 @@ fn signing_error(error: anyhow::Error) -> KeyError {
 pub async fn enroll_signing(
     pool: &DbPool,
     actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     title: &str,
     public_key: &str,
-) -> Result<crate::backend::db::users::signing_keys::SigningKey, KeyError> {
+) -> Result<codeyard_db_identity::users::signing_keys::SigningKey, KeyError> {
     validate_name(title)?;
-    crate::backend::db::users::signing_keys::add_signing_key(
+    codeyard_db_identity::users::signing_keys::add_signing_key(
         pool, actor, credential, title, public_key,
     )
     .await
@@ -115,10 +115,10 @@ pub async fn enroll_signing(
 pub async fn delete_signing(
     pool: &DbPool,
     actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), KeyError> {
-    if crate::backend::db::users::signing_keys::delete_signing_key(pool, actor, credential, id)
+    if codeyard_db_identity::users::signing_keys::delete_signing_key(pool, actor, credential, id)
         .await
         .map_err(signing_error)?
     {

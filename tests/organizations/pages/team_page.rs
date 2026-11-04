@@ -5,8 +5,8 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard::backend::db::organizations::*;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_orgs::organizations::*;
 use codeyard_webui::{app::Page, bootstrap, pages::orgs::TeamPage};
 use tower::ServiceExt;
 

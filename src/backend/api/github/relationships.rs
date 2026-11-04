@@ -4,10 +4,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::assignees::AssignedItem;
-use crate::backend::db::relationships::Kind;
-use crate::backend::db::relationships::Mutation;
-use crate::backend::db::relationships::Refusal;
 use axum::{
     body::Bytes,
     extract::{OriginalUri, Path, Query, State},
@@ -16,6 +12,10 @@ use axum::{
     routing::{delete, get, patch, post, MethodRouter},
     Json,
 };
+use codeyard_db_identity::relationships::Kind;
+use codeyard_db_identity::relationships::Mutation;
+use codeyard_db_identity::relationships::Refusal;
+use codeyard_db_repos::assignees::AssignedItem;
 use serde::Deserialize;
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
@@ -37,7 +37,7 @@ async fn document(
     auth: Option<&crate::backend::api::github::auth::Authentication>,
     id: i64,
 ) -> Result<Value> {
-    let issue = crate::backend::db::issues::get_issue_by_id(&state.pool, id)
+    let issue = codeyard_db_repos::issues::get_issue_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -53,12 +53,12 @@ async fn document(
         return Err(Error::missing());
     }
     let repo =
-        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, issue.repo_id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, issue.repo_id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
     let owners =
-        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &[repo.id])
+        codeyard_db_repos::repositories::records::repository_owner_names(&state.pool, &[repo.id])
             .await
             .map_err(Error::unavailable)?;
     crate::backend::api::github::issues::document(
@@ -101,10 +101,16 @@ async fn list(
     let mut rows = Vec::new();
     let (mut scanned, mut skipped) = (0, 0);
     loop {
-        let batch =
-            crate::backend::db::relationships::list(&state.pool, viewer, root, kind, scanned, 100)
-                .await
-                .map_err(Error::unavailable)?;
+        let batch = codeyard_db_identity::relationships::list(
+            &state.pool,
+            viewer,
+            root,
+            kind,
+            scanned,
+            100,
+        )
+        .await
+        .map_err(Error::unavailable)?;
         let done = batch.len() < 100;
         scanned += batch.len() as i64;
         let mut ids: Vec<_> = batch.iter().map(|link| link.repo_id).collect();
@@ -173,7 +179,7 @@ async fn apply(
     };
     // The linked issue's repository must be within the credential's reach before the change.
     document(state, Some(&auth), other).await?;
-    crate::backend::db::relationships::change_with_token(
+    codeyard_db_identity::relationships::change_with_token(
         &state.pool,
         auth.user.id,
         repo.id,

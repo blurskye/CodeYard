@@ -35,12 +35,12 @@ fn decode(value: &str) -> Result<String> {
         .ok_or_else(|| Error::invalid("Invalid concurrency cursor"))
 }
 fn page(
-    groups: Vec<crate::backend::db::action_concurrency::Group>,
+    groups: Vec<codeyard_db_actions::action_concurrency::Group>,
     query: &Page,
     uri: &Uri,
 ) -> Result<(
     HeaderMap,
-    Vec<crate::backend::db::action_concurrency::Group>,
+    Vec<codeyard_db_actions::action_concurrency::Group>,
 )> {
     if query.after.is_some() && query.before.is_some() {
         return Err(Error::invalid("Use either before or after"));
@@ -110,7 +110,7 @@ fn group_url(owner: &str, repo: &str, group: &str) -> String {
     )
 }
 fn member(
-    member: &crate::backend::db::action_concurrency::Member,
+    member: &codeyard_db_actions::action_concurrency::Member,
     owner: &str,
     repo: &str,
 ) -> Value {
@@ -139,7 +139,7 @@ async fn list(
             "Use after for repository concurrency groups",
         ));
     }
-    let groups = crate::backend::db::action_concurrency::groups(&state.pool, repo.id, None)
+    let groups = codeyard_db_actions::action_concurrency::groups(&state.pool, repo.id, None)
         .await
         .map_err(Error::unavailable)?;
     let total = groups.len();
@@ -163,9 +163,10 @@ async fn get_one(
     Query(query): Query<Ahead>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let mut members = crate::backend::db::action_concurrency::members(&state.pool, repo.id, &group)
-        .await
-        .map_err(Error::unavailable)?;
+    let mut members =
+        codeyard_db_actions::action_concurrency::members(&state.pool, repo.id, &group)
+            .await
+            .map_err(Error::unavailable)?;
     if members.is_empty() {
         return Err(Error::missing());
     }
@@ -200,7 +201,7 @@ async fn for_run(
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let run = run(&state, repo.id, id).await?;
     let id = run.workflow_run_id.unwrap_or(run.id);
-    let groups = crate::backend::db::action_concurrency::groups(&state.pool, repo.id, Some(id))
+    let groups = codeyard_db_actions::action_concurrency::groups(&state.pool, repo.id, Some(id))
         .await
         .map_err(Error::unavailable)?;
     let total = groups.len();
@@ -209,7 +210,7 @@ async fn for_run(
     for group in groups {
         let url = group_url(&owner, &name, &group.name);
         let members =
-            crate::backend::db::action_concurrency::members(&state.pool, repo.id, &group.name)
+            codeyard_db_actions::action_concurrency::members(&state.pool, repo.id, &group.name)
                 .await
                 .map_err(Error::unavailable)?;
         let values_in_group: Vec<_> = members

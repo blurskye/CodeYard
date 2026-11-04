@@ -8,7 +8,7 @@ use crate::backend::api::graphql::RequestContext;
 use crate::backend::api::graphql::Result;
 use crate::backend::api::graphql::Value;
 
-use crate::backend::db::gists::Gist;
+use codeyard_db_repos::gists::Gist;
 
 use crate::backend::repositories::store::repo_store;
 use async_graphql::Error;

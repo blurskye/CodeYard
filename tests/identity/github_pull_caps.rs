@@ -5,8 +5,8 @@ use crate::support::{
 };
 use axum::http::StatusCode;
 
-use codeyard::backend::db::pull_caps::PullCapReached;
-use codeyard::backend::db::pull_requests::records::NewPullRequest;
+use codeyard_db_repos::pull_caps::PullCapReached;
+use codeyard_db_repos::pull_requests::records::NewPullRequest;
 
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::AccessLevel;
@@ -20,7 +20,7 @@ async fn open(
     branch: &str,
     draft: bool,
 ) -> anyhow::Result<PullRequest> {
-    codeyard::backend::db::pull_requests::records::create_pull_request(
+    codeyard_db_repos::pull_requests::records::create_pull_request(
         pool,
         NewPullRequest {
             repo_id: repo,
@@ -45,10 +45,10 @@ async fn state(
     actor: i64,
     state: &str,
 ) -> anyhow::Result<Option<PullRequest>> {
-    codeyard::backend::db::pull_requests::records::update_pull_request(
+    codeyard_db_repos::pull_requests::records::update_pull_request(
         pool,
         pr.id,
-        codeyard::backend::db::discussions::DiscussionEdit {
+        codeyard_db_repos::discussions::DiscussionEdit {
             actor_id: actor,
             expected_state: &pr.state,
             expected_updated: pr.updated_at,
@@ -56,7 +56,7 @@ async fn state(
             body: None,
             state: Some(state),
         },
-        codeyard::backend::db::pull_requests::records::PullRequestUpdate {
+        codeyard_db_repos::pull_requests::records::PullRequestUpdate {
             base: None,
             maintainer_can_modify: None,
         },
@@ -105,7 +105,7 @@ async fn contract(pg: bool) {
         )
         .await;
     let project =
-        codeyard::backend::db::repositories::records::get_repository(f.pool(), "alice", "project")
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "project")
             .await
             .unwrap()
             .unwrap();
@@ -153,7 +153,7 @@ async fn contract(pg: bool) {
         200,
     )
     .await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         project.id,
@@ -292,7 +292,7 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(denied["error"], "pull_request_creation_cap");
     let draft = session.expect("POST","/api/repos/alice/project/pulls",json!({"title":"Draft","head_branch":"feature-two","base_branch":"main","is_draft":true}),StatusCode::CREATED).await;
-    let first = codeyard::backend::db::pull_requests::records::get_pull_request(
+    let first = codeyard_db_repos::pull_requests::records::get_pull_request(
         f.pool(),
         project.id,
         first["number"].as_i64().unwrap() as i32,
@@ -300,7 +300,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    let draft = codeyard::backend::db::pull_requests::records::get_pull_request(
+    let draft = codeyard_db_repos::pull_requests::records::get_pull_request(
         f.pool(),
         project.id,
         draft["number"].as_i64().unwrap() as i32,
@@ -308,7 +308,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    let error = codeyard::backend::db::pull_requests::records::mark_pull_request_ready(
+    let error = codeyard_db_repos::pull_requests::records::mark_pull_request_ready(
         f.pool(),
         draft.id,
         alice,
@@ -321,7 +321,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    let ready = codeyard::backend::db::pull_requests::records::mark_pull_request_ready(
+    let ready = codeyard_db_repos::pull_requests::records::mark_pull_request_ready(
         f.pool(),
         draft.id,
         alice,
@@ -331,7 +331,7 @@ async fn contract(pg: bool) {
     .unwrap();
     assert!(matches!(
         ready,
-        codeyard::backend::db::pull_requests::records::ReadyOutcome::Ready(_)
+        codeyard_db_repos::pull_requests::records::ReadyOutcome::Ready(_)
     ));
     assert!(state(f.pool(), &closed, alice, "open")
         .await
@@ -380,7 +380,7 @@ async fn contract(pg: bool) {
         is_draft: false,
     };
     assert!(
-        codeyard::backend::db::pull_requests::records::create_pull_request(f.pool(), conversion())
+        codeyard_db_repos::pull_requests::records::create_pull_request(f.pool(), conversion())
             .await
             .unwrap_err()
             .is::<PullCapReached>()
@@ -411,7 +411,7 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER);
     let converted =
-        codeyard::backend::db::pull_requests::records::create_pull_request(f.pool(), conversion())
+        codeyard_db_repos::pull_requests::records::create_pull_request(f.pool(), conversion())
             .await
             .unwrap();
     assert_eq!(converted.author_id, bob);
@@ -519,13 +519,12 @@ async fn contract(pg: bool) {
         422,
     )
     .await;
-    let input = codeyard::backend::db::organizations::profiles::NewOrganization::new(
+    let input = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "acme",
-        codeyard::backend::db::organizations::profiles::OrganizationProfile::new(None, None)
-            .unwrap(),
+        codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
     )
     .unwrap();
-    let org = match codeyard::backend::db::organizations::profiles::create_organization(
+    let org = match codeyard_db_orgs::organizations::profiles::create_organization(
         f.pool(),
         alice,
         &input,
@@ -533,7 +532,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard::backend::db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization refused"),
     };
     f.execute(
@@ -554,7 +553,7 @@ async fn contract(pg: bool) {
     let mut repos = Vec::new();
     for name in ["one", "two", "private"] {
         repos.push(
-            codeyard::backend::db::repositories::records::get_repository(f.pool(), "acme", name)
+            codeyard_db_repos::repositories::records::get_repository(f.pool(), "acme", name)
                 .await
                 .unwrap()
                 .unwrap(),

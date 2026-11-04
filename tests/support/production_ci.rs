@@ -15,14 +15,14 @@ impl Fixture {
     pub async fn new() -> Self {
         let database = PostgresDatabase::new().await;
         let pool = database.pool.clone();
-        let owner = codeyard::backend::db::users::accounts::create_user(&pool, "ci_owner", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "ci_owner", None)
             .await
             .expect("fixture owner");
         let temp = tempfile::tempdir().expect("owned tempdir");
         let path = temp.path().join("repo.git");
         let git = git2::Repository::init_bare(&path).expect("owned bare Git");
         let sha = commit(&git, "refs/heads/main", None, "admitted-marker", None);
-        let repo = codeyard::backend::db::repositories::records::create_repository(
+        let repo = codeyard_db_repos::repositories::records::create_repository(
             &pool,
             owner.id,
             "fixture",

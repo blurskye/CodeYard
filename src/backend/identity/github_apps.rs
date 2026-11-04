@@ -1,9 +1,9 @@
 //! GitHub App public-key credentials and explicit repository permission bounds.
 
-use crate::backend::db::github_apps::App;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use chrono::Utc;
 use codeyard_db_core::DbPool;
+use codeyard_db_identity::github_apps::App;
 use rsa::{
     pkcs1v15::{Signature, VerifyingKey},
     pkcs8::DecodePublicKey,
@@ -25,7 +25,7 @@ pub fn valid_slug(slug: &str) -> bool {
         && slug
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        && format!("{slug}[bot]") != crate::backend::db::ci_tokens::BOT
+        && format!("{slug}[bot]") != codeyard_db_core::queries::ci_tokens::BOT
 }
 
 /// Bound expensive key generation, including concurrent replays of a conversion code.
@@ -313,7 +313,7 @@ pub async fn authenticate(pool: &DbPool, value: &str) -> anyhow::Result<Option<A
         Value::Number(value) => value.to_string(),
         _ => return Ok(None),
     };
-    let Some(app) = crate::backend::db::github_apps::app_issuer(pool, &issuer).await? else {
+    let Some(app) = codeyard_db_identity::github_apps::app_issuer(pool, &issuer).await? else {
         return Ok(None);
     };
     // Slugs are discovery identifiers, not JWT issuers.
@@ -389,7 +389,7 @@ impl Authority {
         // An installation token names its installation; a user token reaches any installation
         // of its app that the user reaches.
         let actor = installation.is_none().then_some(user);
-        let covering = crate::backend::db::github_apps::repository_installation(
+        let covering = codeyard_db_identity::github_apps::repository_installation(
             pool, app_id, repo, true, actor,
         )
         .await?;
@@ -413,9 +413,9 @@ impl Authority {
     }
 }
 pub async fn authority(pool: &DbPool, id: i64) -> anyhow::Result<Option<Authority>> {
-    if let Some(token) = crate::backend::db::github_apps::token(pool, id).await? {
+    if let Some(token) = codeyard_db_identity::github_apps::token(pool, id).await? {
         let Some(installation) =
-            crate::backend::db::github_apps::installation(pool, token.installation_id).await?
+            codeyard_db_identity::github_apps::installation(pool, token.installation_id).await?
         else {
             return Ok(None);
         };
@@ -428,8 +428,8 @@ pub async fn authority(pool: &DbPool, id: i64) -> anyhow::Result<Option<Authorit
             },
         }));
     }
-    if let Some(token) = crate::backend::db::oauth_apps::token(pool, id).await? {
-        if let Some(app) = crate::backend::db::github_apps::app(pool, &token.client_id).await? {
+    if let Some(token) = codeyard_db_identity::oauth_apps::token(pool, id).await? {
+        if let Some(app) = codeyard_db_identity::github_apps::app(pool, &token.client_id).await? {
             return Ok(Some(Authority {
                 permissions: serde_json::from_str(&app.permissions)?,
                 source: Source::App {

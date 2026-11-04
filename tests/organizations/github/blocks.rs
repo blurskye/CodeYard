@@ -1,14 +1,14 @@
 use super::request;
 use crate::support::{
-    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
 };
 use axum::http::StatusCode;
 
-use codeyard::backend::db::organizations::NewOrganization;
-use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::db::repositories::creation::NewRepository;
-use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
-use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::OrganizationProfile;
+use codeyard_db_repos::repositories::creation::NewRepository;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::AccessLevel;
@@ -30,7 +30,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -39,7 +39,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let foreign = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("foreign", OrganizationProfile::new(None, None).unwrap())
@@ -50,7 +50,7 @@ async fn contract(pg: bool) {
     );
     for (user, role) in [(member, OrgRole::Member), (admin, OrgRole::Admin)] {
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 f.pool(),
                 owner,
                 org.id,
@@ -74,7 +74,7 @@ async fn contract(pg: bool) {
             .to_string_lossy()
             .into_owned();
         repos.push(
-            codeyard::backend::db::repositories::creation::insert_repository(
+            codeyard_db_repos::repositories::creation::insert_repository(
                 f.pool(),
                 NewRepository {
                     owner: RepositoryCreationOwner {
@@ -95,7 +95,7 @@ async fn contract(pg: bool) {
         );
     }
     for repo in &repos {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.pool(),
             outsider,
             repo.id,
@@ -431,9 +431,9 @@ async fn contract(pg: bool) {
     )
     .await;
     let metadata = json!({"comment_id":owner_comment["id"]});
-    let notification = codeyard::backend::db::notifications::records::create_notification(
+    let notification = codeyard_db_repos::notifications::records::create_notification(
         f.pool(),
-        codeyard::backend::db::notifications::NewNotification {
+        codeyard_db_repos::notifications::NewNotification {
             user_id: outsider,
             actor_id: Some(owner),
             repo_id: Some(repos[0].id),
@@ -448,8 +448,8 @@ async fn contract(pg: bool) {
     assert!(notification
         .err()
         .unwrap()
-        .is::<codeyard::backend::db::notifications::records::NotificationSuppressed>());
-    let fork = codeyard::backend::db::repositories::creation::insert_repository(
+        .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
+    let fork = codeyard_db_repos::repositories::creation::insert_repository(
         f.pool(),
         NewRepository {
             owner: RepositoryCreationOwner::personal(outsider),
@@ -465,8 +465,8 @@ async fn contract(pg: bool) {
     assert_eq!(
         fork.err()
             .unwrap()
-            .downcast_ref::<codeyard::backend::db::repositories::creation::RepositoryStorageRefusal>(),
-        Some(&codeyard::backend::db::repositories::creation::RepositoryStorageRefusal::Denied)
+            .downcast_ref::<codeyard_db_repos::repositories::creation::RepositoryStorageRefusal>(),
+        Some(&codeyard_db_repos::repositories::creation::RepositoryStorageRefusal::Denied)
     );
     request(
         &router,
@@ -489,7 +489,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(matches!(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             f.pool(),
             owner,
             org.id,
@@ -498,7 +498,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap(),
-        codeyard::backend::db::organizations::OrganizationOutcome::Denied
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Denied
     ));
     // Even grants retained by a future repository transfer cannot override the organization block.
     f.execute(

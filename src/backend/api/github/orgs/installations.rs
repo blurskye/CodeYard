@@ -6,7 +6,6 @@ use crate::backend::api::github::orgs::owner_actor;
 use crate::backend::api::github::pagination::Pagination;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::github_apps::InstallationFilter;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::HeaderMap,
@@ -14,6 +13,7 @@ use axum::{
     routing::{get, MethodRouter},
     Json,
 };
+use codeyard_db_identity::github_apps::InstallationFilter;
 use serde_json::json;
 use std::sync::Arc;
 

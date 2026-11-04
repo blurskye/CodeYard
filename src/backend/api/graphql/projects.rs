@@ -52,30 +52,30 @@ fn id(value: &Value, kinds: &[&str]) -> Result<i64> {
     }
     Ok(id)
 }
-fn owner(value: &Value) -> Result<crate::backend::db::projects::Owner> {
+fn owner(value: &Value) -> Result<codeyard_db_repos::projects::Owner> {
     let id = id(value, &["U", "O"])?;
     Ok(
         if node_id::decode(value.as_str().unwrap()).unwrap().0 == "O" {
-            crate::backend::db::projects::Owner::Organization(id)
+            codeyard_db_repos::projects::Owner::Organization(id)
         } else {
-            crate::backend::db::projects::Owner::User(id)
+            codeyard_db_repos::projects::Owner::User(id)
         },
     )
 }
 fn project_owner(
-    project: &crate::backend::db::projects::Project,
-) -> crate::backend::db::projects::Owner {
+    project: &codeyard_db_repos::projects::Project,
+) -> codeyard_db_repos::projects::Owner {
     if project.owner_kind == "org" {
-        crate::backend::db::projects::Owner::Organization(project.owner_id)
+        codeyard_db_repos::projects::Owner::Organization(project.owner_id)
     } else {
-        crate::backend::db::projects::Owner::User(project.owner_id)
+        codeyard_db_repos::projects::Owner::User(project.owner_id)
     }
 }
-fn project_object(p: &crate::backend::db::projects::Project) -> Value {
+fn project_object(p: &codeyard_db_repos::projects::Project) -> Value {
     json!({"__typename":"ProjectV2","id":node_id::encode("PVT",p.id),"databaseId":p.id,"number":p.number,"title":p.title,"shortDescription":p.description,"readme":p.readme,"public":p.public,"closed":p.closed_at.is_some(),"closedAt":p.closed_at,"template":p.template,"createdAt":p.created_at,"updatedAt":p.updated_at,"_project":p.id,"_ownerKind":p.owner_kind,"_owner":p.owner_id,"_creator":p.creator_id})
 }
-fn field_object(f: &crate::backend::db::projects::Field) -> Result<Value> {
-    let config = crate::backend::db::projects::field_configuration(f).map_err(operation)?;
+fn field_object(f: &codeyard_db_repos::projects::Field) -> Result<Value> {
+    let config = codeyard_db_repos::projects::field_configuration(f).map_err(operation)?;
     let (ty, prefix) = match f.data_type.as_str() {
         "single_select" => ("ProjectV2SingleSelectField", "PVTSSF"),
         "iteration" => ("ProjectV2IterationField", "PVTIF"),
@@ -114,34 +114,34 @@ fn field_object(f: &crate::backend::db::projects::Field) -> Result<Value> {
 /// GitHub's built-in fields whose values come from an item's issue or pull request: the
 /// name, the data type and the content field that holds the value. They follow the stored
 /// fields and cannot be edited or deleted.
-const BUILT_IN_FIELDS: [(crate::backend::db::projects::BuiltInField, &str, &str); 6] = [
+const BUILT_IN_FIELDS: [(codeyard_db_repos::projects::BuiltInField, &str, &str); 6] = [
     (
-        crate::backend::db::projects::BuiltInField::Assignees,
+        codeyard_db_repos::projects::BuiltInField::Assignees,
         "ASSIGNEES",
         "assignees",
     ),
     (
-        crate::backend::db::projects::BuiltInField::Labels,
+        codeyard_db_repos::projects::BuiltInField::Labels,
         "LABELS",
         "labels",
     ),
     (
-        crate::backend::db::projects::BuiltInField::LinkedPullRequests,
+        codeyard_db_repos::projects::BuiltInField::LinkedPullRequests,
         "LINKED_PULL_REQUESTS",
         "closedByPullRequestsReferences",
     ),
     (
-        crate::backend::db::projects::BuiltInField::Milestone,
+        codeyard_db_repos::projects::BuiltInField::Milestone,
         "MILESTONE",
         "milestone",
     ),
     (
-        crate::backend::db::projects::BuiltInField::Repository,
+        codeyard_db_repos::projects::BuiltInField::Repository,
         "REPOSITORY",
         "repository",
     ),
     (
-        crate::backend::db::projects::BuiltInField::Reviewers,
+        codeyard_db_repos::projects::BuiltInField::Reviewers,
         "REVIEWERS",
         "reviewRequests",
     ),
@@ -174,7 +174,7 @@ fn order_fields(ctx: &Arguments, values: &mut [Value]) -> Result<()> {
 /// A project's stored fields followed by the built-in ones.
 fn project_fields(
     project: &Value,
-    fields: &[crate::backend::db::projects::Field],
+    fields: &[codeyard_db_repos::projects::Field],
 ) -> Result<Vec<Value>> {
     let mut values: Vec<_> = fields.iter().map(field_object).collect::<Result<_>>()?;
     values.extend(
@@ -187,7 +187,7 @@ fn project_fields(
 /// The built-in field values of an issue or pull request item. Empty values are left out,
 /// as GitHub leaves them out.
 async fn built_in_values(
-    item: &crate::backend::db::projects::Item,
+    item: &codeyard_db_repos::projects::Item,
     request: &RequestContext,
     selected: Option<&str>,
     include_deleted: bool,
@@ -204,7 +204,7 @@ async fn built_in_values(
         return Ok(Vec::new());
     }
     let project = project_object(
-        &crate::backend::db::projects::by_id_at(
+        &codeyard_db_repos::projects::by_id_at(
             &request.state.pool,
             Some(request.auth.user.id),
             item.project_id,
@@ -281,10 +281,10 @@ async fn built_in_values(
     }
     Ok(values)
 }
-fn draft_object(item: &crate::backend::db::projects::Item) -> Value {
+fn draft_object(item: &codeyard_db_repos::projects::Item) -> Value {
     json!({"__typename":"DraftIssue","id":node_id::encode("DI",item.id),"title":item.draft_title,"body":item.draft_body.as_deref().unwrap_or(""),"createdAt":item.created_at,"updatedAt":item.updated_at,"_creator":item.creator_id,"_project":item.project_id})
 }
-fn charge_item(item: &crate::backend::db::projects::Item, request: &RequestContext) -> Result<()> {
+fn charge_item(item: &codeyard_db_repos::projects::Item, request: &RequestContext) -> Result<()> {
     request.charge(
         item.field_values.len()
             + item.title.len()
@@ -294,7 +294,7 @@ fn charge_item(item: &crate::backend::db::projects::Item, request: &RequestConte
     )
 }
 fn charge_fields(
-    fields: &[crate::backend::db::projects::Field],
+    fields: &[codeyard_db_repos::projects::Field],
     request: &RequestContext,
 ) -> Result<()> {
     request.charge(
@@ -306,7 +306,7 @@ fn charge_fields(
 }
 
 async fn item_object(
-    item: &crate::backend::db::projects::Item,
+    item: &codeyard_db_repos::projects::Item,
     request: &RequestContext,
 ) -> Result<Value> {
     charge_item(item, request)?;
@@ -352,13 +352,13 @@ pub(super) async fn node(kind: &str, id: i64, request: &RequestContext) -> Resul
     let viewer = Some(request.auth.user.id);
     match kind {
         "PVT" => Ok(project_object(
-            &crate::backend::db::projects::by_id(pool, viewer, id)
+            &codeyard_db_repos::projects::by_id(pool, viewer, id)
                 .await
                 .map_err(operation)?,
         )),
         "PVTF" | "PVTSSF" | "PVTIF" => {
             let object = field_object(
-                &crate::backend::db::projects::field_by_id(pool, viewer, id)
+                &codeyard_db_repos::projects::field_by_id(pool, viewer, id)
                     .await
                     .map_err(operation)?,
             )?;
@@ -368,7 +368,7 @@ pub(super) async fn node(kind: &str, id: i64, request: &RequestContext) -> Resul
             Ok(object)
         }
         "PVTI" | "DI" => {
-            let item = crate::backend::db::projects::item_by_id(pool, viewer, id)
+            let item = codeyard_db_repos::projects::item_by_id(pool, viewer, id)
                 .await
                 .map_err(operation)?;
             if kind == "DI" {
@@ -394,9 +394,9 @@ pub(super) async fn content_items(
     let pool = &request.state.pool;
     let viewer = Some(request.auth.user.id);
     let content = if ty == "Issue" {
-        crate::backend::db::projects::Content::Issue(id)
+        codeyard_db_repos::projects::Content::Issue(id)
     } else {
-        crate::backend::db::projects::Content::PullRequest(id)
+        codeyard_db_repos::projects::Content::PullRequest(id)
     };
     let include_archived = ctx
         .args
@@ -406,7 +406,7 @@ pub(super) async fn content_items(
         .transpose()?
         .unwrap_or(true);
     crate::backend::api::graphql::connection::validate(ctx)?;
-    let total = crate::backend::db::projects::content_items(
+    let total = codeyard_db_repos::projects::content_items(
         pool,
         viewer,
         &content,
@@ -422,7 +422,7 @@ pub(super) async fn content_items(
     let rows = if page.limit == 0 {
         Vec::new()
     } else {
-        crate::backend::db::projects::content_items(
+        codeyard_db_repos::projects::content_items(
             pool,
             viewer,
             &content,
@@ -445,7 +445,7 @@ pub(super) async fn content_items(
 /// What a project deleted in this request held, kept in its answer since deletion purges it.
 fn removed_contents(
     parent: &Value,
-) -> Result<Option<crate::backend::db::projects::ProjectContents>> {
+) -> Result<Option<codeyard_db_repos::projects::ProjectContents>> {
     parent
         .get("_removed")
         .map(|removed| serde_json::from_value(removed.clone()).map_err(unavailable))
@@ -494,7 +494,7 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
     };
     let removed = removed_contents(parent)?;
     let (page, rows) = if query.trim().is_empty() && removed.is_none() {
-        let mut window = crate::backend::db::projects::ItemWindow {
+        let mut window = codeyard_db_repos::projects::ItemWindow {
             project,
             include_deleted,
             archived,
@@ -503,7 +503,7 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
             limit: 0,
             count: true,
         };
-        let total = crate::backend::db::projects::items_window(pool, viewer, &window)
+        let total = codeyard_db_repos::projects::items_window(pool, viewer, &window)
             .await
             .map_err(operation)?
             .0;
@@ -514,7 +514,7 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
         let rows = if page.limit == 0 {
             Vec::new()
         } else {
-            crate::backend::db::projects::items_window(pool, viewer, &window)
+            codeyard_db_repos::projects::items_window(pool, viewer, &window)
                 .await
                 .map_err(operation)?
                 .1
@@ -524,10 +524,10 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
         let (fields, rows) = match removed {
             Some(removed) => (removed.fields, removed.items),
             None => (
-                crate::backend::db::projects::fields_at(pool, viewer, project, include_deleted)
+                codeyard_db_repos::projects::fields_at(pool, viewer, project, include_deleted)
                     .await
                     .map_err(operation)?,
-                crate::backend::db::projects::items_at(pool, viewer, project, include_deleted)
+                codeyard_db_repos::projects::items_at(pool, viewer, project, include_deleted)
                     .await
                     .map_err(operation)?,
             ),
@@ -563,7 +563,7 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
 async fn project_connection(
     ctx: &Arguments,
     request: &RequestContext,
-    mut filter: crate::backend::db::projects::ListFilter,
+    mut filter: codeyard_db_repos::projects::ListFilter,
 ) -> Result<Value> {
     let query = ctx
         .args
@@ -590,22 +590,22 @@ async fn project_connection(
     if let Some(order) = ctx.args.get("orderBy").filter(|o| !o.is_null()) {
         let order: Value = order.deserialize()?;
         filter.order = match order["field"].as_str() {
-            Some("TITLE") => crate::backend::db::projects::ListOrder::Title,
-            Some("UPDATED_AT") => crate::backend::db::projects::ListOrder::Updated,
-            Some("CREATED_AT") => crate::backend::db::projects::ListOrder::Created,
-            Some("NUMBER") => crate::backend::db::projects::ListOrder::Number,
+            Some("TITLE") => codeyard_db_repos::projects::ListOrder::Title,
+            Some("UPDATED_AT") => codeyard_db_repos::projects::ListOrder::Updated,
+            Some("CREATED_AT") => codeyard_db_repos::projects::ListOrder::Created,
+            Some("NUMBER") => codeyard_db_repos::projects::ListOrder::Number,
             _ => return Err(Error::new("Unsupported project order")),
         };
         filter.descending = order["direction"] == "DESC";
     }
     let pool = &request.state.pool;
     let viewer = Some(request.auth.user.id);
-    let (count, _) = crate::backend::db::projects::list(pool, viewer, &filter, 0, 0)
+    let (count, _) = codeyard_db_repos::projects::list(pool, viewer, &filter, 0, 0)
         .await
         .map_err(operation)?;
     let page = crate::backend::api::graphql::connection::Page::new(ctx, count)?;
     let (_, projects) =
-        crate::backend::db::projects::list(pool, viewer, &filter, page.offset, page.limit)
+        codeyard_db_repos::projects::list(pool, viewer, &filter, page.offset, page.limit)
             .await
             .map_err(operation)?;
     let nodes = projects
@@ -696,7 +696,7 @@ async fn resolve_at(
 ) -> Result<Value> {
     authorize_account(request)?;
     if let Some(id) = parent["_project"].as_i64() {
-        let project = crate::backend::db::projects::by_id_at(
+        let project = codeyard_db_repos::projects::by_id_at(
             &request.state.pool,
             Some(request.auth.user.id),
             id,
@@ -737,7 +737,7 @@ async fn resolve_at(
         return project_connection(
             ctx,
             request,
-            crate::backend::db::projects::ListFilter {
+            codeyard_db_repos::projects::ListFilter {
                 repo: Some(repo),
                 ..Default::default()
             },
@@ -747,9 +747,9 @@ async fn resolve_at(
     if matches!(ty, "User" | "Organization") {
         let target = parent["databaseId"].as_i64().ok_or_else(missing)?;
         let owner = if ty == "User" {
-            crate::backend::db::projects::Owner::User(target)
+            codeyard_db_repos::projects::Owner::User(target)
         } else {
-            crate::backend::db::projects::Owner::Organization(target)
+            codeyard_db_repos::projects::Owner::Organization(target)
         };
         return match field {
             "team" if ty == "Organization" => {
@@ -757,7 +757,7 @@ async fn resolve_at(
                     .await
             }
             "projectV2" => Ok(project_object(
-                &crate::backend::db::projects::get(
+                &codeyard_db_repos::projects::get(
                     pool,
                     viewer,
                     owner,
@@ -770,14 +770,14 @@ async fn resolve_at(
                 project_connection(
                     ctx,
                     request,
-                    crate::backend::db::projects::ListFilter {
+                    codeyard_db_repos::projects::ListFilter {
                         owner: Some(owner),
                         ..Default::default()
                     },
                 )
                 .await
             }
-            "viewerCanCreateProjects" => Ok(json!(crate::backend::db::projects::can_write(
+            "viewerCanCreateProjects" => Ok(json!(codeyard_db_repos::projects::can_write(
                 pool, actor, owner
             )
             .await
@@ -816,7 +816,7 @@ async fn resolve_at(
     }
     match (ty, field) {
         ("ProjectV2", "readme") => {
-            let project = crate::backend::db::projects::by_id_at(
+            let project = codeyard_db_repos::projects::by_id_at(
                 pool,
                 viewer,
                 parent["databaseId"].as_i64().ok_or_else(missing)?,
@@ -827,7 +827,7 @@ async fn resolve_at(
             Ok(json!(project.readme))
         }
         (_, "project") if parent["_deleted"] == true => Ok(project_object(
-            &crate::backend::db::projects::by_id_at(
+            &codeyard_db_repos::projects::by_id_at(
                 pool,
                 viewer,
                 parent["_project"].as_i64().ok_or_else(missing)?,
@@ -898,14 +898,14 @@ async fn resolve_at(
             Ok(json!(false))
         }
         ("ProjectV2", "viewerCanUpdate" | "viewerCanClose" | "viewerCanReopen") => {
-            let project = crate::backend::db::projects::by_id(
+            let project = codeyard_db_repos::projects::by_id(
                 pool,
                 viewer,
                 parent["_project"].as_i64().ok_or_else(missing)?,
             )
             .await
             .map_err(operation)?;
-            Ok(json!(crate::backend::db::projects::can_write(
+            Ok(json!(codeyard_db_repos::projects::can_write(
                 pool,
                 actor,
                 project_owner(&project)
@@ -916,7 +916,7 @@ async fn resolve_at(
         ("ProjectV2", "fields" | "field") => {
             let fields = match removed_contents(parent)? {
                 Some(removed) => removed.fields,
-                None => crate::backend::db::projects::fields_at(
+                None => codeyard_db_repos::projects::fields_at(
                     pool,
                     viewer,
                     parent["_project"].as_i64().ok_or_else(missing)?,
@@ -939,7 +939,7 @@ async fn resolve_at(
         }
         ("ProjectV2", "items") => project_items(ctx, request, parent).await,
         ("ProjectV2Item", "fieldValues" | "fieldValueByName") => {
-            let item = crate::backend::db::projects::item_by_id_at(
+            let item = codeyard_db_repos::projects::item_by_id_at(
                 pool,
                 viewer,
                 parent["_item"].as_i64().ok_or_else(missing)?,
@@ -948,7 +948,7 @@ async fn resolve_at(
             .await
             .map_err(operation)?;
             charge_item(&item, request)?;
-            let fields = crate::backend::db::projects::fields_at(
+            let fields = codeyard_db_repos::projects::fields_at(
                 pool,
                 viewer,
                 item.project_id,
@@ -992,7 +992,7 @@ async fn resolve_at(
                         "SingleSelect"
                     }
                     "iteration" => {
-                        let config = crate::backend::db::projects::field_configuration(&f)
+                        let config = codeyard_db_repos::projects::field_configuration(&f)
                             .map_err(operation)?;
                         let iteration = config["iterations"]
                             .as_array()
@@ -1095,7 +1095,7 @@ pub(super) async fn mutation(
                 "Create the project first, then link its repository or team",
             ));
         }
-        let project = crate::backend::db::projects::create(
+        let project = codeyard_db_repos::projects::create(
             pool,
             actor,
             &request.auth.credential(),
@@ -1116,7 +1116,7 @@ pub(super) async fn mutation(
         {
             return Err(Error::new("Draft assignees are not supported"));
         }
-        let item = crate::backend::db::projects::edit_draft(
+        let item = codeyard_db_repos::projects::edit_draft(
             pool,
             actor,
             &request.auth.credential(),
@@ -1130,7 +1130,7 @@ pub(super) async fn mutation(
         return Ok(payload);
     }
     if field == "deleteProjectV2Field" {
-        let f = crate::backend::db::projects::field_by_id(
+        let f = codeyard_db_repos::projects::field_by_id(
             pool,
             viewer,
             id(&input["fieldId"], &["PVTF", "PVTSSF", "PVTIF"])?,
@@ -1138,7 +1138,7 @@ pub(super) async fn mutation(
         .await
         .map_err(operation)?;
         let object = field_object(&f)?;
-        crate::backend::db::projects::delete_field(
+        codeyard_db_repos::projects::delete_field(
             pool,
             actor,
             &request.auth.credential(),
@@ -1151,7 +1151,7 @@ pub(super) async fn mutation(
         return Ok(payload);
     }
     let project =
-        crate::backend::db::projects::by_id(pool, viewer, id(&input["projectId"], &["PVT"])?)
+        codeyard_db_repos::projects::by_id(pool, viewer, id(&input["projectId"], &["PVT"])?)
             .await
             .map_err(operation)?;
     match field {
@@ -1159,13 +1159,13 @@ pub(super) async fn mutation(
             if let Some(readme) = input["readme"].as_str() {
                 codeyard_model::issue_input::validate_body(readme, false).map_err(Error::new)?;
             }
-            let settings = crate::backend::db::projects::Settings {
+            let settings = codeyard_db_repos::projects::Settings {
                 title: input["title"].as_str().map(str::to_owned),
                 description: input["shortDescription"].as_str().map(str::to_owned),
                 public: input["public"].as_bool(),
                 closed: input["closed"].as_bool(),
             };
-            let mut updated = crate::backend::db::projects::save(
+            let mut updated = codeyard_db_repos::projects::save(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1175,7 +1175,7 @@ pub(super) async fn mutation(
             .await
             .map_err(operation)?;
             if let Some(readme) = input["readme"].as_str() {
-                updated = crate::backend::db::projects::metadata(
+                updated = codeyard_db_repos::projects::metadata(
                     pool,
                     actor,
                     &request.auth.credential(),
@@ -1190,7 +1190,7 @@ pub(super) async fn mutation(
         }
         "markProjectV2AsTemplate" | "unmarkProjectV2AsTemplate" => {
             payload["projectV2"] = project_object(
-                &crate::backend::db::projects::metadata(
+                &codeyard_db_repos::projects::metadata(
                     pool,
                     actor,
                     &request.auth.credential(),
@@ -1203,7 +1203,7 @@ pub(super) async fn mutation(
             );
         }
         "deleteProjectV2" => {
-            let removed = crate::backend::db::projects::delete(
+            let removed = codeyard_db_repos::projects::delete(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1219,7 +1219,7 @@ pub(super) async fn mutation(
         }
         "copyProjectV2" => {
             payload["projectV2"] = project_object(
-                &crate::backend::db::projects::copy(
+                &codeyard_db_repos::projects::copy(
                     pool,
                     actor,
                     &request.auth.credential(),
@@ -1239,7 +1239,7 @@ pub(super) async fn mutation(
                 .map(|value| {
                     crate::backend::api::graphql::metadata_mutations::list(value)
                         .iter()
-                        .map(|o| crate::backend::db::projects::SelectOption {
+                        .map(|o| codeyard_db_repos::projects::SelectOption {
                             name: o["name"].as_str().unwrap_or("").into(),
                             color: o["color"].as_str().map(str::to_owned),
                             description: o["description"].as_str().map(str::to_owned),
@@ -1250,7 +1250,7 @@ pub(super) async fn mutation(
             let iteration = if config.is_null() {
                 None
             } else {
-                Some(crate::backend::db::projects::IterationConfiguration {
+                Some(codeyard_db_repos::projects::IterationConfiguration {
                     start_date: date(&config["startDate"])?,
                     duration: config["duration"]
                         .as_i64()
@@ -1262,7 +1262,7 @@ pub(super) async fn mutation(
                     )
                     .iter()
                     .map(|item| {
-                        Ok(crate::backend::db::projects::Iteration {
+                        Ok(codeyard_db_repos::projects::Iteration {
                             title: item["title"].as_str().ok_or_else(missing)?.to_owned(),
                             start_date: date(&item["startDate"])?,
                             duration: item["duration"]
@@ -1275,14 +1275,14 @@ pub(super) async fn mutation(
                     .collect::<std::result::Result<Vec<_>, Error>>()?,
                 })
             };
-            let new = crate::backend::db::projects::NewField {
+            let new = codeyard_db_repos::projects::NewField {
                 name: input["name"].as_str().unwrap_or("").into(),
                 data_type: input["dataType"].as_str().unwrap_or("").to_lowercase(),
                 single_select_options: options,
                 iteration_configuration: iteration,
             };
             payload["projectV2Field"] = field_object(
-                &crate::backend::db::projects::add_field(
+                &codeyard_db_repos::projects::add_field(
                     pool,
                     actor,
                     &request.auth.credential(),
@@ -1301,7 +1301,7 @@ pub(super) async fn mutation(
                 {
                     return Err(Error::new("Draft assignees are not supported"));
                 }
-                crate::backend::db::projects::Content::Draft {
+                codeyard_db_repos::projects::Content::Draft {
                     title: input["title"].as_str().unwrap_or("").into(),
                     body: input["body"].as_str().map(str::to_owned),
                 }
@@ -1312,12 +1312,12 @@ pub(super) async fn mutation(
                     .0
                     == "I"
                 {
-                    crate::backend::db::projects::Content::Issue(target)
+                    codeyard_db_repos::projects::Content::Issue(target)
                 } else {
-                    crate::backend::db::projects::Content::PullRequest(target)
+                    codeyard_db_repos::projects::Content::PullRequest(target)
                 }
             };
-            let item = crate::backend::db::projects::add_item(
+            let item = codeyard_db_repos::projects::add_item(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1352,13 +1352,13 @@ pub(super) async fn mutation(
                     values[0].1.clone()
                 }
             };
-            let item = crate::backend::db::projects::update_item(
+            let item = codeyard_db_repos::projects::update_item(
                 pool,
                 actor,
                 &request.auth.credential(),
                 project.id,
                 id(&input["itemId"], &["PVTI"])?,
-                &[crate::backend::db::projects::FieldUpdate {
+                &[codeyard_db_repos::projects::FieldUpdate {
                     id: field_id,
                     value,
                 }],
@@ -1368,7 +1368,7 @@ pub(super) async fn mutation(
             payload["projectV2Item"] = item_object(&item, request).await?;
         }
         "archiveProjectV2Item" | "unarchiveProjectV2Item" => {
-            let item = crate::backend::db::projects::archive_item(
+            let item = codeyard_db_repos::projects::archive_item(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1381,7 +1381,7 @@ pub(super) async fn mutation(
             payload["item"] = item_object(&item, request).await?;
         }
         "deleteProjectV2Item" => {
-            crate::backend::db::projects::delete_item(
+            codeyard_db_repos::projects::delete_item(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1398,7 +1398,7 @@ pub(super) async fn mutation(
             } else {
                 Some(id(&input["afterId"], &["PVTI"])?)
             };
-            crate::backend::db::projects::reorder_item(
+            codeyard_db_repos::projects::reorder_item(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1411,7 +1411,7 @@ pub(super) async fn mutation(
             payload["_project"] = json!(project.id);
         }
         "linkProjectV2ToTeam" | "unlinkProjectV2FromTeam" => {
-            crate::backend::db::projects::link_team(
+            codeyard_db_repos::projects::link_team(
                 pool,
                 actor,
                 &request.auth.credential(),
@@ -1428,7 +1428,7 @@ pub(super) async fn mutation(
                 request,
             )
             .await?;
-            crate::backend::db::projects::link_repository(
+            codeyard_db_repos::projects::link_repository(
                 pool,
                 actor,
                 &request.auth.credential(),

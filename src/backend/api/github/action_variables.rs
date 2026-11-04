@@ -24,8 +24,8 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 
-fn error(error: crate::backend::db::variables::VariableError) -> Error {
-    use crate::backend::db::variables::VariableError;
+fn error(error: codeyard_db_actions::variables::VariableError) -> Error {
+    use codeyard_db_actions::variables::VariableError;
     match error {
         VariableError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token")
@@ -62,7 +62,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let variables =
-        crate::backend::db::variables::list(&state.pool, actor.user.id, &actor.credential(), repo)
+        codeyard_db_actions::variables::list(&state.pool, actor.user.id, &actor.credential(), repo)
             .await
             .map_err(error)?;
     let total = variables.len();
@@ -83,7 +83,7 @@ async fn variable(
     let (repo, actor) = repository(&state, &headers, &owner, &repo, false).await?;
     let name = name.to_ascii_uppercase();
     let variable =
-        crate::backend::db::variables::list(&state.pool, actor.user.id, &actor.credential(), repo)
+        codeyard_db_actions::variables::list(&state.pool, actor.user.id, &actor.credential(), repo)
             .await
             .map_err(error)?
             .into_iter()
@@ -107,7 +107,7 @@ async fn create(
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
     let Json(body) = body.map_err(|_| Error::invalid("Invalid variable input"))?;
-    crate::backend::db::variables::save(
+    codeyard_db_actions::variables::save(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -118,7 +118,7 @@ async fn create(
     )
     .await
     .map_err(|failure| match failure {
-        crate::backend::db::variables::VariableError::Exists => {
+        codeyard_db_actions::variables::VariableError::Exists => {
             Error::new(StatusCode::CONFLICT, "Variable already exists")
         }
         other => error(other),
@@ -150,7 +150,7 @@ async fn update(
         .name
         .unwrap_or_else(|| previous.clone())
         .to_ascii_uppercase();
-    crate::backend::db::variables::save(
+    codeyard_db_actions::variables::save(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -170,7 +170,7 @@ async fn remove(
     Path((owner, repo, name)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, true).await?;
-    crate::backend::db::variables::delete(
+    codeyard_db_actions::variables::delete(
         &state.pool,
         actor.user.id,
         &actor.credential(),

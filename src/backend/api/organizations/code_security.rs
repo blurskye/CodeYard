@@ -23,28 +23,28 @@ pub(super) fn router() -> Router<Arc<AppState>> {
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
 }
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
-    let (status, message) = match error.downcast_ref::<crate::backend::db::code_security::Refusal>()
-    {
-        Some(crate::backend::db::code_security::Refusal::Missing) => {
-            (StatusCode::NOT_FOUND, "Security configuration not found.")
-        }
-        Some(crate::backend::db::code_security::Refusal::Denied) => (
-            StatusCode::FORBIDDEN,
-            "Organization security access is required.",
-        ),
-        Some(crate::backend::db::code_security::Refusal::Duplicate) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "A configuration with this name already exists.",
-        ),
-        Some(crate::backend::db::code_security::Refusal::Invalid) => (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Check the configuration name, scope and repository IDs.",
-        ),
-        None => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Security configurations are temporarily unavailable.",
-        ),
-    };
+    let (status, message) =
+        match error.downcast_ref::<codeyard_db_core::queries::code_security::Refusal>() {
+            Some(codeyard_db_core::queries::code_security::Refusal::Missing) => {
+                (StatusCode::NOT_FOUND, "Security configuration not found.")
+            }
+            Some(codeyard_db_core::queries::code_security::Refusal::Denied) => (
+                StatusCode::FORBIDDEN,
+                "Organization security access is required.",
+            ),
+            Some(codeyard_db_core::queries::code_security::Refusal::Duplicate) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "A configuration with this name already exists.",
+            ),
+            Some(codeyard_db_core::queries::code_security::Refusal::Invalid) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "Check the configuration name, scope and repository IDs.",
+            ),
+            None => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Security configurations are temporarily unavailable.",
+            ),
+        };
     ctx.error(status, message)
 }
 async fn show(
@@ -71,7 +71,7 @@ async fn show(
     let Some(session) = ctx.session_id.as_deref() else {
         return ctx.error(StatusCode::FORBIDDEN, "A live account session is required.");
     };
-    let loaded = match crate::backend::db::code_security::settings_page(
+    let loaded = match codeyard_db_security::code_security::settings_page(
         &ctx.state.pool,
         actor,
         session,
@@ -156,14 +156,14 @@ async fn post(
             for (name, _) in view::TOGGLES {
                 patch[name] = json!(values.get(name).map_or("not_set", String::as_str));
             }
-            crate::backend::db::code_security::save(&ctx.state.pool, actor, org, id, &patch)
+            codeyard_db_security::code_security::save(&ctx.state.pool, actor, org, id, &patch)
                 .await
                 .map(|_| ())
         }
         ("delete", Some(id)) => {
-            crate::backend::db::code_security::delete(&ctx.state.pool, actor, org, id).await
+            codeyard_db_security::code_security::delete(&ctx.state.pool, actor, org, id).await
         }
-        ("defaults", Some(id)) => crate::backend::db::code_security::set_default(
+        ("defaults", Some(id)) => codeyard_db_security::code_security::set_default(
             &ctx.state.pool,
             actor,
             org,
@@ -192,7 +192,7 @@ async fn post(
                     )
                 }
             };
-            crate::backend::db::code_security::attach(
+            codeyard_db_security::code_security::attach(
                 &ctx.state.pool,
                 actor,
                 org,

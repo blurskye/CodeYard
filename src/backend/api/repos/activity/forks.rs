@@ -50,7 +50,7 @@ pub async fn fork_repo(
         state.cluster.as_ref(),
         &state.repos_path,
         &state.notification_broadcaster,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             user.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -102,7 +102,7 @@ pub async fn check_fork(
     if let Some(user) =
         crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?
     {
-        if let Some(fork) = crate::backend::db::repositories::discovery::get_user_fork(
+        if let Some(fork) = codeyard_db_repos::repositories::discovery::get_user_fork(
             &state.pool,
             user.id,
             repository.id,
@@ -138,7 +138,7 @@ pub(crate) async fn visible_forks(
     limit: i64,
     offset: i64,
 ) -> anyhow::Result<(Vec<Repository>, bool)> {
-    let mut forks = crate::backend::db::repositories::discovery::list_visible_forks(
+    let mut forks = codeyard_db_repos::repositories::discovery::list_visible_forks(
         pool,
         viewer,
         Some(session),
@@ -185,7 +185,7 @@ pub async fn list_forks(
     let mut readable = std::collections::HashSet::new();
     for ids in ids.chunks(100) {
         readable.extend(
-            crate::backend::db::repositories::access::readable_repository_ids(
+            codeyard_db_repos::repositories::access::readable_repository_ids(
                 &state.pool,
                 viewer.as_ref().map(|user| user.id),
                 ids,

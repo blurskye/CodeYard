@@ -15,7 +15,7 @@ pub(super) async fn panel(
     loaded: &Loaded,
     name: Option<&str>,
 ) -> Result<view::Properties, Response> {
-    let metadata = crate::backend::db::organizations::properties::repository(
+    let metadata = codeyard_db_orgs::organizations::properties::repository(
         &ctx.state.pool,
         ctx.user.as_ref().map(|user| user.id),
         loaded.repository.id,
@@ -50,7 +50,7 @@ pub(super) async fn panel(
             .iter()
             .find(|row| row.property_name.eq_ignore_ascii_case(name))
             .and_then(|row| row.value.as_ref())
-            .map(crate::backend::db::organizations::properties::PropertyValue::form_value);
+            .map(codeyard_db_core::queries::organizations::properties::PropertyValue::form_value);
         Some(view::Property {
             id: definition.id,
             field: RepositoryPropertyField {
@@ -61,7 +61,7 @@ pub(super) async fn panel(
                 required: fields.needs_explicit_value(),
                 editable: metadata.organization_owner
                     || (metadata.repository_admin
-                        && fields.values_editable_by == crate::backend::db::organizations::properties::EditableBy::OrgAndRepoActors),
+                        && fields.values_editable_by == codeyard_db_core::queries::organizations::properties::EditableBy::OrgAndRepoActors),
                 default_preview: None,
             },
             draft: value.clone().unwrap_or_default(),
@@ -104,8 +104,8 @@ pub(super) async fn form(
     }
     let name = form.get("property_name").map(String::as_str).unwrap_or("");
     let raw = form.get("value").map(String::as_str).unwrap_or("");
-    if !crate::backend::db::organizations::properties::valid_name(name)
-        || raw.len() > crate::backend::db::organizations::properties::MAX_FORM_VALUE_BYTES
+    if !codeyard_db_core::queries::organizations::properties::valid_name(name)
+        || raw.len() > codeyard_db_orgs::organizations::properties::MAX_FORM_VALUE_BYTES
     {
         return ctx.repo_error(
             &loaded.chrome,
@@ -128,7 +128,7 @@ pub(super) async fn form(
         Ok(user) => user.id,
         Err(response) => return response,
     };
-    let metadata = match crate::backend::db::organizations::properties::repository(
+    let metadata = match codeyard_db_orgs::organizations::properties::repository(
         &ctx.state.pool,
         Some(actor),
         loaded.repository.id,
@@ -173,17 +173,17 @@ pub(super) async fn form(
             );
         }
         Some(
-            crate::backend::db::organizations::properties::PropertyValue::from_form(
+            codeyard_db_core::queries::organizations::properties::PropertyValue::from_form(
                 definition.fields.value_type,
                 raw,
             ),
         )
     };
-    let input = crate::backend::db::organizations::properties::ValueInput {
+    let input = codeyard_db_core::queries::organizations::properties::ValueInput {
         property_name: name.to_owned(),
         value,
     };
-    let outcome = crate::backend::db::organizations::properties::set_repository_value(
+    let outcome = codeyard_db_orgs::organizations::properties::set_repository_value(
         &ctx.state.pool,
         ctx.database_actor(actor),
         loaded.repository.id,
@@ -200,16 +200,18 @@ pub(super) async fn form(
             ))
         }
         Err(error) => {
-            match error.downcast_ref::<crate::backend::db::organizations::properties::Refusal>() {
-                Some(crate::backend::db::organizations::properties::Refusal::Invalid {
+            match error
+                .downcast_ref::<codeyard_db_core::queries::organizations::properties::Refusal>()
+            {
+                Some(codeyard_db_core::queries::organizations::properties::Refusal::Invalid {
                     message,
                     ..
                 }) => (StatusCode::BAD_REQUEST, *message),
-                Some(crate::backend::db::organizations::properties::Refusal::Denied) => (
+                Some(codeyard_db_core::queries::organizations::properties::Refusal::Denied) => (
                     StatusCode::FORBIDDEN,
                     "Organization policy does not allow editing this property.",
                 ),
-                Some(crate::backend::db::organizations::properties::Refusal::Missing) => (
+                Some(codeyard_db_core::queries::organizations::properties::Refusal::Missing) => (
                     StatusCode::CONFLICT,
                     "The repository property changed. Reload before retrying.",
                 ),

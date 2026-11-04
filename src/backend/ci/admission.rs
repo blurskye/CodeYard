@@ -20,7 +20,7 @@ pub(super) struct AdmittedRevision {
     pub request: CiRunRequest,
     pub blobs: serde_json::Value,
     pub definitions: BTreeMap<String, String>,
-    pub scheduling: crate::backend::db::runners::Scheduling,
+    pub scheduling: codeyard_db_actions::runners::Scheduling,
 }
 
 /// The events a run can be queued for.
@@ -80,7 +80,7 @@ pub(crate) async fn fork_approval_required(
         return Ok(false);
     };
     Ok(
-        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, id)
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, id)
             .await?
             .is_some_and(|pull| {
                 pull.repo_id == request.repo_id
@@ -137,12 +137,12 @@ pub(super) async fn resolve(
     let lookup_timeout = std::time::Duration::from_secs(5);
     let actor = tokio::time::timeout(
         lookup_timeout,
-        crate::backend::db::users::accounts::get_user_by_id(pool, request.triggered_by_id),
+        codeyard_db_identity::users::accounts::get_user_by_id(pool, request.triggered_by_id),
     )
     .await??
     .ok_or(AdmissionError::Unavailable)?;
     if !rerun
-        && actor.username == crate::backend::db::ci_tokens::BOT
+        && actor.username == codeyard_db_core::queries::ci_tokens::BOT
         && !matches!(
             request.event.as_str(),
             "workflow_dispatch" | "repository_dispatch"
@@ -154,13 +154,13 @@ pub(super) async fn resolve(
     }
     let repo = tokio::time::timeout(
         lookup_timeout,
-        crate::backend::db::repositories::records::get_repository_by_id(pool, request.repo_id),
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, request.repo_id),
     )
     .await??
     .ok_or(AdmissionError::Unavailable)?;
     let access = tokio::time::timeout(
         lookup_timeout,
-        crate::backend::db::repositories::access::get_user_repo_access(pool, actor.id, repo.id),
+        codeyard_db_repos::repositories::access::get_user_repo_access(pool, actor.id, repo.id),
     )
     .await??;
     let awaiting_approval = !rerun && fork_approval_required(pool, &request).await?;
@@ -175,7 +175,7 @@ pub(super) async fn resolve(
     // is queued.
     let enabled = tokio::time::timeout(
         lookup_timeout,
-        crate::backend::db::action_settings::actions_enabled(pool, repo.id),
+        codeyard_db_actions::action_settings::actions_enabled(pool, repo.id),
     )
     .await??;
     if !enabled {
@@ -187,7 +187,7 @@ pub(super) async fn resolve(
     request.repo_name = repo.name.clone();
     request.repo_owner = tokio::time::timeout(
         lookup_timeout,
-        crate::backend::db::ci::ci_repository_owner(pool, repo.id),
+        codeyard_db_actions::ci::ci_repository_owner(pool, repo.id),
     )
     .await??
     .ok_or(AdmissionError::Unavailable)?;
@@ -211,7 +211,7 @@ pub(super) async fn resolve(
         return Err(AdmissionError::Invalid("invalid CI workflow path"));
     }
     if let Some(environment) = &request.environment {
-        if crate::backend::db::environment_values::environment_key(environment).is_err() {
+        if codeyard_db_actions::environment_values::environment_key(environment).is_err() {
             return Err(AdmissionError::Invalid("invalid CI environment"));
         }
     }
@@ -236,7 +236,7 @@ pub(super) async fn resolve(
         if let Some(sha) = request.head_sha.as_deref() {
             tokio::time::timeout(
                 lookup_timeout,
-                crate::backend::db::ci::has_ci_accepted_push(
+                codeyard_db_actions::ci::has_ci_accepted_push(
                     pool, repo.id, actor.id, &reference, sha,
                 ),
             )
@@ -290,7 +290,7 @@ pub(super) async fn resolve(
         pinned,
     );
     let mut definitions = BTreeMap::new();
-    let mut scheduling = crate::backend::db::runners::Scheduling::default();
+    let mut scheduling = codeyard_db_actions::runners::Scheduling::default();
     for path in &request.workflow_paths {
         let file =
             store
@@ -344,7 +344,7 @@ pub(super) async fn resolve(
                 ));
             }
             let pull = if let Some(id) = request.pull_request_id {
-                crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, id).await?
+                codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, id).await?
             } else {
                 None
             };
@@ -463,7 +463,7 @@ pub(super) async fn resolve(
         let registration = [(path.to_owned(), definition.name.clone())];
         tokio::time::timeout(
             lookup_timeout,
-            crate::backend::db::action_workflows::register_workflows(
+            codeyard_db_actions::action_workflows::register_workflows(
                 pool,
                 repo.id,
                 &registration,
@@ -540,8 +540,8 @@ pub(super) async fn resolve(
 
 /// Labels accumulate across a run's workflows, and a run has at most one runner group.
 pub(super) fn merge_scheduling(
-    into: &mut crate::backend::db::runners::Scheduling,
-    from: crate::backend::db::runners::Scheduling,
+    into: &mut codeyard_db_actions::runners::Scheduling,
+    from: codeyard_db_actions::runners::Scheduling,
 ) -> Result<(), AdmissionError> {
     if let Some(group) = from.group {
         if into
@@ -560,7 +560,7 @@ pub(super) fn merge_scheduling(
 pub(super) struct ParsedWorkflow {
     pub definition: crate::backend::ci::workflows::WorkflowDefinition,
     pub environment: Option<String>,
-    pub scheduling: crate::backend::db::runners::Scheduling,
+    pub scheduling: codeyard_db_actions::runners::Scheduling,
     pub(super) concurrency: Option<serde_yaml::Value>,
     pub(super) yaml: serde_yaml::Value,
 }
@@ -610,7 +610,7 @@ pub(super) async fn parse_admission_workflow(
                     .ok_or(AdmissionError::Invalid(
                         "CI dynamic workflow environments are unsupported",
                     ))?;
-                if crate::backend::db::environment_values::environment_key(name).is_err()
+                if codeyard_db_actions::environment_values::environment_key(name).is_err()
                     || name.contains("${{")
                 {
                     return Err(AdmissionError::Invalid(
@@ -618,8 +618,8 @@ pub(super) async fn parse_admission_workflow(
                     ));
                 }
                 if let Some(environment) = &environment {
-                    if crate::backend::db::environment_values::environment_key(environment).ok()
-                        != crate::backend::db::environment_values::environment_key(name).ok()
+                    if codeyard_db_actions::environment_values::environment_key(environment).ok()
+                        != codeyard_db_actions::environment_values::environment_key(name).ok()
                     {
                         return Err(AdmissionError::Invalid(
                             "CI workflow environment differs from requested target",

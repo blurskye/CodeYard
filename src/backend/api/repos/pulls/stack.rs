@@ -74,7 +74,7 @@ pub async fn post_rebase(
     crate::backend::repositories::pull_requests::restack::rebase_stack(
         &state.pool,
         &state.ci_runs,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             current_actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),

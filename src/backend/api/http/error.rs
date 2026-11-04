@@ -18,8 +18,8 @@ pub(crate) fn protection_write_error(
             "A live unrestricted account credential is required",
         );
     }
-    use crate::backend::db::repositories::ProtectionWriteRefusal as Refusal;
     use axum::{http::StatusCode, Json};
+    use codeyard_db_repos::repositories::ProtectionWriteRefusal as Refusal;
     let (status, code, message) = match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => (
             StatusCode::FORBIDDEN,
@@ -51,8 +51,8 @@ pub(crate) fn protection_write_error(
 /// The status of a refused native OIDC settings save: a denial is 403, any other typed refusal
 /// is 422, and an untyped failure is 503.
 pub(crate) fn oidc_settings_status(error: &anyhow::Error) -> StatusCode {
-    match error.downcast_ref::<crate::backend::db::oidc::Refusal>() {
-        Some(crate::backend::db::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
+    match error.downcast_ref::<codeyard_db_core::queries::oidc::Refusal>() {
+        Some(codeyard_db_core::queries::oidc::Refusal::Denied) => StatusCode::FORBIDDEN,
         Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
         None => StatusCode::SERVICE_UNAVAILABLE,
     }
@@ -62,8 +62,8 @@ pub(crate) fn oidc_settings_status(error: &anyhow::Error) -> StatusCode {
 pub(crate) fn repository_settings_error(
     error: anyhow::Error,
 ) -> (axum::http::StatusCode, axum::Json<ApiError>) {
-    use crate::backend::db::repositories::RepositorySettingsRefusal as Refusal;
     use axum::{http::StatusCode, Json};
+    use codeyard_db_repos::repositories::RepositorySettingsRefusal as Refusal;
     if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return ApiError::failure(
             StatusCode::FORBIDDEN,
@@ -117,7 +117,7 @@ pub(crate) fn repository_settings_error(
             "validation_error",
             "Invalid squash merge commit title or message",
         ),
-        None if matches!(error.downcast_ref::<crate::backend::db::secrets::SecretsError>(), Some(crate::backend::db::secrets::SecretsError::TotalTooLarge | crate::backend::db::secrets::SecretsError::TooManySecrets)) => (
+        None if matches!(error.downcast_ref::<codeyard_db_core::queries::secrets::SecretsError>(), Some(codeyard_db_core::queries::secrets::SecretsError::TotalTooLarge | codeyard_db_core::queries::secrets::SecretsError::TooManySecrets)) => (
             StatusCode::BAD_REQUEST,
             "validation_error",
             "Delivered Actions secrets exceed the CI delivery budget",
@@ -153,8 +153,8 @@ mod tests {
 
     #[test]
     fn repository_settings_errors_preserve_refusals_not_private_context() {
-        use crate::backend::db::repositories::RepositorySettingsRefusal as Refusal;
         use axum::http::StatusCode;
+        use codeyard_db_repos::repositories::RepositorySettingsRefusal as Refusal;
         for (refusal, expected) in [
             (Refusal::Denied, StatusCode::FORBIDDEN),
             (Refusal::VisibilityLocked, StatusCode::FORBIDDEN),
@@ -180,7 +180,7 @@ mod tests {
     #[test]
     fn protection_denial_survives_context_without_driver_disclosure() {
         let refusal =
-            anyhow::Error::from(crate::backend::db::repositories::ProtectionWriteRefusal::Denied)
+            anyhow::Error::from(codeyard_db_repos::repositories::ProtectionWriteRefusal::Denied)
                 .context("private driver diagnostic");
         let (status, axum::Json(error)) = protection_write_error(refusal);
         assert_eq!(status, axum::http::StatusCode::FORBIDDEN);
@@ -188,7 +188,7 @@ mod tests {
         assert!(!serde_json::to_string(&error).unwrap().contains("private"));
         let (status, axum::Json(error)) = protection_write_error(
             anyhow::Error::from(
-                crate::backend::db::repositories::ProtectionWriteRefusal::InvalidPattern,
+                codeyard_db_repos::repositories::ProtectionWriteRefusal::InvalidPattern,
             )
             .context("private driver diagnostic"),
         );
@@ -207,7 +207,7 @@ mod tests {
 }
 
 pub(crate) fn discussion_write_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
-    use crate::backend::db::discussions::DiscussionWriteRefusal;
+    use codeyard_db_core::queries::discussions::DiscussionWriteRefusal;
     let (status, code, message) = match error.downcast_ref::<DiscussionWriteRefusal>() {
         Some(DiscussionWriteRefusal::Denied) => (
             StatusCode::FORBIDDEN,
@@ -280,7 +280,7 @@ mod discussion_errors {
 
     #[test]
     fn typed_refusals_survive_context_and_driver_details_are_never_disclosed() {
-        use crate::backend::db::discussions::DiscussionWriteRefusal;
+        use codeyard_db_core::queries::discussions::DiscussionWriteRefusal;
         for (refusal, status, code, message) in [
             (
                 DiscussionWriteRefusal::Denied,

@@ -57,13 +57,12 @@ async fn tips(context: &NodeContext, repository: Uuid, mirror: &Path) -> Result<
     let store = RepoStore::from_disk_path(path);
     let mut tips: Vec<String> = store.mirror_refs().await?.into_values().collect();
     let pool = context.database()?;
-    let row = crate::backend::db::cluster::get_repository_by_uuid(pool, &repository.to_string())
+    let row = codeyard_db_cluster::cluster::get_repository_by_uuid(pool, &repository.to_string())
         .await?
         .context("replica repository was deleted")?;
-    let mut retained = crate::backend::db::ci::retained_ci_commits(pool, row.id).await?;
-    retained.extend(
-        crate::backend::db::pull_requests::records::retained_revisions(pool, row.id).await?,
-    );
+    let mut retained = codeyard_db_actions::ci::retained_ci_commits(pool, row.id).await?;
+    retained
+        .extend(codeyard_db_repos::pull_requests::records::retained_revisions(pool, row.id).await?);
     tips.extend(store.existing_commits(&retained).await?);
     tips.sort();
     tips.dedup();
@@ -115,7 +114,7 @@ async fn fetch(
     let store =
         RepoStore::from_disk_path(mirror.to_str().context("replica copy path is not text")?);
     let pool = context.database()?;
-    let row = crate::backend::db::cluster::get_repository_by_uuid(pool, &repository.to_string())
+    let row = codeyard_db_cluster::cluster::get_repository_by_uuid(pool, &repository.to_string())
         .await?
         .context("replica repository was deleted")?;
     let primary_path =
@@ -128,7 +127,7 @@ async fn fetch(
     // From here cancellation is deferred until installation has ended. Copying retains
     // the task and its directory reservation until join, including during shutdown.
     ensure!(
-        crate::backend::db::cluster::set_applied_version(
+        codeyard_db_cluster::cluster::set_applied_version(
             pool,
             row.id,
             context.node_id,
@@ -259,18 +258,18 @@ mod tests {
             (server_key.public_hex(), "primary"),
         ] {
             let roles = ["storage".to_owned()];
-            let node = crate::backend::db::cluster::register_own_node(
+            let node = codeyard_db_cluster::cluster::register_own_node(
                 &pool, &node_key, name, &roles, "test",
             )
             .await;
             nodes.push(node.unwrap().id);
         }
         let (copy_node, primary) = (nodes[0], nodes[1]);
-        let owner = crate::backend::db::users::accounts::create_user(&pool, "owner", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
         let repository = Uuid::new_v4();
-        let row = crate::backend::db::repositories::records::create_repository(
+        let row = codeyard_db_repos::repositories::records::create_repository(
             &pool,
             owner.id,
             "copied",
@@ -281,12 +280,12 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            crate::backend::db::cluster::place_repository(&pool, row.id, primary)
+            codeyard_db_cluster::cluster::place_repository(&pool, row.id, primary)
                 .await
                 .unwrap()
         );
         assert!(
-            crate::backend::db::cluster::insert_replica(&pool, row.id, copy_node, primary)
+            codeyard_db_cluster::cluster::insert_replica(&pool, row.id, copy_node, primary)
                 .await
                 .unwrap()
         );
@@ -308,7 +307,7 @@ mod tests {
         };
         let hint = serde_json::to_string(&address).unwrap();
         let pool = context.database().unwrap();
-        assert!(crate::backend::db::cluster::record_node_heartbeat(
+        assert!(codeyard_db_cluster::cluster::record_node_heartbeat(
             pool,
             &server_key.public_hex(),
             "test",

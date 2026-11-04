@@ -13,11 +13,11 @@ use crate::backend::repositories::pull_requests::merge::prepare_error;
 use crate::backend::repositories::pull_requests::require_write;
 use crate::backend::repositories::pull_requests::OperationError;
 
-use crate::backend::db::pull_requests::records::MAX_STACK_LAYERS;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::RepoStore;
 use crate::backend::repositories::store::RestackMove;
 use codeyard_db_core::models::PullRequest;
+use codeyard_db_repos::pull_requests::records::MAX_STACK_LAYERS;
 use codeyard_git::error::{ErrorKind, RepoError};
 use serde::Serialize;
 use std::collections::HashMap;
@@ -39,7 +39,7 @@ pub struct RestackResponse {
 pub async fn rebase_stack(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
     target: (String, String, i32),
 ) -> Result<RestackResponse, OperationError> {
     match prepare_rebase(pool, ci, actor_id, target).await? {
@@ -50,7 +50,7 @@ pub async fn rebase_stack(
 
 /// The replayed layers of a rebase, ready to publish.
 pub struct PreparedRestack {
-    authority: crate::backend::db::credentials::Actor,
+    authority: codeyard_db_core::queries::credentials::Actor,
     owner: String,
     repository: codeyard_db_core::models::Repository,
     stack_id: i64,
@@ -66,13 +66,13 @@ pub struct PreparedRestack {
 pub async fn prepare_rebase(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    authority: impl Into<crate::backend::db::credentials::Actor>,
+    authority: impl Into<codeyard_db_core::queries::credentials::Actor>,
     (owner, repo, number): (String, String, i32),
 ) -> Result<Option<PreparedRestack>, OperationError> {
     let authority = authority.into();
     let actor_id = authority.user_id;
     let deadline = tokio::time::Instant::now() + RESTACK_PREPARE_DEADLINE;
-    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -88,7 +88,7 @@ pub async fn prepare_rebase(
         });
     }
     let target =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -101,14 +101,14 @@ pub async fn prepare_rebase(
     };
     // The versions are read before the layers, so a change between the two reads shows up when
     // the rebase is published.
-    let versions = crate::backend::db::pull_requests::records::list_stack_versions(
+    let versions = codeyard_db_repos::pull_requests::records::list_stack_versions(
         pool,
         repository.id,
         stack_id,
     )
     .await
     .map_err(database_error)?;
-    let members = crate::backend::db::pull_requests::records::list_stack_members(
+    let members = codeyard_db_repos::pull_requests::records::list_stack_members(
         pool,
         repository.id,
         stack_id,
@@ -497,7 +497,7 @@ pub(super) async fn squashed_below(
     let Some(base_tip) = tip_of(refs, &bottom.base_branch) else {
         return Ok(false);
     };
-    let members = crate::backend::db::pull_requests::records::list_stack_members(
+    let members = codeyard_db_repos::pull_requests::records::list_stack_members(
         pool,
         bottom.repo_id,
         stack_id,

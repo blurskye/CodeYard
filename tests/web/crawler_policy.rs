@@ -63,7 +63,7 @@ async fn contract(pg: bool) {
         .await;
     let member_id = f.actor("member").await;
     // A fresh install blocks AI crawlers until an administrator allows them.
-    let stored = codeyard::backend::db::node_config::get_node_configuration(f.pool())
+    let stored = codeyard_db_cluster::node_config::get_node_configuration(f.pool())
         .await
         .unwrap()
         .unwrap();
@@ -162,7 +162,7 @@ async fn contract(pg: bool) {
     let mode = |f: &Database| {
         let pool = f.pool().clone();
         async move {
-            codeyard::backend::db::node_config::get_node_configuration(&pool)
+            codeyard_db_cluster::node_config::get_node_configuration(&pool)
                 .await
                 .unwrap()
                 .unwrap()

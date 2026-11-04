@@ -2,8 +2,6 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
 
-use crate::backend::db::artifact_metadata::Record;
-use crate::backend::db::artifact_metadata::Refusal;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -11,6 +9,8 @@ use axum::{
     routing::get,
     Router,
 };
+use codeyard_db_repos::artifact_metadata::Record;
+use codeyard_db_repos::artifact_metadata::Refusal;
 use codeyard_webui::{app::Page as AppPage, encode_component, pages::artifact_metadata as view};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
@@ -128,7 +128,7 @@ async fn show(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let organization = match crate::backend::db::organizations::get_public_organization(
+    let organization = match codeyard_db_orgs::organizations::get_public_organization(
         &ctx.state.pool,
         &params["org"],
     )
@@ -151,7 +151,7 @@ async fn show(
     if !matches!(kind.as_str(), "deployment" | "storage")
         || (!digest.is_empty()
             && (!digest.starts_with("sha256:")
-                || !crate::backend::db::attestations::valid_digest(&digest)))
+                || !codeyard_db_core::queries::attestations::valid_digest(&digest)))
     {
         return ctx.error(
             StatusCode::BAD_REQUEST,
@@ -174,7 +174,7 @@ async fn show(
     let mut rows = if digest.is_empty() {
         vec![]
     } else {
-        match crate::backend::db::artifact_metadata::pages::list(
+        match codeyard_db_repos::artifact_metadata::pages::list(
             &ctx.state.pool,
             session.as_deref(),
             organization.id,

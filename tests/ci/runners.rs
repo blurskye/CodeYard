@@ -108,12 +108,12 @@ async fn contract(pg: bool) {
     let bob = f.actor("runner_member").await;
     let eve = f.actor("runner_outsider").await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             alice,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 "runner-org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -121,7 +121,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             f.pool(),
             alice,
             org.id,
@@ -151,7 +151,7 @@ async fn contract(pg: bool) {
     .spawn();
     codeyard::backend::cluster::wait_for_address(core.endpoint()).await;
     let address = NodeAddress::of(&core.endpoint().addr());
-    let node = codeyard::backend::db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         f.pool(),
         &key.public_hex(),
         "runner-core",
@@ -160,7 +160,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::cluster::record_node_heartbeat(
+    codeyard_db_cluster::cluster::record_node_heartbeat(
         f.pool(),
         &key.public_hex(),
         env!("CARGO_PKG_VERSION"),
@@ -478,7 +478,7 @@ async fn contract(pg: bool) {
         let token = registration["token"].as_str().unwrap().to_owned();
         pair(&token, key, name).await;
         registration_tokens.push(token);
-        codeyard::backend::db::cluster::touch_node(f.pool(), &key.public_hex())
+        codeyard_db_cluster::cluster::touch_node(f.pool(), &key.public_hex())
             .await
             .unwrap();
         let rows = call(
@@ -788,7 +788,7 @@ async fn contract(pg: bool) {
         .unwrap()
         .parse::<uuid::Uuid>()
         .unwrap();
-    assert!(codeyard::backend::db::ci::claim_ci_run_on_node(
+    assert!(codeyard_db_actions::ci::claim_ci_run_on_node(
         f.pool(),
         &repo_runner_key.public_hex(),
         &format!("{}/slot", repo_runner_key.public_hex()),
@@ -800,7 +800,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .is_none());
     let worker = format!("{}/slot", org_runner_key.public_hex());
-    let claim = codeyard::backend::db::ci::claim_ci_run_on_node(
+    let claim = codeyard_db_actions::ci::claim_ci_run_on_node(
         f.pool(),
         &org_runner_key.public_hex(),
         &worker,
@@ -838,7 +838,7 @@ async fn contract(pg: bool) {
             ("users/get-authenticated", 200)
         )
         .await["login"],
-        codeyard::backend::db::ci_tokens::BOT
+        codeyard_db_core::queries::ci_tokens::BOT
     );
     let repo_runners = "/api/v3/repos/runner-org/one/actions/runners";
     for (suffix, operation, body) in [
@@ -868,10 +868,10 @@ async fn contract(pg: bool) {
         )
         .await;
     }
-    assert!(codeyard::backend::db::runners::list_runners(
+    assert!(codeyard_db_actions::runners::list_runners(
         f.pool(),
         alice,
-        codeyard::backend::db::runners::Scope::Repository(repo),
+        codeyard_db_core::queries::runners::Scope::Repository(repo),
         &Default::default()
     )
     .await
@@ -903,12 +903,12 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        codeyard::backend::db::ci::heartbeat_ci_run(f.pool(), claim.id, &worker)
+        codeyard_db_actions::ci::heartbeat_ci_run(f.pool(), claim.id, &worker)
             .await
             .unwrap(),
         Some(true)
     );
-    assert!(!codeyard::backend::db::ci::ci_run_allows_repository_read(
+    assert!(!codeyard_db_actions::ci::ci_run_allows_repository_read(
         f.pool(),
         claim.id,
         repo,
@@ -917,7 +917,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap());
-    assert!(codeyard::backend::db::ci::claim_ci_run_on_node(
+    assert!(codeyard_db_actions::ci::claim_ci_run_on_node(
         f.pool(),
         &org_runner_key.public_hex(),
         &worker,
@@ -928,7 +928,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .is_none());
-    codeyard::backend::db::ci::finish_ci_run(f.pool(), claim.id, &worker, "cancelled", None)
+    codeyard_db_actions::ci::finish_ci_run(f.pool(), claim.id, &worker, "cancelled", None)
         .await
         .unwrap();
     call(
@@ -994,15 +994,14 @@ async fn contract(pg: bool) {
                 codeyard::backend::ci::runner_credentials::work_root(&state).unwrap(),
                 state.join("runner-workspaces/jit-work")
             );
-            let node =
-                codeyard::backend::db::cluster::get_node_by_name(f.pool(), &config.node_name)
-                    .await
-                    .unwrap()
-                    .unwrap();
-            let runner = codeyard::backend::db::runners::list_runners(
+            let node = codeyard_db_cluster::cluster::get_node_by_name(f.pool(), &config.node_name)
+                .await
+                .unwrap()
+                .unwrap();
+            let runner = codeyard_db_actions::runners::list_runners(
                 f.pool(),
                 alice,
-                codeyard::backend::db::runners::Scope::Repository(personal),
+                codeyard_db_core::queries::runners::Scope::Repository(personal),
                 &Default::default(),
             )
             .await
@@ -1030,7 +1029,7 @@ async fn contract(pg: bool) {
         if scope == "org" {
             let dispatched=owner.expect("POST","/api/ci/trigger",json!({"repo_owner":"runner-org","repo_name":"one","branch":"main","event":"workflow_dispatch","pipeline":"ci"}),StatusCode::OK).await;
             let jit_worker = format!("{}/slot", jit_key.public_hex());
-            let run = codeyard::backend::db::ci::claim_ci_run_on_node(
+            let run = codeyard_db_actions::ci::claim_ci_run_on_node(
                 f.pool(),
                 &jit_key.public_hex(),
                 &jit_worker,
@@ -1045,7 +1044,7 @@ async fn contract(pg: bool) {
                 run.run_id.to_string(),
                 dispatched["job_id"].as_str().unwrap()
             );
-            assert!(codeyard::backend::db::ci::claim_ci_run_on_node(
+            assert!(codeyard_db_actions::ci::claim_ci_run_on_node(
                 f.pool(),
                 &jit_key.public_hex(),
                 &format!("{}/second-slot", jit_key.public_hex()),
@@ -1056,21 +1055,14 @@ async fn contract(pg: bool) {
             .await
             .unwrap()
             .is_none());
-            codeyard::backend::db::ci::finish_ci_run(
-                f.pool(),
-                run.id,
-                &jit_worker,
-                "success",
-                None,
-            )
-            .await
-            .unwrap();
-            assert!(!codeyard::backend::db::cluster::is_active_node(
-                f.pool(),
-                &jit_key.public_hex()
-            )
-            .await
-            .unwrap());
+            codeyard_db_actions::ci::finish_ci_run(f.pool(), run.id, &jit_worker, "success", None)
+                .await
+                .unwrap();
+            assert!(
+                !codeyard_db_cluster::cluster::is_active_node(f.pool(), &jit_key.public_hex())
+                    .await
+                    .unwrap()
+            );
         }
     }
     // Remove tokens are scoped and redeem against the same registered workers.
@@ -1089,10 +1081,10 @@ async fn contract(pg: bool) {
     assert_eq!(wrong.status(), StatusCode::NOT_FOUND);
     let removable_key = NodeKey::generate();
     pair(&registration_tokens[0], &removable_key, "removable").await;
-    let removable = codeyard::backend::db::runners::list_runners(
+    let removable = codeyard_db_actions::runners::list_runners(
         f.pool(),
         alice,
-        codeyard::backend::db::runners::Scope::Organization(org.id),
+        codeyard_db_core::queries::runners::Scope::Organization(org.id),
         &Default::default(),
     )
     .await
@@ -1115,7 +1107,7 @@ async fn contract(pg: bool) {
         .unwrap();
     assert_eq!(removed.status(), StatusCode::NO_CONTENT);
     assert!(
-        !codeyard::backend::db::cluster::is_active_node(f.pool(), &removable_key.public_hex())
+        !codeyard_db_cluster::cluster::is_active_node(f.pool(), &removable_key.public_hex())
             .await
             .unwrap()
     );
@@ -1168,11 +1160,11 @@ async fn contract(pg: bool) {
         &[personal],
     )
     .await;
-    codeyard::backend::db::repositories::records::transfer_repository(
+    codeyard_db_repos::repositories::records::transfer_repository(
         f.pool(),
         alice,
         personal,
-        codeyard::backend::db::repositories::creation::RepositoryTarget::Organization(org.id),
+        codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(org.id),
     )
     .await
     .unwrap();
@@ -1195,12 +1187,12 @@ async fn runner_settings_browser() {
     f.complete_setup().await;
     let alice = f.actor("browser_owner").await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             alice,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 "browser-org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -1239,7 +1231,7 @@ async fn runner_settings_browser() {
     );
     println!("{}", String::from_utf8_lossy(&result.stdout));
     let groups =
-        codeyard::backend::db::runners::list_groups(f.pool(), alice, org.id, &Default::default())
+        codeyard_db_actions::runners::list_groups(f.pool(), alice, org.id, &Default::default())
             .await
             .unwrap()
             .rows;

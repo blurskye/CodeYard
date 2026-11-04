@@ -8,10 +8,10 @@ use crate::backend::api::user::responses::require_account;
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::db::fine_grained_tokens::Token;
+use codeyard_db_core::queries::fine_grained_tokens::Token;
 
-use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::db::organizations::OrganizationPage;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations::OrganizationPage;
 
 use crate::backend::identity::fine_grained::Access;
 use crate::backend::identity::fine_grained::Owner;
@@ -140,7 +140,7 @@ async fn owner_name(ctx: &PageContext, user: &User, org: Option<i64>) -> anyhow:
     Ok(match org {
         None => user.username.clone(),
         Some(org) => {
-            crate::backend::db::organizations::get_public_organization_by_id(&ctx.state.pool, org)
+            codeyard_db_orgs::organizations::get_public_organization_by_id(&ctx.state.pool, org)
                 .await?
                 .map_or_else(|| "Deleted organization".to_owned(), |org| org.name)
         }
@@ -164,7 +164,7 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         None => None,
     };
     let Ok(rows) =
-        crate::backend::db::fine_grained_tokens::list_before(&ctx.state.pool, user.id, before)
+        codeyard_db_identity::fine_grained_tokens::list_before(&ctx.state.pool, user.id, before)
             .await
     else {
         return ctx.error(StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE);
@@ -207,10 +207,10 @@ async fn organizations_of(
     ctx: &PageContext,
     user: &User,
     after: i64,
-) -> anyhow::Result<Vec<crate::backend::db::organizations::OrganizationMetadata>> {
+) -> anyhow::Result<Vec<codeyard_db_orgs::organizations::OrganizationMetadata>> {
     let page = OrganizationPage::new(after, 100).map_err(|_| anyhow::anyhow!("page"))?;
     Ok(
-        match crate::backend::db::organizations::list_actor_organizations(
+        match codeyard_db_orgs::organizations::list_actor_organizations(
             &ctx.state.pool,
             user.id,
             page,
@@ -232,7 +232,7 @@ async fn owner_of(ctx: &PageContext, draft: &Draft, user: &User) -> anyhow::Resu
         return Ok(None);
     };
     Ok(matches!(
-        crate::backend::db::organizations::get_organization_role(&ctx.state.pool, user.id, id)
+        codeyard_db_orgs::organizations::get_organization_role(&ctx.state.pool, user.id, id)
             .await?,
         OrganizationOutcome::Applied(_)
     )
@@ -265,14 +265,15 @@ async fn choices(ctx: &PageContext, user: &User, draft: &Draft) -> anyhow::Resul
         }
     }
     let session = extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
     let selected: Vec<_> = draft
         .repositories
         .iter()
         .copied()
         .take(crate::backend::identity::fine_grained::MAX_REPOSITORIES)
         .collect();
-    let choices = crate::backend::db::fine_grained_tokens::repository_choices(
+    let choices = codeyard_db_identity::fine_grained_tokens::repository_choices(
         pool,
         user.id,
         &credential,
@@ -293,7 +294,7 @@ async fn choices(ctx: &PageContext, user: &User, draft: &Draft) -> anyhow::Resul
     let never_allowed = if let Some(org) = org {
         crate::backend::identity::fine_grained::max_lifetime(
             owner,
-            Some(&crate::backend::db::fine_grained_tokens::policy(pool, org).await?),
+            Some(&codeyard_db_identity::fine_grained_tokens::policy(pool, org).await?),
         )
         .is_none()
     } else {
@@ -545,7 +546,7 @@ async fn create(
 async fn detail(ctx: &PageContext, user: &User, id: i64) -> Result<Detail, TokenError> {
     let pool = &ctx.state.pool;
     let unavailable = |_| TokenError::Unavailable;
-    let token = crate::backend::db::fine_grained_tokens::get(pool, id)
+    let token = codeyard_db_identity::fine_grained_tokens::get(pool, id)
         .await
         .map_err(unavailable)?
         .filter(|token| token.user_id == user.id)
@@ -557,7 +558,7 @@ async fn detail(ctx: &PageContext, user: &User, id: i64) -> Result<Detail, Token
         Some(org) => crate::backend::identity::fine_grained::max_lifetime(
             Owner::Organization(org),
             Some(
-                &crate::backend::db::fine_grained_tokens::policy(pool, org)
+                &codeyard_db_identity::fine_grained_tokens::policy(pool, org)
                     .await
                     .map_err(unavailable)?,
             ),
@@ -566,11 +567,11 @@ async fn detail(ctx: &PageContext, user: &User, id: i64) -> Result<Detail, Token
         None => false,
     };
     let repositories = if token.repository_access == "selected" {
-        crate::backend::db::fine_grained_tokens::repositories(
+        codeyard_db_identity::fine_grained_tokens::repositories(
             pool,
             token.token_id,
             user.id,
-            &crate::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 ctx.session_id.as_deref().unwrap_or(""),
             ),
         )
@@ -716,7 +717,7 @@ async fn delete(
         );
     }
     // Only the user's own fine-grained token; classic tokens are deleted from their own list.
-    match crate::backend::db::fine_grained_tokens::get(&ctx.state.pool, id).await {
+    match codeyard_db_identity::fine_grained_tokens::get(&ctx.state.pool, id).await {
         Ok(Some(token)) if token.user_id == user.id => {}
         Ok(_) => return ctx.error(StatusCode::NOT_FOUND, MISSING),
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE),

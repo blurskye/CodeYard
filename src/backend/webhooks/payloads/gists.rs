@@ -2,8 +2,8 @@ use crate::backend::webhooks::payloads::time;
 use crate::backend::webhooks::payloads::user;
 use codeyard_model::urls::api_url;
 
-use crate::backend::db::gists::Comment;
-use crate::backend::db::gists::Gist;
+use codeyard_db_repos::gists::Comment;
+use codeyard_db_repos::gists::Gist;
 use codeyard_git::error::RepoError;
 use codeyard_git::gist_types::GistRevision;
 use codeyard_model::http_config::http_clone_base;

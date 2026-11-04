@@ -8,12 +8,8 @@ use crate::backend::api::github::rulesets::page;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::organizations::OrganizationOutcome;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
 
-use crate::backend::db::rulesets::Suite;
-use crate::backend::db::rulesets::SuiteEnforcement;
-use crate::backend::db::rulesets::SuiteFilter;
-use crate::backend::db::rulesets::SuiteResult;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -21,6 +17,10 @@ use axum::{
     Json,
 };
 use chrono::{Duration, Utc};
+use codeyard_db_core::queries::rulesets::records::Suite;
+use codeyard_db_core::queries::rulesets::records::SuiteEnforcement;
+use codeyard_db_core::queries::rulesets::records::SuiteFilter;
+use codeyard_db_core::queries::rulesets::records::SuiteResult;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -142,7 +142,7 @@ pub(super) async fn list(
     let org = target(&state, &name).await?;
     let (pagination, filter) = query.filter()?;
     let rows = outcome(
-        crate::backend::db::rulesets::organization_rule_suites(
+        codeyard_db_repos::rulesets::organization_rule_suites(
             &state.pool,
             actor.user.id,
             org.id,
@@ -178,7 +178,7 @@ pub(super) async fn get_one(
         .ok_or_else(crate::backend::api::github::auth::required)?;
     let org = target(&state, &name).await?;
     let row = outcome(
-        crate::backend::db::rulesets::organization_rule_suite(
+        codeyard_db_repos::rulesets::organization_rule_suite(
             &state.pool,
             actor.user.id,
             org.id,
@@ -210,7 +210,7 @@ pub(super) async fn list_repository(
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let (pagination, filter) = query.filter()?;
     let rows = repository_outcome(
-        crate::backend::db::rulesets::repository_rule_suites(
+        codeyard_db_repos::rulesets::repository_rule_suites(
             &state.pool,
             actor.user.id,
             repo.id,
@@ -239,14 +239,9 @@ pub(super) async fn get_repository(
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let row = repository_outcome(
-        crate::backend::db::rulesets::repository_rule_suite(
-            &state.pool,
-            actor.user.id,
-            repo.id,
-            id,
-        )
-        .await
-        .map_err(error)?,
+        codeyard_db_repos::rulesets::repository_rule_suite(&state.pool, actor.user.id, repo.id, id)
+            .await
+            .map_err(error)?,
     )?;
     Ok(Json(document(&row, true, query.include_metadata)?))
 }

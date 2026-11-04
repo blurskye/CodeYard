@@ -4,13 +4,13 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::assignees::AssignedItem;
-use crate::backend::db::repository_exports as exports;
-use crate::backend::db::repository_exports::RepositoryExport;
 use crate::backend::repositories::migration_archive::MigrationArchive;
 use crate::backend::repositories::releases::ReleaseDetail;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::storage::Upload;
+use codeyard_db_repos::assignees::AssignedItem;
+use codeyard_db_repos::repository_exports as exports;
+use codeyard_db_repos::repository_exports::RepositoryExport;
 
 use axum::http::HeaderMap;
 use serde_json::{json, Value};
@@ -42,7 +42,7 @@ pub(super) fn spawn(state: Arc<AppState>, headers: HeaderMap, row: RepositoryExp
 }
 
 async fn person(state: &AppState, id: i64) -> Result<Value> {
-    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -77,12 +77,12 @@ async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) ->
         projects::append(state, actor.user.id, row, &mut archive).await?;
     }
     for id in ids {
-        let repo = crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
+        let repo = codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
         let owner =
-            crate::backend::db::repositories::records::repository_owner_name(&state.pool, id)
+            codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -144,7 +144,7 @@ async fn metadata(
         crate::backend::webhooks::payloads::repository(repo, owner)["html_url"].clone();
     for (kind, record) in [("type", "issue_type"), ("field", "issue_field")] {
         let definitions =
-            crate::backend::db::issue_attributes::catalog(&state.pool, repo.id, Some(actor), kind)
+            codeyard_db_repos::issue_attributes::catalog(&state.pool, repo.id, Some(actor), kind)
                 .await
                 .map_err(Error::unavailable)?;
         let mut values = Vec::new();
@@ -159,7 +159,7 @@ async fn metadata(
     }
     let mut offset = 0;
     loop {
-        let labels = crate::backend::db::labels::list_repo_labels_page(
+        let labels = codeyard_db_repos::labels::list_repo_labels_page(
             &state.pool,
             repo.id,
             "",
@@ -188,7 +188,7 @@ async fn metadata(
     }
     let mut offset = 0;
     loop {
-        let rows = crate::backend::db::milestones::list_milestones_page(
+        let rows = codeyard_db_repos::milestones::list_milestones_page(
             &state.pool,
             repo.id,
             None,
@@ -238,7 +238,7 @@ async fn metadata(
             .await?;
             value["issue_type"] = value["type"].take();
             value["issue_field_values"] = serde_json::to_value(
-                crate::backend::db::issue_attributes::values(&state.pool, repo.id, id, Some(actor))
+                codeyard_db_repos::issue_attributes::values(&state.pool, repo.id, id, Some(actor))
                     .await
                     .map_err(Error::unavailable)?,
             )
@@ -265,7 +265,7 @@ async fn metadata(
         let mut values = Vec::new();
         for id in rows {
             let pull =
-                crate::backend::db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
+                codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&state.pool, id)
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?;
@@ -278,7 +278,7 @@ async fn metadata(
             pull_comments(state, repo, owner, &pull, archive).await?;
             let mut offset = 0;
             loop {
-                let rows = crate::backend::db::pull_requests::reviews::list_pull_request_reviews(
+                let rows = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviews(
                     &state.pool,
                     pull.id,
                     100,
@@ -292,7 +292,7 @@ async fn metadata(
                     if row.review.state == "pending" {
                         continue;
                     }
-                    let author = crate::backend::db::users::accounts::get_user_by_id(
+                    let author = codeyard_db_identity::users::accounts::get_user_by_id(
                         &state.pool,
                         row.review.author_id,
                     )
@@ -345,7 +345,7 @@ async fn issue_comments(
 ) -> Result<()> {
     let mut offset = 0;
     loop {
-        let rows = crate::backend::db::issues::list_issue_comments(&state.pool, id, 100, offset)
+        let rows = codeyard_db_repos::issues::list_issue_comments(&state.pool, id, 100, offset)
             .await
             .map_err(Error::unavailable)?;
         let count = rows.len();
@@ -382,7 +382,7 @@ async fn pull_comments(
 ) -> Result<()> {
     let mut offset = 0;
     loop {
-        let rows = crate::backend::db::pull_requests::reviews::list_pull_request_comments(
+        let rows = codeyard_db_repos::pull_requests::reviews::list_pull_request_comments(
             &state.pool,
             pull.id,
             100,
@@ -395,7 +395,7 @@ async fn pull_comments(
         let mut inline = Vec::new();
         for row in rows {
             if row.comment.path.is_some() || row.comment.review_id.is_some() {
-                let author = crate::backend::db::users::accounts::get_user_by_id(
+                let author = codeyard_db_identity::users::accounts::get_user_by_id(
                     &state.pool,
                     row.comment.author_id,
                 )
@@ -454,14 +454,14 @@ async fn release_records(
     let mut offset = 0;
     loop {
         let rows =
-            crate::backend::db::releases::list_releases(&state.pool, repo.id, true, 100, offset)
+            codeyard_db_repos::releases::list_releases(&state.pool, repo.id, true, 100, offset)
                 .await
                 .map_err(Error::unavailable)?;
         let count = rows.len();
         let mut values = Vec::new();
         for row in rows {
             let assets =
-                crate::backend::db::releases::list_release_assets(&state.pool, row.release.id)
+                codeyard_db_repos::releases::list_release_assets(&state.pool, row.release.id)
                     .await
                     .map_err(Error::unavailable)?;
             let detail = ReleaseDetail {
@@ -478,12 +478,11 @@ async fn release_records(
             let mut asset_values = Vec::new();
             if attachments {
                 for asset in &detail.assets {
-                    let file =
-                        crate::backend::db::files::get_file_by_id(&state.pool, asset.file_id)
-                            .await
-                            .map_err(Error::unavailable)?
-                            .filter(|file| file.is_active)
-                            .ok_or_else(Error::missing)?;
+                    let file = codeyard_db_repos::files::get_file_by_id(&state.pool, asset.file_id)
+                        .await
+                        .map_err(Error::unavailable)?
+                        .filter(|file| file.is_active)
+                        .ok_or_else(Error::missing)?;
                     let path = format!("attachments/release-assets/{}", asset.id);
                     let mut bytes = Vec::new();
                     let size = usize::try_from(file.file_size).map_err(Error::unavailable)?;
@@ -546,8 +545,8 @@ async fn organization(
     org: i64,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
-    use crate::backend::db::organizations::{OrganizationOutcome, OrganizationPage};
-    let record = crate::backend::db::organizations::get_public_organization_by_id(&state.pool, org)
+    use codeyard_db_orgs::organizations::{OrganizationOutcome, OrganizationPage};
+    let record = codeyard_db_orgs::organizations::get_public_organization_by_id(&state.pool, org)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -558,7 +557,7 @@ async fn organization(
     loop {
         let page = OrganizationPage::new(after, 100).map_err(Error::unavailable)?;
         let OrganizationOutcome::Applied(rows) =
-            crate::backend::db::organizations::list_organization_members(
+            codeyard_db_orgs::organizations::list_organization_members(
                 &state.pool,
                 actor,
                 org,
@@ -593,19 +592,14 @@ async fn teams(
     slug: &str,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
-    use crate::backend::db::organizations::{OrganizationOutcome, OrganizationPage};
+    use codeyard_db_orgs::organizations::{OrganizationOutcome, OrganizationPage};
     let mut after = 0;
     loop {
         let page = OrganizationPage::new(after, 100).map_err(Error::unavailable)?;
         let OrganizationOutcome::Applied(rows) =
-            crate::backend::db::organizations::list_organization_teams(
-                &state.pool,
-                actor,
-                org,
-                page,
-            )
-            .await
-            .map_err(Error::unavailable)?
+            codeyard_db_orgs::organizations::list_organization_teams(&state.pool, actor, org, page)
+                .await
+                .map_err(Error::unavailable)?
         else {
             return Err(Error::missing());
         };
@@ -614,7 +608,7 @@ async fn teams(
         for row in rows {
             after = row.team.id;
             let mut value = crate::backend::webhooks::payloads::team(
-                &crate::backend::db::repositories::push_teams::TeamAccess {
+                &codeyard_db_repos::repositories::push_teams::TeamAccess {
                     team: row.team.clone(),
                     permission: 0,
                     org_slug: slug.to_owned(),
@@ -636,7 +630,7 @@ async fn teams(
             loop {
                 let page = OrganizationPage::new(member_after, 100).map_err(Error::unavailable)?;
                 let OrganizationOutcome::Applied(members) =
-                    crate::backend::db::organizations::list_direct_organization_team_members(
+                    codeyard_db_orgs::organizations::list_direct_organization_team_members(
                         &state.pool,
                         actor,
                         org,
@@ -666,7 +660,7 @@ async fn teams(
                 let page =
                     OrganizationPage::new(repository_after, 100).map_err(Error::unavailable)?;
                 let OrganizationOutcome::Applied(repositories) =
-                    crate::backend::db::organizations::list_direct_organization_team_repositories(
+                    codeyard_db_orgs::organizations::list_direct_organization_team_repositories(
                         &state.pool,
                         actor,
                         org,

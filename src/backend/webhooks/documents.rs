@@ -2,8 +2,8 @@
 //! counts and reactions. The payload builders run without the database, so `complete` reads
 //! these fields before a delivery is recorded and sent.
 
-use crate::backend::db::assignees::AssignedItem;
-use crate::backend::db::reactions::Subject;
+use codeyard_db_repos::assignees::AssignedItem;
+use codeyard_db_repos::reactions::Subject;
 
 use codeyard_db_core::models::Release;
 use codeyard_db_core::models::ReleaseAsset;
@@ -30,7 +30,7 @@ async fn fill(
     {
         // A source subscription does not grant access to its private remediation forks.
         let forks =
-            crate::backend::db::repositories::discovery::public_fork_counts(pool, &[repo.id])
+            codeyard_db_repos::repositories::discovery::public_fork_counts(pool, &[repo.id])
                 .await?
                 .remove(&repo.id)
                 .unwrap_or_default();
@@ -101,7 +101,7 @@ async fn fill(
         );
     }
     if let Some(id) = payload["release"]["id"].as_i64() {
-        if let Some(row) = crate::backend::db::releases::get_release(pool, repo.id, id).await? {
+        if let Some(row) = codeyard_db_repos::releases::get_release(pool, repo.id, id).await? {
             payload["release"]["assets"] =
                 json!(release_assets(pool, repo, owner, &row.release).await?);
         }
@@ -111,7 +111,7 @@ async fn fill(
 
 async fn topics(pool: &DbPool, repo_id: i64) -> anyhow::Result<Vec<String>> {
     Ok(
-        crate::backend::db::repositories::topics::repository_topics(pool, &[repo_id])
+        codeyard_db_repos::repositories::topics::repository_topics(pool, &[repo_id])
             .await?
             .remove(&repo_id)
             .unwrap_or_default(),
@@ -128,7 +128,7 @@ async fn still_here(
     let AssignedItem::Issue(id) = item else {
         return Ok(true);
     };
-    Ok(crate::backend::db::issues::get_issue_by_id(pool, id)
+    Ok(codeyard_db_repos::issues::get_issue_by_id(pool, id)
         .await?
         .is_some_and(|issue| {
             issue.repo_id == repo.id && Some(i64::from(issue.number)) == event["number"].as_i64()
@@ -172,7 +172,7 @@ async fn comment(
     // Conversation comment ids interleave the issue and pull request tables; see
     // `codeyard_model::webhook_ids::conversation_comment_id`.
     let counts =
-        crate::backend::db::reactions::reaction_counts(pool, subject.name(), &[id / 2], 0).await?;
+        codeyard_db_repos::reactions::reaction_counts(pool, subject.name(), &[id / 2], 0).await?;
     comment["reactions"] =
         crate::backend::webhooks::payloads::reaction_rollup(&format!("{url}/reactions"), &counts);
     Ok(())
@@ -186,7 +186,7 @@ pub(crate) async fn review_comment_reactions(
     let (Some(id), Some(url)) = (comment["id"].as_i64(), comment["url"].as_str()) else {
         return Ok(Value::Null);
     };
-    let counts = crate::backend::db::reactions::reaction_counts(
+    let counts = codeyard_db_repos::reactions::reaction_counts(
         pool,
         Subject::PullRequestComment.name(),
         &[id],
@@ -213,15 +213,14 @@ async fn review_comment(
         return Ok(());
     };
     let Some(comment) =
-        crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
-            .await?
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(pool, id).await?
     else {
         return Ok(());
     };
     let Some(path) = comment.path.as_deref() else {
         return Ok(());
     };
-    let Some(pull) = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+    let Some(pull) = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         pool,
         comment.pull_request_id,
     )
@@ -255,7 +254,7 @@ async fn pull_request(
     id: i64,
     document: &mut Value,
 ) -> anyhow::Result<()> {
-    let Some(pull) = crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, id)
+    let Some(pull) = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, id)
         .await?
         .filter(|pull| pull.repo_id == repo.id)
     else {
@@ -280,11 +279,11 @@ async fn pull_request(
     let head = match pull.head_repo_id {
         Some(head_id) if head_id == repo.id => Some((repo.clone(), owner.to_owned())),
         Some(head_id) => {
-            match crate::backend::db::repositories::records::get_repository_by_id(pool, head_id)
+            match codeyard_db_repos::repositories::records::get_repository_by_id(pool, head_id)
                 .await?
             {
                 Some(head) => {
-                    crate::backend::db::repositories::records::repository_owner_name(pool, head.id)
+                    codeyard_db_repos::repositories::records::repository_owner_name(pool, head.id)
                         .await?
                         .map(|name| (head, name))
                 }
@@ -307,7 +306,7 @@ async fn pull_request(
                 value["topics"] = json!(topics(pool, head.id).await?);
                 // The fork may have turned private while its topics were read.
                 let public = !fork
-                    || crate::backend::db::repositories::records::get_repository_by_id(
+                    || codeyard_db_repos::repositories::records::get_repository_by_id(
                         pool, head.id,
                     )
                     .await?
@@ -337,17 +336,17 @@ async fn pull_request(
         document["head"]["label"] = json!(head_branch);
     }
     let labels =
-        crate::backend::db::labels::get_pull_request_labels(pool, pull.repo_id, pull.id).await?;
+        codeyard_db_repos::labels::get_pull_request_labels(pool, pull.repo_id, pull.id).await?;
     document["labels"] = json!(labels
         .iter()
         .map(|label| crate::backend::webhooks::payloads::label(label, owner, &repo.name))
         .collect::<Vec<_>>());
     if let Some(milestone) = pull.milestone_id {
         if let Some(summary) =
-            crate::backend::db::milestones::get_milestone_by_id(pool, repo.id, milestone).await?
+            codeyard_db_repos::milestones::get_milestone_by_id(pool, repo.id, milestone).await?
         {
             let creator = match summary.milestone.creator_id {
-                Some(id) => crate::backend::db::users::accounts::get_user_by_id(pool, id).await?,
+                Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(pool, id).await?,
                 None => None,
             };
             document["milestone"] = crate::backend::webhooks::payloads::milestone(
@@ -360,11 +359,11 @@ async fn pull_request(
     }
     let mut assignees = Vec::new();
     for name in
-        crate::backend::db::assignees::list_assignees(pool, AssignedItem::PullRequest(pull.id))
+        codeyard_db_repos::assignees::list_assignees(pool, AssignedItem::PullRequest(pull.id))
             .await?
     {
         if let Some(user) =
-            crate::backend::db::users::accounts::get_user_by_username(pool, &name).await?
+            codeyard_db_identity::users::accounts::get_user_by_username(pool, &name).await?
         {
             assignees.push(crate::backend::webhooks::payloads::user(&user));
         }
@@ -372,14 +371,14 @@ async fn pull_request(
     document["assignee"] = assignees.first().cloned().unwrap_or(Value::Null);
     document["assignees"] = json!(assignees);
     let reviewers =
-        crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id)
+        codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id)
             .await?;
     document["requested_reviewers"] = json!(reviewers
         .iter()
         .map(crate::backend::webhooks::payloads::user)
         .collect::<Vec<_>>());
     let teams =
-        crate::backend::db::pull_requests::team_reviewers::list(pool, repo.id, Some(pull.id), None)
+        codeyard_db_repos::pull_requests::team_reviewers::list(pool, repo.id, Some(pull.id), None)
             .await?;
     document["requested_teams"] = json!(teams
         .iter()
@@ -390,13 +389,13 @@ async fn pull_request(
         ))
         .collect::<Vec<_>>());
     let (comments, review_comments) =
-        crate::backend::db::pull_requests::reviews::pull_request_comment_counts(pool, pull.id)
+        codeyard_db_repos::pull_requests::reviews::pull_request_comment_counts(pool, pull.id)
             .await?;
     document["comments"] = json!(comments);
     document["review_comments"] = json!(review_comments);
     document["auto_merge"] = auto_merge(pool, pull.id).await?;
     document["merged_by"] = match pull.merged_by_id {
-        Some(id) => crate::backend::db::users::accounts::get_user_by_id(pool, id)
+        Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
             .await?
             .as_ref()
             .map_or(Value::Null, crate::backend::webhooks::payloads::user),
@@ -408,13 +407,13 @@ async fn pull_request(
 /// A pull request's `auto_merge` object, or null when auto-merge is not enabled.
 pub(crate) async fn auto_merge(pool: &DbPool, pull_request_id: i64) -> anyhow::Result<Value> {
     let Some(entry) =
-        crate::backend::db::pull_requests::auto_merge::get_auto_merge(pool, pull_request_id)
-            .await?
+        codeyard_db_repos::pull_requests::auto_merge::get_auto_merge(pool, pull_request_id).await?
     else {
         return Ok(Value::Null);
     };
     let enabled_by =
-        crate::backend::db::users::accounts::get_user_by_id(pool, entry.request.enabled_by).await?;
+        codeyard_db_identity::users::accounts::get_user_by_id(pool, entry.request.enabled_by)
+            .await?;
     Ok(crate::backend::webhooks::payloads::auto_merge(
         &entry.request,
         enabled_by.as_ref(),
@@ -429,7 +428,7 @@ pub(crate) async fn release_assets(
     release: &Release,
 ) -> anyhow::Result<Vec<Value>> {
     Ok(
-        crate::backend::db::releases::list_asset_files(pool, release.id)
+        codeyard_db_repos::releases::list_asset_files(pool, release.id)
             .await?
             .into_iter()
             .map(|row| {
@@ -463,11 +462,11 @@ pub(crate) async fn release_asset(
     release: &Release,
     asset: &ReleaseAsset,
 ) -> anyhow::Result<Option<Value>> {
-    let Some(file) = crate::backend::db::files::get_file_by_id(pool, asset.file_id).await? else {
+    let Some(file) = codeyard_db_repos::files::get_file_by_id(pool, asset.file_id).await? else {
         return Ok(None);
     };
     let uploader = match file.user_id {
-        Some(id) => crate::backend::db::users::accounts::get_user_by_id(pool, id)
+        Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
             .await?
             .map(|user| {
                 crate::backend::webhooks::payloads::simple_person(

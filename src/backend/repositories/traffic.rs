@@ -1,13 +1,13 @@
 //! Traffic means observed native navigations and completed initial Git object transfers.
 pub(crate) mod clone;
 
-pub use crate::backend::db::repositories::traffic::{
-    Bucket, Identity, Kind, Metric, PopularPath, PopularReferrer, Summary, Totals, Window,
-};
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
+pub use codeyard_db_repos::repositories::traffic::{
+    Bucket, Identity, Kind, Metric, PopularPath, PopularReferrer, Summary, Totals, Window,
+};
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
     #[error("Repository not found")]
@@ -46,7 +46,7 @@ pub async fn summary(
     weekly: bool,
 ) -> Result<Summary> {
     authorize(pool, viewer, repo).await?;
-    crate::backend::db::repositories::traffic::summary(
+    codeyard_db_repos::repositories::traffic::summary(
         pool,
         repo.id,
         kind,
@@ -61,7 +61,7 @@ pub async fn paths(
     repo: &Repository,
 ) -> Result<Vec<PopularPath>> {
     authorize(pool, viewer, repo).await?;
-    crate::backend::db::repositories::traffic::paths(pool, repo.id, &Window::current()).await
+    codeyard_db_repos::repositories::traffic::paths(pool, repo.id, &Window::current()).await
 }
 pub async fn referrers(
     pool: &DbPool,
@@ -69,11 +69,11 @@ pub async fn referrers(
     repo: &Repository,
 ) -> Result<Vec<PopularReferrer>> {
     authorize(pool, viewer, repo).await?;
-    crate::backend::db::repositories::traffic::referrers(pool, repo.id, &Window::current()).await
+    codeyard_db_repos::repositories::traffic::referrers(pool, repo.id, &Window::current()).await
 }
 /// One bounded cleanup batch, shared by the live service and maintenance tests.
 pub async fn purge_expired(pool: &DbPool) -> Result<u64> {
-    crate::backend::db::repositories::traffic::prune(pool, &Window::current().first).await
+    codeyard_db_repos::repositories::traffic::prune(pool, &Window::current().first).await
 }
 pub(crate) async fn maintain(pool: DbPool, mut stop: tokio::sync::watch::Receiver<bool>) {
     use tokio::time::{Duration, Instant, MissedTickBehavior};
@@ -108,7 +108,7 @@ const OBSERVE_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 pub async fn observe(pool: &DbPool, repo: i64, identity: &Identity, metric: &Metric) {
     match tokio::time::timeout(
         OBSERVE_BUDGET,
-        crate::backend::db::repositories::traffic::record(pool, repo, identity, metric),
+        codeyard_db_repos::repositories::traffic::record(pool, repo, identity, metric),
     )
     .await
     {

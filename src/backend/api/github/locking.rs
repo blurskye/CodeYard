@@ -18,12 +18,12 @@ struct Lock {
 }
 
 pub(in crate::backend::api) fn error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<crate::backend::db::discussions::LockRefusal>() {
-        Some(crate::backend::db::discussions::LockRefusal::Denied) => {
+    match error.downcast_ref::<codeyard_db_repos::discussions::LockRefusal>() {
+        Some(codeyard_db_repos::discussions::LockRefusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Discussion lock denied")
         }
-        Some(crate::backend::db::discussions::LockRefusal::Missing) => Error::missing(),
-        Some(crate::backend::db::discussions::LockRefusal::InvalidReason) => {
+        Some(codeyard_db_repos::discussions::LockRefusal::Missing) => Error::missing(),
+        Some(codeyard_db_repos::discussions::LockRefusal::InvalidReason) => {
             Error::validation("Issue", "lock_reason", "invalid")
         }
         None => Error::unavailable(error),
@@ -43,7 +43,7 @@ async fn change(
         .database_actor();
     let item =
         crate::backend::api::github::labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
-    crate::backend::db::discussions::set_lock(&state.pool, actor, repo.id, item, locked, reason)
+    codeyard_db_repos::discussions::set_lock(&state.pool, actor, repo.id, item, locked, reason)
         .await
         .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)

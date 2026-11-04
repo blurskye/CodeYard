@@ -102,7 +102,7 @@ pub(super) async fn run(
             } = &service.queue
             {
                 ensure!(
-                    crate::backend::db::cluster::get_node_by_id(pool, context.node_id)
+                    codeyard_db_cluster::cluster::get_node_by_id(pool, context.node_id)
                         .await?
                         .is_some_and(|node| {
                             node.public_key == context.key.public_hex()
@@ -527,7 +527,7 @@ async fn run_workflows(
     } else {
         workspace.write_github_secrets(&claim.secrets, &claim.github_tokens.act)?
     };
-    crate::backend::db::variables::validate_workflow_variables(&claim.variables)?;
+    codeyard_db_actions::variables::validate_workflow_variables(&claim.variables)?;
     let variable_file = workspace.write_values("variables.env", &claim.variables, !native)?;
     workspace.write_event(claim)?;
     if !native && claim.github_tokens.act_limited {
@@ -2125,7 +2125,7 @@ impl Workspace {
                 .iter()
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect();
-            crate::backend::db::secrets::validate_repository_secrets(&secrets)?;
+            codeyard_db_actions::secrets::validate_repository_secrets(&secrets)?;
             ensure!(
                 scope.variables.len() <= codeyard_actions::values::MAX_SCOPE_VALUES,
                 "Too many environment variables"
@@ -2135,7 +2135,7 @@ impl Workspace {
                 .iter()
                 .map(|(name, value)| (name.clone(), value.clone()))
                 .collect();
-            crate::backend::db::variables::validate_all(&variables)?;
+            codeyard_db_actions::variables::validate_all(&variables)?;
             environments.insert(key, scope);
         }
         let bytes =
@@ -2213,7 +2213,7 @@ impl Workspace {
             return Ok(None);
         }
         // Remote claims are untrusted input here. Validate the whole set before the file exists.
-        crate::backend::db::secrets::validate_workflow_secrets(secrets)?;
+        codeyard_db_actions::secrets::validate_workflow_secrets(secrets)?;
 
         self.write_values("secrets.env", secrets, act)
     }
@@ -2357,10 +2357,10 @@ mod tests {
                 .await
                 .unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let owner = crate::backend::db::users::accounts::create_user(&pool, "worker_owner", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "worker_owner", None)
             .await
             .unwrap();
-        let repo = crate::backend::db::repositories::records::create_repository(
+        let repo = codeyard_db_repos::repositories::records::create_repository(
             &pool,
             owner.id,
             "project",
@@ -2371,9 +2371,9 @@ mod tests {
         .await
         .unwrap();
         let sha = "1".repeat(40);
-        let run = crate::backend::db::ci::enqueue_ci_run(
+        let run = codeyard_db_actions::ci::enqueue_ci_run(
             &pool,
-            crate::backend::db::ci::NewCiRun {
+            codeyard_db_actions::ci::NewCiRun {
                 repo_id: repo.id,
                 triggered_by_id: owner.id,
                 pipeline: "ci",
@@ -2391,7 +2391,7 @@ mod tests {
         )
         .await
         .unwrap();
-        crate::backend::db::ci::claim_ci_run(
+        codeyard_db_actions::ci::claim_ci_run(
             &pool,
             "worker",
             "local",
@@ -2442,12 +2442,12 @@ mod tests {
             .await
             .unwrap();
             flush_log_lines(&tx).await.unwrap();
-            let stored = crate::backend::db::ci::list_ci_logs(pool, run.id, 100)
+            let stored = codeyard_db_actions::ci::list_ci_logs(pool, run.id, 100)
                 .await
                 .unwrap();
             assert_eq!(stored.len(), 1);
             assert_eq!(stored[0].line, "last output");
-            crate::backend::db::ci::finish_ci_run(pool, run.id, "worker", "success", None)
+            codeyard_db_actions::ci::finish_ci_run(pool, run.id, "worker", "success", None)
                 .await
                 .unwrap()
                 .unwrap();
@@ -2503,7 +2503,7 @@ mod tests {
                 }
                 tokio::time::sleep(Duration::from_millis(5)).await;
             }
-            crate::backend::db::ci::finish_ci_run(pool, run.id, "worker", "success", None)
+            codeyard_db_actions::ci::finish_ci_run(pool, run.id, "worker", "success", None)
                 .await
                 .unwrap()
                 .unwrap();
@@ -2533,7 +2533,7 @@ mod tests {
         sent.unwrap();
         assert!(!open);
         assert_eq!(
-            crate::backend::db::ci::list_ci_logs(pool, run.id, 100)
+            codeyard_db_actions::ci::list_ci_logs(pool, run.id, 100)
                 .await
                 .unwrap()
                 .len(),
@@ -2581,7 +2581,7 @@ mod tests {
         };
         // The fixture's repository is missing, so the run fails before any job starts.
         tokio::time::timeout(Duration::from_secs(40), async {
-            while !crate::backend::db::ci::list_ci_logs(pool, run.id, 100)
+            while !codeyard_db_actions::ci::list_ci_logs(pool, run.id, 100)
                 .await
                 .unwrap()
                 .iter()
@@ -2594,7 +2594,7 @@ mod tests {
         .unwrap();
         // A container may still be running, so the run keeps its lease until removal succeeds.
         tokio::time::sleep(Duration::from_secs(2)).await;
-        let current = crate::backend::db::ci::get_ci_run_by_run_id(pool, run.run_id)
+        let current = codeyard_db_actions::ci::get_ci_run_by_run_id(pool, run.run_id)
             .await
             .unwrap()
             .unwrap();
@@ -2655,7 +2655,7 @@ mod tests {
         for (key, secret) in [("prod", "production-secret"), ("other", "other-secret")] {
             values.environments.insert(
                 key.into(),
-                crate::backend::db::environment_values::WorkflowValues {
+                codeyard_db_actions::environment_values::WorkflowValues {
                     secrets: BTreeMap::from([("TOKEN".into(), secret.into())]),
                     variables: BTreeMap::from([("COLOR".into(), "visible-variable".into())]),
                 },
@@ -2706,7 +2706,7 @@ mod tests {
             crate::backend::ci::environment_values::EnvironmentValues::default();
         environment_values.environments.insert(
             "prod".into(),
-            crate::backend::db::environment_values::WorkflowValues {
+            codeyard_db_actions::environment_values::WorkflowValues {
                 secrets: BTreeMap::from([("TOKEN".into(), "shared-secret".into())]),
                 variables: BTreeMap::from([("COLOR".into(), "visible-variable".into())]),
             },
@@ -2791,7 +2791,7 @@ mod tests {
             ),
             (
                 "VALID_NAME",
-                "x".repeat(crate::backend::db::secrets::MAX_SECRET_VALUE_BYTES + 1),
+                "x".repeat(codeyard_actions::values::MAX_VALUE_BYTES + 1),
                 "Repository secret value exceeds 48 KiB",
             ),
         ] {
@@ -3671,10 +3671,10 @@ jobs:
             .unwrap();
         let pool = codeyard_db_core::DbPool::from(native);
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let owner = crate::backend::db::users::accounts::create_user(&pool, "result_owner", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "result_owner", None)
             .await
             .unwrap();
-        let repository = crate::backend::db::repositories::records::create_repository(
+        let repository = codeyard_db_repos::repositories::records::create_repository(
             &pool,
             owner.id,
             "result",
@@ -3686,9 +3686,9 @@ jobs:
         .unwrap();
         let sha = "a".repeat(40);
         let blobs = serde_json::json!({ ".github/workflows/ci.yml": sha });
-        let run = crate::backend::db::ci::enqueue_ci_run(
+        let run = codeyard_db_actions::ci::enqueue_ci_run(
             &pool,
-            crate::backend::db::ci::NewCiRun {
+            codeyard_db_actions::ci::NewCiRun {
                 repo_id: repository.id,
                 triggered_by_id: owner.id,
                 pipeline: "ci",

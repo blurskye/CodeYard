@@ -18,9 +18,6 @@ use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse;
 use crate::backend::app::AppState;
 
-use crate::backend::db::discussions::ListFilter;
-use crate::backend::db::discussions::ListSort;
-use crate::backend::db::discussions::Pick;
 use crate::backend::issues::mutations::CreateIssueRequest;
 use crate::backend::repositories::issue_templates::compose_form_body;
 use crate::backend::repositories::issue_templates::first_missing_answer;
@@ -40,6 +37,9 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
+use codeyard_db_repos::discussions::ListFilter;
+use codeyard_db_repos::discussions::ListSort;
+use codeyard_db_repos::discussions::Pick;
 use codeyard_webui::components::references::References;
 use codeyard_webui::components::task_lists::count_tasks;
 use codeyard_webui::pages::repos::issues as view;
@@ -57,7 +57,7 @@ pub async fn create_issue(
     let issue = crate::backend::issues::mutations::create_issue(
         &state.pool,
         &state.notification_broadcaster,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             current_actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -148,10 +148,10 @@ pub async fn list_issues(
         query.page,
         Some(query.per_page.unwrap_or(100)),
     )?;
-    let issues = crate::backend::db::issues::list_repo_issues(
+    let issues = codeyard_db_repos::issues::list_repo_issues(
         &state.pool,
         repository.id,
-        &crate::backend::db::discussions::ListFilter {
+        &codeyard_db_repos::discussions::ListFilter {
             state: issue_state,
             labels: &labels,
             offset: offset as i64,
@@ -166,12 +166,11 @@ pub async fn list_issues(
         .iter()
         .map(|entry| entry.issue.id)
         .collect::<Vec<_>>();
-    let mut labels =
-        crate::backend::db::labels::get_issues_labels(&state.pool, repository.id, &ids)
-            .await
-            .map_err(|_| storage_unavailable())?;
+    let mut labels = codeyard_db_repos::labels::get_issues_labels(&state.pool, repository.id, &ids)
+        .await
+        .map_err(|_| storage_unavailable())?;
     let mut comments: HashMap<i64, i64> =
-        crate::backend::db::issues::count_issue_comments(&state.pool, &ids)
+        codeyard_db_repos::issues::count_issue_comments(&state.pool, &ids)
             .await
             .map_err(|_| storage_unavailable())?
             .into_iter()
@@ -223,7 +222,7 @@ async fn query_narrowing(
         "none" => Pick::Unset,
         text => {
             let found = match text.parse::<i32>() {
-                Ok(number) => crate::backend::db::milestones::get_milestone(
+                Ok(number) => codeyard_db_repos::milestones::get_milestone(
                     &ctx.state.pool,
                     repo.record.id,
                     number,
@@ -276,7 +275,7 @@ async fn add_row_milestones(
 ) -> ResultPage<()> {
     let ids: Vec<_> = ids.filter(|id| !named.contains_key(id)).collect();
     if !ids.is_empty() {
-        for milestone in crate::backend::db::milestones::milestone_choices_by_ids(
+        for milestone in codeyard_db_repos::milestones::milestone_choices_by_ids(
             &ctx.state.pool,
             repo.record.id,
             &ids,
@@ -298,7 +297,7 @@ async fn list_filters(
     selected_labels: Vec<String>,
     selected_author: Option<i64>,
 ) -> ResultPage<view::ListFilters> {
-    let mut labels: Vec<_> = crate::backend::db::labels::list_repo_labels_page(
+    let mut labels: Vec<_> = codeyard_db_repos::labels::list_repo_labels_page(
         &ctx.state.pool,
         repo.record.id,
         "",
@@ -316,7 +315,7 @@ async fn list_filters(
             .iter()
             .any(|label| label.name.eq_ignore_ascii_case(name))
         {
-            if let Some(found) = crate::backend::db::labels::get_repo_label_by_name(
+            if let Some(found) = codeyard_db_repos::labels::get_repo_label_by_name(
                 &ctx.state.pool,
                 repo.record.id,
                 name,
@@ -331,7 +330,7 @@ async fn list_filters(
     Ok(view::ListFilters {
         labels,
         selected_labels,
-        assignees: crate::backend::db::assignees::list_assignable_usernames(
+        assignees: codeyard_db_repos::assignees::list_assignable_usernames(
             &ctx.state.pool,
             repo.record.id,
         )
@@ -340,7 +339,7 @@ async fn list_filters(
         assignee: query_value(ctx, "assignee"),
         milestones: milestones.into_iter().map(milestone_choice_view).collect(),
         milestone: query_value(ctx, "milestone"),
-        authors: crate::backend::db::discussions::list_repo_authors(
+        authors: codeyard_db_repos::discussions::list_repo_authors(
             &ctx.state.pool,
             repo.record.id,
             selected_author,
@@ -367,7 +366,7 @@ pub(crate) async fn native_index(
     let repo = repository(&ctx, &owner, &name).await?;
     // The milestones name each row and feed the milestone filter, so they are read once.
     let mut milestones =
-        crate::backend::db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
+        codeyard_db_repos::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
             .await
             .map_err(|_| unavailable(&ctx))?;
     // The search box holds the filters as qualifiers (`state:closed label:bug`); they replace the
@@ -382,7 +381,7 @@ pub(crate) async fn native_index(
         {
             Some(found) => found.number,
             None => {
-                crate::backend::db::milestones::milestone_choice_by_title(
+                codeyard_db_repos::milestones::milestone_choice_by_title(
                     &ctx.state.pool,
                     repo.record.id,
                     title,
@@ -424,7 +423,7 @@ pub(crate) async fn native_index(
     if let Pick::Is(id) = narrowing.milestone {
         if !milestones.iter().any(|milestone| milestone.id == id) {
             milestones.extend(
-                crate::backend::db::milestones::milestone_choices_by_ids(
+                codeyard_db_repos::milestones::milestone_choices_by_ids(
                     &ctx.state.pool,
                     repo.record.id,
                     &[id],
@@ -475,14 +474,14 @@ pub(crate) async fn native_index(
     let totals;
     match kind {
         Kind::Issue => {
-            totals = crate::backend::db::issues::count_repo_issues(
+            totals = codeyard_db_repos::issues::count_repo_issues(
                 &ctx.state.pool,
                 repo.record.id,
                 &list,
             )
             .await
             .map_err(|_| unavailable(&ctx))?;
-            let mut entries = crate::backend::db::issues::list_repo_issues(
+            let mut entries = codeyard_db_repos::issues::list_repo_issues(
                 &ctx.state.pool,
                 repo.record.id,
                 &list,
@@ -508,16 +507,13 @@ pub(crate) async fn native_index(
                 .iter()
                 .map(|entry| entry.issue.id)
                 .collect::<Vec<_>>();
-            let mut labels = crate::backend::db::labels::get_issues_labels(
-                &ctx.state.pool,
-                repo.record.id,
-                &ids,
-            )
-            .await
-            .map_err(|_| unavailable(&ctx))?;
+            let mut labels =
+                codeyard_db_repos::labels::get_issues_labels(&ctx.state.pool, repo.record.id, &ids)
+                    .await
+                    .map_err(|_| unavailable(&ctx))?;
             let mut assignees = listed_assignees(&ctx, &ids, false).await?;
             let mut comments: HashMap<i64, i64> =
-                crate::backend::db::issues::count_issue_comments(&ctx.state.pool, &ids)
+                codeyard_db_repos::issues::count_issue_comments(&ctx.state.pool, &ids)
                     .await
                     .map_err(|_| unavailable(&ctx))?
                     .into_iter()
@@ -539,14 +535,14 @@ pub(crate) async fn native_index(
             }
         }
         Kind::Pull => {
-            totals = crate::backend::db::pull_requests::records::count_repo_pull_requests(
+            totals = codeyard_db_repos::pull_requests::records::count_repo_pull_requests(
                 &ctx.state.pool,
                 repo.record.id,
                 &list,
             )
             .await
             .map_err(|_| unavailable(&ctx))?;
-            let mut pulls = crate::backend::db::pull_requests::records::list_repo_pull_requests(
+            let mut pulls = codeyard_db_repos::pull_requests::records::list_repo_pull_requests(
                 &ctx.state.pool,
                 repo.record.id,
                 &list,
@@ -574,7 +570,7 @@ pub(crate) async fn native_index(
                 .iter()
                 .map(|value| value.pull_request.id)
                 .collect::<Vec<_>>();
-            let mut labels = crate::backend::db::labels::get_pull_requests_labels(
+            let mut labels = codeyard_db_repos::labels::get_pull_requests_labels(
                 &ctx.state.pool,
                 repo.record.id,
                 &ids,
@@ -583,7 +579,7 @@ pub(crate) async fn native_index(
             .map_err(|_| unavailable(&ctx))?;
             let mut assignees = listed_assignees(&ctx, &ids, true).await?;
             let mut comments: HashMap<i64, i64> =
-                crate::backend::db::pull_requests::reviews::count_pull_request_comments_for(
+                codeyard_db_repos::pull_requests::reviews::count_pull_request_comments_for(
                     &ctx.state.pool,
                     &ids,
                 )
@@ -592,14 +588,14 @@ pub(crate) async fn native_index(
                 .into_iter()
                 .collect();
             let reviews =
-                crate::backend::db::pull_requests::reviews::list_pull_request_review_states(
+                codeyard_db_repos::pull_requests::reviews::list_pull_request_review_states(
                     &ctx.state.pool,
                     &ids,
                 )
                 .await
                 .map_err(|_| unavailable(&ctx))?;
             let checks =
-                crate::backend::db::ci::list_pull_request_check_statuses(&ctx.state.pool, &ids)
+                codeyard_db_actions::ci::list_pull_request_check_statuses(&ctx.state.pool, &ids)
                     .await
                     .map_err(|_| unavailable(&ctx))?;
             let mut heads = HashMap::new();
@@ -736,12 +732,12 @@ async fn issue_choices(
         return Ok(view::IssueChoices::default());
     }
     let assignable =
-        crate::backend::db::assignees::list_assignable_usernames(&ctx.state.pool, repo.record.id)
+        codeyard_db_repos::assignees::list_assignable_usernames(&ctx.state.pool, repo.record.id)
             .await
             .map_err(|_| unavailable(ctx))?;
     // Labels are applied by administrators, as on the issue page, so writers are not offered them.
     let labels = if repo.view.can_admin {
-        crate::backend::db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
+        codeyard_db_repos::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
             .await
             .map_err(|_| unavailable(ctx))?
             .into_iter()
@@ -751,7 +747,7 @@ async fn issue_choices(
         Vec::new()
     };
     let milestones =
-        crate::backend::db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
+        codeyard_db_repos::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
             .await
             .map_err(|_| unavailable(ctx))?
             .into_iter()
@@ -771,12 +767,12 @@ fn issue_choices_valid(
     choices: &view::IssueChoices,
 ) -> Result<(), &'static str> {
     let assignees_ok = (draft.assignees.len() as i64)
-        <= crate::backend::db::assignees::MAX_ASSIGNEES
+        <= codeyard_db_repos::assignees::MAX_ASSIGNEES
         && draft
             .assignees
             .iter()
             .all(|name| choices.assignable.contains(name));
-    if draft.labels.len() > crate::backend::db::labels::MAX_ISSUE_LABELS {
+    if draft.labels.len() > codeyard_db_repos::labels::MAX_ISSUE_LABELS {
         return Err("Choose at most 100 labels.");
     }
     let labels_ok = draft.labels.iter().all(|id| {
@@ -884,7 +880,7 @@ fn apply_issue_template(
             .assignees
             .iter()
             .filter(|name| choices.assignable.contains(name))
-            .take(crate::backend::db::assignees::MAX_ASSIGNEES as usize)
+            .take(codeyard_db_repos::assignees::MAX_ASSIGNEES as usize)
             .cloned()
             .collect();
     }
@@ -1218,7 +1214,7 @@ pub(crate) async fn native_create(
             let mut names = draft.assignees.clone();
             names.sort_unstable();
             names.dedup();
-            let users = match crate::backend::db::users::accounts::get_users_by_usernames(
+            let users = match codeyard_db_identity::users::accounts::get_users_by_usernames(
                 &ctx.state.pool,
                 &names,
             )
@@ -1262,7 +1258,7 @@ pub(crate) async fn native_create(
                     parent_issue_id: None,
                     parent_repository_id: None,
                 },
-                crate::backend::db::issues::OwnedIssueMetadata {
+                codeyard_db_repos::issues::OwnedIssueMetadata {
                     labels,
                     assignees,
                     milestone: draft.milestone.parse().ok(),

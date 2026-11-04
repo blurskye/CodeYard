@@ -6,7 +6,7 @@ use codeyard_db_core::DbPool;
 
 pub fn social_account(
     input: &str,
-) -> Result<crate::backend::db::users::social_accounts::SocialAccount, ProfileError> {
+) -> Result<codeyard_db_identity::users::social_accounts::SocialAccount, ProfileError> {
     let url = codeyard_support::website::parse(input.trim()).ok_or(ProfileError::Website)?;
     if url.as_str().len() > 255 || input.contains(['\0', '\r', '\n']) {
         return Err(ProfileError::Website);
@@ -21,10 +21,12 @@ pub fn social_account(
         "twitch.tv" => "twitch",
         _ => "generic",
     };
-    Ok(crate::backend::db::users::social_accounts::SocialAccount {
-        provider: provider.into(),
-        url: url.into(),
-    })
+    Ok(
+        codeyard_db_identity::users::social_accounts::SocialAccount {
+            provider: provider.into(),
+            url: url.into(),
+        },
+    )
 }
 
 pub struct ProfileUpdate<'a> {
@@ -61,8 +63,7 @@ fn website(input: &str) -> Result<Option<String>, ProfileError> {
     } else {
         input.to_owned()
     };
-    crate::backend::db::repositories::topics::parse_website(&text)
-        .map_err(|_| ProfileError::Website)
+    codeyard_db_repos::repositories::topics::parse_website(&text).map_err(|_| ProfileError::Website)
 }
 
 pub fn validate(input: &ProfileUpdate<'_>) -> Result<(), ProfileError> {
@@ -101,13 +102,13 @@ pub async fn repositories_on_profile(
     text: &str,
     page: usize,
 ) -> Result<(User, Vec<Repository>, usize), ProfileReadError> {
-    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(pool, username)
         .await
         .map_err(|_| ProfileReadError::UserUnavailable)?
         .ok_or(ProfileReadError::Missing)?;
     let offset = i64::try_from(page.saturating_sub(1).saturating_mul(30)).unwrap_or(i64::MAX);
     let (repositories, count) =
-        crate::backend::db::repositories::records::list_user_repository_page(
+        codeyard_db_repos::repositories::records::list_user_repository_page(
             pool,
             user.id,
             owner_session,
@@ -132,12 +133,12 @@ pub async fn repository_count_on_profile(
     username: &str,
     owner_session: Option<&str>,
 ) -> Result<(User, usize), ProfileReadError> {
-    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(pool, username)
         .await
         .map_err(|_| ProfileReadError::UserUnavailable)?
         .ok_or(ProfileReadError::Missing)?;
     let count =
-        crate::backend::db::repositories::count_user_repositories(pool, user.id, owner_session)
+        codeyard_db_repos::repositories::count_user_repositories(pool, user.id, owner_session)
             .await
             .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
     Ok((user, usize::try_from(count).unwrap_or(usize::MAX)))
@@ -146,8 +147,8 @@ pub async fn repository_count_on_profile(
 pub async fn save(
     pool: &DbPool,
     actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
-    input: &crate::backend::db::users::profiles::ProfilePatch<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+    input: &codeyard_db_identity::users::profiles::ProfilePatch<'_>,
 ) -> Result<User, ProfileError> {
     validate(&ProfileUpdate {
         display_name: input.display_name,
@@ -173,16 +174,16 @@ pub async fn save(
         return Err(ProfileError::Invalid);
     }
     let normalized = input.website.map(website).transpose()?.flatten();
-    let patch = crate::backend::db::users::profiles::ProfilePatch {
+    let patch = codeyard_db_identity::users::profiles::ProfilePatch {
         website: input.website.map(|_| normalized.as_deref().unwrap_or("")),
         ..*input
     };
-    crate::backend::db::users::profiles::save_profile(pool, actor, credential, &patch)
+    codeyard_db_identity::users::profiles::save_profile(pool, actor, credential, &patch)
         .await
         .map_err(|error| {
             if error.is::<codeyard_support::credentials::AccountRestricted>() {
                 ProfileError::Denied
-            } else if error.is::<crate::backend::db::users::profiles::InvalidPublicEmail>() {
+            } else if error.is::<codeyard_db_identity::users::profiles::InvalidPublicEmail>() {
                 ProfileError::Email
             } else {
                 ProfileError::Unavailable
@@ -198,7 +199,7 @@ pub async fn update(
 ) -> Result<User, ProfileError> {
     validate(&input)?;
     let normalized = input.website.map(website).transpose()?.flatten();
-    crate::backend::db::users::accounts::update_user_profile(
+    codeyard_db_identity::users::accounts::update_user_profile(
         pool,
         actor,
         session,

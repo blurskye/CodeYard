@@ -134,7 +134,7 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         permalink: String::new(),
         references: Default::default(),
         empty: loaded.refs.is_empty(),
-        migration_status: crate::backend::db::source_imports::get(
+        migration_status: codeyard_db_repos::source_imports::get(
             &ctx.state.pool,
             loaded.repository.id,
         )

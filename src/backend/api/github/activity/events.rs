@@ -5,8 +5,8 @@ use crate::backend::api::github::activity::Pagination;
 use crate::backend::api::github::activity::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::events::EventScope;
-use crate::backend::db::events::EventViewer;
+use codeyard_db_repos::events::EventScope;
+use codeyard_db_repos::events::EventViewer;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -38,7 +38,7 @@ pub(super) async fn documents(
     offset: usize,
     limit: usize,
 ) -> Result<(Vec<Value>, bool)> {
-    let entries = crate::backend::db::events::list_events(
+    let entries = codeyard_db_repos::events::list_events(
         &state.pool,
         viewer,
         scope,
@@ -56,7 +56,7 @@ pub(super) async fn documents(
             if let Some(value) = actors.get(&id) {
                 value.clone()
             } else {
-                let value = crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+                let value = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
                     .await
                     .map_err(Error::unavailable)?
                     .as_ref()
@@ -142,7 +142,7 @@ async fn list(
                 }
             }
             Listing::Organization | Listing::UserOrganization => {
-                let org = crate::backend::db::organizations::profiles::get_public_organization(
+                let org = codeyard_db_orgs::organizations::profiles::get_public_organization(
                     &state.pool,
                     param("org")?,
                 )
@@ -150,7 +150,7 @@ async fn list(
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
                 let public = if matches!(listing, Listing::UserOrganization) {
-                    let user = crate::backend::db::users::accounts::get_user_by_username(
+                    let user = codeyard_db_identity::users::accounts::get_user_by_username(
                         &state.pool,
                         param("username")?,
                     )
@@ -164,14 +164,14 @@ async fn list(
                         ));
                     }
                     if !matches!(
-                        crate::backend::db::organizations::profiles::get_organization_metadata(
+                        codeyard_db_orgs::organizations::profiles::get_organization_metadata(
                             &state.pool,
                             user.id,
                             org.id
                         )
                         .await
                         .map_err(Error::unavailable)?,
-                        crate::backend::db::organizations::OrganizationOutcome::Applied(_)
+                        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
                     ) {
                         return Err(Error::missing());
                     }
@@ -182,7 +182,7 @@ async fn list(
                 (EventScope::Organization(org.id), public)
             }
             Listing::User { received, public } => {
-                let user = crate::backend::db::users::accounts::get_user_by_username(
+                let user = codeyard_db_identity::users::accounts::get_user_by_username(
                     &state.pool,
                     param("username")?,
                 )

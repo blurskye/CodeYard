@@ -5,10 +5,6 @@ use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 
-use crate::backend::db::notifications::records::{
-    NotificationCursor, NotificationFilter, NotificationInbox, NotificationInboxAction,
-    NotificationView, ViewCounts,
-};
 use axum::extract::OriginalUri;
 use axum::extract::Query;
 use axum::extract::State;
@@ -18,6 +14,10 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use codeyard_db_repos::notifications::records::{
+    NotificationCursor, NotificationFilter, NotificationInbox, NotificationInboxAction,
+    NotificationView, ViewCounts,
+};
 use codeyard_webui::pages::notifications as view;
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -280,7 +280,7 @@ pub async fn list_notifications(
         .into_iter()
         .collect();
     let actor_map: HashMap<i64, UserResponse> =
-        crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &actor_ids)
+        codeyard_db_identity::users::accounts::get_users_by_ids(&state.pool, &actor_ids)
             .await
             .map_err(notification_unavailable)?
             .into_iter()
@@ -331,7 +331,7 @@ pub(crate) async fn notification_update(
     })?;
     let actor = match notification.actor_id {
         Some(actor_id) => {
-            crate::backend::db::users::accounts::get_user_by_id(&state.pool, actor_id)
+            codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, actor_id)
                 .await
                 .map_err(notification_unavailable)?
                 .map(UserResponse::from)
@@ -368,7 +368,7 @@ pub(crate) async fn notification_list(
         Ok(params) => params,
         Err(message) => return ctx.error(StatusCode::BAD_REQUEST, message),
     };
-    let inbox = match crate::backend::db::notifications::records::notification_inbox(
+    let inbox = match codeyard_db_repos::notifications::records::notification_inbox(
         &ctx.state.pool,
         &session_id,
         user.id,
@@ -405,7 +405,7 @@ pub(crate) async fn notification_list(
         .into_iter()
         .collect();
     let actors: HashMap<i64, String> =
-        match crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &actor_ids)
+        match codeyard_db_identity::users::accounts::get_users_by_ids(&ctx.state.pool, &actor_ids)
             .await
         {
             Ok(actors) => actors

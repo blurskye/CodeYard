@@ -66,7 +66,7 @@ pub async fn edit_review(
     }
     check_optional_text(Some(body))?;
     let previous =
-        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
             .await
             .map_err(database_error)?
             .filter(|r| r.pull_request_id == pull.id)
@@ -87,7 +87,7 @@ pub async fn edit_review(
             }
         });
     }
-    let review = crate::backend::db::pull_requests::reviews::edit_review_body(
+    let review = codeyard_db_repos::pull_requests::reviews::edit_review_body(
         pool, pull.id, actor.id, id, body,
     )
     .await
@@ -99,7 +99,7 @@ pub async fn edit_review(
     if review.state != "pending" {
         // The edit is saved; an unreadable owner name only skips the mention notices.
         if let Ok(Some(owner)) =
-            crate::backend::db::repositories::records::repository_owner_name(pool, repo.id).await
+            codeyard_db_repos::repositories::records::repository_owner_name(pool, repo.id).await
         {
             let link = format!(
                 "/{owner}/{}/pulls/{}?review={2}#review-{2}",
@@ -206,7 +206,7 @@ pub async fn create_pull_request_review(
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     target: impl Into<ReviewTarget>,
     req: CreatePullRequestReviewRequest,
 ) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
@@ -228,7 +228,7 @@ pub async fn create_pull_request_review_batch(
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     target: impl Into<ReviewTarget>,
     batch: CreatePullRequestReviewBatchRequest,
 ) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
@@ -254,7 +254,7 @@ async fn create_review(
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     target: ReviewTarget,
     req: CreatePullRequestReviewRequest,
     batch: Option<
@@ -269,7 +269,7 @@ async fn create_review(
     } = target;
     let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
 
-    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -288,7 +288,7 @@ async fn create_review(
     crate::backend::repositories::pull_requests::require_read(pool, &user, &repository).await?;
 
     let pull_request =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -336,7 +336,7 @@ async fn create_review(
     }
 
     let draft_commit = if let Some(id) = req.review_id {
-        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
             .await
             .map_err(database_error)?
             .filter(|review| {
@@ -404,7 +404,7 @@ async fn create_review(
 
     let create_pending = batch.is_some();
     let comments = batch.unwrap_or_default();
-    if comments.len() > crate::backend::db::pull_requests::reviews::MAX_REVIEW_COMMENTS as usize
+    if comments.len() > codeyard_db_repos::pull_requests::reviews::MAX_REVIEW_COMMENTS as usize
         || comments
             .iter()
             .any(|comment| comment.path.is_none() || comment.in_reply_to_comment_id.is_some())
@@ -433,9 +433,9 @@ async fn create_review(
         .iter()
         .map(|comment| comment.input(&pull_request, user.id))
         .collect();
-    let (review, published_ids) = crate::backend::db::pull_requests::reviews::save_review_batch(
+    let (review, published_ids) = codeyard_db_repos::pull_requests::reviews::save_review_batch(
         pool,
-        crate::backend::db::pull_requests::reviews::ReviewBatch {
+        codeyard_db_repos::pull_requests::reviews::ReviewBatch {
             pr_id: pull_request.id,
             author_id: user.id,
             state: if create_pending && req.state.is_none() {
@@ -513,7 +513,7 @@ async fn create_review(
     let published = if published_ids.is_empty() {
         Vec::new()
     } else {
-        crate::backend::db::pull_requests::reviews::list_review_comments(pool, &[review.id])
+        codeyard_db_repos::pull_requests::reviews::list_review_comments(pool, &[review.id])
             .await
             .unwrap_or_else(|error| {
                 tracing::warn!(review_id = review.id, %error, "could not notify published review comments");
@@ -588,7 +588,7 @@ pub async fn dismiss_pull_request_review(
 ) -> Result<codeyard_db_core::models::PullRequestReview, OperationError> {
     let actor = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
 
-    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -608,7 +608,7 @@ pub async fn dismiss_pull_request_review(
     }
 
     let pull_request =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -617,7 +617,7 @@ pub async fn dismiss_pull_request_review(
             })?;
 
     let review =
-        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(pool, review_id)
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(pool, review_id)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -640,7 +640,7 @@ pub async fn dismiss_pull_request_review(
         });
     }
 
-    let dismissed = crate::backend::db::pull_requests::reviews::dismiss_pull_request_review(
+    let dismissed = codeyard_db_repos::pull_requests::reviews::dismiss_pull_request_review(
         pool,
         review.id,
         actor.id,
@@ -690,7 +690,7 @@ pub async fn request_reviewer_bound(
     req: RequestReviewerRequest,
     expected_repository: Option<i64>,
 ) -> Result<RequestReviewerResult, OperationError> {
-    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -703,7 +703,7 @@ pub async fn request_reviewer_bound(
     crate::backend::repositories::pull_requests::require_write(pool, &requester, &repository)
         .await?;
     let pull_request =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -722,7 +722,7 @@ pub async fn request_reviewer_bound(
                 message: "Review team belongs to another organization".to_owned(),
             });
         }
-        let target = crate::backend::db::pull_requests::team_reviewers::list(
+        let target = codeyard_db_repos::pull_requests::team_reviewers::list(
             pool,
             repository.id,
             None,
@@ -744,7 +744,7 @@ pub async fn request_reviewer_bound(
             &repository,
             &pull_request,
             &[name.1.to_owned()],
-            crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Request,
+            codeyard_db_repos::pull_requests::team_reviewers::ReviewTeamAction::Request,
         )
         .await?;
         return Ok(RequestReviewerResult {
@@ -752,7 +752,7 @@ pub async fn request_reviewer_bound(
             created: !changed.is_empty(),
         });
     }
-    let target = crate::backend::db::users::accounts::get_user_by_username(pool, &req.username)
+    let target = codeyard_db_identity::users::accounts::get_user_by_username(pool, &req.username)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -795,7 +795,7 @@ pub(super) async fn add_review_request(
     pull_request: &codeyard_db_core::models::PullRequest,
     target: &codeyard_db_core::models::User,
 ) -> Result<bool, OperationError> {
-    let created = crate::backend::db::pull_requests::reviews::request_pull_request_reviewer(
+    let created = codeyard_db_repos::pull_requests::reviews::request_pull_request_reviewer(
         pool,
         pull_request.id,
         requester.id,
@@ -925,7 +925,7 @@ pub async fn remove_requested_reviewer_bound(
     username: String,
     expected_repository: Option<i64>,
 ) -> Result<(), OperationError> {
-    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -937,7 +937,7 @@ pub async fn remove_requested_reviewer_bound(
     let actor = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
     crate::backend::repositories::pull_requests::require_write(pool, &actor, &repository).await?;
     let pull_request =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -955,12 +955,12 @@ pub async fn remove_requested_reviewer_bound(
                 message: "Review team belongs to another organization".to_owned(),
             });
         }
-        let removed = crate::backend::db::pull_requests::team_reviewers::change(
+        let removed = codeyard_db_repos::pull_requests::team_reviewers::change(
             pool,
             actor.id,
             pull_request.id,
             &[slug.to_owned()],
-            crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Remove,
+            codeyard_db_repos::pull_requests::team_reviewers::ReviewTeamAction::Remove,
             None,
         )
         .await
@@ -977,7 +977,7 @@ pub async fn remove_requested_reviewer_bound(
         .await;
         return Ok(());
     }
-    let target = crate::backend::db::users::accounts::get_user_by_username(pool, &username)
+    let target = codeyard_db_identity::users::accounts::get_user_by_username(pool, &username)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -985,7 +985,7 @@ pub async fn remove_requested_reviewer_bound(
             message: "User not found".to_owned(),
         })?;
 
-    let removed = crate::backend::db::pull_requests::reviews::remove_pull_request_reviewer(
+    let removed = codeyard_db_repos::pull_requests::reviews::remove_pull_request_reviewer(
         pool,
         pull_request.id,
         actor.id,
@@ -1024,7 +1024,7 @@ pub async fn discard_pending_review(
     number: i32,
     review: Option<i64>,
 ) -> Result<(), OperationError> {
-    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -1039,7 +1039,7 @@ pub async fn discard_pending_review(
     )
     .await?;
     let pull_request =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -1048,7 +1048,7 @@ pub async fn discard_pending_review(
             })?;
 
     let discarded = match review {
-        Some(review) => crate::backend::db::pull_requests::reviews::delete_pending_review_by_id(
+        Some(review) => codeyard_db_repos::pull_requests::reviews::delete_pending_review_by_id(
             pool,
             pull_request.id,
             actor_id,
@@ -1057,7 +1057,7 @@ pub async fn discard_pending_review(
         .await
         .map_err(crate::backend::repositories::pull_requests::write_error)?
         .is_some(),
-        None => crate::backend::db::pull_requests::reviews::discard_pending_review(
+        None => codeyard_db_repos::pull_requests::reviews::discard_pending_review(
             pool,
             pull_request.id,
             actor_id,

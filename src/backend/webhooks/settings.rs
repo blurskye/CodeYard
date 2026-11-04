@@ -6,11 +6,11 @@ use crate::backend::webhooks::outgoing;
 
 use codeyard_support::secrets::SecretEncryptor;
 
-use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::db::webhooks as hooks;
-use crate::backend::db::webhooks::HookOwner;
-use crate::backend::db::webhooks::SealedSecret;
-use crate::backend::db::webhooks::WebhookFields;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_core::queries::webhooks::SealedSecret;
+use codeyard_db_core::queries::webhooks::WebhookFields;
+use codeyard_db_repos::webhooks as hooks;
+use codeyard_db_repos::webhooks::HookOwner;
 
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
@@ -90,7 +90,7 @@ fn write_error(owner: HookOwner, error: anyhow::Error) -> HookError {
 pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<(), HookError> {
     let allowed = match owner {
         HookOwner::Repository(id) => {
-            let repo = crate::backend::db::repositories::records::get_repository_by_id(pool, id)
+            let repo = codeyard_db_repos::repositories::records::get_repository_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or(HookError::NotFound)?;
@@ -99,11 +99,9 @@ pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<
                 .map_err(unavailable)?
         }
         HookOwner::Organization(org) => matches!(
-            crate::backend::db::organizations::membership::get_organization_role(
-                pool, actor.id, org
-            )
-            .await
-            .map_err(unavailable)?,
+            codeyard_db_orgs::organizations::membership::get_organization_role(pool, actor.id, org)
+                .await
+                .map_err(unavailable)?,
             OrganizationOutcome::Applied(OrgRole::Owner)
         ),
     };
@@ -186,7 +184,7 @@ pub async fn save(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     id: Option<i64>,
     form: &HookForm,
 ) -> Result<i64, HookError> {
@@ -202,7 +200,7 @@ pub async fn save_with_revision(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     id: Option<i64>,
     form: &HookForm,
     expected_updated: Option<chrono::DateTime<chrono::Utc>>,
@@ -275,7 +273,7 @@ pub async fn update(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     id: i64,
     patch: &HookPatch,
 ) -> Result<(), HookError> {
@@ -340,7 +338,7 @@ pub async fn delete(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
     authorize(pool, actor, owner).await?;
@@ -360,7 +358,7 @@ pub async fn ping(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
     let snapshot = hooks::read_settings(
@@ -393,7 +391,7 @@ pub async fn redeliver(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     hook_id: i64,
     delivery_id: i64,
 ) -> Result<(), HookError> {
@@ -426,7 +424,7 @@ pub async fn test_push(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
     let snapshot = hooks::read_settings(
@@ -496,12 +494,12 @@ async fn ping_payload(
     let url = match owner {
         HookOwner::Repository(id) => {
             let repo: Repository =
-                crate::backend::db::repositories::records::get_repository_by_id(pool, id)
+                codeyard_db_repos::repositories::records::get_repository_by_id(pool, id)
                     .await
                     .map_err(unavailable)?
                     .ok_or(HookError::NotFound)?;
             let owner_name =
-                crate::backend::db::repositories::records::repository_owner_names(pool, &[id])
+                codeyard_db_repos::repositories::records::repository_owner_names(pool, &[id])
                     .await
                     .map_err(unavailable)?
                     .remove(&id)
@@ -516,7 +514,7 @@ async fn ping_payload(
             )
         }
         HookOwner::Organization(id) => {
-            let org = crate::backend::db::organizations::get_public_organization_by_id(pool, id)
+            let org = codeyard_db_orgs::organizations::get_public_organization_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or(HookError::NotFound)?;

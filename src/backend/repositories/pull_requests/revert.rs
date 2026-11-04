@@ -24,7 +24,7 @@ pub async fn revert_pull_request(
     request: RevertRequest,
 ) -> Result<codeyard_db_core::models::PullRequest, OperationError> {
     let user = crate::backend::repositories::pull_requests::actor(pool, actor).await?;
-    let repo = crate::backend::db::repositories::records::get_repository(pool, &owner, &name)
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &name)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -32,7 +32,7 @@ pub async fn revert_pull_request(
             message: "Repository not found".into(),
         })?;
     crate::backend::repositories::pull_requests::require_write(pool, &user, &repo).await?;
-    let pull = crate::backend::db::pull_requests::records::get_pull_request(pool, repo.id, number)
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request(pool, repo.id, number)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -49,7 +49,7 @@ pub async fn revert_pull_request(
         })?;
     // A stack merges in one commit. Its inverse for a lower layer would also remove the layers
     // above, so only the top layer can be reverted.
-    if crate::backend::db::pull_requests::records::merged_above(
+    if codeyard_db_repos::pull_requests::records::merged_above(
         pool,
         repo.id,
         merged,
@@ -66,7 +66,7 @@ pub async fn revert_pull_request(
     // The merge commit landed on the base of the bottom layer it merged, at the tip recorded for
     // that layer. A stacked layer's own base names the layer below it, which the merge left alone.
     let (base_branch, before) =
-        crate::backend::db::pull_requests::records::merged_trunk(pool, repo.id, merged)
+        codeyard_db_repos::pull_requests::records::merged_trunk(pool, repo.id, merged)
             .await
             .map_err(database_error)?
             .unwrap_or_else(|| (pull.base_branch.clone(), pull.base_sha.clone()));

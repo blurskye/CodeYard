@@ -7,7 +7,7 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::assignees::AssignedItem;
+use codeyard_db_repos::assignees::AssignedItem;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -30,7 +30,7 @@ async fn event_document(
     include_issue: bool,
     issues: &mut HashMap<(String, i64), Value>,
 ) -> Result<Value> {
-    let event = crate::backend::db::timeline::get_event(&state.pool, repo.id, id)
+    let event = codeyard_db_repos::timeline::get_event(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -40,7 +40,7 @@ async fn event_document(
         _ => return Err(Error::missing()),
     };
     let actor = match event.actor_id {
-        Some(id) => crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+        Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?,
         None => None,
@@ -57,7 +57,7 @@ async fn event_document(
         }
         "milestoned" | "demilestoned" => value["milestone"] = json!({"title":event.detail}),
         "assigned" | "unassigned" => {
-            let user = crate::backend::db::users::accounts::get_user_by_username(
+            let user = codeyard_db_identity::users::accounts::get_user_by_username(
                 &state.pool,
                 &event.detail,
             )
@@ -118,12 +118,12 @@ async fn review_document(
     id: i64,
 ) -> Result<Value> {
     let review =
-        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .filter(|review| review.state != "pending")
             .ok_or_else(Error::missing)?;
-    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         &state.pool,
         review.pull_request_id,
     )
@@ -131,7 +131,7 @@ async fn review_document(
     .map_err(Error::unavailable)?
     .filter(|pull| pull.repo_id == repo.id)
     .ok_or_else(Error::missing)?;
-    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, review.author_id)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, review.author_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -165,7 +165,7 @@ async fn list(
     };
     let timeline = uri.path().ends_with("/timeline");
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::timeline::list_entries(
+    let rows = codeyard_db_repos::timeline::list_entries(
         &state.pool,
         repo.id,
         item,

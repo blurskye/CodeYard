@@ -3,7 +3,7 @@ use crate::backend::api::packages::Error;
 use crate::backend::api::packages::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::packages::Publish;
+use codeyard_db_repos::packages::Publish;
 
 use axum::{
     body::to_bytes,
@@ -110,9 +110,9 @@ fn valid_tag(tag: &str) -> bool {
 fn version_metadata(
     namespace: &str,
     slug: &str,
-    version: &crate::backend::db::packages::Version,
+    version: &codeyard_db_repos::packages::Version,
 ) -> Result<Value> {
-    if version.manifest.len() > crate::backend::db::packages::MAX_LISTED_METADATA_BYTES {
+    if version.manifest.len() > codeyard_db_repos::packages::MAX_LISTED_METADATA_BYTES {
         return Err(Error::unavailable());
     }
     let mut metadata: Value =
@@ -177,7 +177,7 @@ async fn dispatch(
                 let mut before = i64::MAX;
                 let mut bytes = 0usize;
                 loop {
-                    let rows = crate::backend::db::packages::version_page(
+                    let rows = codeyard_db_repos::packages::version_page(
                         &state.pool,
                         package.id,
                         token,
@@ -191,14 +191,14 @@ async fn dispatch(
                         before = version.id;
                         bytes = bytes
                             .saturating_add(version.manifest.len() + version.name.len() + 1024);
-                        if bytes > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
+                        if bytes > codeyard_db_repos::packages::MAX_METADATA_RESPONSE_BYTES {
                             return Err(Error::unavailable());
                         }
                         let metadata = version_metadata(namespace, slug, &version)?;
                         if metadata["name"] != name {
                             continue;
                         }
-                        for tag in crate::backend::db::packages::tags(
+                        for tag in codeyard_db_repos::packages::tags(
                             &state.pool,
                             package.id,
                             token,
@@ -208,7 +208,7 @@ async fn dispatch(
                         .map_err(Error::db)?
                         {
                             bytes = bytes.saturating_add(tag.len() + version.name.len() + 16);
-                            if bytes > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
+                            if bytes > codeyard_db_repos::packages::MAX_METADATA_RESPONSE_BYTES {
                                 return Err(Error::unavailable());
                             }
                             tags.insert(tag, json!(version.name));
@@ -236,14 +236,14 @@ async fn dispatch(
                 .ok_or_else(Error::missing)?;
             let reference = version;
             let version =
-                crate::backend::db::packages::version(&state.pool, package.id, token, reference)
+                codeyard_db_repos::packages::version(&state.pool, package.id, token, reference)
                     .await
                     .map_err(Error::db)?;
             if version.name != reference {
                 return Err(Error::missing());
             }
             let blob =
-                crate::backend::db::packages::blob(&state.pool, package.id, token, &version.digest)
+                codeyard_db_repos::packages::blob(&state.pool, package.id, token, &version.digest)
                     .await
                     .map_err(Error::db)?;
             return crate::backend::api::packages::oci::download(
@@ -254,7 +254,7 @@ async fn dispatch(
             )
             .await;
         }
-        let version = crate::backend::db::packages::version(&state.pool, package.id, token, rest)
+        let version = codeyard_db_repos::packages::version(&state.pool, package.id, token, rest)
             .await
             .map_err(Error::db)?;
         if valid_version(rest) && version.name != rest {
@@ -299,7 +299,7 @@ async fn dispatch(
         .filter(|v| v.len() == 1)
         .ok_or_else(Error::invalid)?;
     let (version, metadata) = versions.iter().next().ok_or_else(Error::invalid)?;
-    if metadata.to_string().len() > crate::backend::db::packages::MAX_LISTED_METADATA_BYTES {
+    if metadata.to_string().len() > codeyard_db_repos::packages::MAX_LISTED_METADATA_BYTES {
         return Err(Error::invalid());
     }
     if !valid_version(version)
@@ -352,7 +352,7 @@ async fn dispatch(
         package.id,
         token,
         tarball,
-        crate::backend::db::packages::Charge::Upload,
+        codeyard_db_repos::packages::Charge::Upload,
     )
     .await
     .map_err(Error::db)?;
@@ -372,7 +372,7 @@ async fn dispatch(
     );
     metadata["dist"] = json!({"tarball":format!("{base}/-/{slug}-{version}.tgz"),"shasum":sha1,"integrity":integrity});
     let manifest = metadata.to_string();
-    crate::backend::db::packages::publish(
+    codeyard_db_repos::packages::publish(
         &state.pool,
         token,
         Publish {
@@ -422,7 +422,7 @@ async fn dist_tags(
             let token = auth.map(|auth| auth.token.id.into());
             let (mut tags, mut after, mut bytes) = (Map::new(), String::new(), 0usize);
             loop {
-                let page = crate::backend::db::packages::tag_page(
+                let page = codeyard_db_repos::packages::tag_page(
                     &state.pool,
                     package.id,
                     token,
@@ -434,7 +434,7 @@ async fn dist_tags(
                 let done = page.len() < 100;
                 for (tag, version) in page {
                     bytes = bytes.saturating_add(tag.len() + version.len() + 16);
-                    if bytes > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
+                    if bytes > codeyard_db_repos::packages::MAX_METADATA_RESPONSE_BYTES {
                         return Err(Error::unavailable());
                     }
                     after.clone_from(&tag);
@@ -454,14 +454,14 @@ async fn dist_tags(
             if !valid_version(&version) {
                 return Err(Error::invalid());
             }
-            crate::backend::db::packages::set_tag(&state.pool, package.id, token, tag, &version)
+            codeyard_db_repos::packages::set_tag(&state.pool, package.id, token, tag, &version)
                 .await
                 .map_err(Error::db)?;
             Ok(Json(json!({"ok":true})).into_response())
         }
         (Method::DELETE, Some(tag)) => {
             let token = crate::backend::api::packages::writer(auth)?.token.id;
-            crate::backend::db::packages::delete_tag(&state.pool, package.id, token, tag)
+            codeyard_db_repos::packages::delete_tag(&state.pool, package.id, token, tag)
                 .await
                 .map_err(Error::db)?;
             Ok(Json(json!({"ok":true})).into_response())

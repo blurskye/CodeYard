@@ -129,7 +129,7 @@ pub(in crate::backend::api::repos) async fn page(
     let Some((reference, format)) = parse_archive_name(&archive) else {
         return ctx.error(StatusCode::NOT_FOUND, "Archive format not found.");
     };
-    let repository = match crate::backend::db::repositories::records::get_repository(
+    let repository = match codeyard_db_repos::repositories::records::get_repository(
         &ctx.state.pool,
         &owner,
         &name,

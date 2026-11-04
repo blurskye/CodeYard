@@ -76,7 +76,7 @@ async fn search(pg: bool) {
         second.id,
         bob,
         "Discussion café search",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
     )

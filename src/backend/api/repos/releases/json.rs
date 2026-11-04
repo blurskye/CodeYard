@@ -10,7 +10,7 @@ use crate::backend::api::repos::releases::pages::refused;
 use crate::backend::app::AppState;
 use codeyard_model::http_config::public_origin;
 
-use crate::backend::repositories::releases as releases;
+use crate::backend::repositories::releases;
 use crate::backend::repositories::releases::ReleaseChanges;
 use crate::backend::repositories::releases::ReleaseError;
 use crate::backend::repositories::releases::ReleaseFields;
@@ -70,12 +70,12 @@ pub struct ReleaseRequest {
     target_commitish: Option<String>,
     #[serde(
         default,
-        deserialize_with = "crate::backend::db::repositories::records::nullable_change"
+        deserialize_with = "codeyard_db_repos::repositories::records::nullable_change"
     )]
     name: Option<Option<String>>,
     #[serde(
         default,
-        deserialize_with = "crate::backend::db::repositories::records::nullable_change"
+        deserialize_with = "codeyard_db_repos::repositories::records::nullable_change"
     )]
     body: Option<Option<String>>,
     draft: Option<bool>,

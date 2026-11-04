@@ -620,7 +620,7 @@ jobs:
             first.id,
             bob,
             false,
-            Some(codeyard::backend::db::ci::CiCredential::Token {
+            Some(codeyard_db_core::queries::ci::CiCredential::Token {
                 id: credential,
                 hash,
                 permission: "actions",

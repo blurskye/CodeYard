@@ -1,9 +1,9 @@
 //! Secondary addresses require their own confirmation and never authorize a password reset.
 
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_support::credentials::AccountRestricted;
 
-use crate::backend::db::users::emails::EmailRefusal;
+use codeyard_db_identity::users::emails::EmailRefusal;
 
 use codeyard_db_core::DbPool;
 
@@ -43,7 +43,7 @@ pub async fn change(
     }
     emails.sort();
     emails.dedup();
-    crate::backend::db::users::emails::change_emails(pool, actor, credential, &emails, add)
+    codeyard_db_identity::users::emails::change_emails(pool, actor, credential, &emails, add)
         .await
         .map_err(|error| {
             if error.is::<AccountRestricted>() {
@@ -57,7 +57,7 @@ pub async fn change(
             }
         })?;
     if add {
-        let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
+        let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
             .await
             .map_err(|_| EmailError::Unavailable)?
             .ok_or(EmailError::Denied)?;

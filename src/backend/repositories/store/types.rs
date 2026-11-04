@@ -227,7 +227,7 @@ pub struct RevertRequest {
 /// all the way to the owning storage node. Older peers must reject, not ignore, this authority.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AsyncMergePublication {
-    pub policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
+    pub policy: Option<codeyard_db_repos::pull_requests::merge_policy::Snapshot>,
     pub uuid: String,
     pub token_id: i64,
     pub pull_request_id: i64,
@@ -247,7 +247,7 @@ pub struct BranchMergePublication {
     pub head_branch: Option<String>,
     pub head: String,
     pub result: String,
-    pub authority: crate::backend::db::credentials::Actor,
+    pub authority: codeyard_db_core::queries::credentials::Actor,
 }
 
 /// One branch that a restack moves: the commit it must still be at, and the commit it moves to.

@@ -6,8 +6,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::repositories::protection::ActorListUpdate;
-use crate::backend::db::repositories::protection::ProtectionUpdate;
 use axum::{
     extract::{FromRequest, Path, Request, State},
     http::{HeaderMap, Method},
@@ -16,6 +14,8 @@ use axum::{
     Json,
 };
 use codeyard_db_core::models::BranchProtectionRule;
+use codeyard_db_repos::repositories::protection::ActorListUpdate;
+use codeyard_db_repos::repositories::protection::ProtectionUpdate;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
@@ -25,7 +25,7 @@ pub(super) async fn documents(
     rule: &BranchProtectionRule,
     actor: i64,
 ) -> Result<Vec<Value>> {
-    let rows = crate::backend::db::repositories::push_teams::by_ids(
+    let rows = codeyard_db_repos::repositories::push_teams::by_ids(
         &state.pool,
         rule.repo_id,
         &rule.push_team_allowances,
@@ -34,7 +34,7 @@ pub(super) async fn documents(
     .map_err(Error::unavailable)?;
     let mut values = Vec::new();
     for row in rows {
-        if crate::backend::db::organizations::teams::get_team_by_id(&state.pool, actor, row.team.id)
+        if codeyard_db_orgs::organizations::teams::get_team_by_id(&state.pool, actor, row.team.id)
             .await
             .map_err(Error::unavailable)?
             .is_none()
@@ -85,7 +85,7 @@ async fn teams(
             .await
             .map_err(crate::backend::api::github::json_error)?;
         let (Input::Array(names) | Input::Object { teams: names }) = input;
-        let ids = crate::backend::db::repositories::push_teams::resolve_names(
+        let ids = codeyard_db_repos::repositories::push_teams::resolve_names(
             &state.pool,
             rule.repo_id,
             &names,
@@ -98,7 +98,7 @@ async fn teams(
             Method::DELETE => ActorListUpdate::Remove(ids),
             _ => unreachable!(),
         };
-        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
+        rule = codeyard_db_repos::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,

@@ -4,7 +4,6 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::organizations::organization::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::db::organizations::OrganizationOutcome;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -12,6 +11,7 @@ use axum::{
     routing::post,
     Router,
 };
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_webui::pages::orgs as view;
 use serde_json::{Map, Value};
 use std::{collections::HashSet, sync::Arc};
@@ -25,8 +25,7 @@ pub(super) async fn panel(
     org: i64,
 ) -> Result<view::SettingsPanel, Response> {
     let updated =
-        match crate::backend::db::organizations::settings::owned(&ctx.state.pool, actor, org).await
-        {
+        match codeyard_db_orgs::organizations::settings::owned(&ctx.state.pool, actor, org).await {
             Ok(Applied(updated)) => updated,
             Ok(_) => {
                 return Err(crate::backend::api::organizations::organization::not_found(
@@ -107,8 +106,8 @@ fn valid(form: &Fields) -> bool {
 fn changes(
     form: &Fields,
 ) -> Result<
-    crate::backend::db::organizations::settings::Changes,
-    crate::backend::db::organizations::settings::Invalid,
+    codeyard_db_orgs::organizations::settings::Changes,
+    codeyard_db_orgs::organizations::settings::Invalid,
 > {
     let mut input = Map::new();
     for &key in allowed(crate::backend::api::organizations::organization::field(
@@ -125,7 +124,7 @@ fn changes(
                 None | Some("false") => false,
                 Some("true") => true,
                 _ => {
-                    return Err(crate::backend::db::organizations::settings::Invalid {
+                    return Err(codeyard_db_orgs::organizations::settings::Invalid {
                         field: key,
                         message: "Invalid checkbox value",
                     })
@@ -136,7 +135,7 @@ fn changes(
             input.insert(key.into(), Value::String(value.clone()));
         }
     }
-    crate::backend::db::organizations::settings::Changes::parse(&Value::Object(input))
+    codeyard_db_orgs::organizations::settings::Changes::parse(&Value::Object(input))
 }
 async fn mutate(
     State(state): State<Arc<AppState>>,
@@ -181,7 +180,7 @@ async fn mutate(
         .collect();
     let result = match changes(&form) {
         Ok(input) => {
-            crate::backend::db::organizations::settings::change(
+            codeyard_db_orgs::organizations::settings::change(
                 &ctx.state.pool,
                 ctx.database_actor(actor),
                 org,

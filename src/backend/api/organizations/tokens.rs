@@ -5,9 +5,8 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::organizations::organization::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::db::fine_grained_tokens::Policy;
+use codeyard_db_core::queries::fine_grained_tokens::Policy;
 
-use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::identity::fine_grained::MAX_DAYS;
 use axum::{
     extract::{rejection::FormRejection, Form, Path, State},
@@ -17,6 +16,7 @@ use axum::{
     Router,
 };
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_model::fine_grained::catalog;
 use codeyard_webui::pages::orgs as view;
 use serde_json::{Map, Value};
@@ -37,8 +37,7 @@ pub(super) fn router() -> Router<Arc<AppState>> {
     reason = "HTML adapters preserve complete Axum responses under the PageContext contract."
 )]
 async fn require_owner(ctx: &PageContext, actor: i64, org: i64) -> Result<(), Response> {
-    match crate::backend::db::organizations::get_organization_role(&ctx.state.pool, actor, org)
-        .await
+    match codeyard_db_orgs::organizations::get_organization_role(&ctx.state.pool, actor, org).await
     {
         Ok(OrganizationOutcome::Applied(OrgRole::Owner)) => Ok(()),
         Ok(OrganizationOutcome::Applied(_)) => Err(ctx.error(
@@ -55,14 +54,14 @@ async fn require_owner(ctx: &PageContext, actor: i64, org: i64) -> Result<(), Re
 /// Projects listed tokens with their users and selected repository names.
 async fn grants(
     ctx: &PageContext,
-    rows: Vec<crate::backend::db::fine_grained_tokens::Token>,
+    rows: Vec<codeyard_db_core::queries::fine_grained_tokens::Token>,
     repositories: &HashMap<i64, Vec<String>>,
 ) -> anyhow::Result<Vec<view::TokenGrant>> {
     let mut ids: Vec<_> = rows.iter().map(|token| token.user_id).collect();
     ids.sort_unstable();
     ids.dedup();
     let users: HashMap<_, _> =
-        crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+        codeyard_db_identity::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
             .await?
             .into_iter()
             .map(|user| (user.id, user.username))
@@ -116,7 +115,7 @@ pub(super) async fn panel(
             ctx,
         ));
     };
-    let loaded = crate::backend::db::fine_grained_tokens::owner_tokens(
+    let loaded = codeyard_db_identity::fine_grained_tokens::owner_tokens(
         &ctx.state.pool,
         actor,
         ctx.session_id.as_deref().unwrap_or(""),
@@ -200,7 +199,7 @@ fn policy(form: &Fields) -> Result<Policy, &'static str> {
 }
 
 async fn apply(ctx: &PageContext, actor: i64, org: i64, form: &Fields) -> anyhow::Result<Outcome> {
-    let actor = crate::backend::db::credentials::Actor::from((
+    let actor = codeyard_db_core::queries::credentials::Actor::from((
         actor,
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
     ));
@@ -222,8 +221,10 @@ async fn apply(ctx: &PageContext, actor: i64, org: i64, form: &Fields) -> anyhow
         ) {
             ("token-policy", _) => match policy(form) {
                 Ok(policy) => changed(
-                    crate::backend::db::fine_grained_tokens::set_policy(pool, actor, org, &policy)
-                        .await?,
+                    codeyard_db_identity::fine_grained_tokens::set_policy(
+                        pool, actor, org, &policy,
+                    )
+                    .await?,
                 ),
                 Err(message) => Outcome::Invalid(message),
             },
@@ -242,7 +243,7 @@ async fn apply(ctx: &PageContext, actor: i64, org: i64, form: &Fields) -> anyhow
                     return Ok(Outcome::Invalid("Use a reason of at most 1024 characters."));
                 }
                 changed(
-                    crate::backend::db::fine_grained_tokens::review(
+                    codeyard_db_identity::fine_grained_tokens::review(
                         pool,
                         org,
                         actor,
@@ -256,7 +257,7 @@ async fn apply(ctx: &PageContext, actor: i64, org: i64, form: &Fields) -> anyhow
                 )
             }
             ("token-revoke", Some(token)) => changed(
-                crate::backend::db::fine_grained_tokens::review(
+                codeyard_db_identity::fine_grained_tokens::review(
                     pool,
                     org,
                     actor,

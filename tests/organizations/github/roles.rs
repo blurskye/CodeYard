@@ -1,18 +1,18 @@
 use super::request;
 use crate::support::{
-    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
 };
 use axum::http::StatusCode;
 
-use codeyard::backend::db::organizations::NewOrganization;
-use codeyard::backend::db::organizations::NewTeam;
-use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::db::organizations::TeamPrivacy;
-use codeyard::backend::db::organizations::TeamProfile;
-use codeyard::backend::db::organizations::TeamRole;
-use codeyard::backend::db::repositories::creation::NewRepository;
-use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
-use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::NewTeam;
+use codeyard_db_orgs::organizations::OrganizationProfile;
+use codeyard_db_orgs::organizations::TeamPrivacy;
+use codeyard_db_orgs::organizations::TeamProfile;
+use codeyard_db_orgs::organizations::TeamRole;
+use codeyard_db_repos::repositories::creation::NewRepository;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::AccessLevel;
@@ -58,7 +58,7 @@ pub(super) async fn repo(
         .into_owned();
     let bare = git2::Repository::init_bare(&disk).unwrap();
     bare.set_head("refs/heads/main").unwrap();
-    codeyard::backend::db::repositories::creation::insert_repository(
+    codeyard_db_repos::repositories::creation::insert_repository(
         f.pool(),
         NewRepository {
             owner: RepositoryCreationOwner {
@@ -89,7 +89,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "foreign"] {
         orgs.push(applied(
-            codeyard::backend::db::organizations::create_organization(
+            codeyard_db_orgs::organizations::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -104,7 +104,7 @@ async fn contract(pg: bool) {
         (delegated, OrgRole::Admin),
     ] {
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 f.pool(),
                 owner,
                 orgs[0].id,
@@ -116,7 +116,7 @@ async fn contract(pg: bool) {
         );
     }
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             f.pool(),
             owner,
             orgs[1].id,
@@ -127,7 +127,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let team = applied(
-        codeyard::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -141,7 +141,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             f.pool(),
             owner,
             orgs[1].id,
@@ -156,7 +156,7 @@ async fn contract(pg: bool) {
     );
     for user in [member, other] {
         applied(
-            codeyard::backend::db::organizations::add_organization_team_member(
+            codeyard_db_orgs::organizations::add_organization_team_member(
                 f.pool(),
                 owner,
                 orgs[0].id,
@@ -446,7 +446,7 @@ async fn contract(pg: bool) {
     assert_eq!(body["permissions"]["pull"], true);
     assert_eq!(body["permissions"]["push"], false);
     let metadata = applied(
-        codeyard::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -460,13 +460,13 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::grant_organization_team_repository(
             f.pool(),
             owner,
             orgs[0].id,
             metadata.id,
             first.id,
-            codeyard::backend::db::organizations::TeamRepositoryPermission::new(1).unwrap(),
+            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(1).unwrap(),
         )
         .await
         .unwrap(),
@@ -510,13 +510,9 @@ async fn contract(pg: bool) {
             .all(|repository| repository["id"] != foreign.id));
     }
     assert_eq!(
-        codeyard::backend::db::organizations::get_organization_repo_access(
-            f.pool(),
-            member,
-            &first
-        )
-        .await
-        .unwrap(),
+        codeyard_db_orgs::organizations::get_organization_repo_access(f.pool(), member, &first)
+            .await
+            .unwrap(),
         AccessLevel::Read
     );
     request(
@@ -531,13 +527,9 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(
         applied(
-            codeyard::backend::db::organizations::get_organization_role(
-                f.pool(),
-                member,
-                orgs[0].id
-            )
-            .await
-            .unwrap()
+            codeyard_db_orgs::organizations::get_organization_role(f.pool(), member, orgs[0].id)
+                .await
+                .unwrap()
         ),
         OrgRole::Member
     );
@@ -593,20 +585,18 @@ async fn contract(pg: bool) {
     )
     .await;
     let push_teams =
-        codeyard::backend::db::repositories::push_teams::by_ids(f.pool(), first.id, &[team.id])
+        codeyard_db_repos::repositories::push_teams::by_ids(f.pool(), first.id, &[team.id])
             .await
             .unwrap();
     assert_eq!(push_teams[0].permission, 3);
-    assert!(
-        codeyard::backend::db::repositories::push_teams::contains_actor(
-            f.pool(),
-            first.id,
-            member,
-            &[team.id]
-        )
-        .await
-        .unwrap()
-    );
+    assert!(codeyard_db_repos::repositories::push_teams::contains_actor(
+        f.pool(),
+        first.id,
+        member,
+        &[team.id]
+    )
+    .await
+    .unwrap());
     let (_, users) = request(
         &router,
         "orgs/list-org-role-users",
@@ -895,7 +885,7 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -906,7 +896,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -979,7 +969,7 @@ async fn contract(pg: bool) {
         5
     );
     assert!(
-        !codeyard::backend::db::repositories::push_teams::contains_actor(
+        !codeyard_db_repos::repositories::push_teams::contains_actor(
             f.pool(),
             first.id,
             member,
@@ -1117,7 +1107,7 @@ async fn contract(pg: bool) {
     // push restrictions, cleanup and conversion. It must never become org governance.
     let nested = f.actor("nested").await;
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1128,7 +1118,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let parent = applied(
-        codeyard::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1142,7 +1132,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let child = applied(
-        codeyard::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1159,7 +1149,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1207,13 +1197,9 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(body["permissions"]["push"], true);
     assert_eq!(
-        codeyard::backend::db::organizations::get_organization_repo_access(
-            f.pool(),
-            nested,
-            &first
-        )
-        .await
-        .unwrap(),
+        codeyard_db_orgs::organizations::get_organization_repo_access(f.pool(), nested, &first)
+            .await
+            .unwrap(),
         AccessLevel::Write
     );
     let (_, users) = request(
@@ -1245,22 +1231,20 @@ async fn contract(pg: bool) {
         .iter()
         .any(|repository| repository["id"] == first.id));
     assert_eq!(
-        codeyard::backend::db::repositories::push_teams::by_ids(f.pool(), first.id, &[child.id])
+        codeyard_db_repos::repositories::push_teams::by_ids(f.pool(), first.id, &[child.id])
             .await
             .unwrap()[0]
             .permission,
         3
     );
-    assert!(
-        codeyard::backend::db::repositories::push_teams::contains_actor(
-            f.pool(),
-            first.id,
-            nested,
-            &[parent.id, child.id]
-        )
-        .await
-        .unwrap()
-    );
+    assert!(codeyard_db_repos::repositories::push_teams::contains_actor(
+        f.pool(),
+        first.id,
+        nested,
+        &[parent.id, child.id]
+    )
+    .await
+    .unwrap());
     request(
         &router,
         "issues/check-user-can-be-assigned",
@@ -1273,7 +1257,7 @@ async fn contract(pg: bool) {
     .await;
     run(&f, first.id, nested, "queued").await;
     applied(
-        codeyard::backend::db::organizations::delete_organization_team(
+        codeyard_db_orgs::organizations::delete_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1294,7 +1278,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(f.scalar("SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2 AND status='cancelled'",&[first.id,nested]).await,1);
     // The child team went with its parent; a new team of the same name stands in for it.
-    assert!(codeyard::backend::db::organizations::get_public_team(
+    assert!(codeyard_db_orgs::organizations::get_public_team(
         f.pool(),
         owner,
         orgs[0].id,
@@ -1304,7 +1288,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .is_none());
     let child = applied(
-        codeyard::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1318,7 +1302,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1341,7 +1325,7 @@ async fn contract(pg: bool) {
     .await;
     run(&f, first.id, nested, "queued").await;
     applied(
-        codeyard::backend::db::organizations::remove_organization_team_member(
+        codeyard_db_orgs::organizations::remove_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1363,7 +1347,7 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1394,7 +1378,7 @@ async fn contract(pg: bool) {
     );
     // Ordinary team changes must not cancel unrelated repository jobs in the same org.
     let scoped = applied(
-        codeyard::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1408,19 +1392,19 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::grant_organization_team_repository(
             f.pool(),
             owner,
             orgs[0].id,
             scoped.id,
             first.id,
-            codeyard::backend::db::organizations::TeamRepositoryPermission::new(3).unwrap(),
+            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(3).unwrap(),
         )
         .await
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1440,7 +1424,7 @@ async fn contract(pg: bool) {
     run(&f, first.id, other, "queued").await;
     run(&f, future.id, other, "queued").await;
     applied(
-        codeyard::backend::db::organizations::remove_organization_team_member(
+        codeyard_db_orgs::organizations::remove_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1453,7 +1437,7 @@ async fn contract(pg: bool) {
     assert_eq!(f.scalar("SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2 AND status='cancelled'",&[first.id,other]).await,stopped+1);
     assert_eq!(f.scalar("SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2 AND status='queued'",&[future.id,other]).await,1);
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -1466,7 +1450,7 @@ async fn contract(pg: bool) {
     );
     run(&f, first.id, other, "queued").await;
     applied(
-        codeyard::backend::db::organizations::delete_organization_team(
+        codeyard_db_orgs::organizations::delete_organization_team(
             f.pool(),
             owner,
             orgs[0].id,

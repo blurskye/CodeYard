@@ -174,22 +174,17 @@ async fn pages(pg: bool) {
     f.execute("UPDATE package_blob_grants SET expires_at=0", &[])
         .await;
     let auth = tokens::token_hash(writer.trim_start_matches("Bearer "));
-    let token = codeyard::backend::db::users::tokens::find_token(f.pool(), &auth)
+    let token = codeyard_db_identity::users::tokens::find_token(f.pool(), &auth)
         .await
         .unwrap()
         .unwrap();
-    let error = codeyard::backend::db::packages::set_deleted(
-        f.pool(),
-        package,
-        None,
-        token.id.into(),
-        true,
-    )
-    .await
-    .unwrap_err();
+    let error =
+        codeyard_db_repos::packages::set_deleted(f.pool(), package, None, token.id.into(), true)
+            .await
+            .unwrap_err();
     assert!(matches!(
-        error.downcast_ref::<codeyard::backend::db::packages::Refusal>(),
-        Some(codeyard::backend::db::packages::Refusal::Missing)
+        error.downcast_ref::<codeyard_db_repos::packages::Refusal>(),
+        Some(codeyard_db_repos::packages::Refusal::Missing)
     ));
     let storage = codeyard::backend::storage::ObjectStore::open(root.path(), None)
         .await

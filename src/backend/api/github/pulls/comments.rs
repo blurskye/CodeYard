@@ -38,12 +38,12 @@ pub(super) async fn visible(
     codeyard_db_core::models::PullRequestComment,
 )> {
     let comment =
-        crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(&state.pool, id)
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .filter(|c| c.path.is_some())
             .ok_or_else(Error::missing)?;
-    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         &state.pool,
         comment.pull_request_id,
     )
@@ -52,7 +52,7 @@ pub(super) async fn visible(
     .filter(|p| p.repo_id == repo.id)
     .ok_or_else(Error::missing)?;
     if let Some(review) = comment.review_id {
-        let review = crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(
+        let review = codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(
             &state.pool,
             review,
         )
@@ -92,10 +92,11 @@ async fn document_cached(
     comment: &codeyard_db_core::models::PullRequestComment,
     diffs: &mut HashMap<(String, String, String), Vec<DiffFileInfo>>,
 ) -> Result<Value> {
-    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, comment.author_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let user =
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, comment.author_id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     let mut value = crate::backend::webhooks::payloads::pull_request_review_comment_json(
         comment,
         pull,
@@ -427,9 +428,9 @@ async fn collection(
         "desc" => false,
         _ => return Err(Error::invalid("Invalid direction")),
     };
-    let rows = crate::backend::db::pull_requests::reviews::list_visible_review_comments(
+    let rows = codeyard_db_repos::pull_requests::reviews::list_visible_review_comments(
         &state.pool,
-        &crate::backend::db::pull_requests::reviews::ReviewCommentFilter {
+        &codeyard_db_repos::pull_requests::reviews::ReviewCommentFilter {
             repo_id: repo.id,
             pull_id,
             review_id,
@@ -447,7 +448,7 @@ async fn collection(
     let mut items = Vec::new();
     let mut diffs = HashMap::new();
     for comment in rows.iter().take(limit) {
-        let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+        let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
             &state.pool,
             comment.pull_request_id,
         )
@@ -495,7 +496,7 @@ async fn list_review(
 ) -> Result<Response> {
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let review =
-        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .filter(|r| r.pull_request_id == pull.id)

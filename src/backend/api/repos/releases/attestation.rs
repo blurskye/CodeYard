@@ -48,7 +48,7 @@ pub(super) async fn download(
     if !found.release.release.is_immutable {
         return ctx.error(StatusCode::NOT_FOUND, "Release attestation not found.");
     }
-    let (key, body) = match crate::backend::db::repositories::immutable_releases::attestation(
+    let (key, body) = match codeyard_db_repos::repositories::immutable_releases::attestation(
         &ctx.state.pool,
         found.repository.id,
         id,

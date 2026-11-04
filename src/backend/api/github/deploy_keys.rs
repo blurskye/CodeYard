@@ -36,7 +36,7 @@ async fn document(
     key: &codeyard_db_core::models::DeployKey,
 ) -> Result<Value> {
     let added_by = match key.created_by_id {
-        Some(id) => crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+        Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .map(|user| user.username),
@@ -63,7 +63,7 @@ async fn list(
         &state.pool,
         &auth.user,
         &repo,
-        crate::backend::db::deploy_keys::Credential::Token(
+        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
             auth.token.id,
             auth.token.token_hash.clone(),
         ),
@@ -90,7 +90,7 @@ async fn read(
         &state.pool,
         &auth.user,
         &repo,
-        crate::backend::db::deploy_keys::Credential::Token(
+        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
             auth.token.id,
             auth.token.token_hash.clone(),
         ),
@@ -139,7 +139,7 @@ async fn create(
     let key = crate::backend::repositories::deploy_keys::add_key(
         &state.pool,
         &auth.user,
-        crate::backend::db::deploy_keys::Credential::Token(
+        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
             auth.token.id,
             auth.token.token_hash.clone(),
         ),
@@ -167,7 +167,7 @@ async fn remove(
     crate::backend::repositories::deploy_keys::remove_key(
         &state.pool,
         &auth.user,
-        crate::backend::db::deploy_keys::Credential::Token(
+        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
             auth.token.id,
             auth.token.token_hash.clone(),
         ),

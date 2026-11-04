@@ -31,7 +31,7 @@ pub async fn merge_pull_request(
     let actor = get_current_user(&state.pool, &headers).await?;
     crate::backend::repositories::pull_requests::merge::merge_pull_request(
         &state,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -56,7 +56,7 @@ pub(crate) async fn native_merge(
     // Catch up with the branches first, so a stale form shows the pull request as it is
     // now. Only a writer may start that refresh; everyone else is refused below.
     if repo.view.can_write {
-        let pull = crate::backend::db::pull_requests::records::get_pull_request(
+        let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
             &ctx.state.pool,
             repo.record.id,
             number,

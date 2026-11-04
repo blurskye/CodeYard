@@ -3,13 +3,6 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::field;
 use crate::backend::app::AppState;
 
-use crate::backend::db::runners as native;
-use crate::backend::db::runners::GroupInput;
-use crate::backend::db::runners::Labels;
-use crate::backend::db::runners::Refusal;
-use crate::backend::db::runners::Registration;
-use crate::backend::db::runners::Scope;
-use crate::backend::db::runners::Selection;
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, Path, State},
@@ -19,6 +12,13 @@ use axum::{
     Form, Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_db_actions::runners as native;
+use codeyard_db_actions::runners::GroupInput;
+use codeyard_db_actions::runners::Labels;
+use codeyard_db_actions::runners::Registration;
+use codeyard_db_actions::runners::Selection;
+use codeyard_db_core::queries::runners::Refusal;
+use codeyard_db_core::queries::runners::Scope;
 use codeyard_webui::{app::Page, pages::runners as view};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -52,7 +52,7 @@ async fn scope(ctx: &PageContext) -> Result<Scope, Response> {
     match (org, repo) {
         (Some(id), None) => Ok(Scope::Organization(id)),
         (None, Some(id)) => {
-            let repository = match crate::backend::db::repositories::records::get_repository_by_id(
+            let repository = match codeyard_db_repos::repositories::records::get_repository_by_id(
                 &ctx.state.pool,
                 id,
             )
@@ -159,7 +159,7 @@ async fn render(
     };
     let (title, back, groups) = match scope {
         Scope::Organization(org) => {
-            let org = match crate::backend::db::organizations::get_public_organization_by_id(
+            let org = match codeyard_db_orgs::organizations::get_public_organization_by_id(
                 &ctx.state.pool,
                 org,
             )
@@ -189,7 +189,7 @@ async fn render(
             )
         }
         Scope::Repository(repo) => {
-            let repo = match crate::backend::db::repositories::records::get_repository_by_id(
+            let repo = match codeyard_db_repos::repositories::records::get_repository_by_id(
                 &ctx.state.pool,
                 repo,
             )
@@ -198,16 +198,17 @@ async fn render(
                 Ok(Some(repo)) => repo,
                 _ => return ctx.error(StatusCode::NOT_FOUND, "Repository not found."),
             };
-            let owner =
-                match crate::backend::db::ci::ci_repository_owner(&ctx.state.pool, repo.id).await {
-                    Ok(Some(owner)) => owner,
-                    _ => {
-                        return ctx.error(
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            "Repository settings unavailable.",
-                        )
-                    }
-                };
+            let owner = match codeyard_db_actions::ci::ci_repository_owner(&ctx.state.pool, repo.id)
+                .await
+            {
+                Ok(Some(owner)) => owner,
+                _ => {
+                    return ctx.error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Repository settings unavailable.",
+                    )
+                }
+            };
             (
                 format!("{owner}/{} runners", repo.name),
                 format!(

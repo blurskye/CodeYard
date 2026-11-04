@@ -4,10 +4,10 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::reactions::Reaction;
-use crate::backend::db::reactions::ReactionRefusal;
-use crate::backend::db::reactions::Subject;
-use crate::backend::db::reactions::Target;
+use codeyard_db_repos::reactions::Reaction;
+use codeyard_db_repos::reactions::ReactionRefusal;
+use codeyard_db_repos::reactions::Subject;
+use codeyard_db_repos::reactions::Target;
 
 use axum::{
     extract::{MatchedPath, OriginalUri, Path, Query, State},
@@ -48,8 +48,8 @@ async fn target(
     if let Some(number) = p.get("issue_number") {
         let (subject, id) =
             match crate::backend::api::github::labels::item(pool, repo_id, number).await? {
-                crate::backend::db::assignees::AssignedItem::Issue(id) => (Subject::Issue, id),
-                crate::backend::db::assignees::AssignedItem::PullRequest(id) => {
+                codeyard_db_repos::assignees::AssignedItem::Issue(id) => (Subject::Issue, id),
+                codeyard_db_repos::assignees::AssignedItem::PullRequest(id) => {
                     (Subject::PullRequest, id)
                 }
             };
@@ -63,7 +63,7 @@ async fn target(
     let id = p["comment_id"].parse().map_err(|_| Error::missing())?;
     if !route.contains("/issues/comments/") && !route.contains("/pulls/comments/") {
         let comment =
-            crate::backend::db::repositories::commit_comments::get_comment(pool, repo_id, id)
+            codeyard_db_repos::repositories::commit_comments::get_comment(pool, repo_id, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -76,12 +76,12 @@ async fn target(
     }
     if route.contains("/pulls/comments/") {
         let comment =
-            crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
+            codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .filter(|comment| comment.path.is_some())
                 .ok_or_else(Error::missing)?;
-        let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+        let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
             pool,
             comment.pull_request_id,
         )
@@ -90,7 +90,7 @@ async fn target(
         .filter(|pull| pull.repo_id == repo_id)
         .ok_or_else(Error::missing)?;
         if let Some(review_id) = comment.review_id {
-            let review = crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(
+            let review = codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(
                 pool, review_id,
             )
             .await
@@ -109,8 +109,8 @@ async fn target(
     }
     let comment = crate::backend::api::github::comments::find(pool, repo_id, id).await?;
     let (item_id, subject) = match comment.item {
-        crate::backend::db::assignees::AssignedItem::Issue(id) => (id, Subject::IssueComment),
-        crate::backend::db::assignees::AssignedItem::PullRequest(id) => {
+        codeyard_db_repos::assignees::AssignedItem::Issue(id) => (id, Subject::IssueComment),
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(id) => {
             (id, Subject::PullRequestComment)
         }
     };
@@ -127,7 +127,7 @@ pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
         return Error::missing();
     }
     if error
-        .downcast_ref::<crate::backend::db::discussions::DiscussionWriteRefusal>()
+        .downcast_ref::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>()
         .is_some()
     {
         return Error::new(StatusCode::FORBIDDEN, "Reaction mutation denied");
@@ -136,7 +136,7 @@ pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
 }
 
 async fn document(pool: &codeyard_db_core::DbPool, reaction: &Reaction) -> Result<Value> {
-    let user = crate::backend::db::users::accounts::get_user_by_id(pool, reaction.user_id)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, reaction.user_id)
         .await
         .map_err(Error::unavailable)?;
     Ok(crate::backend::webhooks::payloads::reaction(
@@ -151,7 +151,7 @@ struct Content {
 }
 
 fn validate(subject: Subject, content: &str) -> Result<()> {
-    if crate::backend::db::reactions::valid_content(subject, content) {
+    if codeyard_db_repos::reactions::valid_content(subject, content) {
         Ok(())
     } else {
         Err(Error::invalid("Unknown reaction"))
@@ -176,7 +176,7 @@ async fn create(
     )
     .await?;
     validate(target.subject, &input.content)?;
-    let (reaction, created) = crate::backend::db::reactions::create_reaction(
+    let (reaction, created) = codeyard_db_repos::reactions::create_reaction(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -222,7 +222,7 @@ async fn list(
         validate(target.subject, content)?;
     }
     let (offset, limit) = page.window()?;
-    let mut rows = crate::backend::db::reactions::list_reactions(
+    let mut rows = codeyard_db_repos::reactions::list_reactions(
         &state.pool,
         target,
         query.content.as_deref(),
@@ -237,7 +237,7 @@ async fn list(
     ids.sort_unstable();
     ids.dedup();
     let users: std::collections::HashMap<_, _> =
-        crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &ids)
+        codeyard_db_identity::users::accounts::get_users_by_ids(&state.pool, &ids)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
@@ -267,7 +267,7 @@ async fn remove(
     )
     .await?;
     let id = p["reaction_id"].parse().map_err(|_| Error::missing())?;
-    if !crate::backend::db::reactions::delete_reaction(
+    if !codeyard_db_repos::reactions::delete_reaction(
         &state.pool,
         actor.user.id,
         &actor.credential(),

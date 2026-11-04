@@ -123,7 +123,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     assert!(db::cluster::place_repository(&pool, repo.id, primary)
         .await
         .unwrap());
-    crate::backend::db::cluster::writes::bootstrap_writes(
+    codeyard_db_cluster::cluster::writes::bootstrap_writes(
         &pool,
         repo.id,
         primary,
@@ -143,13 +143,13 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
     )
     .await
     .unwrap();
-    assert!(crate::backend::db::cluster::writes::mark_write_applied(
+    assert!(codeyard_db_cluster::cluster::writes::mark_write_applied(
         &pool, repo.id, follower, 1, 0
     )
     .await
     .unwrap());
     assert!(
-        crate::backend::db::cluster::writes::enable_write_family(&pool, &[(repo.id, 1)])
+        codeyard_db_cluster::cluster::writes::enable_write_family(&pool, &[(repo.id, 1)])
             .await
             .unwrap()
     );
@@ -220,7 +220,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         !task.is_finished(),
         "prepared hook must remain held without a decision"
     );
-    let view = crate::backend::db::cluster::writes::recovery_view(&pool, repo.id)
+    let view = codeyard_db_cluster::cluster::writes::recovery_view(&pool, repo.id)
         .await
         .unwrap();
     let pending = view.unfinished.unwrap();
@@ -243,7 +243,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         error.downcast_ref::<RepoError>().unwrap().message,
         "write quorum unavailable"
     );
-    let decided = crate::backend::db::cluster::writes::load_write(&pool, &pending.id)
+    let decided = codeyard_db_cluster::cluster::writes::load_write(&pool, &pending.id)
         .await
         .unwrap()
         .unwrap();

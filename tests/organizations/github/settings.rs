@@ -3,11 +3,11 @@ use super::{
     roles::{repo, run},
 };
 use crate::support::{
-    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
 };
 
-use codeyard::backend::db::organizations::NewOrganization;
-use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::OrganizationProfile;
 
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::AccessLevel;
@@ -28,7 +28,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "foreign"] {
         orgs.push(applied(
-            codeyard::backend::db::organizations::create_organization(
+            codeyard_db_orgs::organizations::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -39,7 +39,7 @@ async fn contract(pg: bool) {
     }
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 f.pool(),
                 owner,
                 orgs[0].id,
@@ -51,7 +51,7 @@ async fn contract(pg: bool) {
         );
     }
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             f.pool(),
             owner,
             orgs[1].id,
@@ -192,17 +192,13 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(
-            f.pool(),
-            member,
-            second.id
-        )
-        .await
-        .unwrap(),
+        codeyard_db_repos::repositories::access::get_user_repo_access(f.pool(), member, second.id)
+            .await
+            .unwrap(),
         AccessLevel::Read
     );
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(
+        codeyard_db_repos::repositories::access::get_user_repo_access(
             f.pool(),
             outsider,
             second.id
@@ -212,13 +208,9 @@ async fn contract(pg: bool) {
         AccessLevel::None
     );
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(
-            f.pool(),
-            member,
-            foreign.id
-        )
-        .await
-        .unwrap(),
+        codeyard_db_repos::repositories::access::get_user_repo_access(f.pool(), member, foreign.id)
+            .await
+            .unwrap(),
         AccessLevel::None
     );
     let (_, visible) = request(
@@ -291,13 +283,9 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(
-            f.pool(),
-            member,
-            second.id
-        )
-        .await
-        .unwrap(),
+        codeyard_db_repos::repositories::access::get_user_repo_access(f.pool(), member, second.id)
+            .await
+            .unwrap(),
         AccessLevel::Admin
     );
     request(
@@ -332,7 +320,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(
+        codeyard_db_repos::repositories::access::get_user_repo_access(
             f.pool(),
             member,
             created["id"].as_i64().unwrap()
@@ -342,19 +330,17 @@ async fn contract(pg: bool) {
         AccessLevel::Admin
     );
     assert!(
-        codeyard::backend::db::repositories::records::transfer_repository(
+        codeyard_db_repos::repositories::records::transfer_repository(
             f.pool(),
             member,
             created["id"].as_i64().unwrap(),
-            codeyard::backend::db::repositories::creation::RepositoryTarget::Organization(
-                orgs[1].id
-            )
+            codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(orgs[1].id)
         )
         .await
         .is_err(),
         "destination creation policy cannot be bypassed by transfer"
     );
-    let child = codeyard::backend::db::repositories::records::get_repository_by_id(
+    let child = codeyard_db_repos::repositories::records::get_repository_by_id(
         f.pool(),
         created["id"].as_i64().unwrap(),
     )
@@ -362,44 +348,35 @@ async fn contract(pg: bool) {
     .unwrap()
     .unwrap();
     assert_eq!(child.owner_org_id, Some(orgs[0].id));
-    let target = codeyard::backend::db::organizations::settings::Changes::parse(
+    let target = codeyard_db_orgs::organizations::settings::Changes::parse(
         &json!({"members_can_create_private_repositories":true}),
     )
     .unwrap();
     applied(
-        codeyard::backend::db::organizations::settings::change(
-            f.pool(),
-            owner,
-            orgs[1].id,
-            &target,
-        )
-        .await
-        .unwrap(),
+        codeyard_db_orgs::organizations::settings::change(f.pool(), owner, orgs[1].id, &target)
+            .await
+            .unwrap(),
     );
-    let moved = codeyard::backend::db::repositories::records::transfer_repository(
+    let moved = codeyard_db_repos::repositories::records::transfer_repository(
         f.pool(),
         member,
         child.id,
-        codeyard::backend::db::repositories::creation::RepositoryTarget::Organization(orgs[1].id),
+        codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(orgs[1].id),
     )
     .await
     .unwrap();
     assert_eq!(moved.owner_org_id, Some(orgs[1].id));
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(
-            f.pool(),
-            member,
-            child.id
-        )
-        .await
-        .unwrap(),
+        codeyard_db_repos::repositories::access::get_user_repo_access(f.pool(), member, child.id)
+            .await
+            .unwrap(),
         AccessLevel::Admin
     );
-    let project = codeyard::backend::db::projects::create(
+    let project = codeyard_db_repos::projects::create(
         f.pool(),
         owner,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&browser.session),
-        codeyard::backend::db::projects::Owner::Organization(orgs[0].id),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&browser.session),
+        codeyard_db_repos::projects::Owner::Organization(orgs[0].id),
         "Roadmap",
         None,
         true,
@@ -416,13 +393,11 @@ async fn contract(pg: bool) {
         200,
     )
     .await;
-    assert!(codeyard::backend::db::projects::list(
+    assert!(codeyard_db_repos::projects::list(
         f.pool(),
         None,
-        &codeyard::backend::db::projects::ListFilter {
-            owner: Some(codeyard::backend::db::projects::Owner::Organization(
-                orgs[0].id
-            )),
+        &codeyard_db_repos::projects::ListFilter {
+            owner: Some(codeyard_db_repos::projects::Owner::Organization(orgs[0].id)),
             ..Default::default()
         },
         0,
@@ -432,19 +407,19 @@ async fn contract(pg: bool) {
     .unwrap()
     .1
     .is_empty());
-    assert!(codeyard::backend::db::projects::get(
+    assert!(codeyard_db_repos::projects::get(
         f.pool(),
         Some(owner),
-        codeyard::backend::db::projects::Owner::Organization(orgs[0].id),
+        codeyard_db_repos::projects::Owner::Organization(orgs[0].id),
         project.number
     )
     .await
     .is_err());
-    assert!(codeyard::backend::db::projects::create(
+    assert!(codeyard_db_repos::projects::create(
         f.pool(),
         owner,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&browser.session),
-        codeyard::backend::db::projects::Owner::Organization(orgs[0].id),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&browser.session),
+        codeyard_db_repos::projects::Owner::Organization(orgs[0].id),
         "Refused",
         None,
         true
@@ -462,10 +437,10 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        codeyard::backend::db::projects::get(
+        codeyard_db_repos::projects::get(
             f.pool(),
             Some(owner),
-            codeyard::backend::db::projects::Owner::Organization(orgs[0].id),
+            codeyard_db_repos::projects::Owner::Organization(orgs[0].id),
             project.number
         )
         .await

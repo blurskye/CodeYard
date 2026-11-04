@@ -57,7 +57,7 @@ async fn respond(
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
-    let reader = crate::backend::db::dependency_graph::Reader::Viewer(
+    let reader = codeyard_db_security::dependency_graph::Reader::Viewer(
         ctx.user.as_ref().map(|user| ctx.database_actor(user.id)),
     );
     let reference = format!("refs/heads/{}", loaded.default_branch);

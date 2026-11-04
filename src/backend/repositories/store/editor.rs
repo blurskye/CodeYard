@@ -444,7 +444,7 @@ pub struct PreparedFile {
     #[serde(default)]
     pub staging: Option<String>,
     #[serde(default)]
-    pub authority: Option<crate::backend::db::credentials::Actor>,
+    pub authority: Option<codeyard_db_core::queries::credentials::Actor>,
     pub branch: String,
     pub reference: String,
     pub expected: Option<String>,

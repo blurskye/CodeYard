@@ -31,7 +31,7 @@ pub async fn issue_authenticated_session<'a>(
     pool: &DbPool,
     context: SessionContext<'_>,
     user_id: i64,
-    credential: impl Into<crate::backend::db::users::sessions::SessionCredential<'a>>,
+    credential: impl Into<codeyard_db_identity::users::sessions::SessionCredential<'a>>,
 ) -> Result<String, SessionIssueError> {
     let old = match context.initiating {
         InitiatingSession::Missing => None,
@@ -40,13 +40,13 @@ pub async fn issue_authenticated_session<'a>(
     };
     // One named transaction revalidates setup/account/credentials, rejects active
     // rebinds, and invalidates the initiating anonymous identity and its CSRF.
-    let issued = crate::backend::db::users::sessions::rotate_authenticated_session(
+    let issued = codeyard_db_identity::users::sessions::rotate_authenticated_session(
         pool,
         old,
         context.fresh_id,
         user_id,
         credential,
-        crate::backend::db::users::sessions::SessionClient {
+        codeyard_db_identity::users::sessions::SessionClient {
             user_agent: context.user_agent,
             ip_address: context.client,
         },
@@ -74,7 +74,7 @@ pub(crate) async fn password_change_account(
     session_id: Option<&str>,
 ) -> Result<User, AccountAuthorityError> {
     let id = session_id.ok_or(AccountAuthorityError::NotAuthenticated)?;
-    crate::backend::db::users::sessions::get_session_account(pool, id)
+    codeyard_db_identity::users::sessions::get_session_account(pool, id)
         .await
         .map_err(|_| AccountAuthorityError::SessionUnavailable)?
         .ok_or(AccountAuthorityError::SessionExpired)
@@ -102,7 +102,7 @@ pub async fn end_session(
     session_id: Option<&str>,
 ) -> Result<(), SessionStorageUnavailable> {
     if let Some(id) = session_id {
-        crate::backend::db::users::sessions::delete_session(pool, id)
+        codeyard_db_identity::users::sessions::delete_session(pool, id)
             .await
             .map_err(|_| SessionStorageUnavailable)?;
     }

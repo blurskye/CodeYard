@@ -33,56 +33,56 @@ fn secrets_unavailable() -> (StatusCode, Json<ApiError>) {
 }
 
 pub(crate) fn secret_error(
-    error: crate::backend::db::secrets::SecretsError,
+    error: codeyard_db_core::queries::secrets::SecretsError,
 ) -> (StatusCode, Json<ApiError>) {
     match error {
-        crate::backend::db::secrets::SecretsError::Denied => (
+        codeyard_db_core::queries::secrets::SecretsError::Denied => (
             StatusCode::FORBIDDEN,
             Json(ApiError::new(
                 "forbidden",
                 "Repository secret access denied",
             )),
         ),
-        crate::backend::db::secrets::SecretsError::NotFound => (
+        codeyard_db_core::queries::secrets::SecretsError::NotFound => (
             StatusCode::NOT_FOUND,
             Json(ApiError::new("not_found", "Secret not found")),
         ),
-        crate::backend::db::secrets::SecretsError::InvalidName => (
+        codeyard_db_core::queries::secrets::SecretsError::InvalidName => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret names must be 1 to 255 ASCII letters, digits, or underscores and start with a letter or underscore",
             )),
         ),
-        crate::backend::db::secrets::SecretsError::ReservedName => (
+        codeyard_db_core::queries::secrets::SecretsError::ReservedName => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret names beginning with GITHUB_ are reserved",
             )),
         ),
-        crate::backend::db::secrets::SecretsError::ValueContainsNul => (
+        codeyard_db_core::queries::secrets::SecretsError::ValueContainsNul => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret values cannot contain NUL",
             )),
         ),
-        crate::backend::db::secrets::SecretsError::ValueTooLarge => (
+        codeyard_db_core::queries::secrets::SecretsError::ValueTooLarge => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "Secret values cannot exceed 48 KiB",
             )),
         ),
-        crate::backend::db::secrets::SecretsError::TooManySecrets => (
+        codeyard_db_core::queries::secrets::SecretsError::TooManySecrets => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
                 "A repository can have at most 100 secrets",
             )),
         ),
-        crate::backend::db::secrets::SecretsError::TotalTooLarge => (
+        codeyard_db_core::queries::secrets::SecretsError::TotalTooLarge => (
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
@@ -107,14 +107,14 @@ pub async fn create_or_update_secret(
         .as_ref()
         .ok_or_else(secrets_unavailable)?;
 
-    crate::backend::db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         &state.pool,
         encryptor,
         repository.id,
         &name,
         &body.value,
         Some(user.id),
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         ),
     )
@@ -132,7 +132,7 @@ pub async fn list_secrets(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    let secrets = crate::backend::db::secrets::list_secrets(&state.pool, user.id, repository.id)
+    let secrets = codeyard_db_actions::secrets::list_secrets(&state.pool, user.id, repository.id)
         .await
         .map_err(secret_error)?;
 
@@ -156,12 +156,12 @@ pub async fn delete_secret(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    let deleted = crate::backend::db::secrets::delete_secret(
+    let deleted = codeyard_db_actions::secrets::delete_secret(
         &state.pool,
         user.id,
         repository.id,
         &name,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         ),
     )
@@ -189,9 +189,9 @@ pub(crate) async fn form(
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to manage secrets.");
     };
     let (kind, tab) = match field(form, "secret_kind").as_str() {
-        "" | "actions" => (crate::backend::db::secrets::SecretKind::Actions, "secrets"),
+        "" | "actions" => (codeyard_db_actions::secrets::SecretKind::Actions, "secrets"),
         "dependabot" => (
-            crate::backend::db::secrets::SecretKind::Dependabot,
+            codeyard_db_actions::secrets::SecretKind::Dependabot,
             "dependabot-secrets",
         ),
         _ => return ctx.error(StatusCode::BAD_REQUEST, "Invalid secret kind."),
@@ -201,10 +201,11 @@ pub(crate) async fn form(
     let name = field(form, "name");
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
     let result = if action == "secret-save" {
         match ctx.state.secret_encryptor.as_deref() {
-            Some(encryptor) => crate::backend::db::secrets::create_or_update_secret_for(
+            Some(encryptor) => codeyard_db_actions::secrets::create_or_update_secret_for(
                 &ctx.state.pool,
                 encryptor,
                 (loaded.repository.id, kind),
@@ -219,7 +220,7 @@ pub(crate) async fn form(
             None => Err(secrets_unavailable()),
         }
     } else {
-        crate::backend::db::secrets::delete_secret_for(
+        codeyard_db_actions::secrets::delete_secret_for(
             &ctx.state.pool,
             kind,
             actor.id,
@@ -234,7 +235,7 @@ pub(crate) async fn form(
                 Ok(())
             } else {
                 Err(secret_error(
-                    crate::backend::db::secrets::SecretsError::NotFound,
+                    codeyard_db_core::queries::secrets::SecretsError::NotFound,
                 ))
             }
         })
@@ -251,32 +252,33 @@ mod tests {
 
     #[test]
     fn secret_errors_are_typed_and_sanitized() {
-        let (status, Json(error)) = secret_error(crate::backend::db::secrets::SecretsError::Denied);
+        let (status, Json(error)) =
+            secret_error(codeyard_db_core::queries::secrets::SecretsError::Denied);
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert_eq!(error.error, "forbidden");
         for (error, message) in [
             (
-                crate::backend::db::secrets::SecretsError::InvalidName,
+                codeyard_db_core::queries::secrets::SecretsError::InvalidName,
                 "Secret names must be 1 to 255 ASCII letters, digits, or underscores and start with a letter or underscore",
             ),
             (
-                crate::backend::db::secrets::SecretsError::ReservedName,
+                codeyard_db_core::queries::secrets::SecretsError::ReservedName,
                 "Secret names beginning with GITHUB_ are reserved",
             ),
             (
-                crate::backend::db::secrets::SecretsError::ValueContainsNul,
+                codeyard_db_core::queries::secrets::SecretsError::ValueContainsNul,
                 "Secret values cannot contain NUL",
             ),
             (
-                crate::backend::db::secrets::SecretsError::ValueTooLarge,
+                codeyard_db_core::queries::secrets::SecretsError::ValueTooLarge,
                 "Secret values cannot exceed 48 KiB",
             ),
             (
-                crate::backend::db::secrets::SecretsError::TooManySecrets,
+                codeyard_db_core::queries::secrets::SecretsError::TooManySecrets,
                 "A repository can have at most 100 secrets",
             ),
             (
-                crate::backend::db::secrets::SecretsError::TotalTooLarge,
+                codeyard_db_core::queries::secrets::SecretsError::TotalTooLarge,
                 "A repository's secrets can total at most 1 MiB",
             ),
         ] {
@@ -290,10 +292,10 @@ mod tests {
             }
         }
         for error in [
-            crate::backend::db::secrets::SecretsError::Authority(anyhow::anyhow!(
+            codeyard_db_core::queries::secrets::SecretsError::Authority(anyhow::anyhow!(
                 "private SQL encrypted_value nonce plaintext /filesystem/key"
             )),
-            crate::backend::db::secrets::SecretsError::Encryption(
+            codeyard_db_core::queries::secrets::SecretsError::Encryption(
                 codeyard_support::secrets::SecretError::EncryptionFailed,
             ),
         ] {

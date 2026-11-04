@@ -39,7 +39,7 @@ fn document(
     entry: &CommentDetails,
     repo: &Repository,
     owner: &str,
-    counts: &[crate::backend::db::reactions::ReactionCount],
+    counts: &[codeyard_db_repos::reactions::ReactionCount],
 ) -> Value {
     let counts = counts
         .iter()
@@ -61,7 +61,7 @@ async fn document_one(
     repo: &Repository,
     owner: &str,
 ) -> Result<Value> {
-    let counts = crate::backend::db::reactions::reaction_counts(
+    let counts = codeyard_db_repos::reactions::reaction_counts(
         pool,
         "commit_comment",
         &[entry.comment.id],
@@ -77,7 +77,7 @@ async fn writer(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
-) -> Result<(Repository, crate::backend::db::credentials::Actor)> {
+) -> Result<(Repository, codeyard_db_core::queries::credentials::Actor)> {
     // Comment participation needs read access, not permission to push to the repository.
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
@@ -153,7 +153,7 @@ async fn item(
         Some(auth.database_actor())
     };
     let comment =
-        crate::backend::db::repositories::commit_comments::get_comment(&state.pool, repo.id, id)
+        codeyard_db_repos::repositories::commit_comments::get_comment(&state.pool, repo.id, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -190,7 +190,7 @@ async fn item(
         &state.pool,
         state.cluster.as_ref(),
         &state.notification_broadcaster,
-        crate::backend::db::repositories::commit_comments::CommentEdit {
+        codeyard_db_repos::repositories::commit_comments::CommentEdit {
             actor,
             repo_id: repo.id,
             id,
@@ -224,7 +224,7 @@ async fn list(
         None
     };
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::repositories::commit_comments::list_comments(
+    let rows = codeyard_db_repos::repositories::commit_comments::list_comments(
         &state.pool,
         repo.id,
         sha.as_deref(),
@@ -235,7 +235,7 @@ async fn list(
     .map_err(Error::unavailable)?;
     let has_next = rows.len() == limit
         && offset + limit <= 1_000_000
-        && !crate::backend::db::repositories::commit_comments::list_comments(
+        && !codeyard_db_repos::repositories::commit_comments::list_comments(
             &state.pool,
             repo.id,
             sha.as_deref(),
@@ -258,7 +258,7 @@ async fn list(
         .map(|entry| entry.comment.id)
         .collect::<Vec<_>>();
     let counts =
-        crate::backend::db::reactions::reaction_counts(&state.pool, "commit_comment", &ids, 0)
+        codeyard_db_repos::reactions::reaction_counts(&state.pool, "commit_comment", &ids, 0)
             .await
             .map_err(Error::unavailable)?;
     page.response(

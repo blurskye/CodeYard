@@ -142,11 +142,11 @@ async fn bundle_recovery(url: &str) {
 
 async fn rejected_commands(pool: &codeyard_db_core::DbPool, url: &str) {
     let root = tempfile::tempdir().unwrap();
-    let user = codeyard::backend::db::users::accounts::create_user(pool, "loguser", None)
+    let user = codeyard_db_identity::users::accounts::create_user(pool, "loguser", None)
         .await
         .unwrap();
     let key = PrivateKey::from(Ed25519Keypair::from_seed(&[42; 32]));
-    codeyard::backend::db::users::ssh_keys::add_ssh_key(
+    codeyard_db_identity::users::ssh_keys::add_ssh_key(
         pool,
         user.id,
         "log fixture",

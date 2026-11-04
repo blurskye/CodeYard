@@ -8,16 +8,16 @@ use crate::backend::api::repos::forms::authorize_post;
 use crate::backend::api::repos::forms::field;
 use crate::backend::app::AppState;
 
-use crate::backend::db::suggestions::Action;
-use crate::backend::db::suggestions::ListFilter;
-use crate::backend::db::suggestions::Proposal;
-use crate::backend::db::suggestions::Refusal;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
     Json,
 };
+use codeyard_db_repos::suggestions::Action;
+use codeyard_db_repos::suggestions::ListFilter;
+use codeyard_db_repos::suggestions::Proposal;
+use codeyard_db_repos::suggestions::Refusal;
 use codeyard_webui::pages::repos::issues::{
     DetailDraft, IssueSuggestion, IssueSuggestions, Kind, SuggestionDraft,
 };
@@ -28,7 +28,7 @@ use std::{
     sync::Arc,
 };
 fn failure(error: &anyhow::Error) -> (StatusCode, String) {
-    match crate::backend::db::suggestions::refusal(error) {
+    match codeyard_db_repos::suggestions::refusal(error) {
         Some(Refusal::Missing) => (
             StatusCode::NOT_FOUND,
             "Issue or suggestion not found, or suggestions disabled.".into(),
@@ -54,7 +54,7 @@ pub(crate) async fn load(
     let Some(actor) = &ctx.user else {
         return Ok(None);
     };
-    let enabled = crate::backend::db::suggestions::enabled(&ctx.state.pool, repo.id)
+    let enabled = codeyard_db_repos::suggestions::enabled(&ctx.state.pool, repo.id)
         .await
         .map_err(|_| unavailable(ctx))?;
     if !enabled && !admin {
@@ -82,18 +82,18 @@ pub(crate) async fn load(
         .query
         .get("suggestion_page")
         .is_some_and(|s| s.parse::<usize>().is_err())
-        || !crate::backend::db::suggestions::valid_state(&state)
+        || !codeyard_db_repos::suggestions::valid_state(&state)
     {
         return Err(ctx.error(
             StatusCode::UNPROCESSABLE_ENTITY,
             "Invalid suggestion filters.",
         ));
     }
-    let triage = crate::backend::db::suggestions::can_triage(&ctx.state.pool, repo.id, actor.id)
+    let triage = codeyard_db_repos::suggestions::can_triage(&ctx.state.pool, repo.id, actor.id)
         .await
         .map_err(|_| unavailable(ctx))?;
     let mut rows = if enabled {
-        crate::backend::db::suggestions::list(
+        codeyard_db_repos::suggestions::list(
             &ctx.state.pool,
             repo.id,
             actor.id,
@@ -124,7 +124,7 @@ pub(crate) async fn load(
         .collect::<HashSet<_>>()
         .into_iter()
         .collect::<Vec<_>>();
-    let people = crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+    let people = codeyard_db_identity::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
         .await
         .map_err(|_| unavailable(ctx))?
         .into_iter()
@@ -152,14 +152,14 @@ pub(crate) async fn load(
     if !actor.is_admin {
         if let Some(owner) = repo.personal_owner_id() {
             if owner != actor.id {
-                can_propose &= !crate::backend::db::users::blocks::is_blocked(
+                can_propose &= !codeyard_db_identity::users::blocks::is_blocked(
                     &ctx.state.pool,
                     owner,
                     actor.id,
                 )
                 .await
                 .map_err(|_| unavailable(ctx))?
-                    && !crate::backend::db::users::blocks::is_blocked(
+                    && !codeyard_db_identity::users::blocks::is_blocked(
                         &ctx.state.pool,
                         actor.id,
                         owner,
@@ -171,7 +171,7 @@ pub(crate) async fn load(
     }
     if let Some(org) = repo.owner_org_id {
         can_propose &=
-            crate::backend::db::organizations::get_public_organization_by_id(&ctx.state.pool, org)
+            codeyard_db_orgs::organizations::get_public_organization_by_id(&ctx.state.pool, org)
                 .await
                 .map_err(|_| unavailable(ctx))?
                 .is_some();
@@ -212,7 +212,7 @@ async fn native_propose(
             } else {
                 "field"
             };
-            let catalog = crate::backend::db::issue_attributes::catalog(
+            let catalog = codeyard_db_repos::issue_attributes::catalog(
                 &ctx.state.pool,
                 repo.id,
                 Some(actor),
@@ -239,7 +239,7 @@ async fn native_propose(
             Some(a.id)
         }
         Action::AddLabel => {
-            let labels = crate::backend::db::labels::list_repo_labels(&ctx.state.pool, repo.id)
+            let labels = codeyard_db_repos::labels::list_repo_labels(&ctx.state.pool, repo.id)
                 .await
                 .map_err(|_| unavailable(ctx))?;
             // The exact name wins; names that differ only in case are distinct labels.
@@ -255,7 +255,7 @@ async fn native_propose(
             Some(label.id)
         }
         Action::AddAssignee => Some(
-            crate::backend::db::users::accounts::get_user_by_username(
+            codeyard_db_identity::users::accounts::get_user_by_username(
                 &ctx.state.pool,
                 target.trim_start_matches('@'),
             )
@@ -291,11 +291,11 @@ async fn native_propose(
         rationale: Some(field(form, "rationale")).filter(|s| !s.is_empty()),
         confidence: Some(field(form, "confidence")).filter(|s| !s.is_empty()),
     };
-    crate::backend::db::suggestions::propose(
+    codeyard_db_repos::suggestions::propose(
         &ctx.state.pool,
         repo.id,
         actor,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -342,11 +342,11 @@ pub(crate) async fn native_change(
             Some("The suggestion target changed. Your draft is preserved; return to the original issue before submitting."), StatusCode::CONFLICT).await;
     }
     match field(&form, "action").as_str() {
-        "set_enabled" => crate::backend::db::suggestions::set_enabled(
+        "set_enabled" => codeyard_db_repos::suggestions::set_enabled(
             &ctx.state.pool,
             repo.record.id,
             actor.id,
-            &crate::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                     .unwrap_or_default(),
             ),
@@ -372,7 +372,7 @@ pub(crate) async fn native_change(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
                 actor,
-                &crate::backend::db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                         .unwrap_or_default(),
                 ),
@@ -457,7 +457,7 @@ pub async fn agent_propose(
             )
                 .into_response()
         })?;
-    let scoped = crate::backend::db::oauth_apps::token(&state.pool, auth.token.id)
+    let scoped = codeyard_db_identity::oauth_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(unavailable)?
         .map(|token| {
@@ -477,7 +477,7 @@ pub async fn agent_propose(
         )
             .into_response());
     }
-    let issue = crate::backend::db::issues::get_issue(&state.pool, repo.id, number)
+    let issue = codeyard_db_repos::issues::get_issue(&state.pool, repo.id, number)
         .await
         .map_err(|_| {
             (
@@ -512,7 +512,7 @@ pub async fn agent_propose(
                 )
                     .into_response()
             };
-            let target = crate::backend::db::issues::get_issue_by_id(&state.pool, id)
+            let target = codeyard_db_repos::issues::get_issue_by_id(&state.pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -524,7 +524,7 @@ pub async fn agent_propose(
                     }
                     _ => missing(),
                 })?;
-            let readable = crate::backend::db::repositories::access::readable_repository_ids(
+            let readable = codeyard_db_repos::repositories::access::readable_repository_ids(
                 &state.pool,
                 Some(auth.user.id),
                 &[target.repo_id],
@@ -541,7 +541,7 @@ pub async fn agent_propose(
     } else {
         None
     };
-    let row = crate::backend::db::suggestions::propose(
+    let row = codeyard_db_repos::suggestions::propose(
         &state.pool,
         repo.id,
         auth.user.id,

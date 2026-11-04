@@ -3,7 +3,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::private_registries::RegistryError;
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -11,6 +10,7 @@ use axum::{
     routing::{delete, get, patch, post, MethodRouter},
     Json,
 };
+use codeyard_db_actions::private_registries::RegistryError;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -57,7 +57,7 @@ async fn list(
         crate::backend::api::github::dependabot::organization(&state, &headers, &org, false)
             .await?;
     let (offset, limit) = page.window()?;
-    let (total, configurations) = crate::backend::db::private_registries::list(
+    let (total, configurations) = codeyard_db_actions::private_registries::list(
         &state.pool,
         actor.user.id,
         org,
@@ -87,7 +87,7 @@ async fn registry(
     let (org, actor) =
         crate::backend::api::github::dependabot::organization(&state, &headers, &org, false)
             .await?;
-    let registry = crate::backend::db::private_registries::list(
+    let registry = codeyard_db_actions::private_registries::list(
         &state.pool,
         actor.user.id,
         org,
@@ -122,7 +122,7 @@ async fn input(
                 .secret_encryptor
                 .as_deref()
                 .ok_or_else(|| Error::unavailable(()))?;
-            let (key_id, key) = crate::backend::db::dependabot::organization_key(
+            let (key_id, key) = codeyard_db_security::dependabot::organization_key(
                 &state.pool,
                 encryptor,
                 actor,
@@ -155,11 +155,11 @@ async fn create(
         crate::backend::api::github::dependabot::organization(&state, &headers, &org, true).await?;
     let Json(body) = body.map_err(crate::backend::api::github::json_error)?;
     let (body, value) = input(&state, actor.user.id, org, body).await?;
-    let registry = crate::backend::db::private_registries::save(
+    let registry = codeyard_db_actions::private_registries::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
         actor.user.id,
-        &crate::backend::db::users::accounts::AccountCredential::Token(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
             actor.token.id,
             &actor.token.token_hash,
         ),
@@ -187,11 +187,11 @@ async fn update(
         crate::backend::api::github::dependabot::organization(&state, &headers, &org, true).await?;
     let Json(body) = body.map_err(crate::backend::api::github::json_error)?;
     let (body, value) = input(&state, actor.user.id, org, body).await?;
-    crate::backend::db::private_registries::save(
+    codeyard_db_actions::private_registries::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
         actor.user.id,
-        &crate::backend::db::users::accounts::AccountCredential::Token(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
             actor.token.id,
             &actor.token.token_hash,
         ),
@@ -212,10 +212,10 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (org, actor) =
         crate::backend::api::github::dependabot::organization(&state, &headers, &org, true).await?;
-    crate::backend::db::private_registries::delete(
+    codeyard_db_actions::private_registries::delete(
         &state.pool,
         actor.user.id,
-        &crate::backend::db::users::accounts::AccountCredential::Token(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
             actor.token.id,
             &actor.token.token_hash,
         ),

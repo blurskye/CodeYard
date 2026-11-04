@@ -4,9 +4,9 @@ use crate::backend::api::packages::Error;
 use crate::backend::api::packages::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::packages::Package;
-use crate::backend::db::packages::Publish;
-use crate::backend::db::packages::Version;
+use codeyard_db_repos::packages::Package;
+use codeyard_db_repos::packages::Publish;
+use codeyard_db_repos::packages::Version;
 
 use axum::{
     body::to_bytes,
@@ -325,11 +325,11 @@ async fn dispatch(
             package.id,
             auth.token.id,
             bytes,
-            crate::backend::db::packages::Charge::Upload,
+            codeyard_db_repos::packages::Charge::Upload,
         )
         .await
         .map_err(Error::db)?;
-        crate::backend::db::packages::publish(
+        codeyard_db_repos::packages::publish(
             &state.pool,
             auth.token.id,
             Publish {
@@ -439,14 +439,14 @@ async fn dispatch(
             constructed = constructed
                 .checked_add(cost)
                 .ok_or_else(Error::unavailable)?;
-            if constructed > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
+            if constructed > codeyard_db_repos::packages::MAX_METADATA_RESPONSE_BYTES {
                 return Err(Error::unavailable());
             }
             data.push(json!({"id":catalog["id"],"version":latest.name,"description":catalog["description"],"title":catalog["title"],"authors":catalog["authors"].as_str().unwrap_or("").split(',').map(str::trim).collect::<Vec<_>>(),"tags":catalog["tags"],"totalDownloads":downloads,"registration":format!("{base}/{registration_kind}/{}/index.json",package.name),"versions":versions.iter().map(|v| json!({"version":v.name,"downloads":v.downloads,"@id":format!("{base}/{registration_kind}/{}/{}.json",package.name,v.name)})).collect::<Vec<_>>()}));
         }
         let bytes = serde_json::to_vec(&json!({"totalHits":total,"data":data}))
             .map_err(|_| Error::unavailable())?;
-        if bytes.len() > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
+        if bytes.len() > codeyard_db_repos::packages::MAX_METADATA_RESPONSE_BYTES {
             return Err(Error::unavailable());
         }
         return Ok(([(header::CONTENT_TYPE, "application/json")], bytes).into_response());
@@ -479,7 +479,7 @@ async fn dispatch(
             return Err(Error::missing());
         }
         let key = normalize(parts[2])?;
-        let version = crate::backend::db::packages::version(&state.pool, package.id, token, &key)
+        let version = codeyard_db_repos::packages::version(&state.pool, package.id, token, &key)
             .await
             .map_err(Error::db)?;
         let catalog = metadata(&version)?;
@@ -510,7 +510,7 @@ async fn dispatch(
             return Err(Error::missing());
         }
         let blob =
-            crate::backend::db::packages::blob(&state.pool, package.id, token, &version.digest)
+            codeyard_db_repos::packages::blob(&state.pool, package.id, token, &version.digest)
                 .await
                 .map_err(Error::db)?;
         let response = crate::backend::api::packages::oci::download(
@@ -521,7 +521,7 @@ async fn dispatch(
         )
         .await?;
         if request.method() == Method::GET {
-            crate::backend::db::packages::nuget_downloaded(
+            codeyard_db_repos::packages::nuget_downloaded(
                 &state.pool,
                 package.id,
                 token,
@@ -564,7 +564,7 @@ async fn dispatch(
     }
     if parts[0] == "catalog" && parts.len() == 3 {
         let key = parts[2].strip_suffix(".json").ok_or_else(Error::missing)?;
-        let version = crate::backend::db::packages::version(&state.pool, package.id, token, key)
+        let version = codeyard_db_repos::packages::version(&state.pool, package.id, token, key)
             .await
             .map_err(Error::db)?;
         return Ok(Json(

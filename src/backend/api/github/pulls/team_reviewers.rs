@@ -10,7 +10,7 @@ pub(super) async fn documents(
     pull: i64,
     viewer: Option<i64>,
 ) -> Result<Vec<Value>> {
-    let teams = crate::backend::db::pull_requests::team_reviewers::list(
+    let teams = codeyard_db_repos::pull_requests::team_reviewers::list(
         &state.pool,
         repo,
         Some(pull),

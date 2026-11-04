@@ -80,7 +80,7 @@ async fn prepare_application(
     let secret_encryptor = SecretEncryptor::configured_from_env()?.map(Arc::new);
     validate_cluster_encryptor(cluster.is_some(), secret_encryptor.as_deref(), None)?;
     if cluster.is_some() {
-        for (text, nonce) in crate::backend::db::secrets::encryption_samples(&pool).await? {
+        for (text, nonce) in codeyard_db_actions::secrets::encryption_samples(&pool).await? {
             validate_cluster_encryptor(true, secret_encryptor.as_deref(), Some((&text, &nonce)))?;
         }
     }
@@ -159,7 +159,7 @@ async fn remove_expired_rows(
         }
         if let Some(root) = repos_path.clone() {
             let window = std::time::Duration::from_secs(
-                crate::backend::db::files::RESTORE_WINDOW_SECONDS as u64,
+                codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS as u64,
             );
             let sweep = tokio::task::spawn_blocking(move || {
                 let mirrors = root.join(crate::backend::cluster::replicas::MIRRORS);
@@ -207,8 +207,8 @@ async fn remove_expired_web_rows(pool: &DbPool, storage: &crate::backend::storag
         Err(_) => warn!("package object collection timed out"),
     }
     match tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        crate::backend::db::attestations::collect(pool).await?;
-        crate::backend::db::action_objects::expire_objects(pool).await?;
+        codeyard_db_security::attestations::collect(pool).await?;
+        codeyard_db_actions::action_objects::expire_objects(pool).await?;
         Ok::<_, anyhow::Error>(())
     })
     .await
@@ -216,29 +216,29 @@ async fn remove_expired_web_rows(pool: &DbPool, storage: &crate::backend::storag
         Ok(Ok(())) => {}
         _ => warn!("attestation or Actions object collection was deferred"),
     }
-    match crate::backend::db::files::remove_expired_transfer_rows(pool).await {
+    match codeyard_db_repos::files::remove_expired_transfer_rows(pool).await {
         Ok(0) => {}
         Ok(removed) => info!(removed, "removed expired transfer accounting"),
         Err(_) => warn!("could not remove expired transfer accounting"),
     }
-    match crate::backend::db::users::sessions::remove_expired_identity_rows(pool).await {
+    match codeyard_db_identity::users::sessions::remove_expired_identity_rows(pool).await {
         Ok(0) => {}
         Ok(changed) => info!(changed, "cleaned up expired identity rows"),
         Err(_) => warn!("could not clean up expired identity rows"),
     }
-    if let Err(error) = crate::backend::db::pull_requests::async_merge::prune(pool).await {
+    if let Err(error) = codeyard_db_repos::pull_requests::async_merge::prune(pool).await {
         warn!(%error,"could not prune asynchronous merge results");
     }
-    if let Err(error) = crate::backend::db::events::prune_events(pool).await {
+    if let Err(error) = codeyard_db_repos::events::prune_events(pool).await {
         warn!(%error,"could not prune old repository activity");
     }
-    if let Err(error) = crate::backend::db::webhooks::prune_expired_deliveries(pool).await {
+    if let Err(error) = codeyard_db_repos::webhooks::prune_expired_deliveries(pool).await {
         warn!(%error, "could not prune expired webhook deliveries");
     }
-    if let Err(error) = crate::backend::db::dependency_graph::prune_expired_reports(pool).await {
+    if let Err(error) = codeyard_db_security::dependency_graph::prune_expired_reports(pool).await {
         warn!(%error, "could not prune expired SBOM reports");
     }
-    if let Err(error) = crate::backend::db::secret_scanning::prune_expired_bypasses(pool).await {
+    if let Err(error) = codeyard_db_security::secret_scanning::prune_expired_bypasses(pool).await {
         warn!(%error, "could not prune expired unused secret scanning bypasses");
     }
     match storage.remove_stale_staging().await {
@@ -322,9 +322,9 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
 pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let signal = shutdown_signal();
     tokio::pin!(signal);
-    let clustered = crate::backend::db::cluster::cluster_enabled(&pool).await?;
+    let clustered = codeyard_db_cluster::cluster::cluster_enabled(&pool).await?;
     let _installation_lock = if !clustered {
-        Some(crate::backend::db::cluster::serving_lock(&pool, "installation").await?)
+        Some(codeyard_db_cluster::cluster::serving_lock(&pool, "installation").await?)
     } else {
         None
     };
@@ -359,7 +359,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         }),
         None => None,
     };
-    if member.is_none() && crate::backend::db::cluster::cluster_enabled(&pool).await? {
+    if member.is_none() && codeyard_db_cluster::cluster::cluster_enabled(&pool).await? {
         pool.close().await;
         anyhow::bail!(
             "this database is in cluster mode; set the CLUSTER_* settings so this node can serve it"
@@ -690,7 +690,7 @@ mod tests {
         .await
         .unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let owner = crate::backend::db::users::accounts::create_user(&pool, "owner", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
         let DbPool::Sqlite(raw) = &pool else {

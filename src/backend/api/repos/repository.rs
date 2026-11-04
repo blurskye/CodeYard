@@ -48,7 +48,7 @@ use std::sync::Arc;
 const REPO_ADMIN_REQUIRED: &str = "Only repository administrators can manage these settings.";
 
 fn autolink_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
-    use crate::backend::db::repositories::autolinks::Refusal;
+    use codeyard_db_repos::repositories::autolinks::Refusal;
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => ApiError::failure(
             StatusCode::FORBIDDEN,
@@ -72,7 +72,7 @@ fn autolink_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
 }
 
 fn immutable_releases_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
-    use crate::backend::db::repositories::immutable_releases::Refusal;
+    use codeyard_db_repos::repositories::immutable_releases::Refusal;
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => ApiError::failure(
             StatusCode::FORBIDDEN,
@@ -146,12 +146,9 @@ async fn repository_response(
         .unwrap_or_default();
 
     let forked_from = if let Some(parent_id) = repository.forked_from_id {
-        match crate::backend::db::repositories::records::get_repository_by_id(
-            &state.pool,
-            parent_id,
-        )
-        .await
-        .map_err(|_| access_error(AccessError::Unavailable))?
+        match codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, parent_id)
+            .await
+            .map_err(|_| access_error(AccessError::Unavailable))?
         {
             Some(parent) => match check_repo_read_access(&state.pool, &parent, headers).await {
                 Ok(()) => {
@@ -191,7 +188,7 @@ pub struct RenameRepoRequest {
 pub struct UpdateRepoRequest {
     #[serde(
         default,
-        deserialize_with = "crate::backend::db::repositories::records::nullable_change"
+        deserialize_with = "codeyard_db_repos::repositories::records::nullable_change"
     )]
     pub description: Option<Option<String>>,
     pub is_private: Option<bool>,
@@ -214,9 +211,9 @@ pub async fn rename_repo(
 
     // Unique owner/name reservation is authoritative. A rename only changes the
     // DB alias; stable operation-owned storage is never moved or compensated.
-    let updated = crate::backend::db::repositories::records::rename_repository(
+    let updated = codeyard_db_repos::repositories::records::rename_repository(
         &state.pool,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             user.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -246,7 +243,7 @@ pub async fn transfer_repo(
     let updated = crate::backend::repositories::lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             user.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -280,15 +277,15 @@ pub async fn about_repo(
     let description = req.description.unwrap_or_default();
     crate::backend::repositories::lifecycle::validate_description(&description)
         .map_err(lifecycle_error)?;
-    let website = crate::backend::db::repositories::topics::parse_website(
+    let website = codeyard_db_repos::repositories::topics::parse_website(
         req.website.as_deref().unwrap_or_default(),
     )
     .map_err(repository_settings_error)?;
-    let topics = crate::backend::db::repositories::topics::parse_topics(
+    let topics = codeyard_db_repos::repositories::topics::parse_topics(
         req.topics.iter().map(String::as_str),
     )
     .map_err(repository_settings_error)?;
-    crate::backend::db::repositories::topics::update_about(
+    codeyard_db_repos::repositories::topics::update_about(
         &state.pool,
         user.id,
         repository.id,
@@ -299,7 +296,7 @@ pub async fn about_repo(
     .await
     .map_err(repository_settings_error)?;
     let updated =
-        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, repository.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, repository.id)
             .await
             .map_err(repository_settings_error)?
             .ok_or_else(|| {
@@ -344,17 +341,17 @@ pub async fn update_repo(
     }
     // The merge methods, description and visibility save in one transaction, so a refusal or a
     // failed write leaves all of them unchanged.
-    let updated = crate::backend::db::repositories::records::patch_repository(
+    let updated = codeyard_db_repos::repositories::records::patch_repository(
         &state.pool,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             user.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
         repository.id,
-        &crate::backend::db::repositories::records::RepositoryChanges {
+        &codeyard_db_repos::repositories::records::RepositoryChanges {
             description: req.description.as_ref().map(|value| value.as_deref()),
             is_private: req.is_private,
-            merge_methods: crate::backend::db::repositories::records::MergeMethodUpdate {
+            merge_methods: codeyard_db_repos::repositories::records::MergeMethodUpdate {
                 merge: req.allow_merge_commit,
                 squash: req.allow_squash_merge,
                 rebase: req.allow_rebase_merge,
@@ -379,7 +376,7 @@ pub async fn delete_repo(
     crate::backend::repositories::lifecycle::delete(
         &state.pool,
         state.cluster.as_ref(),
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -422,7 +419,7 @@ pub(super) async fn settings_model(
             crate::backend::api::user::interactions::panel(
                 &ctx.state.pool,
                 viewer.id,
-                crate::backend::db::interactions::InteractionScope::Repository(
+                codeyard_db_identity::interactions::InteractionScope::Repository(
                     loaded.repository.id,
                 ),
                 &loaded.chrome.csrf_token,
@@ -435,7 +432,7 @@ pub(super) async fn settings_model(
     // Only the branch-protection section uses rules and their user choices.
     if tab == "branches" {
         settings.force_push_suggestions =
-            crate::backend::db::repositories::access::list_write_access_users(
+            codeyard_db_repos::repositories::access::list_write_access_users(
                 &ctx.state.pool,
                 loaded.repository.id,
                 viewer.id,
@@ -453,16 +450,16 @@ pub(super) async fn settings_model(
     if tab == "actions" {
         let pool = &ctx.state.pool;
         let (site, own) = tokio::try_join!(
-            crate::backend::db::actions::get_actions_settings(pool),
-            crate::backend::db::actions::get_repo_actions_settings(pool, loaded.repository.id),
+            codeyard_db_actions::actions::get_actions_settings(pool),
+            codeyard_db_actions::actions::get_repo_actions_settings(pool, loaded.repository.id),
         )
         .map_err(|_| unavailable(ctx))?;
         let text = |value: Option<i32>| value.map(|value| value.to_string()).unwrap_or_default();
         let server_minutes = ctx.state.ci_runs.config.run_timeout_seconds.div_ceil(60);
-        let oidc = crate::backend::db::oidc::settings(
+        let oidc = codeyard_db_actions::oidc::settings(
             pool,
             viewer.id,
-            crate::backend::db::oidc::Scope::Repository(loaded.repository.id),
+            codeyard_db_core::queries::oidc::Scope::Repository(loaded.repository.id),
         )
         .await
         .map_err(|_| unavailable(ctx))?;
@@ -500,7 +497,7 @@ pub(super) async fn settings_model(
     }
     if tab == "security" {
         let security =
-            crate::backend::db::secret_scanning::settings(&ctx.state.pool, loaded.repository.id)
+            codeyard_db_security::secret_scanning::settings(&ctx.state.pool, loaded.repository.id)
                 .await
                 .map_err(|_| unavailable(ctx))?;
         settings.secret_scanning = security.enabled;
@@ -511,7 +508,7 @@ pub(super) async fn settings_model(
             scopes.push((Owner::Organization(org), true));
         }
         for (scope, organization) in scopes {
-            let patterns = match crate::backend::db::secret_scanning::list_patterns(
+            let patterns = match codeyard_db_security::secret_scanning::list_patterns(
                 &ctx.state.pool,
                 viewer.id,
                 scope,
@@ -521,8 +518,8 @@ pub(super) async fn settings_model(
                 Ok(patterns) => patterns,
                 Err(error)
                     if matches!(
-                        error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>(),
-                        Some(crate::backend::db::secret_scanning::Refusal::Denied)
+                        error.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(),
+                        Some(codeyard_db_core::queries::secret_scanning::Refusal::Denied)
                     ) =>
                 {
                     continue
@@ -544,14 +541,14 @@ pub(super) async fn settings_model(
         }
     }
     if tab == "secrets" {
-        let per_page = crate::backend::db::environment_values::ENVIRONMENTS_PER_PAGE;
+        let per_page = codeyard_db_actions::environment_values::ENVIRONMENTS_PER_PAGE;
         settings.environment_page = crate::backend::api::repos::paging::number(
             ctx,
             "environment_page",
             1,
             1..=i64::MAX as usize / per_page,
         )?;
-        settings.environments = crate::backend::db::environment_values::environments(
+        settings.environments = codeyard_db_actions::environment_values::environments(
             &ctx.state.pool,
             viewer.id,
             loaded.repository.id,
@@ -563,14 +560,14 @@ pub(super) async fn settings_model(
         settings.environments.truncate(per_page);
         if let Some(name) = ctx.query.get("environment").filter(|name| !name.is_empty()) {
             let key =
-                crate::backend::db::environment_values::environment_key(name).map_err(|_| {
+                codeyard_db_actions::environment_values::environment_key(name).map_err(|_| {
                     ctx.repo_error(
                         &loaded.chrome,
                         StatusCode::UNPROCESSABLE_ENTITY,
                         "Invalid environment name.",
                     )
                 })?;
-            let name = crate::backend::db::environment_values::environment(
+            let name = codeyard_db_actions::environment_values::environment(
                 &ctx.state.pool,
                 viewer.id,
                 loaded.repository.id,
@@ -586,19 +583,19 @@ pub(super) async fn settings_model(
                 )
             })?;
             let (secrets, variables) = tokio::try_join!(
-                crate::backend::db::environment_values::list(
+                codeyard_db_actions::environment_values::list(
                     &ctx.state.pool,
                     viewer.id,
                     loaded.repository.id,
                     &name,
-                    crate::backend::db::environment_values::Kind::Secret
+                    codeyard_db_orgs::organization_values::Kind::Secret
                 ),
-                crate::backend::db::environment_values::list(
+                codeyard_db_actions::environment_values::list(
                     &ctx.state.pool,
                     viewer.id,
                     loaded.repository.id,
                     &name,
-                    crate::backend::db::environment_values::Kind::Variable
+                    codeyard_db_orgs::organization_values::Kind::Variable
                 ),
             )
             .map_err(|_| unavailable(ctx))?;
@@ -622,10 +619,10 @@ pub(super) async fn settings_model(
         }
         settings.secrets_enabled = ctx.state.secret_encryptor.is_some();
         if settings.environment.is_none() {
-            settings.variables = crate::backend::db::variables::list(
+            settings.variables = codeyard_db_actions::variables::list(
                 &ctx.state.pool,
                 viewer.id,
-                &crate::backend::db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                         .unwrap_or_default(),
                 ),
@@ -639,7 +636,7 @@ pub(super) async fn settings_model(
                 value: variable.value,
             })
             .collect();
-            settings.secrets = crate::backend::db::secrets::list_secrets(
+            settings.secrets = codeyard_db_actions::secrets::list_secrets(
                 &ctx.state.pool,
                 viewer.id,
                 loaded.repository.id,
@@ -656,9 +653,9 @@ pub(super) async fn settings_model(
     }
     if tab == "dependabot-secrets" {
         settings.secrets_enabled = ctx.state.secret_encryptor.is_some();
-        settings.dependabot_secrets = crate::backend::db::secrets::list_secrets_for(
+        settings.dependabot_secrets = codeyard_db_actions::secrets::list_secrets_for(
             &ctx.state.pool,
-            crate::backend::db::secrets::SecretKind::Dependabot,
+            codeyard_db_actions::secrets::SecretKind::Dependabot,
             viewer.id,
             loaded.repository.id,
         )
@@ -675,14 +672,14 @@ pub(super) async fn settings_model(
         && (loaded.chrome.can_manage_collaborators || loaded.chrome.can_manage_invitations)
     {
         // Team-derived access is managed on teams; invitations and direct grants are managed here.
-        let accesses = crate::backend::db::repositories::access::list_repo_collaborators(
+        let accesses = codeyard_db_repos::repositories::access::list_repo_collaborators(
             &ctx.state.pool,
             loaded.repository.id,
         )
         .await
         .map_err(|_| unavailable(ctx))?;
         let ids: Vec<_> = accesses.iter().map(|access| access.user_id).collect();
-        let users = crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+        let users = codeyard_db_identity::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
             .await
             .map_err(|_| unavailable(ctx))?;
         let mut users: HashMap<_, _> = users.into_iter().map(|user| (user.id, user)).collect();
@@ -714,7 +711,7 @@ pub(super) async fn settings_model(
             .iter()
             .map(|invitation| invitation.invitee_id)
             .collect::<Vec<_>>();
-        let users = crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+        let users = codeyard_db_identity::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
             .await
             .map_err(|_| unavailable(ctx))?
             .into_iter()
@@ -736,7 +733,7 @@ pub(super) async fn settings_model(
         }
     }
     if tab == "releases" {
-        let (opted_in, enforced) = crate::backend::db::repositories::immutable_releases::policy(
+        let (opted_in, enforced) = codeyard_db_repos::repositories::immutable_releases::policy(
             &ctx.state.pool,
             loaded.repository.id,
         )
@@ -746,7 +743,7 @@ pub(super) async fn settings_model(
         settings.immutable_enforced = enforced;
     }
     if tab == "autolinks" {
-        settings.autolinks = crate::backend::db::repositories::autolinks::list(
+        settings.autolinks = codeyard_db_repos::repositories::autolinks::list(
             &ctx.state.pool,
             viewer.id,
             loaded.repository.id,
@@ -768,7 +765,7 @@ pub(super) async fn settings_model(
         let base = format!("{}/settings?tab=webhooks", loaded.chrome.base());
         let action_base = format!("{}/_forms", loaded.chrome.base());
         let place = crate::backend::webhooks::panel::Place {
-            owner: crate::backend::db::webhooks::HookOwner::Repository(loaded.repository.id),
+            owner: codeyard_db_repos::webhooks::HookOwner::Repository(loaded.repository.id),
             base: &base,
             action_base: &action_base,
             csrf_token: &loaded.chrome.csrf_token,
@@ -777,7 +774,7 @@ pub(super) async fn settings_model(
         let built = crate::backend::webhooks::panel::build(
             &ctx.state.pool,
             viewer,
-            &crate::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                     .unwrap_or_default(),
             ),
@@ -1084,13 +1081,13 @@ async fn webhook_form(
         Err(response) => return response,
     };
     let pool = &ctx.state.pool;
-    let owner = crate::backend::db::webhooks::HookOwner::Repository(loaded.repository.id);
+    let owner = codeyard_db_repos::webhooks::HookOwner::Repository(loaded.repository.id);
     let base = format!("{}/settings?tab=webhooks", loaded.chrome.base());
     let outcome = crate::backend::webhooks::panel::apply(
         pool,
         ctx.state.secret_encryptor.as_deref(),
         actor,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -1768,12 +1765,12 @@ async fn mutate(
                     )),
                 ));
             }
-            crate::backend::db::repositories::records::update_repository(
+            codeyard_db_repos::repositories::records::update_repository(
                 pool,
                 authority(),
                 repository.id,
                 Some(&field(form, "description")),
-                crate::backend::db::repositories::records::VisibilityUpdate {
+                codeyard_db_repos::repositories::records::VisibilityUpdate {
                     is_private: private,
                     expected: if confirmation(form).is_ok() {
                         None
@@ -1781,7 +1778,7 @@ async fn mutate(
                         Some(repository.is_private)
                     },
                 },
-                crate::backend::db::repositories::records::MergeMethodUpdate {
+                codeyard_db_repos::repositories::records::MergeMethodUpdate {
                     merge: None,
                     squash: None,
                     rebase: None,
@@ -1792,11 +1789,11 @@ async fn mutate(
             Ok(format!("{base}/settings?tab=general&saved=general"))
         }
         "merge-methods" => {
-            crate::backend::db::repositories::records::set_merge_methods(
+            codeyard_db_repos::repositories::records::set_merge_methods(
                 pool,
                 authority(),
                 repository.id,
-                crate::backend::db::repositories::records::MergeMethodUpdate {
+                codeyard_db_repos::repositories::records::MergeMethodUpdate {
                     merge: Some(checkbox(form, "allow_merge_commit")),
                     squash: Some(checkbox(form, "allow_squash_merge")),
                     rebase: Some(checkbox(form, "allow_rebase_merge")),
@@ -1822,10 +1819,10 @@ async fn mutate(
             } else {
                 Owner::Repository(repository.id)
             };
-            crate::backend::db::secret_scanning::publish_pattern(
+            codeyard_db_security::secret_scanning::publish_pattern(
                 pool,
                 actor.id,
-                &crate::backend::db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                         .unwrap_or_default(),
                 ),
@@ -1833,36 +1830,36 @@ async fn mutate(
                 id,
             )
             .await
-            .map_err(|error| {
-                match error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>() {
-                    _ if error.is::<codeyard_support::credentials::AccountRestricted>() => {
-                        ApiError::failure(
-                            StatusCode::FORBIDDEN,
-                            "forbidden",
-                            "A live unrestricted credential is required.",
-                        )
-                    }
-                    Some(crate::backend::db::secret_scanning::Refusal::Denied) => {
-                        ApiError::failure(
-                            StatusCode::FORBIDDEN,
-                            "forbidden",
-                            "Pattern administration required",
-                        )
-                    }
-                    Some(crate::backend::db::secret_scanning::Refusal::Missing) => {
-                        ApiError::failure(StatusCode::NOT_FOUND, "not_found", "Pattern not found")
-                    }
-                    _ => ApiError::failure(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "unavailable",
-                        "Custom patterns unavailable",
-                    ),
+            .map_err(|error| match error
+                .downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(
+            ) {
+                _ if error.is::<codeyard_support::credentials::AccountRestricted>() => {
+                    ApiError::failure(
+                        StatusCode::FORBIDDEN,
+                        "forbidden",
+                        "A live unrestricted credential is required.",
+                    )
                 }
+                Some(codeyard_db_core::queries::secret_scanning::Refusal::Denied) => {
+                    ApiError::failure(
+                        StatusCode::FORBIDDEN,
+                        "forbidden",
+                        "Pattern administration required",
+                    )
+                }
+                Some(codeyard_db_core::queries::secret_scanning::Refusal::Missing) => {
+                    ApiError::failure(StatusCode::NOT_FOUND, "not_found", "Pattern not found")
+                }
+                _ => ApiError::failure(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "unavailable",
+                    "Custom patterns unavailable",
+                ),
             })?;
             Ok(settings_section_url(&base, action))
         }
         "code-security" => {
-            let settings = crate::backend::db::secret_scanning::Settings {
+            let settings = codeyard_db_core::queries::secret_scanning::Settings {
                 enabled: checkbox(form, "secret_scanning"),
                 push_protection: checkbox(form, "push_protection"),
             };
@@ -1873,47 +1870,47 @@ async fn mutate(
                     "Secret scanning requires SECRETS_MASTER_KEY",
                 ));
             }
-            crate::backend::db::secret_scanning::save_settings(
+            codeyard_db_security::secret_scanning::save_settings(
                 pool,
                 actor.id,
                 repository.id,
                 &settings,
             )
             .await
-            .map_err(|error| {
-                match error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>() {
-                    Some(crate::backend::db::secret_scanning::Refusal::Invalid) => {
-                        ApiError::failure(
-                            StatusCode::UNPROCESSABLE_ENTITY,
-                            "validation_error",
-                            "Push protection requires secret scanning",
-                        )
-                    }
-                    Some(crate::backend::db::secret_scanning::Refusal::Denied) => {
-                        ApiError::failure(
-                            StatusCode::FORBIDDEN,
-                            "forbidden",
-                            "Repository administration required",
-                        )
-                    }
-                    _ => ApiError::failure(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "unavailable",
-                        "Secret scanning settings unavailable",
-                    ),
+            .map_err(|error| match error
+                .downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(
+            ) {
+                Some(codeyard_db_core::queries::secret_scanning::Refusal::Invalid) => {
+                    ApiError::failure(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "validation_error",
+                        "Push protection requires secret scanning",
+                    )
                 }
+                Some(codeyard_db_core::queries::secret_scanning::Refusal::Denied) => {
+                    ApiError::failure(
+                        StatusCode::FORBIDDEN,
+                        "forbidden",
+                        "Repository administration required",
+                    )
+                }
+                _ => ApiError::failure(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "unavailable",
+                    "Secret scanning settings unavailable",
+                ),
             })?;
             Ok(settings_section_url(&base, action))
         }
         "oidc-settings" => {
-            let settings = crate::backend::db::oidc::Settings::from_keys(
+            let settings = codeyard_db_core::queries::oidc::Settings::from_keys(
                 checkbox(form, "use_default"),
                 &field(form, "include_claim_keys"),
             );
-            crate::backend::db::oidc::save_settings(
+            codeyard_db_actions::oidc::save_settings(
                 pool,
                 ctx.database_actor(actor.id),
-                crate::backend::db::oidc::Scope::Repository(repository.id),
+                codeyard_db_core::queries::oidc::Scope::Repository(repository.id),
                 &settings,
             )
             .await
@@ -1933,7 +1930,7 @@ async fn mutate(
                     Json(ApiError::new("validation_error", &message)),
                 )
             };
-            let site = crate::backend::db::actions::get_actions_settings(pool)
+            let site = codeyard_db_actions::actions::get_actions_settings(pool)
                 .await
                 .map_err(|_| {
                     ApiError::failure(
@@ -1958,7 +1955,7 @@ async fn mutate(
             if !engine.is_empty() && !site.engine_enabled(&engine) {
                 return Err(invalid("Choose Site default or an enabled engine.".into()));
             }
-            let settings = crate::backend::db::actions::RepoActionsSettings {
+            let settings = codeyard_db_actions::actions::RepoActionsSettings {
                 org_cache_size_gib: None,
                 org_cache_retention_days: None,
                 engine: (!engine.is_empty()).then_some(engine),
@@ -1994,7 +1991,7 @@ async fn mutate(
                     site.job_memory_gib,
                 )?,
             };
-            crate::backend::db::actions::save_repo_actions_settings(
+            codeyard_db_actions::actions::save_repo_actions_settings(
                 pool,
                 ctx.database_actor(actor.id),
                 repository.id,
@@ -2009,16 +2006,16 @@ async fn mutate(
             crate::backend::repositories::lifecycle::validate_description(&description)
                 .map_err(lifecycle_error)?;
             let website =
-                crate::backend::db::repositories::topics::parse_website(&field(form, "website"))
+                codeyard_db_repos::repositories::topics::parse_website(&field(form, "website"))
                     .map_err(repository_settings_error)?;
             // Topics are typed as a list, separated by commas or spaces.
-            let topics = crate::backend::db::repositories::topics::parse_topics(
+            let topics = codeyard_db_repos::repositories::topics::parse_topics(
                 field(form, "topics")
                     .split(|c: char| c == ',' || c.is_whitespace())
                     .collect::<Vec<_>>(),
             )
             .map_err(repository_settings_error)?;
-            crate::backend::db::repositories::topics::update_about(
+            codeyard_db_repos::repositories::topics::update_about(
                 pool,
                 actor.id,
                 repository.id,
@@ -2034,7 +2031,7 @@ async fn mutate(
             crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
                 .await
                 .map_err(access_error)?;
-            let updated = crate::backend::db::repositories::records::rename_repository(
+            let updated = codeyard_db_repos::repositories::records::rename_repository(
                 pool,
                 authority(),
                 repository.id,
@@ -2062,7 +2059,7 @@ async fn mutate(
                 .await
                 .map_err(access_error)?;
             // Archiving an archived repository, or the reverse, changes nothing and is not an error.
-            crate::backend::db::repositories::records::set_repository_archived(
+            codeyard_db_repos::repositories::records::set_repository_archived(
                 pool,
                 authority(),
                 repository.id,
@@ -2084,11 +2081,11 @@ async fn mutate(
             Ok(codeyard_webui::profile_path(owner))
         }
         "template" => {
-            crate::backend::db::repositories::records::patch_repository(
+            codeyard_db_repos::repositories::records::patch_repository(
                 pool,
                 authority(),
                 repository.id,
-                &crate::backend::db::repositories::records::RepositoryChanges {
+                &codeyard_db_repos::repositories::records::RepositoryChanges {
                     is_template: Some(checkbox(form, "is_template")),
                     ..Default::default()
                 },
@@ -2128,7 +2125,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "autolink-add" => {
-            let input = crate::backend::db::repositories::autolinks::NewAutolink::new(
+            let input = codeyard_db_repos::repositories::autolinks::NewAutolink::new(
                 &field(form, "key_prefix"),
                 &field(form, "url_template"),
                 checkbox(form, "is_alphanumeric"),
@@ -2140,7 +2137,7 @@ async fn mutate(
                     &error.to_string(),
                 )
             })?;
-            crate::backend::db::repositories::autolinks::create(
+            codeyard_db_repos::repositories::autolinks::create(
                 pool,
                 actor.id,
                 repository.id,
@@ -2158,7 +2155,7 @@ async fn mutate(
                     "Invalid autolink",
                 )
             })?;
-            crate::backend::db::repositories::autolinks::remove(pool, actor.id, repository.id, id)
+            codeyard_db_repos::repositories::autolinks::remove(pool, actor.id, repository.id, id)
                 .await
                 .map_err(autolink_error)?;
             Ok(settings_section_url(&base, action))
@@ -2233,7 +2230,7 @@ async fn mutate(
         }
         "label" => {
             let (name, color, description) = label_fields(form)?;
-            crate::backend::db::labels::create_label(
+            codeyard_db_repos::labels::create_label(
                 pool,
                 ctx.database_actor(actor.id),
                 repository.id,
@@ -2248,7 +2245,7 @@ async fn mutate(
         "edit-label" => {
             let id = label_id(form)?;
             let (name, color, description) = label_fields(form)?;
-            crate::backend::db::labels::update_label_checked(
+            codeyard_db_repos::labels::update_label_checked(
                 pool,
                 ctx.database_actor(actor.id),
                 repository.id,
@@ -2268,7 +2265,7 @@ async fn mutate(
         }
         "delete-label" => {
             let id = label_id(form)?;
-            crate::backend::db::labels::delete_label(
+            codeyard_db_repos::labels::delete_label(
                 pool,
                 ctx.database_actor(actor.id),
                 repository.id,

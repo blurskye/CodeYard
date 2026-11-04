@@ -177,7 +177,7 @@ pub(super) async fn settings_section(
         base: &base,
         action: &action,
         csrf_token: &loaded.chrome.csrf_token,
-        credential: crate::backend::db::deploy_keys::Credential::Session(
+        credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Session(
             extract_session_id(&ctx.headers).unwrap_or_default(),
         ),
     };

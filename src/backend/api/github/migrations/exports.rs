@@ -3,10 +3,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::repository_exports as exports;
-use crate::backend::db::repository_exports::ExportOptions;
-use crate::backend::db::repository_exports::ExportRefusal;
-use crate::backend::db::repository_exports::RepositoryExport;
 use crate::backend::storage::Download;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -15,6 +11,10 @@ use axum::{
     routing::{delete, get, post, MethodRouter},
     Json,
 };
+use codeyard_db_repos::repository_exports as exports;
+use codeyard_db_repos::repository_exports::ExportOptions;
+use codeyard_db_repos::repository_exports::ExportRefusal;
+use codeyard_db_repos::repository_exports::RepositoryExport;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -84,7 +84,7 @@ async fn scope(
     }
     let org = match params.get("org") {
         Some(name) => Some(
-            crate::backend::db::organizations::get_public_organization(&state.pool, name)
+            codeyard_db_orgs::organizations::get_public_organization(&state.pool, name)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?
@@ -111,7 +111,7 @@ async fn selected(
     let mut values = Vec::new();
     for id in row.repository_ids().map_err(Error::unavailable)? {
         let Some(repo) =
-            crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
                 .await
                 .map_err(Error::unavailable)?
         else {
@@ -170,7 +170,7 @@ async fn document(
             .map(|time| time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
     };
     let owner = if let Some(id) = row.owner_org_id {
-        let org = crate::backend::db::organizations::get_public_organization_by_id(&state.pool, id)
+        let org = codeyard_db_orgs::organizations::get_public_organization_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -247,7 +247,7 @@ async fn start(
             return Err(Error::validation("Migration", "repositories", "invalid"));
         }
         let repo =
-            crate::backend::db::repositories::records::get_repository(&state.pool, owner, &name)
+            codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, &name)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(|| Error::validation("Migration", "repositories", "invalid"))?;

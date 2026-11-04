@@ -594,13 +594,13 @@ async fn prepared_merge_contract(pg: bool) {
     let prepared = prepare_pull_request_merge(
         f.pool(),
         &app.state.ci_runs,
-        codeyard::backend::db::credentials::Actor::from((app.merger_id, session.clone())),
+        codeyard_db_core::queries::credentials::Actor::from((app.merger_id, session.clone())),
         ("alice".to_owned(), "proj".to_owned(), number),
         request(head.as_str(), main1.as_str()),
     )
     .await
     .unwrap();
-    codeyard::backend::db::users::sessions::delete_session(f.pool(), &session)
+    codeyard_db_identity::users::sessions::delete_session(f.pool(), &session)
         .await
         .unwrap();
     let signed_out = publish_prepared_merge(

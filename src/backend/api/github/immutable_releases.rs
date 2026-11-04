@@ -12,7 +12,7 @@ use axum::{
 use serde_json::{json, Value};
 use std::sync::Arc;
 fn error(error: anyhow::Error) -> Error {
-    use crate::backend::db::repositories::immutable_releases::Refusal;
+    use codeyard_db_repos::repositories::immutable_releases::Refusal;
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Repository administration required")
@@ -42,7 +42,7 @@ async fn check(
         return Err(Error::missing());
     }
     let (_, enforced_by_owner) =
-        crate::backend::db::repositories::immutable_releases::policy(&state.pool, repo.id)
+        codeyard_db_repos::repositories::immutable_releases::policy(&state.pool, repo.id)
             .await
             .map_err(error)?;
     Ok(Json(

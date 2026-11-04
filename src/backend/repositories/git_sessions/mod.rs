@@ -147,7 +147,7 @@ impl ReceiveCredential {
             Self::SshKey(id) => {
                 anyhow::ensure!(id > 0, CredentialRefusal::Credential);
                 let identity =
-                    crate::backend::db::users::ssh_keys::get_user_by_ssh_key_id(pool, id)
+                    codeyard_db_identity::users::ssh_keys::get_user_by_ssh_key_id(pool, id)
                         .await?
                         .ok_or(CredentialRefusal::Credential)?;
                 anyhow::ensure!(
@@ -157,7 +157,7 @@ impl ReceiveCredential {
                 let canonical =
                     validation::canonical_db_key(&identity.key.public_key, &identity.key.key_type)?;
                 anyhow::ensure!(
-                    crate::backend::db::users::ssh_keys::calculate_fingerprint(&canonical)?
+                    codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&canonical)?
                         == identity.key.fingerprint,
                     CredentialRefusal::Credential
                 );
@@ -168,8 +168,7 @@ impl ReceiveCredential {
                     crate::backend::repositories::deploy_keys::authorize(pool, id, repo, write)
                         .await?;
                 anyhow::ensure!(
-                    !write
-                        || !crate::backend::db::repository_exports::locked(pool, repo.id).await?,
+                    !write || !codeyard_db_repos::repository_exports::locked(pool, repo.id).await?,
                     CredentialRefusal::Migration
                 );
                 return Ok(admitted);
@@ -177,7 +176,7 @@ impl ReceiveCredential {
             Self::Token(id) => {
                 let public_read = !write
                     && !repo.is_private
-                    && crate::backend::db::node_config::get_node_configuration(pool)
+                    && codeyard_db_cluster::node_config::get_node_configuration(pool)
                         .await?
                         .is_some_and(|config| config.setup_completed && !config.is_private());
                 let bounds = crate::backend::identity::github_apps::authority(pool, id).await?;
@@ -192,7 +191,7 @@ impl ReceiveCredential {
                     .await?,
                     CredentialRefusal::TokenScope
                 );
-                let user = crate::backend::db::users::tokens::token_user(pool, id, false)
+                let user = codeyard_db_identity::users::tokens::token_user(pool, id, false)
                     .await?
                     .ok_or(CredentialRefusal::Credential)?;
                 (user, bounds)
@@ -210,7 +209,7 @@ impl ReceiveCredential {
                 }) {
                     if bounds.personal().is_some()
                         && (granted.is_none()
-                            || !crate::backend::db::repositories::access::git_access(
+                            || !codeyard_db_repos::repositories::access::git_access(
                                 pool,
                                 identity.id,
                                 repo.id,
@@ -225,7 +224,7 @@ impl ReceiveCredential {
                 }
             } else if let Some(org) = repo.owner_org_id {
                 anyhow::ensure!(
-                    !crate::backend::db::fine_grained_tokens::classic_refused(pool, id, org)
+                    !codeyard_db_identity::fine_grained_tokens::classic_refused(pool, id, org)
                         .await?,
                     CredentialRefusal::Classic
                 );
@@ -235,11 +234,11 @@ impl ReceiveCredential {
             !repo.is_gist || !write || repo.owner_user_id == Some(identity.id),
             CredentialRefusal::Denied
         );
-        if identity.username == crate::backend::db::ci_tokens::BOT {
+        if identity.username == codeyard_db_core::queries::ci_tokens::BOT {
             let Self::Token(id) = self else {
                 anyhow::bail!(CredentialRefusal::TokenScope);
             };
-            let token = crate::backend::db::ci_tokens::get(pool, id)
+            let token = codeyard_db_actions::ci_tokens::get(pool, id)
                 .await?
                 .ok_or(CredentialRefusal::Credential)?;
             let permissions: codeyard_model::permissions::Permissions =
@@ -252,13 +251,13 @@ impl ReceiveCredential {
         }
         // Read the account, gist owner and repository grants in one snapshot; refuse writes below.
         let level =
-            crate::backend::db::repositories::access::git_access(pool, identity.id, repo.id, false)
+            codeyard_db_repos::repositories::access::git_access(pool, identity.id, repo.id, false)
                 .await?;
         anyhow::ensure!(level.can_read(), CredentialRefusal::Missing);
         if let Self::Token(id) = self {
             anyhow::ensure!(
                 !write
-                    || crate::backend::db::users::tokens::token_user(pool, id, true)
+                    || codeyard_db_identity::users::tokens::token_user(pool, id, true)
                         .await?
                         .is_some(),
                 CredentialRefusal::ReadOnly
@@ -267,7 +266,7 @@ impl ReceiveCredential {
         anyhow::ensure!(!write || level.can_write(), CredentialRefusal::Denied);
         anyhow::ensure!(!write || !repo.is_archived, CredentialRefusal::Archived);
         anyhow::ensure!(
-            !write || !crate::backend::db::repository_exports::locked(pool, repo.id).await?,
+            !write || !codeyard_db_repos::repository_exports::locked(pool, repo.id).await?,
             CredentialRefusal::Migration
         );
         Ok((identity, level))

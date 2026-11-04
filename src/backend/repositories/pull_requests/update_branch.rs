@@ -45,14 +45,13 @@ pub async fn update_branch(
     token: Option<i64>,
 ) -> Result<String, OperationError> {
     let actor = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
-    let base =
-        crate::backend::db::repositories::records::get_repository(pool, locator.0, locator.1)
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| OperationError::Missing {
-                code: "not_found",
-                message: "Repository not found".into(),
-            })?;
+    let base = codeyard_db_repos::repositories::records::get_repository(pool, locator.0, locator.1)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Repository not found".into(),
+        })?;
     crate::backend::repositories::pull_requests::require_read(pool, &actor, &base).await?;
     if base.is_archived {
         return Err(OperationError::Denied {
@@ -61,7 +60,7 @@ pub async fn update_branch(
         });
     }
     let pull =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, base.id, locator.2)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, base.id, locator.2)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -178,11 +177,10 @@ pub async fn update_branch(
         return finish(sha);
     }
     // The head moved, so its push workflows run as they do after any other push.
-    let head_owner =
-        crate::backend::db::repositories::records::repository_owner_name(pool, head.id)
-            .await
-            .map_err(database_error)?
-            .ok_or_else(|| database_error(()))?;
+    let head_owner = codeyard_db_repos::repositories::records::repository_owner_name(pool, head.id)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| database_error(()))?;
     ci.queue_push_runs(
         &head,
         &head_owner,

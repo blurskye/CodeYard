@@ -1,0 +1,220 @@
+use anyhow::Result;
+use codeyard_db_core::models::Label;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum LabelWriteRefusal {
+    #[error("Label mutation denied")]
+    Denied,
+    #[error("Invalid label scope or batch")]
+    InvalidLabels,
+    #[error("A label with this name already exists")]
+    DuplicateName,
+    #[error("Label changed since the form was loaded")]
+    Conflict,
+}
+
+pub(crate) fn label_database_error(error: sqlx::Error) -> anyhow::Error {
+    if error
+        .as_database_error()
+        .is_some_and(|error| error.is_unique_violation())
+    {
+        LabelWriteRefusal::DuplicateName.into()
+    } else {
+        error.into()
+    }
+}
+
+pub const MAX_ISSUE_LABELS: usize = 100;
+
+/// The rows a label can be applied to: an issue or a pull request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LabelTarget {
+    Issue,
+    PullRequest,
+}
+
+impl LabelTarget {
+    /// The item table, the label link table and the link column that names the item.
+    pub fn tables(self) -> (&'static str, &'static str, &'static str) {
+        match self {
+            Self::Issue => ("issues", "issue_labels", "issue_id"),
+            Self::PullRequest => ("pull_requests", "pr_labels", "pull_request_id"),
+        }
+    }
+}
+
+pub(crate) fn bounded_label_ids(label_ids: &[i64]) -> Result<Vec<i64>> {
+    anyhow::ensure!(
+        label_ids.len() <= MAX_ISSUE_LABELS,
+        LabelWriteRefusal::InvalidLabels
+    );
+    let mut ids = label_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    Ok(ids)
+}
+
+native_operation!(crate::postgres::labels::create_label,
+    crate::sqlite::labels::create_label,
+    fn create_label(
+    pool: &DbPool,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    repo_id: i64,
+    name: &str,
+    color: &str,
+    description: Option<&str>,
+) -> Result<Label>);
+
+native_operation!(crate::postgres::labels::list_repo_labels,
+    crate::sqlite::labels::list_repo_labels,
+    fn list_repo_labels(pool: &DbPool, repo_id: i64) -> Result<Vec<Label>>);
+
+native_operation!(crate::postgres::labels::get_repo_label_by_name,
+    crate::sqlite::labels::get_repo_label_by_name,
+    fn get_repo_label_by_name(pool: &DbPool, repo_id: i64, name: &str) -> Result<Option<Label>>);
+
+native_operation!(crate::postgres::labels::get_label_by_id,
+    crate::sqlite::labels::get_label_by_id,
+    fn get_label_by_id(pool: &DbPool, id: i64) -> Result<Option<Label>>);
+
+native_operation!(crate::postgres::labels::count_repo_labels,
+    crate::sqlite::labels::count_repo_labels,
+    fn count_repo_labels(pool: &DbPool, repo_id: i64, query: &str) -> Result<i64>);
+
+native_operation!(crate::postgres::labels::list_repo_labels_page,
+    crate::sqlite::labels::list_repo_labels_page,
+    fn list_repo_labels_page(pool: &DbPool, repo_id: i64, query: &str, sort: &str, limit: i64, offset: i64) -> Result<Vec<Label>>);
+
+native_operation!(crate::postgres::labels::list_milestone_labels,
+    crate::sqlite::labels::list_milestone_labels,
+    fn list_milestone_labels(pool: &DbPool, viewer: Option<i64>, repo_id: i64, milestone_id: i64, limit: i64, offset: i64) -> Result<Vec<Label>>);
+
+native_operation!(crate::postgres::labels::list_label_usage,
+    crate::sqlite::labels::list_label_usage,
+    fn list_label_usage(pool: &DbPool, repo_id: i64, label_ids: &[i64]) -> Result<Vec<(i64, i64)>>);
+
+native_operation!(crate::postgres::labels::update_label,
+    crate::sqlite::labels::update_label,
+    fn update_label(
+    pool: &DbPool,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    repo_id: i64,
+    label_id: i64,
+    name: Option<&str>,
+    color: Option<&str>,
+    description: Option<Option<&str>>,
+) -> Result<Label>);
+
+/// The label page shows this many characters of a description. Its edit form's snapshot
+/// holds the same prefix, so a longer stored description still compares equal.
+pub(crate) const PAGE_DESCRIPTION_CHARS: usize = 1024;
+
+native_operation!(crate::postgres::labels::update_label_checked,
+    crate::sqlite::labels::update_label_checked,
+    fn update_label_checked(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, label_id: i64, fields: (Option<&str>, Option<&str>, Option<Option<&str>>), expected: Option<&str>) -> Result<Label>);
+
+native_operation!(crate::postgres::labels::delete_label,
+    crate::sqlite::labels::delete_label,
+    fn delete_label(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, label_id: i64) -> Result<bool>);
+
+native_operation!(crate::postgres::labels::add_issue_label,
+    crate::sqlite::labels::add_issue_label,
+    fn add_issue_label(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_id: i64) -> Result<()>);
+
+native_operation!(crate::postgres::labels::add_issue_labels,
+    crate::sqlite::labels::add_issue_labels,
+    fn add_issue_labels(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_ids: &[i64]) -> Result<Vec<Label>>);
+
+native_operation!(crate::postgres::labels::add_pull_request_labels,
+    crate::sqlite::labels::add_pull_request_labels,
+    fn add_pull_request_labels(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, pull_request_id: i64, label_ids: &[i64]) -> Result<Vec<Label>>);
+
+native_operation!(crate::postgres::labels::remove_issue_label,
+    crate::sqlite::labels::remove_issue_label,
+    fn remove_issue_label(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_id: i64) -> Result<bool>);
+
+native_operation!(crate::postgres::labels::remove_pull_request_label,
+    crate::sqlite::labels::remove_pull_request_label,
+    fn remove_pull_request_label(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, pull_request_id: i64, label_id: i64) -> Result<bool>);
+
+native_operation!(crate::postgres::labels::get_issue_labels,
+    crate::sqlite::labels::get_issue_labels,
+    fn get_issue_labels(pool: &DbPool, repo_id: i64, issue_id: i64) -> Result<Vec<Label>>);
+
+native_operation!(crate::postgres::labels::get_pull_request_labels,
+    crate::sqlite::labels::get_pull_request_labels,
+    fn get_pull_request_labels(pool: &DbPool, repo_id: i64, pull_request_id: i64) -> Result<Vec<Label>>);
+
+/// Loads a list's label assignments in bounded queries, preserving label-name order.
+/// Only labels of `repo_id` are returned, so an item moved away meanwhile shows none.
+pub async fn get_issues_labels(
+    pool: &DbPool,
+    repo_id: i64,
+    issue_ids: &[i64],
+) -> Result<std::collections::BTreeMap<i64, Vec<Label>>> {
+    labels_of_items(pool, LabelTarget::Issue, repo_id, issue_ids).await
+}
+
+/// The same as `get_issues_labels`, for the rows of a pull request list.
+pub async fn get_pull_requests_labels(
+    pool: &DbPool,
+    repo_id: i64,
+    pull_request_ids: &[i64],
+) -> Result<std::collections::BTreeMap<i64, Vec<Label>>> {
+    labels_of_items(pool, LabelTarget::PullRequest, repo_id, pull_request_ids).await
+}
+
+async fn labels_of_items(
+    pool: &DbPool,
+    target: LabelTarget,
+    repo_id: i64,
+    item_ids: &[i64],
+) -> Result<std::collections::BTreeMap<i64, Vec<Label>>> {
+    let mut ids = item_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut labels = std::collections::BTreeMap::<i64, Vec<Label>>::new();
+    for chunk in ids.chunks(500) {
+        let rows = match pool {
+            DbPool::Postgres(pool) => {
+                crate::postgres::labels::get_items_labels(
+                    &mut *pool.acquire().await?,
+                    target,
+                    Some(repo_id),
+                    chunk,
+                )
+                .await?
+            }
+            DbPool::Sqlite(pool) => {
+                crate::sqlite::labels::get_items_labels(
+                    &mut *pool.acquire().await?,
+                    target,
+                    Some(repo_id),
+                    chunk,
+                )
+                .await?
+            }
+        };
+        for row in rows {
+            labels.entry(row.item_id).or_default().push(row.label);
+        }
+    }
+    Ok(labels)
+}
+
+#[derive(sqlx::FromRow)]
+pub(crate) struct ItemLabel {
+    pub item_id: i64,
+    #[sqlx(flatten)]
+    pub label: Label,
+}
+
+native_operation!(crate::postgres::labels::set_issue_labels,
+    crate::sqlite::labels::set_issue_labels,
+    fn set_issue_labels(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, issue_id: i64, label_ids: &[i64]) -> Result<()>);
+
+native_operation!(crate::postgres::labels::set_pull_request_labels,
+    crate::sqlite::labels::set_pull_request_labels,
+    fn set_pull_request_labels(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, pull_request_id: i64, label_ids: &[i64]) -> Result<()>);

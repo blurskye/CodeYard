@@ -2,7 +2,7 @@ use crate::backend::api::github::pagination::Pagination;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -61,7 +61,7 @@ async fn list(
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
     let accounts =
-        crate::backend::db::users::social_accounts::list_social_accounts(&state.pool, user)
+        codeyard_db_identity::users::social_accounts::list_social_accounts(&state.pool, user)
             .await
             .map_err(Error::unavailable)?;
     let more = accounts.len() > offset + limit;
@@ -82,7 +82,7 @@ struct Input {
 }
 
 fn failure(error: anyhow::Error) -> Error {
-    if error.is::<crate::backend::db::users::social_accounts::TooManyAccounts>() {
+    if error.is::<codeyard_db_identity::users::social_accounts::TooManyAccounts>() {
         Error::validation("SocialAccount", "account_urls", "invalid")
     } else if error.is::<AccountRestricted>() {
         Error::new(StatusCode::FORBIDDEN, "Account is restricted")
@@ -95,7 +95,7 @@ async fn change(
     headers: &HeaderMap,
     input: std::result::Result<Json<Input>, axum::extract::rejection::JsonRejection>,
     add: bool,
-) -> Result<Vec<crate::backend::db::users::social_accounts::SocialAccount>> {
+) -> Result<Vec<codeyard_db_identity::users::social_accounts::SocialAccount>> {
     let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
@@ -114,7 +114,7 @@ async fn change(
         .map(|url| crate::backend::identity::profiles::social_account(url))
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| Error::validation("SocialAccount", "account_urls", "invalid"))?;
-    crate::backend::db::users::social_accounts::change_social_accounts(
+    codeyard_db_identity::users::social_accounts::change_social_accounts(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -130,7 +130,7 @@ async fn add(
     input: std::result::Result<Json<Input>, axum::extract::rejection::JsonRejection>,
 ) -> Result<(
     StatusCode,
-    Json<Vec<crate::backend::db::users::social_accounts::SocialAccount>>,
+    Json<Vec<codeyard_db_identity::users::social_accounts::SocialAccount>>,
 )> {
     Ok((
         StatusCode::CREATED,

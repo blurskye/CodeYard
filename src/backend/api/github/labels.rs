@@ -20,7 +20,7 @@ use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 
 pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
-    use crate::backend::db::labels::LabelWriteRefusal;
+    use codeyard_db_repos::labels::LabelWriteRefusal;
     match error.downcast_ref::<LabelWriteRefusal>() {
         Some(LabelWriteRefusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Label mutation denied")
@@ -40,7 +40,7 @@ async fn find(
     repo_id: i64,
     name: &str,
 ) -> Result<codeyard_db_core::models::Label> {
-    crate::backend::db::labels::list_repo_labels(pool, repo_id)
+    codeyard_db_repos::labels::list_repo_labels(pool, repo_id)
         .await
         .map_err(Error::unavailable)?
         .into_iter()
@@ -77,7 +77,7 @@ async fn create(
     codeyard_model::issue_input::validate_label(&input.name, input.description.as_deref())
         .map_err(Error::invalid)?;
     let color = color(input.color.as_deref().unwrap_or("ededed"))?;
-    let label = crate::backend::db::labels::create_label(
+    let label = codeyard_db_repos::labels::create_label(
         &state.pool,
         actor,
         repo.id,
@@ -106,7 +106,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let (offset, limit) = page.window()?;
-    let labels = crate::backend::db::labels::list_repo_labels_page(
+    let labels = codeyard_db_repos::labels::list_repo_labels_page(
         &state.pool,
         repo.id,
         "",
@@ -148,7 +148,7 @@ struct Update {
     /// Left out keeps the description; `null` clears it.
     #[serde(
         default,
-        deserialize_with = "crate::backend::db::repositories::records::nullable_change"
+        deserialize_with = "codeyard_db_repos::repositories::records::nullable_change"
     )]
     description: Option<Option<String>>,
 }
@@ -170,7 +170,7 @@ async fn update(
     )
     .map_err(Error::invalid)?;
     let color = input.color.as_deref().map(color).transpose()?;
-    let label = crate::backend::db::labels::update_label(
+    let label = codeyard_db_repos::labels::update_label(
         &state.pool,
         actor,
         repo.id,
@@ -198,7 +198,7 @@ async fn remove(
         .ok_or_else(crate::backend::api::github::auth::required)?
         .database_actor();
     let label = find(&state.pool, repo.id, &p["name"]).await?;
-    crate::backend::db::labels::delete_label(&state.pool, actor, repo.id, label.id)
+    codeyard_db_repos::labels::delete_label(&state.pool, actor, repo.id, label.id)
         .await
         .map_err(write_error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -208,19 +208,19 @@ pub(super) async fn item(
     pool: &codeyard_db_core::DbPool,
     repo_id: i64,
     number: &str,
-) -> Result<crate::backend::db::assignees::AssignedItem> {
+) -> Result<codeyard_db_repos::assignees::AssignedItem> {
     let number = number.parse().map_err(|_| Error::missing())?;
-    if let Some(issue) = crate::backend::db::issues::get_issue(pool, repo_id, number)
+    if let Some(issue) = codeyard_db_repos::issues::get_issue(pool, repo_id, number)
         .await
         .map_err(Error::unavailable)?
     {
-        return Ok(crate::backend::db::assignees::AssignedItem::Issue(issue.id));
+        return Ok(codeyard_db_repos::assignees::AssignedItem::Issue(issue.id));
     }
-    let pull = crate::backend::db::pull_requests::records::get_pull_request(pool, repo_id, number)
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request(pool, repo_id, number)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    Ok(crate::backend::db::assignees::AssignedItem::PullRequest(
+    Ok(codeyard_db_repos::assignees::AssignedItem::PullRequest(
         pull.id,
     ))
 }
@@ -228,14 +228,14 @@ pub(super) async fn item(
 async fn assigned(
     pool: &codeyard_db_core::DbPool,
     repo_id: i64,
-    item: crate::backend::db::assignees::AssignedItem,
+    item: codeyard_db_repos::assignees::AssignedItem,
 ) -> Result<Vec<codeyard_db_core::models::Label>> {
     match item {
-        crate::backend::db::assignees::AssignedItem::Issue(id) => {
-            crate::backend::db::labels::get_issue_labels(pool, repo_id, id).await
+        codeyard_db_repos::assignees::AssignedItem::Issue(id) => {
+            codeyard_db_repos::labels::get_issue_labels(pool, repo_id, id).await
         }
-        crate::backend::db::assignees::AssignedItem::PullRequest(id) => {
-            crate::backend::db::labels::get_pull_request_labels(pool, repo_id, id).await
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(id) => {
+            codeyard_db_repos::labels::get_pull_request_labels(pool, repo_id, id).await
         }
     }
     .map_err(Error::unavailable)
@@ -291,10 +291,10 @@ async fn change(
         .ok_or_else(crate::backend::api::github::auth::required)?
         .database_actor();
     let item = item(&state.pool, repo.id, &p["issue_number"]).await?;
-    if names.len() > crate::backend::db::labels::MAX_ISSUE_LABELS {
+    if names.len() > codeyard_db_repos::labels::MAX_ISSUE_LABELS {
         return Err(Error::invalid("Too many labels"));
     }
-    let catalog = crate::backend::db::labels::list_repo_labels(&state.pool, repo.id)
+    let catalog = codeyard_db_repos::labels::list_repo_labels(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?;
     let ids = names
@@ -319,26 +319,26 @@ async fn change(
 
 pub(in crate::backend::api) async fn save_labels(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
-    item: crate::backend::db::assignees::AssignedItem,
+    item: codeyard_db_repos::assignees::AssignedItem,
     ids: &[i64],
     replace: bool,
 ) -> Result<Vec<codeyard_db_core::models::Label>> {
     match (item, replace) {
-        (crate::backend::db::assignees::AssignedItem::Issue(id), true) => {
-            crate::backend::db::labels::set_issue_labels(pool, actor, repo_id, id, ids).await
+        (codeyard_db_repos::assignees::AssignedItem::Issue(id), true) => {
+            codeyard_db_repos::labels::set_issue_labels(pool, actor, repo_id, id, ids).await
         }
-        (crate::backend::db::assignees::AssignedItem::PullRequest(id), true) => {
-            crate::backend::db::labels::set_pull_request_labels(pool, actor, repo_id, id, ids).await
+        (codeyard_db_repos::assignees::AssignedItem::PullRequest(id), true) => {
+            codeyard_db_repos::labels::set_pull_request_labels(pool, actor, repo_id, id, ids).await
         }
-        (crate::backend::db::assignees::AssignedItem::Issue(id), false) => {
-            crate::backend::db::labels::add_issue_labels(pool, actor, repo_id, id, ids)
+        (codeyard_db_repos::assignees::AssignedItem::Issue(id), false) => {
+            codeyard_db_repos::labels::add_issue_labels(pool, actor, repo_id, id, ids)
                 .await
                 .map(|_| ())
         }
-        (crate::backend::db::assignees::AssignedItem::PullRequest(id), false) => {
-            crate::backend::db::labels::add_pull_request_labels(pool, actor, repo_id, id, ids)
+        (codeyard_db_repos::assignees::AssignedItem::PullRequest(id), false) => {
+            codeyard_db_repos::labels::add_pull_request_labels(pool, actor, repo_id, id, ids)
                 .await
                 .map(|_| ())
         }
@@ -388,18 +388,12 @@ async fn remove_from_issue(
     let item = item(&state.pool, repo.id, &p["issue_number"]).await?;
     let label = find(&state.pool, repo.id, &p["name"]).await?;
     let removed = match item {
-        crate::backend::db::assignees::AssignedItem::Issue(id) => {
-            crate::backend::db::labels::remove_issue_label(
-                &state.pool,
-                actor,
-                repo.id,
-                id,
-                label.id,
-            )
-            .await
+        codeyard_db_repos::assignees::AssignedItem::Issue(id) => {
+            codeyard_db_repos::labels::remove_issue_label(&state.pool, actor, repo.id, id, label.id)
+                .await
         }
-        crate::backend::db::assignees::AssignedItem::PullRequest(id) => {
-            crate::backend::db::labels::remove_pull_request_label(
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(id) => {
+            codeyard_db_repos::labels::remove_pull_request_label(
                 &state.pool,
                 actor,
                 repo.id,

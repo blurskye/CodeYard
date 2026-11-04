@@ -56,7 +56,7 @@ async fn current_authority(ctx: &PageContext, repo: i64) -> anyhow::Result<bool>
     let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return Ok(false);
     };
-    crate::backend::db::code_scanning::security_read_allowed(
+    codeyard_db_security::code_scanning::security_read_allowed(
         &ctx.state.pool,
         user.id,
         &session,
@@ -87,7 +87,7 @@ async fn model(
                 format!("refs/heads/{branch}")
             }
         });
-    let filters = crate::backend::db::code_scanning::AlertFilters {
+    let filters = codeyard_db_security::code_scanning::AlertFilters {
         reference: explicit.as_deref(),
         tool_name: ctx
             .query
@@ -109,15 +109,15 @@ async fn model(
     let actor = ctx
         .user
         .as_ref()
-        .ok_or(crate::backend::db::code_scanning::Refusal::Denied)?;
+        .ok_or(codeyard_db_security::code_scanning::Refusal::Denied)?;
     let session = crate::backend::api::http::session::extract_session_id(&ctx.headers)
-        .ok_or(crate::backend::db::code_scanning::Refusal::Denied)?;
+        .ok_or(codeyard_db_security::code_scanning::Refusal::Denied)?;
     let category = ctx.query.get("category").map(String::as_str);
-    let snapshot = crate::backend::db::code_scanning::read_alert_snapshot(
+    let snapshot = codeyard_db_security::code_scanning::read_alert_snapshot(
         &ctx.state.pool,
         actor.id,
         &session,
-        &crate::backend::db::code_scanning::AlertSelection {
+        &codeyard_db_security::code_scanning::AlertSelection {
             repo: loaded.repository.id,
             number,
             filters: &filters,
@@ -233,7 +233,7 @@ async fn model(
     }
     anyhow::ensure!(
         current_authority(ctx, loaded.repository.id).await?,
-        crate::backend::db::code_scanning::Refusal::Denied
+        codeyard_db_security::code_scanning::Refusal::Denied
     );
     Ok(view::Page {
         alerts,
@@ -313,7 +313,7 @@ async fn dismiss(
     {
         return ctx.error(StatusCode::CONFLICT, "The repository changed.");
     }
-    let input = crate::backend::db::code_scanning::Dismissal {
+    let input = codeyard_db_security::code_scanning::Dismissal {
         state: values.get("state").map_or("", String::as_str),
         reason: values.get("reason").map(String::as_str),
         comment: values.get("comment").map(String::as_str),
@@ -347,11 +347,11 @@ async fn dismiss(
                 loaded.chrome.base()
             ))
         }
-        Err(error) => match error.downcast_ref::<crate::backend::db::code_scanning::Refusal>() {
-            Some(crate::backend::db::code_scanning::Refusal::Denied) => {
+        Err(error) => match error.downcast_ref::<codeyard_db_security::code_scanning::Refusal>() {
+            Some(codeyard_db_security::code_scanning::Refusal::Denied) => {
                 ctx.error(StatusCode::FORBIDDEN, "Alert dismissal denied.")
             }
-            Some(crate::backend::db::code_scanning::Refusal::Missing) => {
+            Some(codeyard_db_security::code_scanning::Refusal::Missing) => {
                 ctx.error(StatusCode::NOT_FOUND, "Alert not found.")
             }
             _ => crate::backend::api::repos::chrome::unavailable(&ctx),

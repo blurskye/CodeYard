@@ -5,10 +5,10 @@ use crate::backend::api::organizations::organization::unavailable;
 use crate::backend::api::organizations::organization::unit;
 use crate::backend::api::organizations::organization::Fields;
 
-use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::notifications::create::organization_invitation;
 use axum::response::Response;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_webui::pages::orgs as view;
 use std::collections::HashMap;
 
@@ -19,7 +19,7 @@ pub(super) async fn project(
     // IDs come only from the authorized, paginated organization/team reads.
     let ids = members.iter().map(|(id, _)| *id).collect::<Vec<_>>();
     let users: HashMap<_, _> =
-        crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+        codeyard_db_identity::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
             .await
             .map_err(|_| unavailable(ctx))?
             .into_iter()
@@ -151,7 +151,7 @@ impl Command {
                     };
                     Self::Invite {
                         username,
-                        role: crate::backend::db::organizations::parse_organization_role(
+                        role: codeyard_db_orgs::organizations::parse_organization_role(
                             crate::backend::api::organizations::organization::field(form, "role"),
                         )
                         .map_err(|_| ())?,
@@ -161,7 +161,7 @@ impl Command {
                 }
                 "member-role" => Self::ChangeRole {
                     user: crate::backend::api::organizations::organization::id(form, "user_id")?,
-                    role: crate::backend::db::organizations::parse_organization_role(
+                    role: codeyard_db_orgs::organizations::parse_organization_role(
                         crate::backend::api::organizations::organization::field(form, "role"),
                     )
                     .map_err(|_| ())?,
@@ -212,7 +212,7 @@ impl Command {
     }
 }
 pub(super) async fn target(ctx: &PageContext, username: &str) -> Result<Option<i64>, Response> {
-    crate::backend::db::users::accounts::get_user_by_username(&ctx.state.pool, username)
+    codeyard_db_identity::users::accounts::get_user_by_username(&ctx.state.pool, username)
         .await
         .map(|user| user.map(|user| user.id))
         .map_err(|_| unavailable(ctx))
@@ -226,7 +226,7 @@ pub(super) async fn apply(
     let pool = &ctx.state.pool;
     let result = match command {
         Command::Visibility { public } => {
-            crate::backend::db::organizations::discovery::set_membership_public(
+            codeyard_db_orgs::organizations::discovery::set_membership_public(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -248,13 +248,13 @@ pub(super) async fn apply(
             };
             if user.is_none() && email.is_none() {
                 // Only an owner or admin may learn that the name is unknown; anyone else is refused.
-                return match crate::backend::db::organizations::get_organization_role(
+                return match codeyard_db_orgs::organizations::get_organization_role(
                     pool, actor, org,
                 )
                 .await
                 {
                     Ok(OrganizationOutcome::Applied(role))
-                        if crate::backend::db::organizations::administers(role) =>
+                        if codeyard_db_core::queries::organizations::administers(role) =>
                     {
                         Ok(OrganizationOutcome::Missing)
                     }
@@ -262,16 +262,16 @@ pub(super) async fn apply(
                     Err(_) => Err(unavailable(ctx)),
                 };
             }
-            let input = crate::backend::db::organizations::NewInvitation {
+            let input = codeyard_db_orgs::organizations::NewInvitation {
                 user_id: user,
                 email,
                 role,
                 reinstate,
-                teams: Some(crate::backend::db::organizations::InvitationTeams::Slugs(
+                teams: Some(codeyard_db_orgs::organizations::InvitationTeams::Slugs(
                     team_slugs,
                 )),
             };
-            let outcome = crate::backend::db::organizations::create_organization_invitation(
+            let outcome = codeyard_db_orgs::organizations::create_organization_invitation(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -292,7 +292,7 @@ pub(super) async fn apply(
             return Ok(unit(outcome));
         }
         Command::CancelInvitation { user } => {
-            crate::backend::db::organizations::cancel_organization_invitation(
+            codeyard_db_orgs::organizations::cancel_organization_invitation(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -301,7 +301,7 @@ pub(super) async fn apply(
             .await
         }
         Command::CancelInvitationId { invitation } => {
-            crate::backend::db::organizations::cancel_invitation_id(
+            codeyard_db_orgs::organizations::cancel_invitation_id(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -311,7 +311,7 @@ pub(super) async fn apply(
             .await
         }
         Command::ChangeRole { user, role } => {
-            crate::backend::db::organizations::update_organization_member_role(
+            codeyard_db_orgs::organizations::update_organization_member_role(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -322,7 +322,7 @@ pub(super) async fn apply(
             .map(unit)
         }
         Command::Remove { user } => {
-            crate::backend::db::organizations::remove_organization_member(
+            codeyard_db_orgs::organizations::remove_organization_member(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -334,7 +334,7 @@ pub(super) async fn apply(
             let Some(user) = target(ctx, &username).await? else {
                 return Ok(OrganizationOutcome::Missing);
             };
-            crate::backend::db::organizations::blocks::change(
+            codeyard_db_orgs::organizations::blocks::change(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -344,7 +344,7 @@ pub(super) async fn apply(
             .await
         }
         Command::Unblock { user } => {
-            crate::backend::db::organizations::blocks::change(
+            codeyard_db_orgs::organizations::blocks::change(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -354,7 +354,7 @@ pub(super) async fn apply(
             .await
         }
         Command::ConvertOutside { user } => {
-            crate::backend::db::organizations::convert_to_outside_collaborator(
+            codeyard_db_orgs::organizations::convert_to_outside_collaborator(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -363,7 +363,7 @@ pub(super) async fn apply(
             .await
         }
         Command::RemoveOutside { user } => {
-            crate::backend::db::organizations::outside::remove(
+            codeyard_db_orgs::organizations::outside::remove(
                 pool,
                 ctx.database_actor(actor),
                 org,

@@ -39,16 +39,17 @@ pub(crate) async fn load_profile(
     pool: &codeyard_db_core::DbPool,
     user: &codeyard_db_core::models::User,
 ) -> anyhow::Result<Profile> {
-    let settings = crate::backend::db::users::profiles::get_profile_settings(pool, user.id).await?;
+    let settings =
+        codeyard_db_identity::users::profiles::get_profile_settings(pool, user.id).await?;
     let accounts =
-        crate::backend::db::users::social_accounts::list_social_accounts(pool, user.id).await?;
+        codeyard_db_identity::users::social_accounts::list_social_accounts(pool, user.id).await?;
     Ok(profile_model(user, &settings, accounts))
 }
 
 pub(crate) fn profile_model(
     user: &codeyard_db_core::models::User,
-    settings: &crate::backend::db::users::profiles::ProfileSettings,
-    accounts: Vec<crate::backend::db::users::social_accounts::SocialAccount>,
+    settings: &codeyard_db_identity::users::profiles::ProfileSettings,
+    accounts: Vec<codeyard_db_identity::users::social_accounts::SocialAccount>,
 ) -> Profile {
     Profile {
         username: user.username.clone(),
@@ -73,7 +74,7 @@ pub(crate) fn profile_model(
     }
 }
 
-fn settings_key(key: crate::backend::db::users::ssh_keys::SshKeySummary) -> Key {
+fn settings_key(key: codeyard_db_identity::users::ssh_keys::SshKeySummary) -> Key {
     Key {
         id: key.id,
         name: key.name,
@@ -114,11 +115,11 @@ pub(crate) async fn load_settings(
     }
     // Private listings are read in the same transaction that rechecks this session.
     let session = crate::backend::api::http::session::extract_session_id(&ctx.headers);
-    let credential = crate::backend::db::users::accounts::AccountCredential::Session(
+    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Session(
         session.as_deref().unwrap_or_default(),
     );
     let keys = if tab == "keys" {
-        crate::backend::db::users::ssh_keys::list_user_key_summaries(
+        codeyard_db_identity::users::ssh_keys::list_user_key_summaries(
             &ctx.state.pool,
             user.id,
             &credential,
@@ -136,7 +137,7 @@ pub(crate) async fn load_settings(
         Vec::new()
     };
     let gpg_keys = if tab == "keys" {
-        crate::backend::db::users::gpg_keys::list_gpg_key_summaries(
+        codeyard_db_identity::users::gpg_keys::list_gpg_key_summaries(
             &ctx.state.pool,
             user.id,
             &credential,
@@ -166,7 +167,7 @@ pub(crate) async fn load_settings(
         Vec::new()
     };
     let signing_keys = if tab == "keys" {
-        crate::backend::db::users::signing_keys::list_signing_key_summaries(
+        codeyard_db_identity::users::signing_keys::list_signing_key_summaries(
             &ctx.state.pool,
             user.id,
             &credential,
@@ -192,7 +193,7 @@ pub(crate) async fn load_settings(
             .get("tokens_before")
             .and_then(|value| value.parse().ok())
             .unwrap_or(0);
-        crate::backend::db::users::tokens::list_tokens(
+        codeyard_db_identity::users::tokens::list_tokens(
             &ctx.state.pool,
             user.id,
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
@@ -242,7 +243,7 @@ pub(crate) async fn load_settings(
             .and_then(|value| value.parse::<u32>().ok())
             .unwrap_or(1)
             .clamp(1, 10001);
-        let mut users = crate::backend::db::users::blocks::list_blocks(
+        let mut users = codeyard_db_identity::users::blocks::list_blocks(
             &ctx.state.pool,
             user.id,
             101,
@@ -262,7 +263,7 @@ pub(crate) async fn load_settings(
                 crate::backend::api::user::interactions::panel(
                     &ctx.state.pool,
                     user.id,
-                    crate::backend::db::interactions::InteractionScope::User(user.id),
+                    codeyard_db_identity::interactions::InteractionScope::User(user.id),
                     &ctx.csrf_token,
                     true,
                 )
@@ -282,7 +283,7 @@ pub(crate) async fn load_settings(
         Default::default()
     };
     let emails = if tab == "email" {
-        crate::backend::db::users::emails::list_account_emails(
+        codeyard_db_identity::users::emails::list_account_emails(
             &ctx.state.pool,
             user.id,
             &credential,
@@ -302,7 +303,7 @@ pub(crate) async fn load_settings(
         Vec::new()
     };
     let email_notifications = if tab == "email" {
-        crate::backend::db::email::get_email_notifications(&ctx.state.pool, user.id, &credential)
+        codeyard_db_identity::email::get_email_notifications(&ctx.state.pool, user.id, &credential)
             .await
             .map_err(settings_read_failure(
                 ctx,
@@ -491,17 +492,19 @@ pub(crate) async fn social_accounts_post(
     };
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match crate::backend::db::users::social_accounts::change_social_accounts(
+    match codeyard_db_identity::users::social_accounts::change_social_accounts(
         &ctx.state.pool,
         user.id,
-        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
         &[account],
         field(&form, "remove") != "yes",
     )
     .await
     {
         Ok(_) => ctx.redirect("/settings?tab=profile&saved=social-accounts"),
-        Err(error) if error.is::<crate::backend::db::users::social_accounts::TooManyAccounts>() => {
+        Err(error)
+            if error.is::<codeyard_db_identity::users::social_accounts::TooManyAccounts>() =>
+        {
             settings_response(
                 &ctx,
                 "profile",
@@ -554,8 +557,8 @@ pub(crate) async fn profile_post(
     let result = crate::backend::identity::profiles::save(
         &ctx.state.pool,
         actor,
-        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
-        &crate::backend::db::users::profiles::ProfilePatch {
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_db_identity::users::profiles::ProfilePatch {
             display_name: Some(field(&form, "display_name")),
             bio: Some(field(&form, "bio")),
             location: Some(field(&form, "location")),
@@ -565,7 +568,7 @@ pub(crate) async fn profile_post(
             hireable: form
                 .contains_key("profile_details")
                 .then(|| field(&form, "hireable") == "yes"),
-            ..crate::backend::db::users::profiles::ProfilePatch::default()
+            ..codeyard_db_identity::users::profiles::ProfilePatch::default()
         },
     )
     .await

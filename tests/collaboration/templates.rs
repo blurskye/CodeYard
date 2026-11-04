@@ -28,7 +28,7 @@ pub(super) async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Cli
     codeyard::backend::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -298,7 +298,7 @@ async fn pull_request_comment_task_ticks(pg: bool) {
         .as_deref()
         .unwrap()
         .ends_with(&format!("#comment-{comment_id}")));
-    let saved = codeyard::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+    let saved = codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(
         database.pool(),
         comment_id,
     )
@@ -317,15 +317,12 @@ async fn pull_request_comment_task_ticks(pg: bool) {
         )
         .await;
     assert_eq!(stale.status, StatusCode::CONFLICT);
-    let repository = codeyard::backend::db::repositories::records::get_repository(
-        database.pool(),
-        "alice",
-        "proj",
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    let refused = codeyard::backend::db::pull_requests::reviews::edit_pull_request_comment(
+    let repository =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
+    let refused = codeyard_db_repos::pull_requests::reviews::edit_pull_request_comment(
         database.pool(),
         saved.author_id,
         repository.id,
@@ -338,7 +335,7 @@ async fn pull_request_comment_task_ticks(pg: bool) {
     .unwrap();
     assert!(refused.is_none());
     assert_eq!(
-        codeyard::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(
             database.pool(),
             comment_id
         )
@@ -436,13 +433,11 @@ async fn task_boxes_tick_in_the_body_and_comments(pg: bool) {
         )
         .await;
     let comment_id = comment["id"].as_i64().unwrap().to_string();
-    let stored = codeyard::backend::db::issues::get_issue_comment(
-        database.pool(),
-        comment_id.parse().unwrap(),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let stored =
+        codeyard_db_repos::issues::get_issue_comment(database.pool(), comment_id.parse().unwrap())
+            .await
+            .unwrap()
+            .unwrap();
     assert!(stored.body.contains('\n'));
     let (_, page) = alice.page(&format!("/alice/proj/issues/{number}")).await;
     let revision = hidden_value(&page, "comment_revision").replace('\n', "\r\n");

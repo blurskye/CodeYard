@@ -102,11 +102,11 @@ pub(crate) fn protocol(value: Option<&str>) -> Result<Option<&str>> {
 
 /// Parse and re-encode the wire key, never echo caller input or a DB comment/options.
 pub(crate) fn canonical_key(key_type: &str, blob: &str) -> Result<String> {
-    crate::backend::db::users::ssh_keys::canonical_key(key_type, blob)
+    codeyard_db_identity::users::ssh_keys::canonical_key(key_type, blob)
 }
 
 pub(crate) fn canonical_db_key(public_key: &str, key_type: &str) -> Result<String> {
-    let key = crate::backend::db::users::ssh_keys::parse_public_key(public_key)?;
+    let key = codeyard_db_identity::users::ssh_keys::parse_public_key(public_key)?;
     ensure!(
         key.algorithm().to_string() == key_type,
         "stored SSH key type mismatch"

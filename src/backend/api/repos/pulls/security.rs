@@ -24,7 +24,7 @@ pub(super) async fn checks(
     let pool = &ctx.state.pool;
     let branch = (pull.head_repo_id == Some(repo.record.id))
         .then(|| format!("refs/heads/{}", pull.head_branch));
-    let candidates = crate::backend::db::code_scanning::pull_merge_candidates(
+    let candidates = codeyard_db_security::code_scanning::pull_merge_candidates(
         pool,
         user.id,
         &session,
@@ -65,11 +65,11 @@ pub(super) async fn checks(
         }
     }
     let baseline_ref = format!("refs/heads/{}", pull.base_branch);
-    let snapshot = crate::backend::db::code_scanning::pull_snapshot(
+    let snapshot = codeyard_db_security::code_scanning::pull_snapshot(
         pool,
         user.id,
         &session,
-        &crate::backend::db::code_scanning::PullSelection {
+        &codeyard_db_security::code_scanning::PullSelection {
             repo: repo.record.id,
             head,
             base,

@@ -45,16 +45,16 @@ pub async fn list_ci_jobs(
     }
     let runs = if let (Some(owner), Some(repo)) = (query.owner.as_ref(), query.repo.as_ref()) {
         let repo =
-            crate::backend::db::repositories::records::get_repository(&state.pool, owner, repo)
+            codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, repo)
                 .await
                 .map_err(crate::backend::api::ci::jobs::unavailable)?
                 .ok_or_else(missing)?;
         ensure_repo_read_access(&state, &user, &repo).await?;
-        crate::backend::db::ci::list_filtered_ci_runs(
+        codeyard_db_actions::ci::list_filtered_ci_runs(
             &state.pool,
             user.id,
             Some(repo.id),
-            &crate::backend::db::ci::CiRunFilter::default(),
+            &codeyard_db_actions::ci::CiRunFilter::default(),
             limit,
         )
         .await
@@ -62,7 +62,7 @@ pub async fn list_ci_jobs(
     } else {
         // Current repository visibility is in SQL, BEFORE LIMIT; historical
         // triggering is not continuing private-resource authority.
-        crate::backend::db::ci::list_ci_runs_for_user(&state.pool, user.id, limit)
+        codeyard_db_actions::ci::list_ci_runs_for_user(&state.pool, user.id, limit)
             .await
             .map_err(crate::backend::api::ci::jobs::unavailable)?
     };

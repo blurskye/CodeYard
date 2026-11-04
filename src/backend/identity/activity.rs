@@ -1,10 +1,10 @@
 //! A user's public activity, filtered to the repositories the viewer may read.
 
-use crate::backend::db::activity::ActivityRow;
-use crate::backend::db::activity::ActivityViewer;
-use crate::backend::db::activity::SCAN_ROWS;
 use anyhow::Result;
 use codeyard_db_core::DbPool;
+use codeyard_db_repos::activity::ActivityRow;
+use codeyard_db_repos::activity::ActivityViewer;
+use codeyard_db_repos::activity::SCAN_ROWS;
 
 pub const PAGE_SIZE: usize = 30;
 /// Later pages are not served, so one request reads a bounded number of rows.
@@ -35,7 +35,7 @@ pub async fn profile_activity(
     let mut items = Vec::with_capacity(wanted);
     let mut offset = 0i64;
     'scan: while offset < MAX_SCAN_ROWS {
-        let batch = crate::backend::db::activity::list_user_activity(
+        let batch = codeyard_db_repos::activity::list_user_activity(
             pool, user_id, viewer, SCAN_ROWS, offset,
         )
         .await?;

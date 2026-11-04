@@ -55,7 +55,7 @@ async fn contract(pg: bool) {
         // A private key body pasted without its header.
         "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAAB".into(),
     ] {
-        let error = codeyard::backend::db::users::ssh_keys::add_ssh_key(
+        let error = codeyard_db_identity::users::ssh_keys::add_ssh_key(
             f.pool(),
             alice_id,
             "Invalid",
@@ -85,7 +85,7 @@ async fn contract(pg: bool) {
         }
     }
     assert!(
-        codeyard::backend::db::users::ssh_keys::list_user_keys(f.pool(), alice_id)
+        codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), alice_id)
             .await
             .unwrap()
             .is_empty()
@@ -125,7 +125,7 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
-    let enrolled = codeyard::backend::db::users::ssh_keys::list_user_keys(f.pool(), alice_id)
+    let enrolled = codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), alice_id)
         .await
         .unwrap()
         .pop()
@@ -133,7 +133,7 @@ async fn contract(pg: bool) {
     assert_eq!(enrolled.key_type, "sk-ssh-ed25519@openssh.com");
     let id = enrolled.id;
     assert_eq!(
-        codeyard::backend::db::users::ssh_keys::get_user_by_ssh_key_id(f.pool(), id)
+        codeyard_db_identity::users::ssh_keys::get_user_by_ssh_key_id(f.pool(), id)
             .await
             .unwrap()
             .unwrap()
@@ -154,7 +154,7 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(status, StatusCode::SEE_OTHER);
-    let keys = codeyard::backend::db::users::ssh_keys::list_user_keys(f.pool(), alice_id)
+    let keys = codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), alice_id)
         .await
         .unwrap();
     assert_eq!(keys.len(), 1);
@@ -165,7 +165,7 @@ async fn contract(pg: bool) {
     );
     assert_eq!(key.public_key, format!("{PUBLIC} alice public comment"));
     assert_eq!(
-        codeyard::backend::db::users::ssh_keys::get_user_by_key_fingerprint(
+        codeyard_db_identity::users::ssh_keys::get_user_by_key_fingerprint(
             f.pool(),
             &key.fingerprint
         )
@@ -177,7 +177,7 @@ async fn contract(pg: bool) {
         alice_id
     );
     assert_eq!(
-        codeyard::backend::db::users::ssh_keys::get_user_by_ssh_key_id(f.pool(), key.id)
+        codeyard_db_identity::users::ssh_keys::get_user_by_ssh_key_id(f.pool(), key.id)
             .await
             .unwrap()
             .unwrap()
@@ -188,7 +188,7 @@ async fn contract(pg: bool) {
     for (actor, client) in [(alice_id, &alice), (bob_id, &bob)] {
         let public = format!("{PUBLIC} another comment");
         let error =
-            codeyard::backend::db::users::ssh_keys::add_ssh_key(f.pool(), actor, "Copy", &public)
+            codeyard_db_identity::users::ssh_keys::add_ssh_key(f.pool(), actor, "Copy", &public)
                 .await
                 .unwrap_err();
         assert_eq!(
@@ -214,7 +214,7 @@ async fn contract(pg: bool) {
         ssh_key::PrivateKey::random(&mut rand::rngs::OsRng, ssh_key::Algorithm::Ed25519).unwrap();
     let public = private.public_key().to_openssh().unwrap();
     let fingerprint =
-        codeyard::backend::db::users::ssh_keys::calculate_fingerprint(&public).unwrap();
+        codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&public).unwrap();
     let barrier = Arc::new(tokio::sync::Barrier::new(8));
     let mut tasks = tokio::task::JoinSet::new();
     for index in 0..8 {
@@ -223,7 +223,7 @@ async fn contract(pg: bool) {
         let barrier = barrier.clone();
         tasks.spawn(async move {
             barrier.wait().await;
-            codeyard::backend::db::users::ssh_keys::add_ssh_key(
+            codeyard_db_identity::users::ssh_keys::add_ssh_key(
                 &pool,
                 if index % 2 == 0 { alice_id } else { bob_id },
                 "Race",
@@ -246,11 +246,11 @@ async fn contract(pg: bool) {
         }
     }
     assert_eq!(successes, 1);
-    let mut all = codeyard::backend::db::users::ssh_keys::list_user_keys(f.pool(), alice_id)
+    let mut all = codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), alice_id)
         .await
         .unwrap();
     all.extend(
-        codeyard::backend::db::users::ssh_keys::list_user_keys(f.pool(), bob_id)
+        codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), bob_id)
             .await
             .unwrap(),
     );
@@ -267,7 +267,7 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
     assert!(
-        codeyard::backend::db::users::ssh_keys::list_user_keys(f.pool(), alice_id)
+        codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), alice_id)
             .await
             .unwrap()
             .iter()
@@ -282,7 +282,7 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND, "{page}");
     assert!(
-        codeyard::backend::db::users::ssh_keys::get_user_by_key_fingerprint(
+        codeyard_db_identity::users::ssh_keys::get_user_by_key_fingerprint(
             f.pool(),
             &key.fingerprint
         )
@@ -291,7 +291,7 @@ async fn contract(pg: bool) {
         .is_none()
     );
     assert!(
-        codeyard::backend::db::users::ssh_keys::get_user_by_ssh_key_id(f.pool(), key.id)
+        codeyard_db_identity::users::ssh_keys::get_user_by_ssh_key_id(f.pool(), key.id)
             .await
             .unwrap()
             .is_none()
@@ -299,14 +299,14 @@ async fn contract(pg: bool) {
 
     // A stored key that fails validation cannot authenticate on either transport.
     f.execute(&format!("INSERT INTO ssh_keys(user_id,name,fingerprint,public_key,key_type) VALUES($1,'Malformed','{}','ssh-ed25519 AAAA','ssh-ed25519')", key.fingerprint), &[alice_id]).await;
-    let malformed = codeyard::backend::db::users::ssh_keys::list_user_keys(f.pool(), alice_id)
+    let malformed = codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), alice_id)
         .await
         .unwrap()
         .into_iter()
         .find(|other| other.name == "Malformed")
         .unwrap();
     assert!(
-        codeyard::backend::db::users::ssh_keys::get_user_by_key_fingerprint(
+        codeyard_db_identity::users::ssh_keys::get_user_by_key_fingerprint(
             f.pool(),
             &key.fingerprint
         )
@@ -315,7 +315,7 @@ async fn contract(pg: bool) {
         .is_none()
     );
     assert!(
-        codeyard::backend::db::users::ssh_keys::get_user_by_ssh_key_id(f.pool(), malformed.id)
+        codeyard_db_identity::users::ssh_keys::get_user_by_ssh_key_id(f.pool(), malformed.id)
             .await
             .unwrap()
             .is_none()
@@ -325,7 +325,7 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
     assert!(
-        !codeyard::backend::db::users::ssh_keys::list_user_keys(f.pool(), alice_id)
+        !codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), alice_id)
             .await
             .unwrap()
             .iter()
@@ -361,7 +361,7 @@ async fn contract(pg: bool) {
             ssh_key::PrivateKey::random(&mut rand::rngs::OsRng, ssh_key::Algorithm::Ed25519)
                 .unwrap();
         let refused_public = refused_private.public_key().to_openssh().unwrap();
-        let error = codeyard::backend::db::users::ssh_keys::add_ssh_key(
+        let error = codeyard_db_identity::users::ssh_keys::add_ssh_key(
             f.pool(),
             user,
             "Must not persist",
@@ -377,7 +377,7 @@ async fn contract(pg: bool) {
             codeyard::backend::identity::keys::delete(
                 f.pool(),
                 user,
-                &codeyard::backend::db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &client.session
                 ),
                 existing.id,
@@ -406,7 +406,7 @@ async fn contract(pg: bool) {
             .form("/settings/profile", &[("display_name", "Changed")])
             .await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
-        let keys = codeyard::backend::db::users::ssh_keys::list_user_keys(f.pool(), user)
+        let keys = codeyard_db_identity::users::ssh_keys::list_user_keys(f.pool(), user)
             .await
             .unwrap();
         assert_eq!(keys.len(), 1);
@@ -431,11 +431,11 @@ async fn contract(pg: bool) {
 }
 
 async fn session_enrollment_contract(pg: bool) {
-    use codeyard::backend::db::users::{sessions, ssh_keys, transitions};
     use codeyard::backend::identity::keys::{self, KeyError};
+    use codeyard_db_identity::users::{sessions, ssh_keys, transitions};
 
     let mut f = Database::new(pg).await;
-    let user = codeyard::backend::db::users::accounts::create_user_with_password_and_flags(
+    let user = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         f.pool(),
         "session-key-owner",
         None,
@@ -495,7 +495,7 @@ async fn session_enrollment_contract(pg: bool) {
         keys::delete(
             f.pool(),
             user.id,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(&session),
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
             key.id,
         )
         .await
@@ -527,7 +527,7 @@ async fn session_enrollment_contract(pg: bool) {
     keys::delete(
         f.pool(),
         user.id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&session),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
         key.id,
     )
     .await
@@ -620,7 +620,7 @@ async fn session_enrollment_contract(pg: bool) {
 async fn postgres_enrollment_locks_accounts_before_rows_and_fingerprints() {
     let mut f = Database::new(true).await;
     let actor = f.actor("ordered_key_owner").await;
-    let repository = codeyard::backend::db::repositories::records::create_repository(
+    let repository = codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         actor,
         "keys",
@@ -631,7 +631,7 @@ async fn postgres_enrollment_locks_accounts_before_rows_and_fingerprints() {
     .await
     .unwrap();
     let session = native::token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         f.pool(),
         &session,
         actor,
@@ -650,7 +650,7 @@ async fn postgres_enrollment_locks_accounts_before_rows_and_fingerprints() {
                 .to_openssh()
                 .unwrap();
         let fingerprint =
-            codeyard::backend::db::users::ssh_keys::calculate_fingerprint(&public).unwrap();
+            codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&public).unwrap();
         let mut gate = raw.begin().await.unwrap();
         let holder: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *gate)
@@ -663,7 +663,7 @@ async fn postgres_enrollment_locks_accounts_before_rows_and_fingerprints() {
             .unwrap();
         let pool = f.pool().clone();
         let original = session.clone();
-        let key = codeyard::backend::db::deploy_keys::NewDeployKey {
+        let key = codeyard_db_identity::deploy_keys::NewDeployKey {
             repo_id: repository.id,
             title: "ordered".into(),
             fingerprint: fingerprint.clone(),
@@ -673,11 +673,11 @@ async fn postgres_enrollment_locks_accounts_before_rows_and_fingerprints() {
         };
         let task = tokio::spawn(async move {
             if deploy {
-                codeyard::backend::db::deploy_keys::insert_deploy_key(&pool, &key, &original)
+                codeyard_db_identity::deploy_keys::insert_deploy_key(&pool, &key, &original)
                     .await
                     .map(|_| ())
             } else {
-                codeyard::backend::db::users::ssh_keys::add_ssh_key_for_session(
+                codeyard_db_identity::users::ssh_keys::add_ssh_key_for_session(
                     &pool, actor, &original, "ordered", &public,
                 )
                 .await

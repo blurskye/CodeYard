@@ -19,8 +19,8 @@ use std::{collections::HashMap, sync::Arc};
 
 fn error(error: anyhow::Error) -> Error {
     if matches!(
-        error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>(),
-        Some(crate::backend::db::secret_scanning::Refusal::Invalid)
+        error.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(),
+        Some(codeyard_db_core::queries::secret_scanning::Refusal::Invalid)
     ) {
         Error::validation("SecretScanningCustomPattern", "pattern", "invalid")
     } else {
@@ -117,7 +117,7 @@ async fn list(
         return Err(Error::invalid("Invalid custom pattern filter"));
     }
     let mut patterns =
-        crate::backend::db::secret_scanning::list_patterns(&state.pool, actor.user.id, owner)
+        codeyard_db_security::secret_scanning::list_patterns(&state.pool, actor.user.id, owner)
             .await
             .map_err(error)?;
     patterns.retain(|pattern| {
@@ -165,7 +165,7 @@ async fn create(
     Json(input): Json<CreateMany>,
 ) -> Result<Response> {
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
-    let patterns = crate::backend::db::secret_scanning::create_patterns(
+    let patterns = codeyard_db_security::secret_scanning::create_patterns(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -188,7 +188,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
     let id = params["pattern_id"].parse().map_err(|_| Error::missing())?;
-    let pattern = crate::backend::db::secret_scanning::update_pattern(
+    let pattern = codeyard_db_security::secret_scanning::update_pattern(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -221,7 +221,7 @@ async fn remove(
     {
         return Err(Error::invalid("Invalid post_delete_action"));
     }
-    crate::backend::db::secret_scanning::delete_patterns(
+    codeyard_db_security::secret_scanning::delete_patterns(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -242,7 +242,7 @@ async fn configs(
         return Err(Error::missing());
     };
     Ok(Json(
-        crate::backend::db::secret_scanning::pattern_configs(&state.pool, actor.user.id, org)
+        codeyard_db_security::secret_scanning::pattern_configs(&state.pool, actor.user.id, org)
             .await
             .map_err(error)?,
     ))
@@ -251,12 +251,12 @@ async fn configure(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(params): Path<HashMap<String, String>>,
-    Json(input): Json<crate::backend::db::secret_scanning::ConfigUpdate>,
+    Json(input): Json<codeyard_db_security::secret_scanning::ConfigUpdate>,
 ) -> Result<Json<Value>> {
     let (Owner::Organization(org), actor) = scope(&state, &headers, &params, true).await? else {
         return Err(Error::missing());
     };
-    let version = crate::backend::db::secret_scanning::configure_patterns(
+    let version = codeyard_db_security::secret_scanning::configure_patterns(
         &state.pool,
         actor.user.id,
         &actor.credential(),

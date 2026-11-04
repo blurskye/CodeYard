@@ -48,7 +48,7 @@ async fn starred(
         .ok_or_else(crate::backend::api::github::auth::required)?
         .user;
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    if crate::backend::db::repositories::engagement::is_repo_starred(&state.pool, actor.id, repo.id)
+    if codeyard_db_repos::repositories::engagement::is_repo_starred(&state.pool, actor.id, repo.id)
         .await
         .map_err(Error::unavailable)?
     {
@@ -131,7 +131,7 @@ async fn list_stars(
         crate::backend::api::github::auth::authenticate(state, headers, username.is_none()).await?;
     let user = match username {
         Some(username) => {
-            crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
+            codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?
@@ -146,10 +146,10 @@ async fn list_stars(
         query.sort.as_deref().unwrap_or("created"),
         query.direction.as_deref().unwrap_or("desc"),
     ) {
-        ("created", "desc") => crate::backend::db::repositories::engagement::StarSort::Recent,
-        ("created", "asc") => crate::backend::db::repositories::engagement::StarSort::Oldest,
-        ("updated", "desc") => crate::backend::db::repositories::engagement::StarSort::Updated,
-        ("updated", "asc") => crate::backend::db::repositories::engagement::StarSort::UpdatedOldest,
+        ("created", "desc") => codeyard_db_repos::repositories::engagement::StarSort::Recent,
+        ("created", "asc") => codeyard_db_repos::repositories::engagement::StarSort::Oldest,
+        ("updated", "desc") => codeyard_db_repos::repositories::engagement::StarSort::Updated,
+        ("updated", "asc") => codeyard_db_repos::repositories::engagement::StarSort::UpdatedOldest,
         _ => return Err(Error::invalid("Invalid sort or direction")),
     };
     let page = Pagination {
@@ -157,7 +157,7 @@ async fn list_stars(
         per_page: query.per_page,
     };
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::repositories::engagement::list_starred_repositories(
+    let rows = codeyard_db_repos::repositories::engagement::list_starred_repositories(
         &state.pool,
         user.id,
         auth.as_ref().map(|auth| auth.user.id),
@@ -185,7 +185,7 @@ async fn list_stars(
         let value =
             crate::backend::api::github::repos::document(state, repo, auth.as_ref()).await?;
         items.push(if timestamps(headers) {
-            let Some(at) = crate::backend::db::repositories::engagement::starred_at(
+            let Some(at) = codeyard_db_repos::repositories::engagement::starred_at(
                 &state.pool,
                 user.id,
                 repo.id,
@@ -231,7 +231,7 @@ async fn stargazers(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::repositories::engagement::list_repo_stargazers(
+    let rows = codeyard_db_repos::repositories::engagement::list_repo_stargazers(
         &state.pool,
         repo.id,
         limit as i64,
@@ -240,7 +240,7 @@ async fn stargazers(
     .await
     .map_err(Error::unavailable)?;
     let has_next = rows.len() == limit
-        && !crate::backend::db::repositories::engagement::list_repo_stargazers(
+        && !codeyard_db_repos::repositories::engagement::list_repo_stargazers(
             &state.pool,
             repo.id,
             1,
@@ -253,7 +253,7 @@ async fn stargazers(
     for user in rows {
         let value = crate::backend::webhooks::payloads::user(&user);
         items.push(if timestamps(&headers) {
-            let Some(at) = crate::backend::db::repositories::engagement::starred_at(
+            let Some(at) = codeyard_db_repos::repositories::engagement::starred_at(
                 &state.pool,
                 user.id,
                 repo.id,
@@ -289,7 +289,7 @@ async fn star_history(
         per_page: Some(crate::backend::api::github::pagination::page_size(query.per_page).min(30)),
     };
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::repositories::engagement::list_star_history(
+    let rows = codeyard_db_repos::repositories::engagement::list_star_history(
         &state.pool,
         repo.id,
         (limit + 1) as i64,

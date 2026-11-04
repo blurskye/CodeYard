@@ -10,11 +10,11 @@ use axum::{
     Form, Router,
 };
 use codeyard_webui::{
-    crate::backend::db::pages::repos::{
-        crate::backend::db::pages::{Build, Page as PagesPage, Settings},
+    app::Page,
+    codeyard_db_repos::pages::repos::{
+        codeyard_db_repos::pages::{Build, Page as PagesPage, Settings},
         page::Page as RepoPage,
     },
-    app::Page,
 };
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
@@ -31,13 +31,13 @@ async fn render(
     status: StatusCode,
 ) -> Response {
     let session = crate::backend::api::http::session::extract_session_id(&ctx.headers);
-    let reader = crate::backend::db::repositories::credentials::Reader {
+    let reader = codeyard_db_repos::repositories::credentials::Reader {
         user: ctx.user.as_ref().map(|user| user.id),
         credential: session
             .as_deref()
-            .map(crate::backend::db::users::accounts::AccountCredential::Session),
+            .map(codeyard_db_core::queries::users::accounts::AccountCredential::Session),
     };
-    let site = match crate::backend::db::pages::site(&ctx.state.pool, &reader, loaded.repository.id)
+    let site = match codeyard_db_repos::pages::site(&ctx.state.pool, &reader, loaded.repository.id)
         .await
     {
         Ok(site) => site,
@@ -60,7 +60,7 @@ async fn render(
             ..Default::default()
         },
     });
-    let builds = match crate::backend::db::pages::builds(
+    let builds = match codeyard_db_repos::pages::builds(
         &ctx.state.pool,
         &reader,
         loaded.repository.id,
@@ -145,10 +145,13 @@ async fn submit(
     let actor = ctx.user.as_ref().unwrap().id;
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
-    let reader = crate::backend::db::repositories::credentials::Reader {
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+    let reader = codeyard_db_repos::repositories::credentials::Reader {
         user: Some(actor),
-        credential: Some(crate::backend::db::users::accounts::AccountCredential::Session(&session)),
+        credential: Some(
+            codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        ),
     };
     let settings = Settings {
         build_type: crate::backend::api::repos::forms::field(&form, "build_type"),
@@ -160,22 +163,22 @@ async fn submit(
     };
     let operation=async {
         match crate::backend::api::repos::forms::field(&form,"op").as_str() {
-            "delete"=>crate::backend::db::pages::delete(&ctx.state.pool,actor,&credential,loaded.repository.id).await?,
+            "delete"=>codeyard_db_repos::pages::delete(&ctx.state.pool,actor,&credential,loaded.repository.id).await?,
             "build"=>{
-                let site=crate::backend::db::pages::site(&ctx.state.pool,&reader,loaded.repository.id).await?.ok_or(crate::backend::db::pages::Refusal::Missing)?;
-                let branch=site.branch.ok_or(crate::backend::db::pages::Refusal::Invalid)?;
+                let site=codeyard_db_repos::pages::site(&ctx.state.pool,&reader,loaded.repository.id).await?.ok_or(codeyard_db_repos::pages::Refusal::Missing)?;
+                let branch=site.branch.ok_or(codeyard_db_repos::pages::Refusal::Invalid)?;
                 let commit=repo_store(&loaded.repository,ctx.state.cluster.as_ref()).commit(&format!("refs/heads/{branch}")).await?;
-                crate::backend::db::pages::request_build(&ctx.state.pool,actor,&credential,loaded.repository.id,&commit.sha).await?;
+                codeyard_db_repos::pages::request_build(&ctx.state.pool,actor,&credential,loaded.repository.id,&commit.sha).await?;
             }
             "save"=>{
-                let create=crate::backend::db::pages::site(&ctx.state.pool,&reader,loaded.repository.id).await?.is_none();
+                let create=codeyard_db_repos::pages::site(&ctx.state.pool,&reader,loaded.repository.id).await?.is_none();
                 let mut value=json!({"build_type":settings.build_type,"cname":if settings.cname.is_empty(){None}else{Some(&settings.cname)},"https_enforced":settings.https_enforced,"public":settings.public});
                 if settings.build_type == "legacy" && !settings.branch.is_empty() {value["source"]=json!({"branch":settings.branch,"path":settings.path});}
-                let update=crate::backend::db::pages::Update::parse(&value,create)?;
+                let update=codeyard_db_repos::pages::Update::parse(&value,create)?;
                 if let Some(source)=&update.source {repo_store(&loaded.repository,ctx.state.cluster.as_ref()).commit(&format!("refs/heads/{}",source.branch)).await?;}
-                crate::backend::db::pages::save(&ctx.state.pool,actor,&credential,loaded.repository.id,&update,create).await?;
+                codeyard_db_repos::pages::save(&ctx.state.pool,actor,&credential,loaded.repository.id,&update,create).await?;
             }
-            _=>anyhow::bail!(crate::backend::db::pages::Refusal::Invalid),
+            _=>anyhow::bail!(codeyard_db_repos::pages::Refusal::Invalid),
         }
         Ok::<_,anyhow::Error>(())
     }.await;
@@ -185,9 +188,9 @@ async fn submit(
             loaded.chrome.base()
         ))),
         Err(error) => {
-            let status = match error.downcast_ref::<crate::backend::db::pages::Refusal>() {
-                Some(crate::backend::db::pages::Refusal::Denied) => StatusCode::FORBIDDEN,
-                Some(crate::backend::db::pages::Refusal::Missing) => StatusCode::NOT_FOUND,
+            let status = match error.downcast_ref::<codeyard_db_repos::pages::Refusal>() {
+                Some(codeyard_db_repos::pages::Refusal::Denied) => StatusCode::FORBIDDEN,
+                Some(codeyard_db_repos::pages::Refusal::Missing) => StatusCode::NOT_FOUND,
                 Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
                 None if error.is::<codeyard_support::credentials::AccountRestricted>() => {
                     StatusCode::FORBIDDEN

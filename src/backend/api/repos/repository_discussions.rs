@@ -27,7 +27,7 @@ async fn names(ctx: &PageContext, mut ids: Vec<i64>) -> ResultPage<HashMap<i64, 
     ids.sort_unstable();
     ids.dedup();
     Ok(
-        crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
+        codeyard_db_identity::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
             .await
             .map_err(|_| crate::backend::api::repos::chrome::unavailable(ctx))?
             .into_iter()
@@ -64,13 +64,13 @@ async fn index(
     let (page, offset) = window(&ctx)?;
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let mut rows = crate::backend::db::repository_discussions::list_rows(
+    let mut rows = codeyard_db_repos::repository_discussions::list_rows(
         &ctx.state.pool,
         ctx.user.as_ref().map_or(-1, |user| user.id),
-        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
-        &crate::backend::db::repository_discussions::Filter {
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_db_repos::repository_discussions::Filter {
             repo: Some(loaded.repository.id),
-            order: crate::backend::db::repository_discussions::Order::Updated,
+            order: codeyard_db_repos::repository_discussions::Order::Updated,
             ..Default::default()
         },
         offset,
@@ -110,8 +110,8 @@ async fn comment(
     ctx: &PageContext,
     discussion: i64,
     id: i64,
-) -> ResultPage<crate::backend::db::repository_discussions::Comment> {
-    crate::backend::db::repository_discussions::comment(&ctx.state.pool, id)
+) -> ResultPage<codeyard_db_repos::repository_discussions::Comment> {
+    codeyard_db_repos::repository_discussions::comment(&ctx.state.pool, id)
         .await
         .map_err(|_| crate::backend::api::repos::chrome::unavailable(ctx))?
         .filter(|comment| comment.discussion_id == discussion)
@@ -125,7 +125,7 @@ async fn detail(
 ) -> ResultPage<Response> {
     let ctx = PageContext::load(state, headers, &uri).await?;
     let loaded = crate::backend::api::repos::chrome::load_database(&ctx, &owner, &name).await?;
-    let discussion = crate::backend::db::repository_discussions::by_number(
+    let discussion = codeyard_db_repos::repository_discussions::by_number(
         &ctx.state.pool,
         loaded.repository.id,
         number,
@@ -155,7 +155,7 @@ async fn detail(
         }
         root = Some(row);
     }
-    let (_, mut rows) = crate::backend::db::repository_discussions::comments(
+    let (_, mut rows) = codeyard_db_repos::repository_discussions::comments(
         &ctx.state.pool,
         discussion.id,
         thread,

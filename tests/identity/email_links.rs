@@ -9,7 +9,7 @@ use crate::support::PASSWORD_WORK as SERIAL;
 use axum::http::StatusCode;
 use chrono::{Duration, Utc};
 
-use codeyard::backend::db::email::NewEmailSettings;
+use codeyard_db_identity::email::NewEmailSettings;
 
 use codeyard::backend::email::links::LinkError;
 use codeyard::backend::email::links::Purpose;
@@ -27,7 +27,7 @@ pub(super) async fn set_up_mail(f: &Database) {
     let admin = f.actor("mail_admin").await;
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin])
         .await;
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         f.pool(),
         "mail-admin-session",
         admin,
@@ -47,7 +47,7 @@ pub(super) async fn set_up_mail(f: &Database) {
         from_address: "noreply@example.test",
         reply_to: "",
     };
-    assert!(codeyard::backend::db::email::save_email_settings(
+    assert!(codeyard_db_identity::email::save_email_settings(
         f.pool(),
         admin,
         "mail-admin-session",
@@ -59,7 +59,7 @@ pub(super) async fn set_up_mail(f: &Database) {
 
 pub(super) async fn queued(pool: &DbPool) -> Vec<OutboxMessage> {
     let mut mail = Vec::new();
-    while let Some(message) = codeyard::backend::db::email::claim_due_email(pool, 5, 600)
+    while let Some(message) = codeyard_db_identity::email::claim_due_email(pool, 5, 600)
         .await
         .unwrap()
     {
@@ -92,7 +92,7 @@ async fn age_links(f: &Database, user: i64) {
 }
 
 async fn user_named(pool: &DbPool, name: &str) -> User {
-    codeyard::backend::db::users::accounts::get_user_by_username(pool, name)
+    codeyard_db_identity::users::accounts::get_user_by_username(pool, name)
         .await
         .unwrap()
         .unwrap()
@@ -115,7 +115,7 @@ async fn verification_links(pg: bool) {
         .unwrap();
 
     // Without a mail server nothing is queued.
-    let carol = codeyard::backend::db::users::accounts::create_user(
+    let carol = codeyard_db_identity::users::accounts::create_user(
         pool,
         "carol",
         Some("carol@example.test"),
@@ -162,13 +162,10 @@ async fn verification_links(pg: bool) {
     );
 
     // A resend within a minute mails nothing; a later one replaces the earlier link and code.
-    let dave = codeyard::backend::db::users::accounts::create_user(
-        pool,
-        "dave",
-        Some("dave@example.test"),
-    )
-    .await
-    .unwrap();
+    let dave =
+        codeyard_db_identity::users::accounts::create_user(pool, "dave", Some("dave@example.test"))
+            .await
+            .unwrap();
     codeyard::backend::email::links::send_verification(pool, &dave)
         .await
         .unwrap();
@@ -198,13 +195,10 @@ async fn verification_links(pg: bool) {
     );
 
     // Without PUBLIC_URL the mail carries only the code, and pasting it confirms the address.
-    let hana = codeyard::backend::db::users::accounts::create_user(
-        pool,
-        "hana",
-        Some("hana@example.test"),
-    )
-    .await
-    .unwrap();
+    let hana =
+        codeyard_db_identity::users::accounts::create_user(pool, "hana", Some("hana@example.test"))
+            .await
+            .unwrap();
     codeyard::backend::email::links::send_verification(pool, &hana)
         .await
         .unwrap();
@@ -228,13 +222,10 @@ async fn verification_links(pg: bool) {
     );
 
     // An expired link confirms nothing.
-    let erin = codeyard::backend::db::users::accounts::create_user(
-        pool,
-        "erin",
-        Some("erin@example.test"),
-    )
-    .await
-    .unwrap();
+    let erin =
+        codeyard_db_identity::users::accounts::create_user(pool, "erin", Some("erin@example.test"))
+            .await
+            .unwrap();
     codeyard::backend::email::links::send_verification(pool, &erin)
         .await
         .unwrap();
@@ -254,7 +245,7 @@ async fn verification_links(pg: bool) {
     assert!(!user_named(pool, "erin").await.email_verified);
 
     // A link sent to an address the user has since left confirms nothing.
-    let frank = codeyard::backend::db::users::accounts::create_user_with_password(
+    let frank = codeyard_db_identity::users::accounts::create_user_with_password(
         pool,
         "frank",
         Some("frank@example.test"),
@@ -262,7 +253,7 @@ async fn verification_links(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         "frank-session",
         frank.id,
@@ -276,7 +267,7 @@ async fn verification_links(pg: bool) {
         .await
         .unwrap();
     let token = token_in(&queued(pool).await[0]);
-    codeyard::backend::db::users::transitions::change_email(
+    codeyard_db_identity::users::transitions::change_email(
         pool,
         frank.id,
         "frank-new@example.test",
@@ -323,13 +314,10 @@ async fn verification_links(pg: bool) {
     assert!(user_named(pool, "frank").await.email_verified);
 
     // Requests are limited per user.
-    let gina = codeyard::backend::db::users::accounts::create_user(
-        pool,
-        "gina",
-        Some("gina@example.test"),
-    )
-    .await
-    .unwrap();
+    let gina =
+        codeyard_db_identity::users::accounts::create_user(pool, "gina", Some("gina@example.test"))
+            .await
+            .unwrap();
     for _ in 0..10 {
         codeyard::backend::email::links::send_verification(pool, &gina)
             .await
@@ -341,7 +329,7 @@ async fn verification_links(pg: bool) {
     );
 
     // An account without an address has nothing to confirm.
-    let none = codeyard::backend::db::users::accounts::create_user(pool, "no_address", None)
+    let none = codeyard_db_identity::users::accounts::create_user(pool, "no_address", None)
         .await
         .unwrap();
     assert_eq!(
@@ -360,7 +348,7 @@ async fn reset_links(pg: bool) {
         .await
         .unwrap();
     set_up_mail(&f).await;
-    let ivan = codeyard::backend::db::users::accounts::create_user_with_password(
+    let ivan = codeyard_db_identity::users::accounts::create_user_with_password(
         pool,
         "ivan",
         Some("ivan@example.test"),
@@ -379,7 +367,7 @@ async fn reset_links(pg: bool) {
     assert!(queued(pool).await.is_empty());
 
     // An account with no password has nothing to reset.
-    let oauth = codeyard::backend::db::users::accounts::create_user(
+    let oauth = codeyard_db_identity::users::accounts::create_user(
         pool,
         "oauth_only",
         Some("oauth@example.test"),
@@ -401,7 +389,7 @@ async fn reset_links(pg: bool) {
         &[ivan.id],
     )
     .await;
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         "ivan-session",
         ivan.id,
@@ -438,7 +426,7 @@ async fn reset_links(pg: bool) {
     );
 
     // Sent mail keeps no body, so the link is not left in the outbox.
-    codeyard::backend::db::email::mark_email_sent(pool, mail[0].id, mail[0].attempts)
+    codeyard_db_identity::email::mark_email_sent(pool, mail[0].id, mail[0].attempts)
         .await
         .unwrap();
     assert_eq!(
@@ -528,7 +516,7 @@ async fn reset_links(pg: bool) {
         .await
         .unwrap();
     let token = token_in(&queued(pool).await[0]);
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         "ivan-session-2",
         ivan.id,
@@ -601,7 +589,7 @@ async fn email_link_pages(pg: bool) {
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;
-    let kate = codeyard::backend::db::users::accounts::create_user_with_password(
+    let kate = codeyard_db_identity::users::accounts::create_user_with_password(
         pool,
         "kate",
         Some("kate@example.test"),
@@ -683,7 +671,7 @@ async fn email_link_pages(pg: bool) {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     // The code pasted into Settings with spaces around it confirms the address.
-    let lena = codeyard::backend::db::users::accounts::create_user_with_password(
+    let lena = codeyard_db_identity::users::accounts::create_user_with_password(
         pool,
         "lena",
         Some("lena@example.test"),

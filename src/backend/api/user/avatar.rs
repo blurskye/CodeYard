@@ -6,7 +6,7 @@ use crate::backend::api::user::profile::settings_response;
 use crate::backend::api::user::responses::require_account;
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 
 use crate::backend::identity::avatars::AvatarError;
 use axum::extract::multipart::MultipartRejection;

@@ -24,17 +24,17 @@ struct Hosted {
 impl Hosted {
     async fn start(pool: &codeyard_db_core::DbPool, url: &str, name: &str) -> Self {
         bundle::install();
-        codeyard::backend::db::node_config::upsert_node_configuration(pool, "public", true)
+        codeyard_db_cluster::node_config::upsert_node_configuration(pool, "public", true)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
-        let owner = codeyard::backend::db::users::accounts::create_user(pool, "http_owner", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(pool, "http_owner", None)
             .await
             .unwrap();
         let repository = codeyard::backend::repositories::lifecycle::provision(
             (pool, None),
             &root.path().join("repos"),
-            codeyard::backend::db::repositories::RepositoryCreationOwner::personal(owner.id),
+            codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
             name,
             None,
             false,

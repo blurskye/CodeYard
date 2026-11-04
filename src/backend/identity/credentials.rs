@@ -20,7 +20,7 @@ pub(crate) fn validate_account(input: &PasswordAccount<'_>) -> Result<(), Accoun
 /// Reserved names are checked only when a new account is created. An existing account
 /// keeps its name, so setup can still finish for an administrator named `admin`.
 pub(crate) fn validate_new_account_name(username: &str) -> Result<(), AccountInputError> {
-    if crate::backend::db::users::is_reserved_name(username) {
+    if codeyard_db_identity::users::is_reserved_name(username) {
         return Err(AccountInputError::UsernameReserved);
     }
     Ok(())

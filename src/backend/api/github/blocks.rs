@@ -3,7 +3,7 @@ use crate::backend::api::github::pagination::Pagination;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -31,7 +31,7 @@ async fn list(
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
     let (offset, limit) = page.window()?;
-    let mut users = crate::backend::db::users::blocks::list_blocks(
+    let mut users = codeyard_db_identity::users::blocks::list_blocks(
         &state.pool,
         actor.user.id,
         (limit + 1) as i64,
@@ -60,7 +60,7 @@ async fn check(
         .ok_or_else(crate::backend::api::github::auth::required)?;
     let target = crate::backend::api::github::users::target(&state, &username).await?;
     if target.is_banned
-        || !crate::backend::db::users::blocks::is_blocked(&state.pool, actor.user.id, target.id)
+        || !codeyard_db_identity::users::blocks::is_blocked(&state.pool, actor.user.id, target.id)
             .await
             .map_err(Error::unavailable)?
     {

@@ -111,7 +111,7 @@ async fn write_file(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             actor.id,
             crate::backend::api::http::session::extract_session_id(headers).unwrap_or_default(),
         )),
@@ -160,7 +160,7 @@ pub async fn delete_file_content(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),

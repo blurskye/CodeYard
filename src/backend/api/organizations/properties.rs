@@ -4,7 +4,6 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::organizations::organization::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::db::organizations::OrganizationOutcome;
 use anyhow::{ensure, Result};
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, State},
@@ -13,6 +12,7 @@ use axum::{
     routing::post,
     Router,
 };
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_webui::pages::orgs as view;
 use std::{collections::HashSet, sync::Arc};
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing, Suspended};
@@ -28,7 +28,7 @@ pub(super) async fn panel(
     org: i64,
 ) -> std::result::Result<view::PropertyPanel, Response> {
     let definitions =
-        match crate::backend::db::organizations::properties::summaries(&ctx.state.pool, actor, org)
+        match codeyard_db_orgs::organizations::properties::summaries(&ctx.state.pool, actor, org)
             .await
         {
             Ok(Applied(definitions)) => definitions,
@@ -43,10 +43,10 @@ pub(super) async fn panel(
         };
     let selected = if let Some(name) = ctx.query.get("property").filter(|name| !name.is_empty()) {
         let missing = || ctx.error(StatusCode::NOT_FOUND, "Repository property not found.");
-        if !crate::backend::db::organizations::properties::valid_name(name) {
+        if !codeyard_db_core::queries::organizations::properties::valid_name(name) {
             return Err(missing());
         }
-        let definition = match crate::backend::db::organizations::properties::definition(
+        let definition = match codeyard_db_orgs::organizations::properties::definition(
             &ctx.state.pool,
             actor,
             org,
@@ -77,7 +77,9 @@ pub(super) async fn panel(
             default_value: input
                 .default_value
                 .as_ref()
-                .map(crate::backend::db::organizations::properties::PropertyValue::form_value)
+                .map(
+                    codeyard_db_core::queries::organizations::properties::PropertyValue::form_value,
+                )
                 .unwrap_or_default(),
             allowed_values: input
                 .allowed_values
@@ -123,8 +125,8 @@ fn allowed(action: &str) -> &'static [&'static str] {
 fn bound(key: &str) -> usize {
     match key {
         "allowed_values" | "default_value" | "value" => {
-            crate::backend::db::organizations::properties::MAX_ALLOWED_VALUES
-                * (crate::backend::db::organizations::properties::MAX_VALUE_BYTES + 1)
+            codeyard_db_core::queries::organizations::properties::MAX_ALLOWED_VALUES
+                * (codeyard_db_core::queries::organizations::properties::MAX_VALUE_BYTES + 1)
         }
         "description" => 4096,
         "repository_names" => 8192,
@@ -148,11 +150,13 @@ fn flag(form: &Fields, key: &str) -> Result<bool> {
     match form.get(key).map(String::as_str) {
         None | Some("false") => Ok(false),
         Some("true") => Ok(true),
-        _ => Err(crate::backend::db::organizations::properties::invalid(
-            key_name(key),
-            "Invalid property checkbox value",
-        )
-        .into()),
+        _ => Err(
+            codeyard_db_core::queries::organizations::properties::invalid(
+                key_name(key),
+                "Invalid property checkbox value",
+            )
+            .into(),
+        ),
     }
 }
 fn key_name(key: &str) -> &'static str {
@@ -172,20 +176,20 @@ async fn apply(
 ) -> Result<OrganizationOutcome<()>> {
     let name = crate::backend::api::organizations::organization::field(form, "property_name");
     ensure!(
-        crate::backend::db::organizations::properties::valid_name(name),
-        crate::backend::db::organizations::properties::invalid(
+        codeyard_db_core::queries::organizations::properties::valid_name(name),
+        codeyard_db_core::queries::organizations::properties::invalid(
             "property_name",
             "Property names must contain 1-75 ASCII letters, numbers, hyphens or underscores"
         )
     );
     match crate::backend::api::organizations::organization::field(form, "action") {
         "save-property" => {
-            let kind = crate::backend::db::organizations::properties::ValueType::parse(
+            let kind = codeyard_db_core::queries::organizations::properties::ValueType::parse(
                 crate::backend::api::organizations::organization::field(form, "value_type"),
             )?;
             let choices =
                 crate::backend::api::organizations::organization::field(form, "allowed_values");
-            let input = crate::backend::db::organizations::properties::DefinitionInput {
+            let input = codeyard_db_core::queries::organizations::properties::DefinitionInput {
                 property_name: name.into(),
                 value_type: kind,
                 description: crate::backend::api::organizations::organization::optional(
@@ -197,7 +201,7 @@ async fn apply(
                 require_explicit_values: flag(form, "require_explicit_values")?,
                 default_value: if flag(form, "use_default")? {
                     Some(
-                        crate::backend::db::organizations::properties::PropertyValue::from_form(
+                        codeyard_db_core::queries::organizations::properties::PropertyValue::from_form(
                             kind,
                             crate::backend::api::organizations::organization::field(
                                 form,
@@ -220,7 +224,7 @@ async fn apply(
                     None
                 },
                 values_editable_by:
-                    crate::backend::db::organizations::properties::EditableBy::parse(
+                    codeyard_db_core::queries::organizations::properties::EditableBy::parse(
                         crate::backend::api::organizations::organization::optional(
                             form,
                             "values_editable_by",
@@ -228,7 +232,7 @@ async fn apply(
                         .unwrap_or("org_actors"),
                     )?,
             };
-            Ok(crate::backend::db::organizations::properties::define(
+            Ok(codeyard_db_orgs::organizations::properties::define(
                 &ctx.state.pool,
                 ctx.database_actor(actor),
                 org,
@@ -238,16 +242,16 @@ async fn apply(
             .map(|_| ()))
         }
         "delete-property" => {
-            ensure!(crate::backend::api::organizations::organization::field(form,"confirm")==name,crate::backend::db::organizations::properties::invalid("confirm","Type the property name to confirm deleting its definition and every repository value"));
+            ensure!(crate::backend::api::organizations::organization::field(form,"confirm")==name,codeyard_db_core::queries::organizations::properties::invalid("confirm","Type the property name to confirm deleting its definition and every repository value"));
             let definition =
                 crate::backend::api::organizations::organization::id(form, "definition_id")
                     .map_err(|()| {
-                        crate::backend::db::organizations::properties::invalid(
+                        codeyard_db_core::queries::organizations::properties::invalid(
                             "definition_id",
                             "Reload the property and try again",
                         )
                     })?;
-            crate::backend::db::organizations::properties::remove(
+            codeyard_db_orgs::organizations::properties::remove(
                 &ctx.state.pool,
                 ctx.database_actor(actor),
                 org,
@@ -257,7 +261,7 @@ async fn apply(
             .await
         }
         "set-property-value" => {
-            let definition = match crate::backend::db::organizations::properties::definition(
+            let definition = match codeyard_db_orgs::organizations::properties::definition(
                 &ctx.state.pool,
                 actor,
                 org,
@@ -268,7 +272,8 @@ async fn apply(
                 Applied(Some(definition)) => definition,
                 Applied(None) => {
                     return Err(
-                        crate::backend::db::organizations::properties::Refusal::Missing.into(),
+                        codeyard_db_core::queries::organizations::properties::Refusal::Missing
+                            .into(),
                     )
                 }
                 other => return Ok(other.map(|_| ())),
@@ -284,29 +289,33 @@ async fn apply(
                 None
             } else {
                 Some(
-                    crate::backend::db::organizations::properties::PropertyValue::from_form(
+                    codeyard_db_core::queries::organizations::properties::PropertyValue::from_form(
                         definition.fields.value_type,
                         crate::backend::api::organizations::organization::field(form, "value"),
                     ),
                 )
             };
-            crate::backend::db::organizations::properties::set_values(
+            codeyard_db_orgs::organizations::properties::set_values(
                 &ctx.state.pool,
                 ctx.database_actor(actor),
                 org,
                 &repositories,
-                &[crate::backend::db::organizations::properties::ValueInput {
-                    property_name: name.into(),
-                    value,
-                }],
+                &[
+                    codeyard_db_core::queries::organizations::properties::ValueInput {
+                        property_name: name.into(),
+                        value,
+                    },
+                ],
             )
             .await
         }
-        _ => Err(crate::backend::db::organizations::properties::invalid(
-            "action",
-            "Invalid repository property operation",
-        )
-        .into()),
+        _ => Err(
+            codeyard_db_core::queries::organizations::properties::invalid(
+                "action",
+                "Invalid repository property operation",
+            )
+            .into(),
+        ),
     }
 }
 async fn mutate(
@@ -393,16 +402,18 @@ async fn mutate(
             "Repository properties changed. Reload and try again.".to_owned(),
         ),
         Err(error) => {
-            match error.downcast_ref::<crate::backend::db::organizations::properties::Refusal>() {
-                Some(crate::backend::db::organizations::properties::Refusal::Invalid {
+            match error
+                .downcast_ref::<codeyard_db_core::queries::organizations::properties::Refusal>()
+            {
+                Some(codeyard_db_core::queries::organizations::properties::Refusal::Invalid {
                     message,
                     ..
                 }) => (StatusCode::BAD_REQUEST, (*message).to_owned()),
-                Some(crate::backend::db::organizations::properties::Refusal::Denied) => (
+                Some(codeyard_db_core::queries::organizations::properties::Refusal::Denied) => (
                     StatusCode::FORBIDDEN,
                     "Repository property access denied.".to_owned(),
                 ),
-                Some(crate::backend::db::organizations::properties::Refusal::Missing) => (
+                Some(codeyard_db_core::queries::organizations::properties::Refusal::Missing) => (
                     StatusCode::NOT_FOUND,
                     "Repository property not found.".to_owned(),
                 ),
@@ -412,9 +423,9 @@ async fn mutate(
     };
     ctx.query.remove("property");
     let name = crate::backend::api::organizations::organization::field(&form, "property_name");
-    if crate::backend::db::organizations::properties::valid_name(name) {
+    if codeyard_db_core::queries::organizations::properties::valid_name(name) {
         if let Ok(Applied(Some(definition))) =
-            crate::backend::db::organizations::properties::definition(
+            codeyard_db_orgs::organizations::properties::definition(
                 &ctx.state.pool,
                 actor,
                 org,

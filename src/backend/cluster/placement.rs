@@ -19,13 +19,13 @@ pub async fn storage_node(
     };
     // A single-node installation keeps every repository in one place and records no owner;
     // its node connection is there only for runners.
-    if !crate::backend::db::cluster::cluster_enabled(context.database()?)
+    if !codeyard_db_cluster::cluster::cluster_enabled(context.database()?)
         .await
         .map_err(|_| crate::backend::cluster::rpc::unavailable())?
     {
         return Ok(None);
     }
-    let nodes = crate::backend::db::cluster::list_nodes(context.database()?)
+    let nodes = codeyard_db_cluster::cluster::list_nodes(context.database()?)
         .await
         .map_err(|_| crate::backend::cluster::rpc::unavailable())?;
     // In a cluster the owner is always recorded, even when it is this node: other nodes

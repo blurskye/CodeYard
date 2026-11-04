@@ -437,7 +437,7 @@ impl SshServer {
         ci_service: Arc<CiRuns>,
     ) -> Result<Self> {
         let cluster_key_pem = if let Some(key_pem) =
-            crate::backend::db::node_config::get_cluster_ssh_host_key(&pool).await?
+            codeyard_db_cluster::node_config::get_cluster_ssh_host_key(&pool).await?
         {
             info!("Loaded cluster SSH host key from database");
             key_pem
@@ -477,9 +477,9 @@ impl SshServer {
                     .any(|algorithm| *algorithm == key.algorithm()),
                 "Unsupported SSH host key algorithm"
             );
-            crate::backend::db::node_config::insert_cluster_ssh_host_key(&pool, &bootstrap_key)
+            codeyard_db_cluster::node_config::insert_cluster_ssh_host_key(&pool, &bootstrap_key)
                 .await?;
-            let stored_key = crate::backend::db::node_config::get_cluster_ssh_host_key(&pool)
+            let stored_key = codeyard_db_cluster::node_config::get_cluster_ssh_host_key(&pool)
                 .await?
                 .context("Cluster SSH host key missing after initialization")?;
             info!("Loaded initialized cluster SSH host key from database");

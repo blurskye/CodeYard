@@ -4,8 +4,8 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::suggestions::ListFilter;
-use crate::backend::db::suggestions::Refusal;
+use codeyard_db_repos::suggestions::ListFilter;
+use codeyard_db_repos::suggestions::Refusal;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -19,7 +19,7 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 pub(super) fn error(error: anyhow::Error) -> Error {
-    match crate::backend::db::suggestions::refusal(&error) {
+    match codeyard_db_repos::suggestions::refusal(&error) {
         Some(Refusal::Missing) => Error::missing(),
         Some(Refusal::Denied) => Error::new(StatusCode::FORBIDDEN, error.to_string()),
         Some(_) => Error::invalid(error.to_string()),
@@ -55,7 +55,7 @@ async fn list(
     let (mut scanned, mut accepted) = (0_i64, 0_usize);
     let mut rows = Vec::new();
     while rows.len() <= limit {
-        let batch = crate::backend::db::suggestions::list(
+        let batch = codeyard_db_repos::suggestions::list(
             &state.pool,
             repo.id,
             auth.user.id,
@@ -79,7 +79,7 @@ async fn list(
             .filter_map(|row| row.target_id)
             .collect();
         let targets: HashMap<_, _> =
-            crate::backend::db::issues::issue_repositories(&state.pool, &targets)
+            codeyard_db_repos::issues::issue_repositories(&state.pool, &targets)
                 .await
                 .map_err(Error::unavailable)?
                 .into_iter()

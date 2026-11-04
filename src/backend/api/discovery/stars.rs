@@ -5,12 +5,12 @@ use crate::backend::api::discovery::DiscoveryReadError;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
 
-use crate::backend::db::repositories::engagement::StarSort;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_db_repos::repositories::engagement::StarSort;
 use codeyard_webui::app::Page as AppPage;
 use codeyard_webui::pages::discovery::{self as view, RepositoryCard};
 use std::{collections::HashMap, sync::Arc};
@@ -36,7 +36,7 @@ pub(crate) async fn starred_page(
 ) -> Result<StarredPage, DiscoveryReadError> {
     let offset = i64::try_from((page - 1).saturating_mul(STARS_PAGE_SIZE)).unwrap_or(i64::MAX);
     // One row past the page shows whether an older page exists.
-    let mut repos = crate::backend::db::repositories::engagement::list_starred_repositories(
+    let mut repos = codeyard_db_repos::repositories::engagement::list_starred_repositories(
         &state.pool,
         starred_by,
         viewer,

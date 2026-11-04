@@ -4,8 +4,8 @@ use crate::backend::api::github::repository;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::repositories::dependencies::Feature;
 use crate::backend::repositories::access::AccessError;
+use codeyard_db_repos::repositories::dependencies::Feature;
 
 use crate::backend::repositories::dependencies::DependencyError;
 use crate::backend::repositories::dependencies::Status;
@@ -62,7 +62,7 @@ async fn change(
         &state.pool,
         state.cluster.as_ref(),
         actor.user.id,
-        crate::backend::db::users::accounts::OwnedAccountCredential::Token(
+        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
             actor.token.id,
             actor.token.token_hash.clone(),
         ),

@@ -31,7 +31,7 @@ pub(crate) async fn push_document(
     actor_id: i64,
     update: &RefUpdate,
 ) -> Result<serde_json::Value> {
-    let sender = crate::backend::db::users::accounts::get_user_by_id(pool, actor_id)
+    let sender = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor_id)
         .await?
         .context("push sender is unavailable")?;
     let sender = crate::backend::webhooks::payloads::Person::of(&sender);
@@ -152,7 +152,7 @@ impl CiRuns {
                 return;
             }
         };
-        if let Err(error) = crate::backend::db::ci::record_ci_accepted_push(
+        if let Err(error) = codeyard_db_actions::ci::record_ci_accepted_push(
             &self.pool,
             repo.id,
             actor_id,

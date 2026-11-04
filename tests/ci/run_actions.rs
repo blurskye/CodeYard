@@ -30,7 +30,7 @@ async fn contract(pg: bool) {
     let repo = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -38,7 +38,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         repo.id,
@@ -83,13 +83,13 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
-    let run = codeyard::backend::db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+    let run = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
         .await
         .unwrap()
         .into_iter()
         .next()
         .expect("the dispatched run");
-    assert!(codeyard::backend::db::ci::has_ci_accepted_push(
+    assert!(codeyard_db_actions::ci::has_ci_accepted_push(
         f.pool(),
         repo.id,
         alice_id,
@@ -98,7 +98,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap());
-    let claimed = codeyard::backend::db::ci::claim_ci_run(
+    let claimed = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "log-worker",
         "local",
@@ -113,7 +113,7 @@ async fn contract(pg: bool) {
         "failed to pull act-latest",
         "time=\"now\" level=error msg=\"application failure\"",
     ];
-    codeyard::backend::db::ci::append_ci_logs(
+    codeyard_db_actions::ci::append_ci_logs(
         f.pool(),
         run.id,
         "log-worker",
@@ -156,7 +156,7 @@ async fn contract(pg: bool) {
     assert!(!page.contains(&format!("action=\"{cancel}\"")), "{page}");
     let page = bob.page_ok(&format!("/alice/proj/actions?job={job}")).await;
     assert!(page.contains(&format!("action=\"{cancel}\"")), "{page}");
-    let logs = codeyard::backend::db::ci::list_ci_logs(f.pool(), run.id, 10)
+    let logs = codeyard_db_actions::ci::list_ci_logs(f.pool(), run.id, 10)
         .await
         .unwrap();
     let incremental = alice
@@ -193,7 +193,7 @@ async fn contract(pg: bool) {
     let private = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "private",
         None,
         true,
@@ -277,7 +277,7 @@ async fn contract(pg: bool) {
     // A writer re-runs the same workflow at the same commit: a second queued run appears.
     let reply = bob.form_reply(&rerun, &[]).await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
-    let runs = codeyard::backend::db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
         .await
         .unwrap();
     assert_eq!(runs.len(), 2, "{runs:?}");
@@ -300,17 +300,17 @@ async fn contract(pg: bool) {
     let reply = alice.form_reply(&cancel, &[]).await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     assert!(
-        codeyard::backend::db::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
+        codeyard_db_actions::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
             .await
             .unwrap()
             .unwrap()
             .cancel_requested
     );
-    codeyard::backend::db::ci::finish_ci_run(f.pool(), run.id, "log-worker", "cancelled", None)
+    codeyard_db_actions::ci::finish_ci_run(f.pool(), run.id, "log-worker", "cancelled", None)
         .await
         .unwrap()
         .unwrap();
-    let cancelled = codeyard::backend::db::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
+    let cancelled = codeyard_db_actions::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
         .await
         .unwrap()
         .unwrap();
@@ -323,9 +323,9 @@ async fn contract(pg: bool) {
     )
     .await;
     for _ in 0..205 {
-        codeyard::backend::db::ci::enqueue_ci_run(
+        codeyard_db_actions::ci::enqueue_ci_run(
             f.pool(),
-            codeyard::backend::db::ci::NewCiRun {
+            codeyard_db_actions::ci::NewCiRun {
                 repo_id: repo.id,
                 triggered_by_id: alice_id,
                 pipeline: "ci",
@@ -447,7 +447,7 @@ async fn browser_logs(
         )
         .await;
     let ended = Client::login(router, f.pool(), run.triggered_by_id.unwrap()).await;
-    codeyard::backend::db::users::sessions::delete_session(f.pool(), &ended.session)
+    codeyard_db_identity::users::sessions::delete_session(f.pool(), &ended.session)
         .await
         .unwrap();
     ended
@@ -558,11 +558,10 @@ async fn browser_logs(
     )
     .await
     .unwrap();
-    let outsider =
-        codeyard::backend::db::users::sessions::get_session_user(f.pool(), &dave.session)
-            .await
-            .unwrap()
-            .unwrap();
+    let outsider = codeyard_db_identity::users::sessions::get_session_user(f.pool(), &dave.session)
+        .await
+        .unwrap()
+        .unwrap();
     let outsider = tokens::create(
         f.pool(),
         outsider.id,
@@ -663,7 +662,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
     let repo = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -672,7 +671,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
     .await
     .unwrap();
     for writer in [bob_id, carol_id] {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.pool(),
             writer,
             repo.id,
@@ -716,7 +715,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
     alice.open_pull("Review me", "topic", "main").await;
 
     // Opening the pull request queued its workflow at the head commit.
-    let first = codeyard::backend::db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+    let first = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
         .await
         .unwrap()
         .into_iter()
@@ -731,7 +730,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
 
     // The run fails on its worker, which then records the result.
     let worker = "node/slot-1";
-    let claimed = codeyard::backend::db::ci::claim_ci_run(
+    let claimed = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         worker,
         "local",
@@ -742,7 +741,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
     .unwrap()
     .expect("the run is claimed");
     assert_eq!(claimed.id, first.id);
-    codeyard::backend::db::ci::finish_ci_run(
+    codeyard_db_actions::ci::finish_ci_run(
         f.pool(),
         first.id,
         worker,
@@ -774,7 +773,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
     let (status, page) = carol.form(&rerun, &[]).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
     assert_eq!(
-        codeyard::backend::db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
             .await
             .unwrap()
             .len(),
@@ -785,7 +784,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
     // queued returns that attempt rather than a third one.
     let reply = bob.form_reply(&rerun, &[]).await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
-    let runs = codeyard::backend::db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
         .await
         .unwrap();
     assert_eq!(runs.len(), 3, "{runs:?}");
@@ -806,13 +805,13 @@ async fn pull_request_run_is_run_again(pg: bool) {
     assert_eq!(first.workflow_run_attempt, Some(1));
     assert_eq!(again.workflow_run_attempt, Some(2));
     assert_eq!(again.workflow_run_number, first.workflow_run_number);
-    let latest = codeyard::backend::db::action_runs::get(f.pool(), repo.id, first.id, None)
+    let latest = codeyard_db_actions::action_runs::get(f.pool(), repo.id, first.id, None)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(latest.id, again.id);
     assert_eq!(
-        codeyard::backend::db::action_runs::get(f.pool(), repo.id, first.id, Some(1))
+        codeyard_db_actions::action_runs::get(f.pool(), repo.id, first.id, Some(1))
             .await
             .unwrap()
             .unwrap()
@@ -820,7 +819,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
         first.id
     );
     assert_eq!(
-        codeyard::backend::db::action_runs::get(f.pool(), repo.id, first.id, Some(2))
+        codeyard_db_actions::action_runs::get(f.pool(), repo.id, first.id, Some(2))
             .await
             .unwrap()
             .unwrap()
@@ -828,7 +827,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
         again.id
     );
     assert!(
-        codeyard::backend::db::action_runs::get(f.pool(), repo.id, first.id, Some(3))
+        codeyard_db_actions::action_runs::get(f.pool(), repo.id, first.id, Some(3))
             .await
             .unwrap()
             .is_none()
@@ -902,7 +901,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
     let reply = bob.form_reply(&rerun, &[]).await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     assert_eq!(
-        codeyard::backend::db::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(f.pool(), repo.id, 10)
             .await
             .unwrap()
             .len(),

@@ -58,7 +58,7 @@ pub async fn get_combined_commit_status(
     let sha = sha.to_ascii_lowercase();
 
     let (offset, limit) = json_page(query.page, query.per_page)?;
-    let statuses = crate::backend::db::repositories::protection::list_commit_statuses_page(
+    let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses_page(
         &state.pool,
         repository.id,
         &sha,
@@ -69,7 +69,7 @@ pub async fn get_combined_commit_status(
     .await
     .map_err(|_| repository_unavailable())?;
 
-    let counts = crate::backend::db::repositories::protection::commit_status_counts(
+    let counts = codeyard_db_repos::repositories::protection::commit_status_counts(
         &state.pool,
         repository.id,
         &sha,

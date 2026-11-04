@@ -5,7 +5,7 @@ use crate::backend::api::github::orgs::AppState;
 use crate::backend::api::github::orgs::Error;
 use crate::backend::api::github::orgs::Result;
 
-use crate::backend::db::issue_attributes::Definition;
+use codeyard_db_repos::issue_attributes::Definition;
 
 use axum::{
     extract::{Path, State},
@@ -35,7 +35,7 @@ async fn list(
         .await?
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
-    let types = crate::backend::db::issue_attributes::organization_catalog(
+    let types = codeyard_db_repos::issue_attributes::organization_catalog(
         &state.pool,
         org.id,
         actor.user.id,
@@ -74,7 +74,7 @@ async fn save(
         .get("issue_type_id")
         .map(|id| id.parse::<i64>().map_err(|_| Error::missing()))
         .transpose()?;
-    let value = crate::backend::db::issue_attributes::configure_organization(
+    let value = codeyard_db_repos::issue_attributes::configure_organization(
         &state.pool,
         org.id,
         actor.database_actor(),
@@ -105,7 +105,7 @@ async fn remove(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    crate::backend::db::issue_attributes::delete_organization_definition(
+    codeyard_db_repos::issue_attributes::delete_organization_definition(
         &state.pool,
         org.id,
         actor.database_actor(),

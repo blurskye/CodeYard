@@ -73,11 +73,11 @@ pub(crate) async fn prepare(
     if let Some(Path(params)) = params {
         if let (Some(owner), Some(name)) = (params.get("owner"), params.get("repo")) {
             if let Ok(Some(repository)) =
-                crate::backend::db::repositories::records::get_repository(&state.pool, owner, name)
+                codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, name)
                     .await
             {
                 // Avoid token/session work altogether when there is no contributor restriction.
-                if crate::backend::db::interactions::effective_restriction(
+                if codeyard_db_identity::interactions::effective_restriction(
                     &state.pool,
                     repository.id,
                 )

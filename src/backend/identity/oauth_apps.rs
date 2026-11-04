@@ -1,7 +1,7 @@
 //! OAuth clients authorize through native forms; only hashes of codes, secrets and tokens persist.
 
-use crate::backend::db::oauth_apps::Application;
 use codeyard_db_core::DbPool;
+use codeyard_db_identity::oauth_apps::Application;
 use codeyard_model::identity::CLI_CLIENT;
 use codeyard_support::token_hash::token_hash;
 use subtle::ConstantTimeEq;
@@ -30,10 +30,10 @@ pub async fn client(pool: &DbPool, id: &str) -> anyhow::Result<Option<Applicatio
             created_at: chrono::Utc::now(),
         }));
     }
-    if !crate::backend::db::github_apps::client_active(pool, id).await? {
+    if !codeyard_db_identity::github_apps::client_active(pool, id).await? {
         return Ok(None);
     }
-    crate::backend::db::oauth_apps::application(pool, id).await
+    codeyard_db_identity::oauth_apps::application(pool, id).await
 }
 
 pub fn valid_secret(app: &Application, secret: &str) -> bool {
@@ -130,7 +130,7 @@ pub async fn allows_git(
         );
     }
     let scope = if gist { "gist" } else { "repo" };
-    Ok(crate::backend::db::oauth_apps::token(pool, token_id)
+    Ok(codeyard_db_identity::oauth_apps::token(pool, token_id)
         .await?
         .is_none_or(|token| public_read || has_scope(&token.scopes, scope)))
 }
@@ -139,7 +139,7 @@ pub async fn allows_git(
 /// `workflows` permission and OAuth tokens need the `workflow` scope. A job token never may,
 /// as GitHub's GITHUB_TOKEN cannot be given the workflows permission.
 pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bool> {
-    if crate::backend::db::ci_tokens::get(pool, token_id)
+    if codeyard_db_actions::ci_tokens::get(pool, token_id)
         .await?
         .is_some()
     {
@@ -156,7 +156,7 @@ pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bo
             true,
         ));
     }
-    Ok(crate::backend::db::oauth_apps::token(pool, token_id)
+    Ok(codeyard_db_identity::oauth_apps::token(pool, token_id)
         .await?
         .is_none_or(|token| has_scope(&token.scopes, "workflow")))
 }

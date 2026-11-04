@@ -53,7 +53,7 @@ async fn repository_document(
         return Ok(value.clone());
     }
     let facts =
-        crate::backend::db::repository_stats::repository_document_facts(&state.pool, repo.id)
+        codeyard_db_repos::repository_stats::repository_document_facts(&state.pool, repo.id)
             .await
             .map_err(Error::unavailable)?;
     let mut value = crate::backend::webhooks::payloads::repository(repo, owner);
@@ -66,7 +66,7 @@ async fn repository_document(
     value["pushed_at"] = json!(facts.pushed_at);
     value["language"] = json!(facts.language);
     if let Some(id) = repo.personal_owner_id() {
-        let owner = crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+        let owner = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -82,12 +82,12 @@ async fn repository_document(
 }
 
 async fn milestone(state: &AppState, repo: &Repository, owner: &str, id: i64) -> Result<Value> {
-    let summary = crate::backend::db::milestones::get_milestone_by_id(&state.pool, repo.id, id)
+    let summary = codeyard_db_repos::milestones::get_milestone_by_id(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let creator = match summary.milestone.creator_id {
-        Some(id) => crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+        Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?,
         None => None,
@@ -109,7 +109,7 @@ async fn document(
     documents: &mut HashMap<i64, Value>,
     associations: &HashMap<i64, String>,
 ) -> Result<Value> {
-    let author = crate::backend::db::users::accounts::get_user_by_id(&state.pool, pull.author_id)
+    let author = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, pull.author_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -128,7 +128,7 @@ async fn document(
         crate::backend::api::github::pulls::readable_head(state, auth, pull).await?
     {
         let head_owner =
-            crate::backend::db::repositories::records::repository_owner_name(&state.pool, head.id)
+            codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, head.id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -137,7 +137,7 @@ async fn document(
     } else {
         crate::backend::api::github::pulls::hidden_head(state, pull).await?
     };
-    let labels = crate::backend::db::labels::get_pull_request_labels(&state.pool, repo.id, pull.id)
+    let labels = codeyard_db_repos::labels::get_pull_request_labels(&state.pool, repo.id, pull.id)
         .await
         .map_err(Error::unavailable)?;
     value["labels"] = json!(labels
@@ -148,16 +148,16 @@ async fn document(
         Some(id) => milestone(state, repo, owner, id).await?,
         None => Value::Null,
     };
-    let names = crate::backend::db::assignees::list_assignees(
+    let names = codeyard_db_repos::assignees::list_assignees(
         &state.pool,
-        crate::backend::db::assignees::AssignedItem::PullRequest(pull.id),
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(pull.id),
     )
     .await
     .map_err(Error::unavailable)?;
     let mut assignees = Vec::new();
     for name in names {
         if let Some(account) =
-            crate::backend::db::users::accounts::get_user_by_username(&state.pool, &name)
+            codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &name)
                 .await
                 .map_err(Error::unavailable)?
         {
@@ -191,7 +191,7 @@ async fn list(
     )
     .await
     .map_err(operation_error)?;
-    let owner = crate::backend::db::repositories::records::repository_owner_name(
+    let owner = codeyard_db_repos::repositories::records::repository_owner_name(
         &state.pool,
         result.repository.id,
     )

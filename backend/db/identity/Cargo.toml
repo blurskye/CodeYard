@@ -1,0 +1,26 @@
+[package]
+name = "codeyard-db-identity"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+codeyard-db-core.workspace = true
+codeyard-model.workspace = true
+codeyard-support.workspace = true
+hex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+ssh-key.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

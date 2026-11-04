@@ -2,12 +2,12 @@
 #[cfg(test)]
 mod tests;
 
-use crate::backend::db::code_scanning::Finding;
-use crate::backend::db::code_scanning::Run;
-use crate::backend::db::code_scanning::Upload;
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use codeyard_db_core::DbPool;
+use codeyard_db_security::code_scanning::Finding;
+use codeyard_db_security::code_scanning::Run;
+use codeyard_db_security::code_scanning::Upload;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -634,7 +634,7 @@ pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
 }
 
 pub async fn process_next(pool: &DbPool) -> Result<bool> {
-    let Some(upload) = crate::backend::db::code_scanning::pending(pool).await? else {
+    let Some(upload) = codeyard_db_security::code_scanning::pending(pool).await? else {
         return Ok(false);
     };
     let parsed = tokio::task::spawn_blocking({
@@ -644,7 +644,7 @@ pub async fn process_next(pool: &DbPool) -> Result<bool> {
     .await?;
     let changes = match parsed {
         Ok(runs) => {
-            match crate::backend::db::code_scanning::finish(pool, &upload, &runs, None).await {
+            match codeyard_db_security::code_scanning::finish(pool, &upload, &runs, None).await {
                 Ok(changes) => changes,
                 Err(error)
                     if error
@@ -656,7 +656,7 @@ pub async fn process_next(pool: &DbPool) -> Result<bool> {
                         }) =>
                 {
                     tracing::warn!(upload = %upload.id, "SARIF processing rejected by storage constraints");
-                    crate::backend::db::code_scanning::finish(
+                    codeyard_db_security::code_scanning::finish(
                         pool,
                         &upload,
                         &[],
@@ -672,7 +672,7 @@ pub async fn process_next(pool: &DbPool) -> Result<bool> {
                 .chars()
                 .take(2048)
                 .collect::<String>();
-            crate::backend::db::code_scanning::finish(pool, &upload, &[], Some(&message)).await?
+            codeyard_db_security::code_scanning::finish(pool, &upload, &[], Some(&message)).await?
         }
     };
     if let Some(actor) = upload.actor_id {
@@ -697,21 +697,20 @@ pub async fn process_next(pool: &DbPool) -> Result<bool> {
 async fn notify(
     pool: &DbPool,
     actor: i64,
-    alert: &crate::backend::db::code_scanning::Alert,
+    alert: &codeyard_db_security::code_scanning::Alert,
     action: &'static str,
     revision: Option<(&str, &str)>,
-    instance: Option<&crate::backend::db::code_scanning::Instance>,
+    instance: Option<&codeyard_db_security::code_scanning::Instance>,
 ) -> Result<()> {
     let Some(repo) =
-        crate::backend::db::repositories::records::get_repository_by_id(pool, alert.repo_id)
-            .await?
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, alert.repo_id).await?
     else {
         return Ok(());
     };
     let instance = match instance {
         Some(instance) => instance.clone(),
         None if revision.is_some() => return Ok(()),
-        None => match crate::backend::db::code_scanning::instance(pool, alert.id, None).await? {
+        None => match codeyard_db_security::code_scanning::instance(pool, alert.id, None).await? {
             Some(instance) => instance,
             None => return Ok(()),
         },
@@ -734,16 +733,16 @@ async fn notify(
 
 pub async fn dismiss(
     pool: &DbPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo: i64,
     number: i64,
-    input: &crate::backend::db::code_scanning::Dismissal<'_>,
-) -> Result<crate::backend::db::code_scanning::Alert> {
+    input: &codeyard_db_security::code_scanning::Dismissal<'_>,
+) -> Result<codeyard_db_security::code_scanning::Alert> {
     input.validate()?;
     let actor = actor.into();
     let actor_id = actor.user_id;
     let alert =
-        crate::backend::db::code_scanning::dismiss(pool, actor, repo, number, input).await?;
+        codeyard_db_security::code_scanning::dismiss(pool, actor, repo, number, input).await?;
     if let Err(error) = notify(
         pool,
         actor_id,

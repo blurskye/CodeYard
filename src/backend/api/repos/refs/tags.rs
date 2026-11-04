@@ -61,7 +61,7 @@ pub async fn create_tag(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -89,7 +89,7 @@ pub async fn delete_tag(
     crate::backend::repositories::refs::delete_tag(
         &state.pool,
         state.cluster.as_ref(),
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),

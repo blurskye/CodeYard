@@ -3,8 +3,8 @@ use crate::support::database::Database;
 
 use codeyard::backend::ci::CiConfig;
 
-use codeyard::backend::db::action_logs::Target;
 use codeyard_actions::progress::{Event, Update};
+use codeyard_db_actions::action_logs::Target;
 use codeyard_db_core::models::CiRun;
 use codeyard_model::ci::LogLine;
 use std::io::Read;
@@ -24,7 +24,7 @@ impl Fixture {
     async fn new(pg: bool) -> Self {
         let db = Database::new(pg).await;
         let owner = db.actor("chunk_owner").await;
-        let repo = codeyard::backend::db::repositories::records::create_repository(
+        let repo = codeyard_db_repos::repositories::records::create_repository(
             db.pool(),
             owner,
             "project",
@@ -35,9 +35,9 @@ impl Fixture {
         .await
         .unwrap();
         let sha = "1".repeat(40);
-        codeyard::backend::db::ci::enqueue_ci_run(
+        codeyard_db_actions::ci::enqueue_ci_run(
             db.pool(),
-            codeyard::backend::db::ci::NewCiRun {
+            codeyard_db_actions::ci::NewCiRun {
                 repo_id: repo.id,
                 triggered_by_id: owner,
                 pipeline: "ci",
@@ -55,7 +55,7 @@ impl Fixture {
         )
         .await
         .unwrap();
-        let run = codeyard::backend::db::ci::claim_ci_run(
+        let run = codeyard_db_actions::ci::claim_ci_run(
             db.pool(),
             WORKER,
             "local",
@@ -66,7 +66,7 @@ impl Fixture {
         .unwrap()
         .unwrap();
         let generation = codeyard::backend::ci::runtime::token_hash("chunk-runtime");
-        codeyard::backend::db::action_objects::issue_token(
+        codeyard_db_actions::action_objects::issue_token(
             db.pool(),
             run.id,
             WORKER,
@@ -95,7 +95,7 @@ impl Fixture {
                     name: "Test".into(),
                 },
             ] {
-                *job = codeyard::backend::db::action_jobs::apply(
+                *job = codeyard_db_actions::action_jobs::apply(
                     db.pool(),
                     WORKER,
                     run.id,
@@ -132,7 +132,7 @@ impl Fixture {
     }
 
     async fn append(&self, sequence: i64, lines: &[LogLine]) -> bool {
-        codeyard::backend::db::ci::append_ci_logs(
+        codeyard_db_actions::ci::append_ci_logs(
             self.db.pool(),
             self.run.id,
             WORKER,
@@ -145,7 +145,7 @@ impl Fixture {
 
     async fn capability(&self, secret: &str, job: Option<i64>, step: Option<i32>) -> String {
         let hash = codeyard::backend::ci::runtime::token_hash(secret);
-        assert!(codeyard::backend::db::action_logs::issue(
+        assert!(codeyard_db_actions::action_logs::issue(
             self.db.pool(),
             self.owner,
             self.run.repo_id,
@@ -167,8 +167,8 @@ async fn idempotent_append(pg: bool) {
     let mut f = Fixture::new(pg).await;
     let batch = vec![f.line(1); 64];
     let (first, replay) = tokio::join!(
-        codeyard::backend::db::ci::append_ci_logs(f.db.pool(), f.run.id, WORKER, 0, &batch),
-        codeyard::backend::db::ci::append_ci_logs(f.db.pool(), f.run.id, WORKER, 0, &batch),
+        codeyard_db_actions::ci::append_ci_logs(f.db.pool(), f.run.id, WORKER, 0, &batch),
+        codeyard_db_actions::ci::append_ci_logs(f.db.pool(), f.run.id, WORKER, 0, &batch),
     );
     assert!(first.unwrap() && replay.unwrap());
     assert_eq!(
@@ -207,7 +207,7 @@ async fn idempotent_append(pg: bool) {
         .await,
         size
     );
-    assert!(codeyard::backend::db::ci::append_ci_logs(
+    assert!(codeyard_db_actions::ci::append_ci_logs(
         f.db.pool(),
         f.run.id,
         WORKER,
@@ -216,7 +216,7 @@ async fn idempotent_append(pg: bool) {
     )
     .await
     .is_err());
-    assert!(codeyard::backend::db::ci::append_ci_logs(
+    assert!(codeyard_db_actions::ci::append_ci_logs(
         f.db.pool(),
         f.run.id,
         WORKER,
@@ -226,7 +226,7 @@ async fn idempotent_append(pg: bool) {
     .await
     .is_err());
     assert!(
-        codeyard::backend::db::ci::append_ci_logs(f.db.pool(), f.run.id, "other", 0, &batch)
+        codeyard_db_actions::ci::append_ci_logs(f.db.pool(), f.run.id, "other", 0, &batch)
             .await
             .is_err()
     );
@@ -249,7 +249,7 @@ async fn idempotent_append(pg: bool) {
         .await,
         2
     );
-    let lines = codeyard::backend::db::ci::list_ci_logs(f.db.pool(), f.run.id, 3)
+    let lines = codeyard_db_actions::ci::list_ci_logs(f.db.pool(), f.run.id, 3)
         .await
         .unwrap();
     assert_eq!(
@@ -280,7 +280,7 @@ async fn ordered_read_across_500_chunks(pg: bool) {
         .await,
         500
     );
-    let lines = codeyard::backend::db::ci::list_ci_logs(f.db.pool(), f.run.id, 1000)
+    let lines = codeyard_db_actions::ci::list_ci_logs(f.db.pool(), f.run.id, 1000)
         .await
         .unwrap();
     assert_eq!(lines.len(), 1000);
@@ -290,7 +290,7 @@ async fn ordered_read_across_500_chunks(pg: bool) {
         assert_eq!(line.job_id, Some(f.jobs[0]));
     }
     let hash = f.capability("whole", None, None).await;
-    let snapshot = codeyard::backend::db::action_logs::read(f.db.pool(), &hash, RESOURCE)
+    let snapshot = codeyard_db_actions::action_logs::read(f.db.pool(), &hash, RESOURCE)
         .await
         .unwrap()
         .unwrap();
@@ -316,7 +316,7 @@ async fn range_read(pg: bool) {
             .collect();
         assert!(f.append(sequence, &batch).await);
     }
-    let lines = codeyard::backend::db::ci::list_ci_log_history(f.db.pool(), f.run.id, 63, 5)
+    let lines = codeyard_db_actions::ci::list_ci_log_history(f.db.pool(), f.run.id, 63, 5)
         .await
         .unwrap();
     assert_eq!(
@@ -326,7 +326,7 @@ async fn range_read(pg: bool) {
     let mut after = 0;
     let mut all = Vec::new();
     loop {
-        let page = codeyard::backend::db::ci::list_ci_log_history(f.db.pool(), f.run.id, after, 37)
+        let page = codeyard_db_actions::ci::list_ci_log_history(f.db.pool(), f.run.id, after, 37)
             .await
             .unwrap();
         let Some(last) = page.last() else { break };
@@ -335,34 +335,34 @@ async fn range_read(pg: bool) {
     }
     assert_eq!(all, (1..=320).collect::<Vec<_>>());
     assert_eq!(
-        codeyard::backend::db::ci::list_ci_logs(f.db.pool(), f.run.id, 5)
+        codeyard_db_actions::ci::list_ci_logs(f.db.pool(), f.run.id, 5)
             .await
             .unwrap()[0]
             .id,
         316
     );
     assert!(
-        codeyard::backend::db::ci::list_ci_logs(f.db.pool(), f.run.id, 0)
+        codeyard_db_actions::ci::list_ci_logs(f.db.pool(), f.run.id, 0)
             .await
             .unwrap()
             .is_empty()
     );
     assert!(
-        codeyard::backend::db::ci::list_ci_log_history(f.db.pool(), f.run.id, i64::MAX, 5)
+        codeyard_db_actions::ci::list_ci_log_history(f.db.pool(), f.run.id, i64::MAX, 5)
             .await
             .unwrap()
             .is_empty()
     );
     let hash = f.capability("frozen-range", Some(f.jobs[0]), Some(1)).await;
     f.append(5, &[f.line(321)]).await;
-    let snapshot = codeyard::backend::db::action_logs::read(f.db.pool(), &hash, RESOURCE)
+    let snapshot = codeyard_db_actions::action_logs::read(f.db.pool(), &hash, RESOURCE)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(snapshot.lines.len(), 320);
     assert_eq!(snapshot.lines.last().unwrap().id, 320);
     assert!(
-        codeyard::backend::db::action_logs::read(f.db.pool(), &hash, "/different")
+        codeyard_db_actions::action_logs::read(f.db.pool(), &hash, "/different")
             .await
             .unwrap()
             .is_none()
@@ -382,36 +382,32 @@ async fn kill_mid_job(pg: bool) {
         "UPDATE ci_runs SET heartbeat_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour') WHERE id=$1"
     };
     f.db.execute(stopped, &[f.run.id]).await;
-    let (failed, _, _) = codeyard::backend::db::ci::fail_stale_ci_runs(f.db.pool(), 90)
+    let (failed, _, _) = codeyard_db_actions::ci::fail_stale_ci_runs(f.db.pool(), 90)
         .await
         .unwrap();
     assert_eq!(failed.len(), 1);
     assert_eq!(failed[0].status, "failed");
-    let job = codeyard::backend::db::action_jobs::get(f.db.pool(), f.run.repo_id, f.jobs[0], false)
+    let job = codeyard_db_actions::action_jobs::get(f.db.pool(), f.run.repo_id, f.jobs[0], false)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(job.status, "completed");
     assert_eq!(job.conclusion.as_deref(), Some("failure"));
     assert_eq!(
-        codeyard::backend::db::action_jobs::steps(f.db.pool(), f.run.repo_id, f.jobs[0])
+        codeyard_db_actions::action_jobs::steps(f.db.pool(), f.run.repo_id, f.jobs[0])
             .await
             .unwrap()[0]
             .conclusion
             .as_deref(),
         Some("failure")
     );
-    assert!(codeyard::backend::db::ci::finish_ci_run(
-        f.db.pool(),
-        f.run.id,
-        WORKER,
-        "success",
-        None
-    )
-    .await
-    .unwrap()
-    .is_none());
-    assert!(codeyard::backend::db::ci::append_ci_logs(
+    assert!(
+        codeyard_db_actions::ci::finish_ci_run(f.db.pool(), f.run.id, WORKER, "success", None)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(codeyard_db_actions::ci::append_ci_logs(
         f.db.pool(),
         f.run.id,
         WORKER,
@@ -420,7 +416,7 @@ async fn kill_mid_job(pg: bool) {
     )
     .await
     .is_err());
-    let lines = codeyard::backend::db::ci::list_ci_log_history(f.db.pool(), f.run.id, 0, 100)
+    let lines = codeyard_db_actions::ci::list_ci_log_history(f.db.pool(), f.run.id, 0, 100)
         .await
         .unwrap();
     assert_eq!(
@@ -432,7 +428,7 @@ async fn kill_mid_job(pg: bool) {
     );
     let hash = f.capability("killed", None, None).await;
     assert_eq!(
-        codeyard::backend::db::action_logs::read(f.db.pool(), &hash, RESOURCE)
+        codeyard_db_actions::action_logs::read(f.db.pool(), &hash, RESOURCE)
             .await
             .unwrap()
             .unwrap()
@@ -464,7 +460,7 @@ async fn truncation_marker_can_extend_a_full_batch(pg: bool) {
         ..f.line(2)
     });
     assert!(!f.append(0, &batch).await);
-    let lines = codeyard::backend::db::ci::list_ci_logs(f.db.pool(), f.run.id, 100)
+    let lines = codeyard_db_actions::ci::list_ci_logs(f.db.pool(), f.run.id, 100)
         .await
         .unwrap();
     assert_eq!(lines.len(), 17);
@@ -502,7 +498,7 @@ async fn truncation_marker_can_extend_a_full_batch(pg: bool) {
 async fn expiry(pg: bool) {
     let mut f = Fixture::new(pg).await;
     f.append(0, &[f.line(1), f.line(2)]).await;
-    codeyard::backend::db::ci::finish_ci_run(f.db.pool(), f.run.id, WORKER, "success", None)
+    codeyard_db_actions::ci::finish_ci_run(f.db.pool(), f.run.id, WORKER, "success", None)
         .await
         .unwrap()
         .unwrap();
@@ -516,7 +512,7 @@ async fn expiry(pg: bool) {
     );
     let hash = f.capability("expiring", None, None).await;
     assert!(
-        codeyard::backend::db::action_logs::read(f.db.pool(), &hash, RESOURCE)
+        codeyard_db_actions::action_logs::read(f.db.pool(), &hash, RESOURCE)
             .await
             .unwrap()
             .is_some()
@@ -527,24 +523,24 @@ async fn expiry(pg: bool) {
     )
     .await;
     assert!(
-        codeyard::backend::db::ci::list_ci_logs(f.db.pool(), f.run.id, 100)
+        codeyard_db_actions::ci::list_ci_logs(f.db.pool(), f.run.id, 100)
             .await
             .unwrap()
             .is_empty()
     );
     assert!(
-        codeyard::backend::db::ci::list_ci_log_history(f.db.pool(), f.run.id, 0, 100)
+        codeyard_db_actions::ci::list_ci_log_history(f.db.pool(), f.run.id, 0, 100)
             .await
             .unwrap()
             .is_empty()
     );
     assert!(
-        codeyard::backend::db::action_logs::read(f.db.pool(), &hash, RESOURCE)
+        codeyard_db_actions::action_logs::read(f.db.pool(), &hash, RESOURCE)
             .await
             .unwrap()
             .is_none()
     );
-    assert!(!codeyard::backend::db::action_logs::issue(
+    assert!(!codeyard_db_actions::action_logs::issue(
         f.db.pool(),
         f.owner,
         f.run.repo_id,
@@ -558,7 +554,7 @@ async fn expiry(pg: bool) {
     )
     .await
     .unwrap());
-    codeyard::backend::db::action_objects::expire_objects(f.db.pool())
+    codeyard_db_actions::action_objects::expire_objects(f.db.pool())
         .await
         .unwrap();
     assert_eq!(
@@ -583,7 +579,7 @@ async fn expiry(pg: bool) {
         0
     );
     assert!(
-        codeyard::backend::db::action_logs::read(f.db.pool(), &hash, RESOURCE)
+        codeyard_db_actions::action_logs::read(f.db.pool(), &hash, RESOURCE)
             .await
             .unwrap()
             .is_none()

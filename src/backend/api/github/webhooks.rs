@@ -7,10 +7,10 @@ use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use codeyard_model::urls::repo_url;
 
-use crate::backend::db::webhooks::DeliveryOutcome;
-use crate::backend::db::webhooks::DeliveryWindow;
-use crate::backend::db::webhooks::HookOwner;
-use crate::backend::db::webhooks::HookSettings;
+use codeyard_db_repos::webhooks::DeliveryOutcome;
+use codeyard_db_repos::webhooks::DeliveryWindow;
+use codeyard_db_repos::webhooks::HookOwner;
+use codeyard_db_repos::webhooks::HookSettings;
 
 use crate::backend::webhooks::settings::HookError;
 use crate::backend::webhooks::settings::HookForm;
@@ -75,7 +75,7 @@ async fn snapshot(
     delivery: Option<i64>,
     history: DeliveryWindow,
 ) -> Result<(Webhook, HookSettings)> {
-    let mut settings = crate::backend::db::webhooks::read_settings(
+    let mut settings = codeyard_db_repos::webhooks::read_settings(
         &state.pool,
         owner,
         actor.user.id,
@@ -133,7 +133,7 @@ async fn list(
 ) -> Result<Response> {
     let (owner, actor) = scope(&state, &headers, &params, false).await?;
     let (offset, limit) = page.window()?;
-    let hooks = crate::backend::db::webhooks::list_managed_webhooks(
+    let hooks = codeyard_db_repos::webhooks::list_managed_webhooks(
         &state.pool,
         owner,
         actor.user.id,
@@ -147,10 +147,9 @@ async fn list(
     let next = hooks.len() > limit;
     let mut values = Vec::new();
     for hook in hooks.iter().take(limit) {
-        let deliveries =
-            crate::backend::db::webhooks::list_delivery_summaries(&state.pool, hook.id)
-                .await
-                .map_err(Error::unavailable)?;
+        let deliveries = codeyard_db_repos::webhooks::list_delivery_summaries(&state.pool, hook.id)
+            .await
+            .map_err(Error::unavailable)?;
         values.push(document(&params, hook, deliveries.first()));
     }
     page.response(&uri, values, next)
@@ -225,7 +224,7 @@ async fn save(
     let ssl_verify = config.insecure_ssl.map(ssl).transpose()?;
     let id = match hook_id {
         None => {
-            let events = crate::backend::db::webhooks::WebhookPatch {
+            let events = codeyard_db_core::queries::webhooks::WebhookPatch {
                 events: input.events.map(|events| events.join(",")),
                 add_events: input.add_events.unwrap_or_default(),
                 remove_events: input.remove_events.unwrap_or_default(),

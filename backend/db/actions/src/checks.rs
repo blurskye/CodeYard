@@ -1,0 +1,455 @@
+use anyhow::ensure;
+use anyhow::Result;
+use chrono::DateTime;
+use chrono::Utc;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
+use serde::Deserialize;
+use serde::Serialize;
+use sqlx::types::Json;
+use sqlx::FromRow;
+
+#[derive(Clone, Copy)]
+pub enum Credential<'a> {
+    Token(i64),
+    Session(&'a str),
+}
+
+#[derive(FromRow)]
+pub struct Suite {
+    pub id: i64,
+    pub repo_id: i64,
+    pub publisher: String,
+    pub app_id: Option<i64>,
+    /// Set for the suite GitHub Actions publishes for a workflow run. Its stored status and
+    /// conclusion are unused; the run's own state is the suite's.
+    pub ci_run_id: Option<i64>,
+    pub head_sha: String,
+    pub head_branch: Option<String>,
+    pub status: String,
+    pub conclusion: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(FromRow)]
+pub struct Publisher {
+    pub id: i64,
+    pub client_id: String,
+    pub name: String,
+    pub homepage: String,
+    pub created_at: DateTime<Utc>,
+    pub owner_id: i64,
+    pub owner_login: String,
+    pub owner_is_admin: bool,
+}
+
+#[derive(FromRow)]
+pub struct RunDetails {
+    pub run_id: i64,
+    #[sqlx(flatten)]
+    pub suite: Suite,
+    pub annotation_count: i64,
+}
+
+#[derive(FromRow)]
+pub struct SuiteDetails {
+    pub suite_id: i64,
+    pub run_count: i64,
+    pub ci_status: Option<String>,
+    pub ci_approval_required: bool,
+}
+
+pub(crate) fn projection_ids(ids: &[i64]) -> Result<()> {
+    ensure!(
+        ids.len() <= 100 && ids.iter().all(|id| *id > 0),
+        "Invalid Checks projection window"
+    );
+    Ok(())
+}
+
+pub(crate) fn projection_heads(heads: &[String]) -> Result<()> {
+    // An empty key represents an unavailable workflow head, not a Git object lookup.
+    ensure!(
+        heads.len() <= 100
+            && heads
+                .iter()
+                .all(|head| head.len() <= 64 && !head.contains('\0')),
+        "Invalid Checks head projection window"
+    );
+    Ok(())
+}
+
+pub const ACTIONS_APP_ID: i64 = 15368;
+
+#[derive(Default)]
+pub struct AutomaticSuites {
+    pub after: i64,
+    pub has_next: bool,
+    pub suites: Vec<Suite>,
+}
+
+pub struct RunChange {
+    pub run: Run,
+    pub completed_suite: Option<Suite>,
+}
+
+#[derive(FromRow)]
+pub struct Run {
+    pub id: i64,
+    pub suite_id: i64,
+    pub repo_id: i64,
+    pub name: String,
+    pub status: String,
+    pub conclusion: Option<String>,
+    pub data: Json<RunData>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Default, sqlx::FromRow)]
+pub struct CheckSummary {
+    pub total: i64,
+    pub failed: i64,
+    pub pending: i64,
+}
+native_operation!(crate::postgres::checks::summary, crate::sqlite::checks::summary,
+    fn summary(pool: &DbPool, repo: i64, sha: &str) -> Result<CheckSummary>);
+
+pub const ANNOTATIONS_PER_PAGE: usize = 8;
+pub struct PageSnapshot {
+    pub run: Run,
+    pub suite: Suite,
+    pub annotations: Vec<Json<Annotation>>,
+    pub total: i64,
+}
+
+native_operation!(crate::postgres::checks::native::page_snapshot, crate::sqlite::checks::native::page_snapshot,
+    fn page_snapshot(pool: &DbPool, viewer: Option<i64>, session: Option<&str>, repo: i64, id: i64, offset: i64) -> Result<PageSnapshot>);
+
+#[derive(Clone, Default, Serialize, Deserialize)]
+pub struct RunData {
+    pub details_url: Option<String>,
+    pub external_id: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub title: Option<String>,
+    pub summary: Option<String>,
+    pub text: Option<String>,
+    pub images: Vec<Image>,
+    pub actions: Vec<Action>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Annotation {
+    pub path: String,
+    pub start_line: i32,
+    pub end_line: i32,
+    pub start_column: Option<i32>,
+    pub end_column: Option<i32>,
+    pub annotation_level: String,
+    pub title: Option<String>,
+    pub message: String,
+    pub raw_details: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Image {
+    pub alt: String,
+    pub image_url: String,
+    pub caption: Option<String>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Action {
+    pub label: String,
+    pub description: String,
+    pub identifier: String,
+}
+
+#[derive(Default, Deserialize)]
+pub struct RunPatch {
+    pub name: Option<String>,
+    pub details_url: Option<String>,
+    pub external_id: Option<String>,
+    pub status: Option<String>,
+    pub conclusion: Option<String>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub completed_at: Option<DateTime<Utc>>,
+    pub output: Option<Output>,
+    pub actions: Option<Vec<Action>>,
+}
+#[derive(Deserialize)]
+pub struct Output {
+    pub title: Option<String>,
+    pub summary: String,
+    pub text: Option<String>,
+    pub images: Option<Vec<Image>>,
+    #[serde(default)]
+    pub annotations: Vec<Annotation>,
+}
+#[derive(Default)]
+pub struct Filter {
+    pub suite_id: Option<i64>,
+    pub head_sha: Option<String>,
+    pub name: Option<String>,
+    pub status: Option<String>,
+    pub app_id: Option<i64>,
+    pub all: bool,
+}
+#[derive(FromRow)]
+pub struct Pull {
+    pub id: i64,
+    pub number: i64,
+    pub head_branch: String,
+    pub base_branch: String,
+    pub head_sha: String,
+    pub base_sha: String,
+}
+
+#[derive(Serialize, Deserialize, FromRow)]
+pub struct Preference {
+    pub app_id: i64,
+    pub setting: bool,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum Refusal {
+    #[error("Check not found")]
+    Missing,
+    #[error("Checks write denied")]
+    Denied,
+    #[error("This credential cannot modify checks from another publisher")]
+    Publisher,
+    #[error("Invalid check")]
+    Invalid,
+}
+
+fn text(value: &str, max: usize) -> bool {
+    value.chars().count() <= max && !value.contains('\0')
+}
+fn url(value: &str) -> bool {
+    text(value, 2048)
+        && url::Url::parse(value).is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.host_str().is_some()
+                && url.username().is_empty()
+                && url.password().is_none()
+        })
+}
+
+impl RunPatch {
+    pub fn validate(&self, creating: bool) -> Result<()> {
+        ensure!(!creating || self.name.is_some(), Refusal::Invalid);
+        if let Some(name) = &self.name {
+            ensure!(!name.trim().is_empty() && text(name, 255), Refusal::Invalid);
+        }
+        ensure!(
+            self.status
+                .as_deref()
+                .is_none_or(|s| matches!(s, "queued" | "in_progress" | "completed")),
+            Refusal::Invalid
+        );
+        ensure!(
+            self.conclusion.as_deref().is_none_or(|s| matches!(
+                s,
+                "action_required"
+                    | "cancelled"
+                    | "failure"
+                    | "neutral"
+                    | "success"
+                    | "skipped"
+                    | "timed_out"
+            )),
+            Refusal::Invalid
+        );
+        ensure!(
+            !(self.status.as_deref() == Some("completed") || self.completed_at.is_some())
+                || self.conclusion.is_some(),
+            Refusal::Invalid
+        );
+        ensure!(
+            self.details_url
+                .as_deref()
+                .is_none_or(|s| s.is_empty() || url(s)),
+            Refusal::Invalid
+        );
+        ensure!(
+            self.external_id.as_deref().is_none_or(|s| text(s, 255)),
+            Refusal::Invalid
+        );
+        if let Some(output) = &self.output {
+            ensure!(!creating || output.title.is_some(), Refusal::Invalid);
+            ensure!(
+                output.title.as_deref().is_none_or(|s| text(s, 255))
+                    && text(&output.summary, 65535)
+                    && output.text.as_deref().is_none_or(|s| text(s, 65535)),
+                Refusal::Invalid
+            );
+            ensure!(output.annotations.len() <= 50, Refusal::Invalid);
+            for a in &output.annotations {
+                ensure!(
+                    !a.path.is_empty()
+                        && text(&a.path, 4096)
+                        && !a.path.starts_with('/')
+                        && !a.path.split('/').any(|part| matches!(part, "." | "..")),
+                    Refusal::Invalid
+                );
+                ensure!(
+                    a.start_line > 0 && a.end_line >= a.start_line,
+                    Refusal::Invalid
+                );
+                ensure!(
+                    matches!((&a.start_column, &a.end_column), (None, None))
+                        || (a.start_line == a.end_line
+                            && a.start_column.is_some_and(|n| n > 0)
+                            && a.end_column
+                                .is_some_and(|n| n >= a.start_column.unwrap_or(1))),
+                    Refusal::Invalid
+                );
+                ensure!(
+                    matches!(
+                        a.annotation_level.as_str(),
+                        "notice" | "warning" | "failure"
+                    ) && text(&a.message, 65535)
+                        && a.title.as_deref().is_none_or(|s| text(s, 255))
+                        && a.raw_details.as_deref().is_none_or(|s| text(s, 65535)),
+                    Refusal::Invalid
+                );
+            }
+            if let Some(images) = &output.images {
+                ensure!(
+                    images.len() <= 50
+                        && images.iter().all(|i| text(&i.alt, 255)
+                            && url(&i.image_url)
+                            && i.caption.as_deref().is_none_or(|s| text(s, 255))),
+                    Refusal::Invalid
+                );
+            }
+        }
+        if let Some(actions) = &self.actions {
+            ensure!(
+                actions.len() <= 3
+                    && actions.iter().all(|a| !a.label.is_empty()
+                        && text(&a.label, 20)
+                        && !a.description.is_empty()
+                        && text(&a.description, 40)
+                        && !a.identifier.is_empty()
+                        && text(&a.identifier, 20)),
+                Refusal::Invalid
+            );
+        }
+        Ok(())
+    }
+
+    pub fn apply(&self, run: &mut Run) -> Result<()> {
+        self.validate(false)?;
+        if let Some(value) = &self.name {
+            run.name.clone_from(value);
+        }
+        if let Some(value) = &self.status {
+            run.status.clone_from(value);
+        }
+        if let Some(value) = &self.conclusion {
+            run.conclusion = Some(value.clone());
+            run.status = "completed".into();
+            run.data.completed_at = Some(self.completed_at.unwrap_or_else(Utc::now));
+        } else if self.status.as_deref().is_some_and(|s| s != "completed") {
+            run.conclusion = None;
+            run.data.completed_at = None;
+        }
+        if let Some(value) = &self.details_url {
+            run.data.details_url = Some(value.clone());
+        }
+        if let Some(value) = &self.external_id {
+            run.data.external_id = Some(value.clone());
+        }
+        if let Some(value) = self.started_at {
+            run.data.started_at = Some(value);
+        }
+        if let Some(output) = &self.output {
+            if let Some(title) = &output.title {
+                run.data.title = Some(title.clone());
+            }
+            run.data.summary = Some(output.summary.clone());
+            if let Some(value) = &output.text {
+                run.data.text = Some(value.clone());
+            }
+            if let Some(value) = &output.images {
+                run.data.images.clone_from(value);
+            }
+        }
+        if let Some(value) = &self.actions {
+            run.data.actions.clone_from(value);
+        }
+        ensure!(
+            !matches!((run.data.started_at, run.data.completed_at), (Some(start), Some(end)) if end < start),
+            Refusal::Invalid
+        );
+        Ok(())
+    }
+}
+
+pub(crate) fn validate_automatic(sha: &str, branch: &str, after: i64) -> Result<()> {
+    ensure!(
+        codeyard_git::is_full_commit_id(sha)
+            && !branch.is_empty()
+            && text(branch, 1024)
+            && after >= 0,
+        Refusal::Invalid
+    );
+    Ok(())
+}
+
+native_operation!(crate::postgres::checks::publishers, crate::sqlite::checks::publishers,
+    fn publishers(pool: &DbPool, ids: &[i64]) -> Result<Vec<Publisher>>);
+native_operation!(crate::postgres::checks::run_details, crate::sqlite::checks::run_details,
+    fn run_details(pool: &DbPool, repo: i64, ids: &[i64]) -> Result<Vec<RunDetails>>);
+native_operation!(crate::postgres::checks::suite_details, crate::sqlite::checks::suite_details,
+    fn suite_details(pool: &DbPool, repo: i64, ids: &[i64]) -> Result<Vec<SuiteDetails>>);
+native_operation!(crate::postgres::checks::pulls_many, crate::sqlite::checks::pulls_many,
+    fn pulls_many(pool: &DbPool, repo: i64, heads: &[String]) -> Result<Vec<Pull>>);
+
+native_operation!(crate::postgres::checks::recent_app, crate::sqlite::checks::recent_app,
+    fn recent_app(pool: &DbPool, repo: i64, name: &str) -> Result<Option<i64>>);
+native_operation!(crate::postgres::checks::pulls, crate::sqlite::checks::pulls,
+    fn pulls(pool: &DbPool, repo: i64, sha: &str) -> Result<Vec<Pull>>);
+
+native_operation!(crate::postgres::checks::suite, crate::sqlite::checks::suite,
+    fn suite(pool: &DbPool, repo: i64, id: i64) -> Result<Option<Suite>>);
+native_operation!(crate::postgres::checks::run, crate::sqlite::checks::run,
+    fn run(pool: &DbPool, repo: i64, id: i64) -> Result<Option<Run>>);
+native_operation!(crate::postgres::checks::automatic_suites, crate::sqlite::checks::automatic_suites,
+    /// Newly requested suites for at most 100 active installed Apps. The cursor advances over
+    /// eligible Apps even when their suite already exists; a repeated push never requests it twice.
+    fn automatic_suites(pool: &DbPool, repo: &codeyard_db_core::models::Repository, sha: &str, branch: &str, after: i64) -> Result<AutomaticSuites>);
+native_operation!(crate::postgres::checks::create_suite, crate::sqlite::checks::create_suite,
+    fn create_suite(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>) -> Result<(Suite, bool)>);
+native_operation!(crate::postgres::checks::create_run, crate::sqlite::checks::create_run,
+    fn create_run(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>, input: &RunPatch) -> Result<RunChange>);
+native_operation!(crate::postgres::checks::update_run, crate::sqlite::checks::update_run,
+    fn update_run(pool: &DbPool, credential: Credential<'_>, repo: i64, id: i64, input: &RunPatch) -> Result<RunChange>);
+// Rollups need metadata, not the potentially large check output documents.
+native_operation!(crate::postgres::checks::rollup_runs, crate::sqlite::checks::rollup_runs,
+    fn rollup_runs(pool: &DbPool, repo: i64, sha: &str, offset: i64, limit: i64) -> Result<Vec<Run>>);
+native_operation!(crate::postgres::checks::rollup_counts, crate::sqlite::checks::rollup_counts,
+    fn rollup_counts(pool: &DbPool, repo: i64, sha: &str) -> Result<Vec<(String, i64)>>);
+native_operation!(crate::postgres::checks::workflow_metadata, crate::sqlite::checks::workflow_metadata,
+    fn workflow_metadata(pool: &DbPool, repo: i64, suite: i64) -> Result<Option<(String, String, Option<String>)>>);
+
+native_operation!(crate::postgres::checks::runs, crate::sqlite::checks::runs,
+    fn runs(pool: &DbPool, repo: i64, filter: &Filter, offset: i64, limit: i64) -> Result<Vec<Run>>);
+native_operation!(crate::postgres::checks::run_count, crate::sqlite::checks::run_count,
+    fn run_count(pool: &DbPool, repo: i64, filter: &Filter) -> Result<i64>);
+native_operation!(crate::postgres::checks::suites, crate::sqlite::checks::suites,
+    fn suites(pool: &DbPool, repo: i64, filter: &Filter, offset: i64, limit: i64) -> Result<Vec<Suite>>);
+native_operation!(crate::postgres::checks::suite_count, crate::sqlite::checks::suite_count,
+    fn suite_count(pool: &DbPool, repo: i64, filter: &Filter) -> Result<i64>);
+native_operation!(crate::postgres::checks::annotations, crate::sqlite::checks::annotations,
+    fn annotations(pool: &DbPool, run: i64, offset: i64, limit: i64) -> Result<Vec<Json<Annotation>>>);
+native_operation!(crate::postgres::checks::annotation_count, crate::sqlite::checks::annotation_count,
+    fn annotation_count(pool: &DbPool, run: i64) -> Result<i64>);
+native_operation!(crate::postgres::checks::requested_action, crate::sqlite::checks::requested_action,
+    fn requested_action(pool: &DbPool, credential: Credential<'_>, repo: i64, run: i64, identifier: &str) -> Result<Run>);
+native_operation!(crate::postgres::checks::rerequest, crate::sqlite::checks::rerequest,
+    fn rerequest(pool: &DbPool, credential: Credential<'_>, repo: i64, suite: i64, run: Option<i64>) -> Result<()>);
+native_operation!(crate::postgres::checks::preferences, crate::sqlite::checks::preferences,
+    fn preferences(pool: &DbPool, credential: Credential<'_>, repo: i64, preferences: &[Preference]) -> Result<Vec<Preference>>);

@@ -41,7 +41,8 @@ pub async fn notify_assignees(
         if assignee == assignment.actor.id {
             continue;
         }
-        let user = match crate::backend::db::users::accounts::get_user_by_id(pool, assignee).await {
+        let user = match codeyard_db_identity::users::accounts::get_user_by_id(pool, assignee).await
+        {
             Ok(Some(user)) => user,
             Ok(None) => continue,
             Err(error) => {

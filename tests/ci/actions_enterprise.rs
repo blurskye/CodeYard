@@ -42,7 +42,7 @@ async fn contract(pg: bool) {
     let repo = codeyard::backend::repositories::lifecycle::provision(
         (fixture.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "project",
         None,
         true,

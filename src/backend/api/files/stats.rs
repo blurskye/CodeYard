@@ -42,7 +42,7 @@ pub async fn get_my_file_stats(
     headers: HeaderMap,
 ) -> Result<Json<UserFileStatsResponse>, (StatusCode, Json<ApiError>)> {
     let user = get_current_user(&state.pool, &headers).await?;
-    let stats = crate::backend::db::files::get_user_file_stats(&state.pool, user.id)
+    let stats = codeyard_db_repos::files::get_user_file_stats(&state.pool, user.id)
         .await
         .map_err(|_| {
             (

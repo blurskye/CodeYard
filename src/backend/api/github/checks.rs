@@ -7,14 +7,14 @@ use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use codeyard_model::urls::repo_url;
 
-use crate::backend::db::checks::Credential;
-use crate::backend::db::checks::Filter;
-use crate::backend::db::checks::Preference;
-use crate::backend::db::checks::Run;
-use crate::backend::db::checks::RunPatch;
-use crate::backend::db::checks::Suite;
-use crate::backend::db::checks::ACTIONS_APP_ID;
 use crate::backend::repositories::store::repo_store;
+use codeyard_db_actions::checks::Credential;
+use codeyard_db_actions::checks::Filter;
+use codeyard_db_actions::checks::Preference;
+use codeyard_db_actions::checks::Run;
+use codeyard_db_actions::checks::RunPatch;
+use codeyard_db_actions::checks::Suite;
+use codeyard_db_actions::checks::ACTIONS_APP_ID;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -30,13 +30,13 @@ use std::sync::Arc;
 mod documents;
 
 pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<crate::backend::db::checks::Refusal>() {
-        Some(crate::backend::db::checks::Refusal::Missing) => Error::missing(),
+    match error.downcast_ref::<codeyard_db_actions::checks::Refusal>() {
+        Some(codeyard_db_actions::checks::Refusal::Missing) => Error::missing(),
         Some(
-            crate::backend::db::checks::Refusal::Denied
-            | crate::backend::db::checks::Refusal::Publisher,
+            codeyard_db_actions::checks::Refusal::Denied
+            | codeyard_db_actions::checks::Refusal::Publisher,
         ) => Error::new(StatusCode::FORBIDDEN, error.to_string()),
-        Some(crate::backend::db::checks::Refusal::Invalid) => Error::invalid("Invalid check"),
+        Some(codeyard_db_actions::checks::Refusal::Invalid) => Error::invalid("Invalid check"),
         None => Error::unavailable(error),
     }
 }
@@ -45,7 +45,7 @@ async fn app(pool: &codeyard_db_core::DbPool, id: Option<i64>) -> Result<Value> 
     let Some(id) = id else {
         return Ok(Value::Null);
     };
-    Ok(crate::backend::db::checks::publishers(pool, &[id])
+    Ok(codeyard_db_actions::checks::publishers(pool, &[id])
         .await
         .map_err(Error::unavailable)?
         .first()
@@ -53,7 +53,7 @@ async fn app(pool: &codeyard_db_core::DbPool, id: Option<i64>) -> Result<Value> 
         .unwrap_or(Value::Null))
 }
 
-fn app_value(app: &crate::backend::db::checks::Publisher) -> Value {
+fn app_value(app: &codeyard_db_actions::checks::Publisher) -> Value {
     let owner = crate::backend::webhooks::payloads::Person {
         id: app.owner_id,
         login: app.owner_login.clone(),
@@ -68,9 +68,9 @@ async fn actions_app(
     repo: &Repository,
     owner: &str,
 ) -> Result<Value> {
-    let Some(bot) = crate::backend::db::users::accounts::get_user_by_username(
+    let Some(bot) = codeyard_db_identity::users::accounts::get_user_by_username(
         pool,
-        crate::backend::db::ci_tokens::BOT,
+        codeyard_db_core::queries::ci_tokens::BOT,
     )
     .await
     .map_err(Error::unavailable)?
@@ -94,7 +94,7 @@ async fn pulls(
     owner: &str,
     sha: &str,
 ) -> Result<Value> {
-    let rows = crate::backend::db::checks::pulls(pool, repo.id, sha)
+    let rows = codeyard_db_actions::checks::pulls(pool, repo.id, sha)
         .await
         .map_err(Error::unavailable)?;
     Ok(json!(rows
@@ -103,7 +103,7 @@ async fn pulls(
         .collect::<Vec<_>>()))
 }
 
-fn pull_value(repo: &Repository, owner: &str, pull: &crate::backend::db::checks::Pull) -> Value {
+fn pull_value(repo: &Repository, owner: &str, pull: &codeyard_db_actions::checks::Pull) -> Value {
     let branch = |reference: &str, sha: &str| json!({"ref":reference,"sha":sha,"repo":{"id":repo.id,"name":repo.name,"url":repo_url(owner,&repo.name)}});
     json!({"id":pull.id,"number":pull.number,"url":format!("{}/pulls/{}",repo_url(owner,&repo.name),pull.number),"head":branch(&pull.head_branch,&pull.head_sha),"base":branch(&pull.base_branch,&pull.base_sha)})
 }
@@ -160,7 +160,7 @@ async fn suite_document_at(
     suite: &Suite,
     head_commit: &Value,
 ) -> Result<Value> {
-    let count = crate::backend::db::checks::run_count(
+    let count = codeyard_db_actions::checks::run_count(
         pool,
         repo.id,
         &Filter {
@@ -173,11 +173,11 @@ async fn suite_document_at(
     // A workflow run's suite has the run's state and is published by Actions.
     let (status, conclusion, publisher) = match suite.ci_run_id {
         Some(id) => {
-            let run = crate::backend::db::ci::get_ci_run(pool, id)
+            let run = codeyard_db_actions::ci::get_ci_run(pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            let (status, conclusion) = crate::backend::db::action_runs::run_state(&run);
+            let (status, conclusion) = codeyard_db_actions::action_runs::run_state(&run);
             (
                 status.to_owned(),
                 conclusion.map(str::to_owned),
@@ -264,13 +264,13 @@ async fn request_after_push(
     let mut after = 0;
     let mut owner = None;
     loop {
-        let page = crate::backend::db::checks::automatic_suites(pool, repo, sha, branch, after)
+        let page = codeyard_db_actions::checks::automatic_suites(pool, repo, sha, branch, after)
             .await
             .map_err(write_error)?;
         after = page.after;
         if !page.suites.is_empty() && owner.is_none() {
             owner = Some(
-                crate::backend::db::repositories::records::repository_owner_name(pool, repo.id)
+                codeyard_db_repos::repositories::records::repository_owner_name(pool, repo.id)
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?,
@@ -329,7 +329,7 @@ async fn create_suite(
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let (sha, branch) = head(&state, &repo, &input.head_sha).await?;
-    let (suite, created) = crate::backend::db::checks::create_suite(
+    let (suite, created) = codeyard_db_actions::checks::create_suite(
         &state.pool,
         Credential::Token(auth.token.id),
         repo.id,
@@ -370,7 +370,7 @@ async fn create_run(
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     input.patch.validate(true).map_err(write_error)?;
     let (sha, branch) = head(&state, &repo, &input.head_sha).await?;
-    let changed = crate::backend::db::checks::create_run(
+    let changed = codeyard_db_actions::checks::create_run(
         &state.pool,
         Credential::Token(auth.token.id),
         repo.id,
@@ -404,7 +404,7 @@ async fn update_run(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
-    let changed = crate::backend::db::checks::update_run(
+    let changed = codeyard_db_actions::checks::update_run(
         &state.pool,
         Credential::Token(auth.token.id),
         repo.id,
@@ -437,21 +437,21 @@ async fn get_run(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    if let Some(run) = crate::backend::db::checks::run(&state.pool, repo.id, id)
+    if let Some(run) = codeyard_db_actions::checks::run(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
     {
         return Ok(Json(run_document(&state, &repo, &owner, &run).await?));
     }
-    let job = crate::backend::db::action_jobs::by_check_run(&state.pool, repo.id, id)
+    let job = codeyard_db_actions::action_jobs::by_check_run(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let run = crate::backend::db::ci::get_ci_run_by_id(&state.pool, repo.id, job.run_id)
+    let run = codeyard_db_actions::ci::get_ci_run_by_id(&state.pool, repo.id, job.run_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let suite = crate::backend::db::action_runs::metadata(&state.pool, repo.id, &[run.id])
+    let suite = codeyard_db_actions::action_runs::metadata(&state.pool, repo.id, &[run.id])
         .await
         .map_err(Error::unavailable)?
         .into_iter()
@@ -459,7 +459,7 @@ async fn get_run(
         .and_then(|metadata| metadata.check_suite_id)
         .ok_or_else(Error::missing)?;
     let (count, _) =
-        crate::backend::db::action_jobs::annotations(&state.pool, repo.id, job.id, 0, 1)
+        codeyard_db_actions::action_jobs::annotations(&state.pool, repo.id, job.id, 0, 1)
             .await
             .map_err(Error::unavailable)?;
     let job_document =
@@ -479,7 +479,7 @@ async fn get_suite(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let suite = crate::backend::db::checks::suite(&state.pool, repo.id, id)
+    let suite = codeyard_db_actions::checks::suite(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -559,7 +559,7 @@ async fn list_for_suite(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    crate::backend::db::checks::suite(&state.pool, repo.id, id)
+    codeyard_db_actions::checks::suite(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -587,10 +587,10 @@ async fn list(
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
     let (count, key, docs) = if suites {
-        let count = crate::backend::db::checks::suite_count(&state.pool, repo.id, filter)
+        let count = codeyard_db_actions::checks::suite_count(&state.pool, repo.id, filter)
             .await
             .map_err(Error::unavailable)?;
-        let rows = crate::backend::db::checks::suites(
+        let rows = codeyard_db_actions::checks::suites(
             &state.pool,
             repo.id,
             filter,
@@ -602,10 +602,10 @@ async fn list(
         let docs = documents::suites(state, repo, owner, &rows).await?;
         (count, "check_suites", docs)
     } else {
-        let count = crate::backend::db::checks::run_count(&state.pool, repo.id, filter)
+        let count = codeyard_db_actions::checks::run_count(&state.pool, repo.id, filter)
             .await
             .map_err(Error::unavailable)?;
-        let rows = crate::backend::db::checks::runs(
+        let rows = codeyard_db_actions::checks::runs(
             &state.pool,
             repo.id,
             filter,
@@ -631,11 +631,11 @@ async fn annotations(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let Some(run) = crate::backend::db::checks::run(&state.pool, repo.id, id)
+    let Some(run) = codeyard_db_actions::checks::run(&state.pool, repo.id, id)
         .await
         .map_err(Error::unavailable)?
     else {
-        let job = crate::backend::db::action_jobs::by_check_run(&state.pool, repo.id, id)
+        let job = codeyard_db_actions::action_jobs::by_check_run(&state.pool, repo.id, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -648,16 +648,16 @@ async fn annotations(
         )
         .await;
     };
-    let suite = crate::backend::db::checks::suite(&state.pool, repo.id, run.suite_id)
+    let suite = codeyard_db_actions::checks::suite(&state.pool, repo.id, run.suite_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let (offset, limit) = page.window()?;
-    let count = crate::backend::db::checks::annotation_count(&state.pool, id)
+    let count = codeyard_db_actions::checks::annotation_count(&state.pool, id)
         .await
         .map_err(Error::unavailable)?;
     let docs =
-        crate::backend::db::checks::annotations(&state.pool, id, offset as i64, limit as i64)
+        codeyard_db_actions::checks::annotations(&state.pool, id, offset as i64, limit as i64)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
@@ -690,7 +690,7 @@ async fn rerequest(
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let is_run = uri.path().contains("/check-runs/");
     let (suite, run) = if is_run {
-        let run = crate::backend::db::checks::run(&state.pool, repo.id, id)
+        let run = codeyard_db_actions::checks::run(&state.pool, repo.id, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -721,11 +721,11 @@ pub(in crate::backend::api) async fn request_again(
     owner: &str,
     actor: i64,
     credential: Credential<'_>,
-    ci_credential: crate::backend::db::ci::CiCredential,
+    ci_credential: codeyard_db_core::queries::ci::CiCredential,
     suite: i64,
     run: Option<&Run>,
 ) -> Result<()> {
-    let stored = crate::backend::db::checks::suite(&state.pool, repo.id, suite)
+    let stored = codeyard_db_actions::checks::suite(&state.pool, repo.id, suite)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -733,7 +733,7 @@ pub(in crate::backend::api) async fn request_again(
         // An Actions suite shows its workflow run, so rerequesting it queues another attempt of that run.
         let credential = Some(ci_credential);
         // Each attempt has its own suite and CI run; reruns go through the shared workflow run.
-        let workflow_run = crate::backend::db::ci::get_ci_run_by_id(&state.pool, repo.id, ci_run)
+        let workflow_run = codeyard_db_actions::ci::get_ci_run_by_id(&state.pool, repo.id, ci_run)
             .await
             .map_err(Error::unavailable)?
             .map(|run| run.workflow_run_id.unwrap_or(run.id))
@@ -745,7 +745,7 @@ pub(in crate::backend::api) async fn request_again(
             .map_err(crate::backend::api::github::actions::admission_error)?;
         return Ok(());
     }
-    crate::backend::db::checks::rerequest(
+    codeyard_db_actions::checks::rerequest(
         &state.pool,
         credential,
         repo.id,
@@ -757,7 +757,7 @@ pub(in crate::backend::api) async fn request_again(
     let (event, doc) = if let Some(run) = run {
         ("check_run", run_document(state, repo, owner, run).await?)
     } else {
-        let suite = crate::backend::db::checks::suite(&state.pool, repo.id, suite)
+        let suite = codeyard_db_actions::checks::suite(&state.pool, repo.id, suite)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -779,7 +779,7 @@ pub(in crate::backend::api) async fn request_action(
     run: i64,
     identifier: String,
 ) -> Result<()> {
-    let run = crate::backend::db::checks::requested_action(
+    let run = codeyard_db_actions::checks::requested_action(
         &state.pool,
         credential,
         repo.id,
@@ -810,7 +810,7 @@ async fn preferences(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
-    let saved = crate::backend::db::checks::preferences(
+    let saved = codeyard_db_actions::checks::preferences(
         &state.pool,
         Credential::Token(auth.token.id),
         repo.id,

@@ -95,7 +95,7 @@ async fn read(
         .await
         .map_err(store_error)?;
     if !refs.contains_key(&format!("refs/heads/{branch}")) {
-        if let Some(target) = crate::backend::db::repositories::protection::branch_redirect(
+        if let Some(target) = codeyard_db_repos::repositories::protection::branch_redirect(
             &state.pool,
             repo.id,
             &branch,

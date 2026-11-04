@@ -1,8 +1,8 @@
 use super::templates::setup;
 use axum::http::StatusCode;
 
-use codeyard::backend::db::assignees::AssignedItem;
 use codeyard_db_core::models::AccessLevel;
+use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_webui::{app::Page, pages::repos::issues};
 use serde_json::{json, Value};
 
@@ -102,14 +102,14 @@ async fn comment_edit_snapshots(pg: bool) {
 async fn independent_people_filters(pg: bool) {
     let (mut database, _root, alice, _bob) = setup(pg).await;
     let pool = database.pool();
-    let repo = codeyard::backend::db::repositories::records::get_repository(pool, "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
     let owner = repo.owner_user_id.unwrap();
     let none = database.actor("none").await;
     let writer = database.actor("writer").await;
-    let bob = codeyard::backend::db::users::accounts::get_user_by_username(pool, "bob")
+    let bob = codeyard_db_identity::users::accounts::get_user_by_username(pool, "bob")
         .await
         .unwrap()
         .unwrap();
@@ -118,19 +118,19 @@ async fn independent_people_filters(pg: bool) {
         (bob.id, AccessLevel::Read),
         (writer, AccessLevel::Write),
     ] {
-        codeyard::backend::db::repositories::access::grant_repo_access(pool, id, repo.id, level)
+        codeyard_db_repos::repositories::access::grant_repo_access(pool, id, repo.id, level)
             .await
             .unwrap();
     }
     let assigned =
-        codeyard::backend::db::issues::create_issue(pool, repo.id, owner, "Assigned to none", "")
+        codeyard_db_repos::issues::create_issue(pool, repo.id, owner, "Assigned to none", "")
             .await
             .unwrap();
     let unassigned =
-        codeyard::backend::db::issues::create_issue(pool, repo.id, owner, "Unassigned", "")
+        codeyard_db_repos::issues::create_issue(pool, repo.id, owner, "Unassigned", "")
             .await
             .unwrap();
-    codeyard::backend::db::assignees::assign_user(
+    codeyard_db_repos::assignees::assign_user(
         pool,
         owner,
         repo.id,
@@ -165,7 +165,7 @@ async fn independent_people_filters(pg: bool) {
     alice.branch("topic", &tip).await;
     alice.save("topic", "change.txt", &tip).await;
     let pull = alice.open_pull("Review", "topic", "main").await;
-    codeyard::backend::db::assignees::assign_user(
+    codeyard_db_repos::assignees::assign_user(
         pool,
         owner,
         repo.id,

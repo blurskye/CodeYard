@@ -5,7 +5,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::secrets::SecretKind;
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -14,6 +13,7 @@ use axum::{
     Extension, Json,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_db_actions::secrets::SecretKind;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -44,8 +44,8 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
         .collect()
 }
 
-pub(super) fn error(error: crate::backend::db::secrets::SecretsError) -> Error {
-    use crate::backend::db::secrets::SecretsError;
+pub(super) fn error(error: codeyard_db_core::queries::secrets::SecretsError) -> Error {
+    use codeyard_db_core::queries::secrets::SecretsError;
     match error {
         SecretsError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token")
@@ -96,7 +96,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, false).await?;
     let secrets =
-        crate::backend::db::secrets::list_secrets_for(&state.pool, kind, actor.user.id, repo)
+        codeyard_db_actions::secrets::list_secrets_for(&state.pool, kind, actor.user.id, repo)
             .await
             .map_err(error)?;
     let (offset, limit) = page.window()?;
@@ -126,7 +126,7 @@ async fn public_key(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (key_id, key) = crate::backend::db::secrets::repository_secret_key_for(
+    let (key_id, key) = codeyard_db_actions::secrets::repository_secret_key_for(
         &state.pool,
         kind,
         encryptor,
@@ -148,7 +148,7 @@ async fn secret(
     let (repo, actor) = repository(&state, &headers, &owner, &repo, false).await?;
     let name = name.to_ascii_uppercase();
     let secret =
-        crate::backend::db::secrets::list_secrets_for(&state.pool, kind, actor.user.id, repo)
+        codeyard_db_actions::secrets::list_secrets_for(&state.pool, kind, actor.user.id, repo)
             .await
             .map_err(error)?
             .into_iter()
@@ -173,12 +173,12 @@ async fn save(
     let (repo, actor) = repository(&state, &headers, &owner, &repo, true).await?;
     let Json(body) = body.map_err(|_| Error::invalid("Invalid secret input"))?;
     let name = name.to_ascii_uppercase();
-    crate::backend::db::secrets::validate_repository_secret(&name, "").map_err(error)?;
+    codeyard_db_actions::secrets::validate_repository_secret(&name, "").map_err(error)?;
     let encryptor = state
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (key_id, key) = crate::backend::db::secrets::repository_secret_key_for(
+    let (key_id, key) = codeyard_db_actions::secrets::repository_secret_key_for(
         &state.pool,
         kind,
         encryptor,
@@ -189,7 +189,7 @@ async fn save(
     .await
     .map_err(error)?;
     let value = open_value(&key, &key_id, &body.key_id, &body.encrypted_value)?;
-    let created = crate::backend::db::secrets::create_or_update_secret_for(
+    let created = codeyard_db_actions::secrets::create_or_update_secret_for(
         &state.pool,
         encryptor,
         (repo, kind),
@@ -217,9 +217,7 @@ pub(super) fn open_value(
         return Err(Error::validation("Secret", "key_id", "invalid"));
     }
     // Bound the decoded box before allocating or attempting decryption.
-    if encrypted_value.len()
-        > (crate::backend::db::secrets::MAX_SECRET_VALUE_BYTES + 48).div_ceil(3) * 4
-    {
+    if encrypted_value.len() > (codeyard_actions::values::MAX_VALUE_BYTES + 48).div_ceil(3) * 4 {
         return Err(Error::validation("Secret", "encrypted_value", "invalid"));
     }
     let invalid = || Error::validation("Secret", "encrypted_value", "invalid");
@@ -235,7 +233,7 @@ async fn remove(
     Path((owner, repo, name)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, true).await?;
-    if !crate::backend::db::secrets::delete_secret_for(
+    if !codeyard_db_actions::secrets::delete_secret_for(
         &state.pool,
         kind,
         actor.user.id,

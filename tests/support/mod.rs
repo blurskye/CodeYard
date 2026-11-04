@@ -24,7 +24,7 @@ pub static PASSWORD_WORK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new
 
 pub async fn live_session(pool: &codeyard_db_core::DbPool, actor: i64) -> String {
     let id = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &id,
         actor,

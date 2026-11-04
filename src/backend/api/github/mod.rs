@@ -254,13 +254,13 @@ pub(crate) async fn interaction_actor(
     headers: &HeaderMap,
 ) -> Option<codeyard_db_core::models::User> {
     let credential = auth::credential(headers)?;
-    let token = crate::backend::db::users::tokens::find_token(
+    let token = codeyard_db_identity::users::tokens::find_token(
         &state.pool,
         &codeyard_support::token_hash::token_hash(credential),
     )
     .await
     .ok()??;
-    crate::backend::db::users::tokens::token_user(&state.pool, token.id, false)
+    codeyard_db_identity::users::tokens::token_user(&state.pool, token.id, false)
         .await
         .ok()?
 }
@@ -279,7 +279,7 @@ pub(super) async fn repository(
     if write {
         auth.as_ref().ok_or_else(auth::required)?.require_write()?;
     }
-    let repo = crate::backend::db::repositories::records::get_repository(&state.pool, owner, name)
+    let repo = codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, name)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;

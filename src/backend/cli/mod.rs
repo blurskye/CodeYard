@@ -316,7 +316,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
             } => {
                 if cluster {
                     crate::backend::cluster::require_postgres(&pool)?;
-                    if crate::backend::db::cluster::enable_cluster(&pool).await? {
+                    if codeyard_db_cluster::cluster::enable_cluster(&pool).await? {
                         info!("cluster mode is on");
                     }
                 }

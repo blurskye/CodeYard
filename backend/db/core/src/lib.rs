@@ -29,3 +29,4 @@ pub mod ci_logs;
 pub mod ci_messages;
 pub mod ci_policy;
 pub mod limits;
+pub mod queries;

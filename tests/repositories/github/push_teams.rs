@@ -14,12 +14,12 @@ pub(super) async fn run(
     let (pool, alice, bob) = scope;
     let (writer, reader, bob_token) = tokens;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             pool,
             alice,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 "push-org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -28,7 +28,7 @@ pub(super) async fn run(
     )
     .id;
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             pool,
             alice,
             org,
@@ -39,16 +39,16 @@ pub(super) async fn run(
         .unwrap(),
     );
     let writers = applied(
-        codeyard::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             pool,
             alice,
             org,
-            &codeyard::backend::db::organizations::NewTeam::new(
+            &codeyard_db_orgs::organizations::NewTeam::new(
                 "writers",
-                codeyard::backend::db::organizations::TeamProfile::new(
+                codeyard_db_orgs::organizations::TeamProfile::new(
                     "Writers",
                     Some("Release publishers"),
-                    codeyard::backend::db::organizations::TeamPrivacy::Secret,
+                    codeyard_db_orgs::organizations::TeamPrivacy::Secret,
                 )
                 .unwrap(),
             )
@@ -59,16 +59,16 @@ pub(super) async fn run(
     )
     .id;
     let readers = applied(
-        codeyard::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             pool,
             alice,
             org,
-            &codeyard::backend::db::organizations::NewTeam::new(
+            &codeyard_db_orgs::organizations::NewTeam::new(
                 "readers",
-                codeyard::backend::db::organizations::TeamProfile::new(
+                codeyard_db_orgs::organizations::TeamProfile::new(
                     "Readers",
                     None,
-                    codeyard::backend::db::organizations::TeamPrivacy::Visible,
+                    codeyard_db_orgs::organizations::TeamPrivacy::Visible,
                 )
                 .unwrap(),
             )
@@ -79,13 +79,13 @@ pub(super) async fn run(
     )
     .id;
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             pool,
             alice,
             org,
             writers,
             bob,
-            codeyard::backend::db::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::TeamRole::Member,
         )
         .await
         .unwrap(),
@@ -103,14 +103,13 @@ pub(super) async fn run(
     let tip = session.expect("POST", "/api/repos/push-org/team-policy/contents/seed.txt", json!({"content":"c2VlZAo=","message":"Seed team policy","branch":"main","expected_revision":"unborn"}), StatusCode::CREATED).await["sha"].as_str().unwrap().to_owned();
     for (team, permission) in [(writers, 3), (readers, 1)] {
         applied(
-            codeyard::backend::db::organizations::grant_organization_team_repository(
+            codeyard_db_orgs::organizations::grant_organization_team_repository(
                 pool,
                 alice,
                 org,
                 team,
                 repo,
-                codeyard::backend::db::organizations::TeamRepositoryPermission::new(permission)
-                    .unwrap(),
+                codeyard_db_orgs::organizations::TeamRepositoryPermission::new(permission).unwrap(),
             )
             .await
             .unwrap(),
@@ -271,7 +270,7 @@ pub(super) async fn run(
     )
     .await;
     applied(
-        codeyard::backend::db::organizations::remove_organization_team_member(
+        codeyard_db_orgs::organizations::remove_organization_team_member(
             pool, alice, org, writers, bob,
         )
         .await
@@ -287,19 +286,19 @@ pub(super) async fn run(
     )
     .await;
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             pool,
             alice,
             org,
             writers,
             bob,
-            codeyard::backend::db::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::TeamRole::Member,
         )
         .await
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::revoke_organization_team_repository(
+        codeyard_db_orgs::organizations::revoke_organization_team_repository(
             pool, alice, org, writers, repo,
         )
         .await
@@ -340,13 +339,13 @@ pub(super) async fn run(
         "revoked allowances remain removable"
     );
     applied(
-        codeyard::backend::db::organizations::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::grant_organization_team_repository(
             pool,
             alice,
             org,
             writers,
             repo,
-            codeyard::backend::db::organizations::TeamRepositoryPermission::new(3).unwrap(),
+            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(3).unwrap(),
         )
         .await
         .unwrap(),

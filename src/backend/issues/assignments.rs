@@ -2,10 +2,10 @@
 //! request pages and issue creation all change assignees through these functions, so every change
 //! records the same timeline events and notifies the same people.
 
-use crate::backend::db::assignees::AssignedItem;
 use crate::backend::notifications::assignments::notify_assignees;
 use crate::backend::notifications::assignments::Assignment;
 use crate::backend::notifications::NotificationBroadcaster;
+use codeyard_db_repos::assignees::AssignedItem;
 
 /// The issue or pull request whose assignees change, and who changes them.
 pub struct Target<'a> {
@@ -23,11 +23,11 @@ pub async fn assign(
     pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     target: &Target<'_>,
-    authority: impl Into<crate::backend::db::credentials::Actor>,
+    authority: impl Into<codeyard_db_core::queries::credentials::Actor>,
     users: &[codeyard_db_core::models::User],
 ) -> anyhow::Result<Vec<i64>> {
     let ids: Vec<i64> = users.iter().map(|user| user.id).collect();
-    let added = crate::backend::db::assignees::assign_users(
+    let added = codeyard_db_repos::assignees::assign_users(
         pool,
         authority,
         target.repository.id,
@@ -48,10 +48,10 @@ pub async fn assign(
 pub async fn unassign(
     pool: &codeyard_db_core::DbPool,
     target: &Target<'_>,
-    authority: impl Into<crate::backend::db::credentials::Actor>,
+    authority: impl Into<codeyard_db_core::queries::credentials::Actor>,
     usernames: &[String],
 ) -> anyhow::Result<Vec<String>> {
-    let removed = crate::backend::db::assignees::unassign_users(
+    let removed = codeyard_db_repos::assignees::unassign_users(
         pool,
         authority,
         target.repository.id,

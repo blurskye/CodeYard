@@ -3,8 +3,8 @@ use crate::backend::app::AppState;
 use crate::backend::repositories::dependencies::npm::Lockfile;
 use crate::backend::repositories::store::repo_store;
 
-use crate::backend::db::dependency_graph::Reader;
 use codeyard_db_core::models::Repository;
+use codeyard_db_security::dependency_graph::Reader;
 use codeyard_git::error::{ErrorKind, RepoError};
 use codeyard_model::repositories::Package;
 use std::collections::{BTreeMap, HashSet};
@@ -128,12 +128,18 @@ async fn snapshot_values(
     sha: &str,
 ) -> Result<Vec<serde_json::Value>, RepoError> {
     let branch = reference.starts_with("refs/heads/").then_some(reference);
-    crate::backend::db::dependency_graph::snapshots(&state.pool, reader, repo.id, branch, Some(sha))
-        .await
-        .map_err(graph_error)?
-        .iter()
-        .map(|snapshot| serde_json::to_value(snapshot).map_err(|error| unavailable(error.into())))
-        .collect()
+    codeyard_db_security::dependency_graph::snapshots(
+        &state.pool,
+        reader,
+        repo.id,
+        branch,
+        Some(sha),
+    )
+    .await
+    .map_err(graph_error)?
+    .iter()
+    .map(|snapshot| serde_json::to_value(snapshot).map_err(|error| unavailable(error.into())))
+    .collect()
 }
 
 /// Every dependency file in the tree at `reference`. Any unreadable or unsupported file fails the
@@ -144,7 +150,7 @@ pub(crate) async fn native_inventory(
     repo: &Repository,
     reference: &str,
 ) -> Result<(String, Vec<Package>), RepoError> {
-    crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
         .await
         .map_err(graph_error)?;
     let store = repo_store(repo, state.cluster.as_ref());
@@ -178,7 +184,7 @@ pub(crate) async fn native_inventory_at(
     let branch = reference.starts_with("refs/heads/").then_some(reference);
     // Codeyard's own earlier scan of this commit is not a submission, so it covers nothing. A
     // manifest is named by its source location, as `dependency_graph::packages` reads it.
-    let covered: HashSet<String> = crate::backend::db::dependency_graph::snapshots(
+    let covered: HashSet<String> = codeyard_db_security::dependency_graph::snapshots(
         &state.pool,
         reader,
         repo.id,
@@ -261,7 +267,7 @@ pub(crate) async fn native_inventory_at(
             }
         }
     }
-    crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
         .await
         .map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
@@ -329,7 +335,7 @@ pub async fn inventory(
             "Dependency inventory exceeds its limit",
         ));
     }
-    crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
         .await
         .map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
@@ -407,7 +413,7 @@ pub(crate) async fn pinned_snapshots(
         }
         Err(error) => return Err(error),
     };
-    let mut snapshots = crate::backend::db::dependency_graph::snapshots(
+    let mut snapshots = codeyard_db_security::dependency_graph::snapshots(
         &state.pool,
         reader,
         repo.id,

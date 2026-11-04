@@ -35,11 +35,11 @@ impl Fixture {
         .await
         .unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let user = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
+        let user = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let key = Arc::new(PrivateKey::from(Ed25519Keypair::from_seed(&[51; 32])));
-        crate::backend::db::users::ssh_keys::add_ssh_key(
+        codeyard_db_identity::users::ssh_keys::add_ssh_key(
             &pool,
             user.id,
             "client",
@@ -49,7 +49,7 @@ impl Fixture {
         .unwrap();
         let path = root.path().join("repo.git");
         git2::Repository::init_bare(&path).unwrap();
-        crate::backend::db::repositories::records::create_repository(
+        codeyard_db_repos::repositories::records::create_repository(
             &pool,
             user.id,
             "repo",

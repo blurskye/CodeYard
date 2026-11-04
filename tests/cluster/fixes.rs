@@ -32,7 +32,7 @@ async fn oversized_invites_are_refused_before_persisting_tokens() {
         .unwrap_err()
         .to_string()
         .contains("too many advertised addresses"));
-    assert!(codeyard::backend::db::cluster::list_join_tokens(&db.pool)
+    assert!(codeyard_db_cluster::cluster::list_join_tokens(&db.pool)
         .await
         .unwrap()
         .is_empty());
@@ -41,12 +41,12 @@ async fn oversized_invites_are_refused_before_persisting_tokens() {
 #[tokio::test]
 async fn service_startup_refuses_roles_outside_existing_enrollment() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let key = codeyard::backend::cluster::load_or_create(root.path()).unwrap();
-    codeyard::backend::db::cluster::register_own_node(
+    codeyard_db_cluster::cluster::register_own_node(
         &db.pool,
         &key.public_hex(),
         "storage",
@@ -76,10 +76,10 @@ async fn service_startup_refuses_roles_outside_existing_enrollment() {
 }
 
 async fn adoption_and_index(pool: &DbPool) {
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "adopter", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "adopter", None)
         .await
         .unwrap();
-    let node = codeyard::backend::db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         pool,
         &NodeKey::generate().public_hex(),
         "storage",
@@ -89,7 +89,7 @@ async fn adoption_and_index(pool: &DbPool) {
     .await
     .unwrap();
     let make = |name: &'static str| async move {
-        codeyard::backend::db::repositories::records::create_repository(
+        codeyard_db_repos::repositories::records::create_repository(
             pool,
             owner.id,
             name,
@@ -130,7 +130,7 @@ async fn adoption_and_index(pool: &DbPool) {
         }
     }
     // A fork absent from the directory snapshot must prevent adoption of its source.
-    assert!(codeyard::backend::db::cluster::place_fork_family(
+    assert!(codeyard_db_cluster::cluster::place_fork_family(
         pool,
         source.id,
         node.id,
@@ -140,7 +140,7 @@ async fn adoption_and_index(pool: &DbPool) {
     .unwrap()
     .is_empty());
     assert_eq!(
-        codeyard::backend::db::repositories::records::get_repository_by_id(pool, source.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, source.id)
             .await
             .unwrap()
             .unwrap()
@@ -148,7 +148,7 @@ async fn adoption_and_index(pool: &DbPool) {
         None
     );
     assert_eq!(
-        codeyard::backend::db::cluster::place_fork_family(
+        codeyard_db_cluster::cluster::place_fork_family(
             pool,
             source.id,
             node.id,
@@ -160,7 +160,7 @@ async fn adoption_and_index(pool: &DbPool) {
     );
     for id in [source.id, fork.id] {
         assert_eq!(
-            codeyard::backend::db::repositories::records::get_repository_by_id(pool, id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -173,12 +173,12 @@ async fn adoption_and_index(pool: &DbPool) {
 #[tokio::test]
 async fn adoption_refreshes_forks_committed_while_it_waits_for_the_source() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let raw = &db.raw;
     let root = tempfile::tempdir().unwrap();
-    let node = codeyard::backend::db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         &db.pool,
         &NodeKey::generate().public_hex(),
         "storage",
@@ -187,12 +187,12 @@ async fn adoption_refreshes_forks_committed_while_it_waits_for_the_source() {
     )
     .await
     .unwrap();
-    let owner = codeyard::backend::db::users::accounts::create_user(&db.pool, "owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(&db.pool, "owner", None)
         .await
         .unwrap();
     let path = root.path().join(format!("{}.git", uuid::Uuid::new_v4()));
     std::fs::create_dir(&path).unwrap();
-    let source = codeyard::backend::db::repositories::records::create_repository(
+    let source = codeyard_db_repos::repositories::records::create_repository(
         &db.pool,
         owner.id,
         "source",
@@ -223,7 +223,7 @@ async fn adoption_refreshes_forks_committed_while_it_waits_for_the_source() {
     assert_eq!(adopting.await.unwrap().unwrap(), 2);
     for id in [source.id, fork] {
         assert_eq!(
-            codeyard::backend::db::repositories::records::get_repository_by_id(&db.pool, id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(&db.pool, id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -238,7 +238,7 @@ async fn adoption_keeps_current_families_together_on_both_engines() {
     let sqlite = NativeDatabase::new().await;
     adoption_and_index(&sqlite.pool).await;
     let postgres = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&postgres.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&postgres.pool)
         .await
         .unwrap();
     adoption_and_index(&postgres.pool).await;

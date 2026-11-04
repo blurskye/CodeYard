@@ -1,0 +1,61 @@
+pub mod action_objects;
+
+pub mod action_settings;
+
+pub mod actions;
+
+pub mod attestation_validation;
+
+pub mod attestations;
+
+pub mod ci;
+
+pub mod ci_tokens;
+
+pub mod code_security;
+
+pub mod credentials;
+
+pub mod dependabot;
+
+pub mod dependabot_alerts;
+
+pub mod dependency_graph;
+
+pub mod deployment_reviews;
+
+pub mod discussions;
+
+pub mod files;
+
+pub mod fine_grained_tokens;
+
+pub mod github_apps;
+
+pub mod notifications;
+
+pub mod oauth_apps;
+
+pub mod oidc;
+
+pub mod organizations;
+
+pub mod postgres;
+
+pub mod repository_stats;
+
+pub mod rulesets;
+
+pub mod runners;
+
+pub mod secret_scanning;
+
+pub mod secrets;
+
+pub mod source_imports;
+
+pub mod sqlite;
+
+pub mod users;
+
+pub mod webhooks;

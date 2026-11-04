@@ -13,7 +13,7 @@ pub async fn commit_authors(
 ) -> anyhow::Result<HashMap<String, codeyard_db_core::models::User>> {
     anyhow::ensure!(emails.len() <= 512, "Too many commit email addresses");
     Ok(
-        crate::backend::db::users::accounts::commit_authors(pool, emails)
+        codeyard_db_identity::users::accounts::commit_authors(pool, emails)
             .await?
             .into_iter()
             .map(|author| (author.address, author.user))
@@ -70,7 +70,7 @@ pub async fn same_fork_network(
             let Some(parent) = current.forked_from_id else {
                 return Ok(current.id);
             };
-            current = crate::backend::db::repositories::records::get_repository_by_id(pool, parent)
+            current = codeyard_db_repos::repositories::records::get_repository_by_id(pool, parent)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("Fork parent not found"))?;
         }

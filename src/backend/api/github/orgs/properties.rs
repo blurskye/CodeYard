@@ -7,10 +7,10 @@ use crate::backend::api::github::orgs::Error;
 use crate::backend::api::github::orgs::Result;
 use crate::backend::api::github::pagination::Pagination;
 
-use crate::backend::db::organizations::properties::query::RepositoryQuery;
-use crate::backend::db::organizations::properties::DefinitionInput;
-use crate::backend::db::organizations::properties::Refusal;
-use crate::backend::db::organizations::properties::ValueInput;
+use codeyard_db_core::queries::organizations::properties::DefinitionInput;
+use codeyard_db_core::queries::organizations::properties::Refusal;
+use codeyard_db_core::queries::organizations::properties::ValueInput;
+use codeyard_db_orgs::organizations::properties::query::RepositoryQuery;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -109,7 +109,7 @@ async fn list(
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
     let definitions = outcome(
-        crate::backend::db::organizations::properties::catalog(&state.pool, actor.user.id, org.id)
+        codeyard_db_orgs::organizations::properties::catalog(&state.pool, actor.user.id, org.id)
             .await
             .map_err(error)?,
     )?;
@@ -132,7 +132,7 @@ async fn get_definition(
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
     let definitions = outcome(
-        crate::backend::db::organizations::properties::catalog(&state.pool, actor.user.id, org.id)
+        codeyard_db_orgs::organizations::properties::catalog(&state.pool, actor.user.id, org.id)
             .await
             .map_err(error)?,
     )?;
@@ -163,7 +163,7 @@ async fn define_one(
     let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let input = definition(input, Some(&property))?;
     let definitions = outcome(
-        crate::backend::db::organizations::properties::define(
+        codeyard_db_orgs::organizations::properties::define(
             &state.pool,
             actor.database_actor(),
             org.id,
@@ -199,7 +199,7 @@ async fn define_many(
         .map(|value| definition(value, None))
         .collect::<Result<Vec<_>>>()?;
     let definitions = outcome(
-        crate::backend::db::organizations::properties::define(
+        codeyard_db_orgs::organizations::properties::define(
             &state.pool,
             actor.database_actor(),
             org.id,
@@ -228,7 +228,7 @@ async fn remove(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     outcome(
-        crate::backend::db::organizations::properties::remove(
+        codeyard_db_orgs::organizations::properties::remove(
             &state.pool,
             actor.database_actor(),
             org.id,
@@ -256,7 +256,7 @@ async fn values(
         .map_err(error)?;
     let (offset, limit) = page.window()?;
     let mut rows = outcome(
-        crate::backend::db::organizations::properties::list_values(
+        codeyard_db_orgs::organizations::properties::list_values(
             &state.pool,
             actor.user.id,
             org.id,
@@ -296,7 +296,7 @@ async fn set_values(
     let org = target(&state, &name).await?;
     let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     outcome(
-        crate::backend::db::organizations::properties::set_values(
+        codeyard_db_orgs::organizations::properties::set_values(
             &state.pool,
             actor.database_actor(),
             org.id,

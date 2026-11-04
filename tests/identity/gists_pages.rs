@@ -61,7 +61,7 @@ async fn pages(pg: bool) {
     assert_eq!(saved.status, 303, "{}", saved.text());
     let path = saved.location.unwrap();
     let id = path.strip_prefix("/gists/").unwrap();
-    let record = codeyard::backend::db::gists::get(f.pool(), id)
+    let record = codeyard_db_repos::gists::get(f.pool(), id)
         .await
         .unwrap()
         .unwrap();
@@ -142,7 +142,7 @@ async fn pages(pg: bool) {
         .await;
     assert_eq!(no_csrf.status, 403);
     assert!(
-        !codeyard::backend::db::gists::starred(f.pool(), alice, record.repo_id)
+        !codeyard_db_repos::gists::starred(f.pool(), alice, record.repo_id)
             .await
             .unwrap()
     );
@@ -206,7 +206,7 @@ async fn pages(pg: bool) {
         .await;
     assert_eq!(starred.status, 303);
     assert!(
-        codeyard::backend::db::gists::starred(f.pool(), bob, record.repo_id)
+        codeyard_db_repos::gists::starred(f.pool(), bob, record.repo_id)
             .await
             .unwrap()
     );
@@ -215,7 +215,7 @@ async fn pages(pg: bool) {
         .form_reply(&format!("{path}/comments"), &[("body", "**Useful** notes")])
         .await;
     assert_eq!(commented.status, 303, "{}", commented.text());
-    let comments = codeyard::backend::db::gists::comments(f.pool(), record.repo_id, 30, 0)
+    let comments = codeyard_db_repos::gists::comments(f.pool(), record.repo_id, 30, 0)
         .await
         .unwrap();
     let comment = comments[0].id;
@@ -240,7 +240,7 @@ async fn pages(pg: bool) {
         .await;
     assert_eq!(updated.status, 303);
     assert_eq!(
-        codeyard::backend::db::gists::comment(f.pool(), record.repo_id, comment)
+        codeyard_db_repos::gists::comment(f.pool(), record.repo_id, comment)
             .await
             .unwrap()
             .unwrap()
@@ -262,17 +262,17 @@ async fn pages(pg: bool) {
         .await;
     assert_eq!(removed.status, 303);
     assert!(
-        codeyard::backend::db::gists::comment(f.pool(), record.repo_id, comment)
+        codeyard_db_repos::gists::comment(f.pool(), record.repo_id, comment)
             .await
             .unwrap()
             .is_none()
     );
     let mut last = 0;
     for index in 0..31 {
-        last = codeyard::backend::db::gists::create_comment(
+        last = codeyard_db_repos::gists::create_comment(
             f.pool(),
             bob,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(&b.session),
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&b.session),
             record.repo_id,
             &format!("Page comment {index}"),
         )
@@ -318,7 +318,7 @@ async fn pages(pg: bool) {
     };
     assert!(fork.parent.is_none());
     assert_eq!(fork.files[0].content.as_deref(), Some("# Revised\n"));
-    assert!(codeyard::backend::db::gists::get(f.pool(), fork_id)
+    assert!(codeyard_db_repos::gists::get(f.pool(), fork_id)
         .await
         .unwrap()
         .is_some());

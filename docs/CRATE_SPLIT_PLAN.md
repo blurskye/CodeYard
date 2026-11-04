@@ -100,9 +100,10 @@ and results stay the same. A stage can be the last one.
    helpers live in `db/core`; encryption, SSH selection, node identity and custom
    secret scanning live in `support`. Database domains no longer call server helpers.
    Source moves are complete; validation waits until the whole split is committed.
-5. **`db` domains**, lowest first: identity, orgs, repos (with pull requests and issues),
-   then actions, security, cluster. Each domain crate keeps its own PostgreSQL and SQLite
-   code.
+5. **`db` domains.** Source extraction complete: `identity`, `orgs`, `repos`
+   (including pulls and issues), `actions`, `security` and `cluster` each own both
+   engines. Shared transaction helpers and their records live under `db/core/src/queries`.
+   Workspace validation remains deferred until the source split is finished.
 6. **Services:** `identity`, `notifications`, `repositories`, `ci`, `cluster`, in the order
    that the circle cuts allow.
 7. **API:** `api/http` first (the helpers `api/github` shares move there), then `api/github`

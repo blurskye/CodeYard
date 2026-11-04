@@ -10,12 +10,12 @@ use crate::backend::api::repos::responses::repository_topics;
 use crate::backend::api::repos::responses::RepoResponse;
 use crate::backend::app::AppState;
 
-use crate::backend::db::organizations as orgs;
-use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::db::organizations::OrganizationPage;
-use crate::backend::db::repositories::records::RepositoryFilter;
-use crate::backend::db::repositories::records::RepositorySort;
 use crate::backend::repositories::access::AccessError;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations as orgs;
+use codeyard_db_orgs::organizations::OrganizationPage;
+use codeyard_db_repos::repositories::records::RepositoryFilter;
+use codeyard_db_repos::repositories::records::RepositorySort;
 
 use crate::backend::repositories::lifecycle::InitialFiles;
 
@@ -37,7 +37,7 @@ pub async fn list_repos(
     Query(query): Query<PageQuery>,
 ) -> Result<Json<Vec<RepoResponse>>, (StatusCode, Json<ApiError>)> {
     let (offset, limit) = json_page(query.page, Some(query.per_page.unwrap_or(100)))?;
-    let repos = crate::backend::db::repositories::records::search_public_repositories(
+    let repos = codeyard_db_repos::repositories::records::search_public_repositories(
         &state.pool,
         "",
         RepositoryFilter::default(),
@@ -53,7 +53,7 @@ pub async fn list_repos(
     let mut topics = repository_topics(&state.pool, &ids).await?;
     let mut fork_counts = repository_fork_counts(&state.pool, None, &ids).await?;
     let readable =
-        crate::backend::db::repositories::access::readable_repository_ids(&state.pool, None, &ids)
+        codeyard_db_repos::repositories::access::readable_repository_ids(&state.pool, None, &ids)
             .await
             .map_err(|_| access_error(AccessError::Unavailable))?;
     let mut responses = Vec::with_capacity(repos.len());
@@ -84,7 +84,10 @@ pub struct CreateRepoRequest {
     /// Select an organization target, never an arbitrary personal owner.
     pub owner_org_id: Option<i64>,
     pub custom_properties: Option<
-        HashMap<String, Option<crate::backend::db::organizations::properties::PropertyValue>>,
+        HashMap<
+            String,
+            Option<codeyard_db_core::queries::organizations::properties::PropertyValue>,
+        >,
     >,
 }
 
@@ -95,18 +98,18 @@ pub async fn create_repo(
 ) -> Result<(StatusCode, Json<RepoResponse>), (StatusCode, Json<ApiError>)> {
     let pool = state.pool.clone();
     let user = get_current_user(&pool, &headers).await?;
-    let authority = crate::backend::db::credentials::Actor::from((
+    let authority = codeyard_db_core::queries::credentials::Actor::from((
         user.id,
         crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
     ));
 
-    let creation_owner = crate::backend::db::repositories::creation::RepositoryCreationOwner {
+    let creation_owner = codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
         target: match req.owner_org_id {
             Some(id) if id > 0 => {
-                crate::backend::db::repositories::creation::RepositoryTarget::Organization(id)
+                codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(id)
             }
-            None => crate::backend::db::repositories::creation::RepositoryTarget::Personal(user.id),
+            None => codeyard_db_repos::repositories::creation::RepositoryTarget::Personal(user.id),
             _ => {
                 return Err((
                     StatusCode::BAD_REQUEST,
@@ -126,12 +129,12 @@ pub async fn create_repo(
         .custom_properties
         .unwrap_or_default()
         .into_iter()
-        .map(
-            |(property_name, value)| crate::backend::db::organizations::properties::ValueInput {
+        .map(|(property_name, value)| {
+            codeyard_db_core::queries::organizations::properties::ValueInput {
                 property_name,
                 value,
-            },
-        )
+            }
+        })
         .collect::<Vec<_>>();
     let repo = crate::backend::repositories::lifecycle::provision_with_properties(
         (&pool, state.cluster.as_ref()),
@@ -139,7 +142,7 @@ pub async fn create_repo(
         crate::backend::repositories::lifecycle::CreationInput {
             owner: creation_owner,
             properties: &properties,
-            admission: crate::backend::db::repositories::creation::CreationAdmission {
+            admission: codeyard_db_repos::repositories::creation::CreationAdmission {
                 authority: Some(&authority),
                 advisory: None,
             },
@@ -152,7 +155,7 @@ pub async fn create_repo(
     .await
     .map_err(crate::backend::api::repos::responses::lifecycle_error)?;
 
-    let owner = crate::backend::db::repositories::records::repository_owner_name(&pool, repo.id)
+    let owner = codeyard_db_repos::repositories::records::repository_owner_name(&pool, repo.id)
         .await
         .map_err(|_| {
             (
@@ -410,7 +413,7 @@ pub(crate) async fn new_repository(
     if let Some(org) =
         target.filter(|id| choices.organizations.iter().any(|choice| choice.id == *id))
     {
-        match crate::backend::db::organizations::settings::get(&ctx.state.pool, org).await {
+        match codeyard_db_orgs::organizations::settings::get(&ctx.state.pool, org).await {
             Ok(Some(settings)) => {
                 form.is_private = settings.members_can_create_private_repositories
                     && !settings.members_can_create_public_repositories
@@ -571,13 +574,13 @@ pub(crate) async fn create_repository(
         }
     };
     let authority = ctx.database_actor(user.id);
-    let creation_owner = crate::backend::db::repositories::creation::RepositoryCreationOwner {
+    let creation_owner = codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
         target: match target {
             Some(id) => {
-                crate::backend::db::repositories::creation::RepositoryTarget::Organization(id)
+                codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(id)
             }
-            None => crate::backend::db::repositories::creation::RepositoryTarget::Personal(user.id),
+            None => codeyard_db_repos::repositories::creation::RepositoryTarget::Personal(user.id),
         },
     };
     let result = if !values.source.is_empty() {
@@ -597,7 +600,7 @@ pub(crate) async fn create_repository(
             crate::backend::repositories::lifecycle::CreationInput {
                 owner: creation_owner,
                 properties: &property_values,
-                admission: crate::backend::db::repositories::creation::CreationAdmission {
+                admission: codeyard_db_repos::repositories::creation::CreationAdmission {
                     authority: Some(&authority),
                     advisory: None,
                 },
@@ -613,7 +616,7 @@ pub(crate) async fn create_repository(
     };
     match result {
         Ok(repo) => {
-            match crate::backend::db::repositories::records::repository_owner_name(&ctx.state.pool, repo.id).await {
+            match codeyard_db_repos::repositories::records::repository_owner_name(&ctx.state.pool, repo.id).await {
                 Ok(Some(owner)) => ctx.redirect(&view::repository_url(&owner, &repo.name)),
                 _ => creation_error(&ctx, values, page, StatusCode::SERVICE_UNAVAILABLE, None, "The repository was created, but its owner could not be loaded. Check your repositories before retrying.").await,
             }
@@ -641,11 +644,11 @@ pub(crate) async fn create_repository(
 
 async fn create_selection(
     ctx: &PageContext,
-    owner: crate::backend::db::repositories::creation::RepositoryCreationOwner,
+    owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner,
     values: &NewRepositoryForm,
     files: InitialFiles,
-    properties: &[crate::backend::db::organizations::properties::ValueInput],
-    authority: &crate::backend::db::credentials::Actor,
+    properties: &[codeyard_db_core::queries::organizations::properties::ValueInput],
+    authority: &codeyard_db_core::queries::credentials::Actor,
 ) -> Result<
     codeyard_db_core::models::Repository,
     crate::backend::repositories::lifecycle::StorageError,
@@ -658,7 +661,7 @@ async fn create_selection(
         }
     })?;
     if let Some((source_owner, source_name)) = source {
-        let source = crate::backend::db::repositories::records::get_repository(
+        let source = codeyard_db_repos::repositories::records::get_repository(
             &ctx.state.pool,
             source_owner,
             source_name,
@@ -713,7 +716,7 @@ async fn create_selection(
             crate::backend::repositories::lifecycle::CreationInput {
                 owner,
                 properties,
-                admission: crate::backend::db::repositories::creation::CreationAdmission {
+                admission: codeyard_db_repos::repositories::creation::CreationAdmission {
                     authority: Some(authority),
                     advisory: None,
                 },

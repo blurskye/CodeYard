@@ -2,7 +2,7 @@
 
 pub mod providers;
 
-use crate::backend::db::users::transitions::AccountAdmission;
+use codeyard_db_identity::users::transitions::AccountAdmission;
 
 use crate::backend::identity::sessions::SessionContext;
 use crate::backend::identity::sessions::SessionIssueError;
@@ -59,7 +59,7 @@ pub async fn begin(
     let meta = providers::provider_meta(provider).ok_or(OAuthError::UnknownProvider)?;
     let (client, _) = providers::provider_credentials(provider).ok_or(OAuthError::Disabled)?;
     require_setup(pool).await?;
-    crate::backend::db::users::sessions::save_bound_oauth_state(
+    codeyard_db_identity::users::sessions::save_bound_oauth_state(
         pool,
         state_token,
         verifier,
@@ -105,7 +105,7 @@ pub async fn complete(
         providers::provider_credentials(provider).ok_or(OAuthError::Disabled)?;
     validate_callback(code, token)?;
     require_setup(pool).await?;
-    let stored = crate::backend::db::users::sessions::consume_bound_oauth_state(
+    let stored = codeyard_db_identity::users::sessions::consume_bound_oauth_state(
         pool,
         token,
         provider,
@@ -140,7 +140,7 @@ pub async fn complete(
     .map_err(|_| OAuthError::ProviderFailed)?;
     let base = providers::username_from_profile(profile.name.as_deref(), &profile.provider_user_id);
     let name = profile.name.as_deref().filter(|name| name.len() <= 255);
-    let user = match crate::backend::db::users::transitions::admit_oauth_account(
+    let user = match codeyard_db_identity::users::transitions::admit_oauth_account(
         pool,
         provider,
         &profile.provider_user_id,

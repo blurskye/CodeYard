@@ -88,7 +88,7 @@ async fn record_secret_bypasses(
 ) -> Result<(), RepoError> {
     let mut failed = false;
     for bypass in bypasses {
-        if let Err(error) = crate::backend::db::secret_scanning::use_bypass(
+        if let Err(error) = codeyard_db_security::secret_scanning::use_bypass(
             pool,
             repo_id,
             actor,
@@ -151,7 +151,7 @@ async fn live_pull_read(
     node_id: Option<Option<i64>>,
 ) -> Result<(), RepoError> {
     if let Some(token) = actor.token {
-        let user = crate::backend::db::users::tokens::token_user(pool, token, false)
+        let user = codeyard_db_identity::users::tokens::token_user(pool, token, false)
             .await
             .map_err(|_| RepoError::authority_unavailable())?
             .filter(|user| user.id == actor.user)
@@ -167,8 +167,8 @@ async fn live_pull_read(
             {
                 return Err(RepoError::new(ErrorKind::Invalid, "repository read denied"));
             }
-        } else if user.username == crate::backend::db::ci_tokens::BOT {
-            let job = crate::backend::db::ci_tokens::get(pool, token)
+        } else if user.username == codeyard_db_core::queries::ci_tokens::BOT {
+            let job = codeyard_db_actions::ci_tokens::get(pool, token)
                 .await
                 .map_err(|_| RepoError::authority_unavailable())?
                 .ok_or_else(|| RepoError::new(ErrorKind::Invalid, "repository read denied"))?;
@@ -178,7 +178,7 @@ async fn live_pull_read(
             if job.repo_id != repo_id || !permissions.allows("contents", false) {
                 return Err(RepoError::new(ErrorKind::Invalid, "repository read denied"));
             }
-        } else if crate::backend::db::fine_grained_tokens::classic_refused_repository(
+        } else if codeyard_db_identity::fine_grained_tokens::classic_refused_repository(
             pool, token, repo_id,
         )
         .await
@@ -197,7 +197,7 @@ async fn live_read(
     path: &Path,
     node_id: Option<Option<i64>>,
 ) -> Result<(), RepoError> {
-    let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| RepoError::authority_unavailable())?
         .filter(|user| !user.is_banned && !user.must_change_password)
@@ -276,7 +276,7 @@ async fn live_pull_head_write(
     branch: Option<&BranchWrite<'_>>,
     history: &History<'_>,
 ) -> Result<codeyard_db_core::models::Repository, RepoError> {
-    let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| RepoError::authority_unavailable())?
         .ok_or_else(RepoError::write_denied)?;
@@ -296,7 +296,7 @@ async fn live_pull_head_write(
             }
             _ => RepoError::write_denied(),
         })?;
-    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         pool,
         request.pull_request_id,
     )
@@ -367,7 +367,7 @@ async fn record_branch_update(
     // This receipt also owns pushed-commit totals, not just optional feed decoration.
     // Let database admission finish instead of cancelling a valid insert under contention.
     if let Err(error) =
-        crate::backend::db::activity::record_repository_push(pool, repo_id, actor, branch, count)
+        codeyard_db_repos::activity::record_repository_push(pool, repo_id, actor, branch, count)
             .await
     {
         tracing::warn!(repo_id, %error, "could not record a branch update");
@@ -451,13 +451,13 @@ fn request_storage_size(
                 let size = store.size_bytes().await?.min(i64::MAX as u64) as i64;
                 match store.node_id {
                     Some(node) => {
-                        crate::backend::db::repositories::records::update_repo_size_at(
+                        codeyard_db_repos::repositories::records::update_repo_size_at(
                             &pool, repo_id, size, node,
                         )
                         .await
                     }
                     None => {
-                        crate::backend::db::repositories::records::update_repo_size(
+                        codeyard_db_repos::repositories::records::update_repo_size(
                             &pool, repo_id, size,
                         )
                         .await
@@ -528,7 +528,7 @@ pub async fn begin_ref_change(
 ) -> Result<RefChange, RepoError> {
     require_legacy_publisher(pool, repo_id).await?;
     let change = count_ref_change(path).await;
-    match crate::backend::db::cluster::bump_write_version(pool, repo_id, node_id).await {
+    match codeyard_db_cluster::cluster::bump_write_version(pool, repo_id, node_id).await {
         Ok(true) => Ok(change),
         Ok(false) => Err(RepoError::write_denied()),
         Err(error) => {
@@ -551,12 +551,12 @@ pub(crate) async fn begin_coordinated_ref_change(
     path: &Path,
     node_id: Option<Option<i64>>,
 ) -> Result<RefChange, RepoError> {
-    let repository = crate::backend::db::repositories::records::get_repository_by_id(pool, repo_id)
+    let repository = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)
         .await
         .map_err(|_| RepoError::authority_unavailable())?
         .ok_or_else(RepoError::write_denied)?;
     if repository.storage_node_id.is_some()
-        && crate::backend::db::cluster::writes::write_settings(pool)
+        && codeyard_db_cluster::cluster::writes::write_settings(pool)
             .await
             .map_err(RepoError::from)?
             .write_quorum
@@ -640,11 +640,11 @@ pub(super) async fn recover_term(
     use crate::backend::cluster::context::term_path;
 
     use anyhow::{ensure, Context};
-    let view = crate::backend::db::cluster::writes::recovery_view(pool, repository).await?;
+    let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, repository).await?;
     if view.serving || !view.voters.iter().any(|voter| voter.node_id == node) {
         return Ok(());
     }
-    let row = crate::backend::db::repositories::records::get_repository_by_id(pool, repository)
+    let row = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository)
         .await?
         .context("repository was deleted during recovery")?;
     let uuid = crate::backend::repositories::store::rpc::repository_uuid(&row.disk_path)?;
@@ -727,7 +727,7 @@ pub(super) async fn recover_term(
             }
         }
         staged.verify_canonical(&view.refs).await?;
-        let current = crate::backend::db::cluster::writes::recovery_view(pool, repository).await?;
+        let current = codeyard_db_cluster::cluster::writes::recovery_view(pool, repository).await?;
         ensure!(
             !current.serving
                 && current.term == view.term
@@ -751,7 +751,7 @@ pub(super) async fn recover_term(
     crate::backend::cluster::context::literal_directory(root, &target).await?;
     target_store.verify_canonical(&view.refs).await?;
     ensure!(
-        crate::backend::db::cluster::writes::mark_write_applied(
+        codeyard_db_cluster::cluster::writes::mark_write_applied(
             pool,
             repository,
             node,
@@ -763,7 +763,7 @@ pub(super) async fn recover_term(
     );
     if let Some(write) = &view.unfinished {
         // A committed operation is released only once both reconstructed copies are durable.
-        crate::backend::db::cluster::writes::finish_write(pool, &write.id, view.term).await?;
+        codeyard_db_cluster::cluster::writes::finish_write(pool, &write.id, view.term).await?;
     }
     Ok(())
 }
@@ -1017,7 +1017,7 @@ impl LocalStore {
         token: Option<i64>,
     ) -> Result<(), RepoError> {
         let Some(token) = token else { return Ok(()) };
-        if !crate::backend::db::users::tokens::repository_write(
+        if !codeyard_db_identity::users::tokens::repository_write(
             pool, token, actor, repo, "contents",
         )
         .await
@@ -1271,7 +1271,7 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        authority: crate::backend::db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
         source: &LocalStore,
         options: &crate::backend::repositories::store::CopyOptions,
     ) -> Result<(), RepoError> {
@@ -1298,7 +1298,7 @@ impl LocalStore {
         .await
         .map_err(RepoError::from)?;
         if options.template {
-            let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
+            let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
                 .await
                 .map_err(RepoError::from)?
                 .ok_or_else(RepoError::write_denied)?;
@@ -1315,13 +1315,10 @@ impl LocalStore {
         }
         live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
         if options.template
-            && !crate::backend::db::repositories::records::get_repository_by_id(
-                pool,
-                source_repo_id,
-            )
-            .await
-            .map_err(RepoError::from)?
-            .is_some_and(|repo| repo.is_template)
+            && !codeyard_db_repos::repositories::records::get_repository_by_id(pool, source_repo_id)
+                .await
+                .map_err(RepoError::from)?
+                .is_some_and(|repo| repo.is_template)
         {
             return Err(RepoError::new(
                 ErrorKind::Invalid,
@@ -1368,7 +1365,7 @@ impl LocalStore {
         .refs()
         .await?;
         let owner =
-            crate::backend::db::repositories::records::repository_owner_names(pool, &[repo_id])
+            codeyard_db_repos::repositories::records::repository_owner_names(pool, &[repo_id])
                 .await
                 .map_err(RepoError::from)?
                 .remove(&repo_id)
@@ -1412,7 +1409,7 @@ impl LocalStore {
         tokio::fs::rename(temporary.path(), self.path())
             .await
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
-        if !crate::backend::db::cluster::bump_write_version(pool, repo_id, self.node_id)
+        if !codeyard_db_cluster::cluster::bump_write_version(pool, repo_id, self.node_id)
             .await
             .map_err(RepoError::from)?
         {
@@ -2125,7 +2122,7 @@ impl LocalStore {
         live_pull_read(pool, repo_id, actor, self.path(), self.node_id).await?;
         // An export locks the repository under this same lock before it copies the Git data, so
         // a head published into a locked repository would be missing from the archive.
-        if crate::backend::db::repository_exports::locked(pool, repo_id)
+        if codeyard_db_repos::repository_exports::locked(pool, repo_id)
             .await
             .map_err(|_| RepoError::authority_unavailable())?
         {
@@ -2143,7 +2140,7 @@ impl LocalStore {
             .scope(self.publish_quorum_refs(pool, repo_id, &changes, async {
                 live_pull_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
                 live_pull_read(pool, repo_id, actor, self.path(), self.node_id).await?;
-                if crate::backend::db::repository_exports::locked(pool, repo_id)
+                if codeyard_db_repos::repository_exports::locked(pool, repo_id)
                     .await
                     .map_err(|_| RepoError::authority_unavailable())?
                 {
@@ -2173,7 +2170,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        authority: crate::backend::db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
         name: &str,
         sha: &str,
     ) -> Result<String, RepoError> {
@@ -2284,7 +2281,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        authority: crate::backend::db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
         reference: &str,
         sha: &str,
         force: bool,
@@ -2436,7 +2433,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        authority: crate::backend::db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
         name: &str,
     ) -> Result<(), RepoError> {
         self.admitted_path(false).await?;
@@ -2523,7 +2520,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        authority: crate::backend::db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
         name: &str,
         sha: &str,
         message: Option<&str>,
@@ -2647,7 +2644,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        authority: crate::backend::db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
         name: &str,
     ) -> Result<(), RepoError> {
         self.admitted_path(false).await?;
@@ -2779,9 +2776,7 @@ impl LocalStore {
         repo_id: i64,
         actor: i64,
         prepared: &crate::backend::repositories::store::editor::PreparedFile,
-        dependency_publication: Option<
-            &crate::backend::db::repositories::dependencies::Publication,
-        >,
+        dependency_publication: Option<&codeyard_db_repos::repositories::dependencies::Publication>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<CommitInfo, RepoError>> + Send>>
     {
         let (store, pool, prepared, dependency_publication) = (
@@ -2813,9 +2808,7 @@ impl LocalStore {
         repo_id: i64,
         actor: i64,
         prepared: &crate::backend::repositories::store::editor::PreparedFile,
-        dependency_publication: Option<
-            &crate::backend::db::repositories::dependencies::Publication,
-        >,
+        dependency_publication: Option<&codeyard_db_repos::repositories::dependencies::Publication>,
     ) -> Result<CommitInfo, RepoError> {
         self.admitted_path(false).await?;
         let staged =
@@ -2864,14 +2857,14 @@ impl LocalStore {
         .await?;
         if prepared.web_commit {
             let settings =
-                crate::backend::db::organizations::settings::repository_requires_web_signoff(
+                codeyard_db_orgs::organizations::settings::repository_requires_web_signoff(
                     pool, repo_id,
                 )
                 .await
                 .map_err(|_| RepoError::authority_unavailable())?
                 .ok_or_else(RepoError::write_denied)?;
             if settings
-                && !crate::backend::db::organizations::settings::has_signoff(
+                && !codeyard_db_orgs::organizations::settings::has_signoff(
                     &prepared.commit.message,
                     &prepared.commit.author_name,
                     &prepared.commit.author_email,
@@ -2879,7 +2872,7 @@ impl LocalStore {
             {
                 return Err(RepoError::new(
                     ErrorKind::Invalid,
-                    crate::backend::db::organizations::settings::required_signoff_message(
+                    codeyard_db_orgs::organizations::settings::required_signoff_message(
                         &prepared.commit.author_name,
                         &prepared.commit.author_email,
                     ),
@@ -2894,7 +2887,7 @@ impl LocalStore {
                 update,
                 &self.refs().await?,
             )?;
-            crate::backend::db::repositories::dependencies::plan_update(
+            codeyard_db_repos::repositories::dependencies::plan_update(
                 pool,
                 &update.job,
                 &update.key,
@@ -3053,7 +3046,7 @@ impl LocalStore {
         // In-flight contributor proofs may have observed the pre-publication head after
         // the preparation-time version bump. Invalidate them before other follow-ups.
         let contributors =
-            crate::backend::db::repositories::records::advance_contribution_version(pool, repo_id)
+            codeyard_db_repos::repositories::records::advance_contribution_version(pool, repo_id)
                 .await
                 .map_err(|_| RepoError::applied_followup_failed());
         let activity = crate::backend::repositories::activity::record_moves(
@@ -3071,7 +3064,7 @@ impl LocalStore {
         let metadata = self.synchronize_default_branch(pool, repo_id).await;
         refresh_storage_size(pool.clone(), repo_id, self.clone());
         let repository =
-            crate::backend::db::repositories::records::get_repository_by_id(pool, repo_id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)
                 .await
                 .map_err(|_| RepoError::applied_followup_failed())?
                 .ok_or_else(RepoError::applied_followup_failed)?;
@@ -3079,7 +3072,7 @@ impl LocalStore {
         // Evaluate-only reporting must neither hide accepted native writes nor skip other
         // follow-ups when its storage is unavailable.
         let suites: anyhow::Result<()> = async {
-            let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
+            let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("rule suite actor is unavailable"))?;
             let updates: Vec<_> = moves
@@ -3114,11 +3107,11 @@ impl LocalStore {
                 .filter(|(_, _, new)| new != crate::backend::repositories::store::editor::ZERO)
             {
                 // Web and API saves get the same incremental secret scan that a push gets.
-                crate::backend::db::secret_scanning::enqueue(pool, repo_id, new, actor)
+                codeyard_db_security::secret_scanning::enqueue(pool, repo_id, new, actor)
                     .await
                     .map_err(|_| RepoError::applied_followup_failed())?;
                 match self.commit(new).await {
-                    Ok(commit) => crate::backend::db::ci::record_ci_accepted_push(
+                    Ok(commit) => codeyard_db_actions::ci::record_ci_accepted_push(
                         pool,
                         repo_id,
                         actor,
@@ -3171,7 +3164,7 @@ impl LocalStore {
                 if current.as_deref() != Some(&target) {
                     self.set_head_target(&target).await?;
                 }
-                crate::backend::db::repositories::records::update_repo_default_branch(
+                codeyard_db_repos::repositories::records::update_repo_default_branch(
                     pool, repo_id, &branch,
                 )
                 .await?;
@@ -3262,7 +3255,7 @@ impl LocalStore {
         )
         .await?;
         // This PR-scoped consent is deliberately not general repository write access.
-        let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
+        let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
             .await
             .map_err(|_| RepoError::authority_unavailable())?
             .ok_or_else(RepoError::write_denied)?;
@@ -3482,8 +3475,8 @@ impl LocalStore {
         method: MergeMethod,
         via: WriteVia,
         token: Option<i64>,
-        credential: Option<&crate::backend::db::credentials::Actor>,
-        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
+        credential: Option<&codeyard_db_core::queries::credentials::Actor>,
+        policy: Option<codeyard_db_repos::pull_requests::merge_policy::Snapshot>,
     ) -> Result<(), RepoError> {
         self.publish_merge_authorized(
             pool,
@@ -3548,8 +3541,8 @@ impl LocalStore {
         via: WriteVia,
         token: Option<i64>,
         authority: Option<&AsyncMergePublication>,
-        credential: Option<&crate::backend::db::credentials::Actor>,
-        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
+        credential: Option<&codeyard_db_core::queries::credentials::Actor>,
+        policy: Option<codeyard_db_repos::pull_requests::merge_policy::Snapshot>,
     ) -> Result<(), RepoError> {
         self.admitted_path(false).await?;
         let publication = git::locks::publication(self.path())
@@ -3609,12 +3602,12 @@ impl LocalStore {
                 return Err(RepoError::merge_method_not_allowed());
             }
             if let Some(authority) = authority {
-                crate::backend::db::users::tokens::token_user(pool, authority.token_id, true)
+                codeyard_db_identity::users::tokens::token_user(pool, authority.token_id, true)
                     .await
                     .map_err(|_| RepoError::authority_unavailable())?
                     .filter(|u| u.id == actor)
                     .ok_or_else(RepoError::write_denied)?;
-                let request = crate::backend::db::pull_requests::async_merge::get(
+                let request = codeyard_db_repos::pull_requests::async_merge::get(
                     pool,
                     repo_id,
                     authority.pull_request_id,
@@ -3624,7 +3617,7 @@ impl LocalStore {
                 .map_err(|_| RepoError::authority_unavailable())?
                 .filter(|r| r.status == "pending" && r.token_id == Some(authority.token_id))
                 .ok_or_else(RepoError::write_denied)?;
-                let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+                let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
                     pool,
                     authority.pull_request_id,
                 )
@@ -3663,10 +3656,10 @@ impl LocalStore {
             // The policy the merge was judged under must still hold as the last step before the ref
             // moves. No transaction is held across the Git process.
             if let Some(expected) = &policy {
-                crate::backend::db::pull_requests::merge_policy::check(pool, repo_id, expected)
+                codeyard_db_repos::pull_requests::merge_policy::check(pool, repo_id, expected)
                     .await
                     .map_err(|error| {
-                        if error.is::<crate::backend::db::pull_requests::merge_policy::Changed>() {
+                        if error.is::<codeyard_db_repos::pull_requests::merge_policy::Changed>() {
                             RepoError::new(ErrorKind::Conflict, error.to_string())
                         } else {
                             RepoError::authority_unavailable()
@@ -3761,7 +3754,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        authority: crate::backend::db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
         stack_id: i64,
         versions: &[(i64, i64)],
         base_branch: &str,
@@ -3815,11 +3808,10 @@ impl LocalStore {
             .collect();
         // Retargeting, closing, unstacking and joining change only the database, so the stack is
         // compared here, after the lock wait and the checks, right before the refs move.
-        let current = crate::backend::db::pull_requests::records::list_stack_versions(
-            pool, repo_id, stack_id,
-        )
-        .await
-        .map_err(|_| unavailable("Repository storage is unavailable."))?;
+        let current =
+            codeyard_db_repos::pull_requests::records::list_stack_versions(pool, repo_id, stack_id)
+                .await
+                .map_err(|_| unavailable("Repository storage is unavailable."))?;
         if current != versions {
             return Err(RepoError::stack_changed());
         }
@@ -3903,7 +3895,7 @@ impl LocalStore {
                     &repository,
                 )
                 .await?;
-                let current = crate::backend::db::pull_requests::records::list_stack_versions(
+                let current = codeyard_db_repos::pull_requests::records::list_stack_versions(
                     pool, repo_id, stack_id,
                 )
                 .await
@@ -4166,7 +4158,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: crate::backend::db::credentials::Actor,
+        actor: codeyard_db_core::queries::credentials::Actor,
         name: &str,
     ) -> Result<(), RepoError> {
         self.patch_repository(pool, repo_id, actor, name, Default::default())
@@ -4180,7 +4172,7 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        authority: crate::backend::db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
         new_owner: &str,
     ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         let actor = authority.user_id;
@@ -4215,7 +4207,7 @@ impl LocalStore {
                 &store.refs().await?,
             )
             .await?;
-            crate::backend::db::repositories::records::transfer_repository_checked(
+            codeyard_db_repos::repositories::records::transfer_repository_checked(
                 &pool,
                 authority,
                 repo_id,
@@ -4250,8 +4242,8 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
-        credential: crate::backend::db::users::accounts::OwnedAccountCredential,
-        feature: crate::backend::db::repositories::dependencies::Feature,
+        credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential,
+        feature: codeyard_db_repos::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
     ) -> Result<(), RepoError> {
@@ -4268,7 +4260,7 @@ impl LocalStore {
                 store.node_id,
             )
             .await?;
-            crate::backend::db::repositories::dependencies::configure(
+            codeyard_db_repos::repositories::dependencies::configure(
                 &pool,
                 (actor, &credential),
                 repo_id,
@@ -4300,7 +4292,7 @@ impl LocalStore {
             let (tag, publishing) = match &mut mutation {
                 Mutation::Create { tag, fields, .. } => (tag.clone(), !fields.is_draft),
                 Mutation::Update { id, changes } => {
-                    let current = crate::backend::db::releases::get_release(&pool, repo_id, *id)
+                    let current = codeyard_db_repos::releases::get_release(&pool, repo_id, *id)
                         .await
                         .map_err(|_| unavailable("Release storage unavailable"))?
                         .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Release not found"))?
@@ -4371,11 +4363,11 @@ impl LocalStore {
                     .first()
                     .ok_or_else(|| RepoError::new(ErrorKind::Invalid, "Missing release signature"))?
                     .keyid;
-                let verified = if crate::backend::db::cluster::is_active_node(&pool, key)
+                let verified = if codeyard_db_cluster::cluster::is_active_node(&pool, key)
                     .await
                     .map_err(|_| RepoError::authority_unavailable())?
                 {
-                    crate::backend::db::repositories::immutable_releases::Publication::verify(
+                    codeyard_db_repos::repositories::immutable_releases::Publication::verify(
                         attestation,
                         key,
                     )
@@ -4411,7 +4403,7 @@ impl LocalStore {
             };
             let result = match mutation {
                 Mutation::Create { tag, fields, .. } => {
-                    crate::backend::db::releases::create_release_with_publication(
+                    codeyard_db_repos::releases::create_release_with_publication(
                         &pool,
                         actor,
                         repo_id,
@@ -4427,7 +4419,7 @@ impl LocalStore {
                     })
                 }
                 Mutation::Update { id, changes } => {
-                    crate::backend::db::releases::update_release_with_publication(
+                    codeyard_db_repos::releases::update_release_with_publication(
                         &pool,
                         actor,
                         repo_id,
@@ -4439,7 +4431,7 @@ impl LocalStore {
                 }
             };
             result.map_err(|error| {
-                use crate::backend::db::releases::ReleaseRefusal;
+                use codeyard_db_repos::releases::ReleaseRefusal;
                 let kind = match error.downcast_ref::<ReleaseRefusal>() {
                     Some(ReleaseRefusal::Denied) => return RepoError::write_denied(),
                     Some(ReleaseRefusal::NotFound) => ErrorKind::NotFound,
@@ -4458,9 +4450,9 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: crate::backend::db::credentials::Actor,
+        actor: codeyard_db_core::queries::credentials::Actor,
         name: &str,
-        changes: crate::backend::db::repositories::records::RepositoryChanges<String>,
+        changes: codeyard_db_repos::repositories::records::RepositoryChanges<String>,
     ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         // Publication and compensation finish even when the client disconnects.
         let (store, pool, name) = (self.clone(), pool.clone(), name.to_owned());
@@ -4475,11 +4467,11 @@ impl LocalStore {
 
     async fn settings_authority(
         &self,
-        pool: &crate::backend::db::DbPool,
+        pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        authority: &crate::backend::db::credentials::Actor,
-        changes: &crate::backend::db::repositories::records::RepositoryChanges<String>,
-    ) -> Result<crate::backend::db::models::Repository, RepoError> {
+        authority: &codeyard_db_core::queries::credentials::Actor,
+        changes: &codeyard_db_repos::repositories::records::RepositoryChanges<String>,
+    ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         let repository =
             crate::backend::repositories::access::check_admin(pool, repo_id, authority.user_id)
                 .await
@@ -4519,9 +4511,9 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        authority: crate::backend::db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
         name: &str,
-        changes: &crate::backend::db::repositories::records::RepositoryChanges<String>,
+        changes: &codeyard_db_repos::repositories::records::RepositoryChanges<String>,
     ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         self.admitted_path(false).await?;
         let publication = git::locks::publication(self.path())
@@ -4532,7 +4524,7 @@ impl LocalStore {
             .await?;
         let checked_owner = if let Some(destination) = changes.name.as_deref() {
             let owner =
-                crate::backend::db::repositories::records::repository_owner_names(pool, &[repo_id])
+                codeyard_db_repos::repositories::records::repository_owner_names(pool, &[repo_id])
                     .await
                     .map_err(RepoError::from)?
                     .remove(&repo_id)
@@ -4591,7 +4583,7 @@ impl LocalStore {
         {
             publication.scope(self.set_head_target(&reference)).await?;
         }
-        let updated = crate::backend::db::repositories::records::patch_repository_and_default(
+        let updated = codeyard_db_repos::repositories::records::patch_repository_and_default(
             pool,
             authority,
             repo_id,
@@ -4605,14 +4597,14 @@ impl LocalStore {
             Err(error) => {
                 // A failed COMMIT acknowledgement may still have committed. Do not roll HEAD
                 // back when the database already names the requested default.
-                use crate::backend::db::repositories::records::RepositorySettingsRefusal;
+                use codeyard_db_repos::repositories::records::RepositorySettingsRefusal;
                 let must_restore = if error.downcast_ref::<RepositorySettingsRefusal>().is_some()
                     || error.is::<codeyard_support::credentials::AccountRestricted>()
                     || previous.default_branch == name
                 {
                     true
                 } else {
-                    match crate::backend::db::repositories::records::get_repository_by_id(
+                    match codeyard_db_repos::repositories::records::get_repository_by_id(
                         pool, repo_id,
                     )
                     .await
@@ -4705,7 +4697,7 @@ impl LocalStore {
                 receive.ok_or_else(|| anyhow::anyhow!("receive resources required"))?;
             let uuid = crate::backend::repositories::store::rpc::repository_uuid(&self.disk_path)?;
             let repo =
-                crate::backend::db::cluster::get_repository_by_uuid(&pool, &uuid.to_string())
+                codeyard_db_cluster::cluster::get_repository_by_uuid(&pool, &uuid.to_string())
                     .await?
                     .ok_or_else(|| anyhow::anyhow!("repository unavailable"))?;
             crate::backend::cluster::context::check_term_directory(

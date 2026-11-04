@@ -44,7 +44,7 @@ impl World {
             let repository = codeyard::backend::repositories::lifecycle::provision(
                 (database.pool(), None),
                 root.path(),
-                codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
                     alice_id,
                 ),
                 name,
@@ -60,7 +60,7 @@ impl World {
         }
         let proj = proj.unwrap();
         for user in [bob_id, carol_id, dave_id] {
-            codeyard::backend::db::repositories::access::grant_repo_access(
+            codeyard_db_repos::repositories::access::grant_repo_access(
                 database.pool(),
                 user,
                 proj,
@@ -112,7 +112,7 @@ async fn notices(
     user: i64,
     kind: &str,
 ) -> Vec<codeyard_db_core::models::Notification> {
-    codeyard::backend::db::notifications::records::list_notifications_for_user(
+    codeyard_db_repos::notifications::records::list_notifications_for_user(
         world.pool(),
         user,
         100,
@@ -220,13 +220,13 @@ async fn deleted_comments_take_their_mention_notices(pg: bool) {
     assert!(mentions(&world, world.bob_id).await.is_empty());
     // A delayed recipient from the original fan-out cannot recreate the deleted text.
     let repo =
-        codeyard::backend::db::repositories::records::get_repository(world.pool(), "alice", "proj")
+        codeyard_db_repos::repositories::records::get_repository(world.pool(), "alice", "proj")
             .await
             .unwrap()
             .unwrap();
-    let delayed = codeyard::backend::db::notifications::records::create_notification(
+    let delayed = codeyard_db_repos::notifications::records::create_notification(
         world.pool(),
-        codeyard::backend::db::notifications::records::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: world.bob_id,
             actor_id: Some(world.alice_id),
             repo_id: Some(repo.id),
@@ -240,10 +240,10 @@ async fn deleted_comments_take_their_mention_notices(pg: bool) {
     .await;
     assert!(delayed
         .unwrap_err()
-        .is::<codeyard::backend::db::notifications::records::NotificationSuppressed>());
-    let delayed_pull = codeyard::backend::db::notifications::records::create_notification(
+        .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
+    let delayed_pull = codeyard_db_repos::notifications::records::create_notification(
         world.pool(),
-        codeyard::backend::db::notifications::records::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: world.bob_id,
             actor_id: Some(world.alice_id),
             repo_id: Some(repo.id),
@@ -257,7 +257,7 @@ async fn deleted_comments_take_their_mention_notices(pg: bool) {
     .await;
     assert!(delayed_pull
         .unwrap_err()
-        .is::<codeyard::backend::db::notifications::records::NotificationSuppressed>());
+        .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
     assert!(mentions(&world, world.bob_id).await.is_empty());
     world.close().await;
 }
@@ -416,7 +416,7 @@ async fn issue_author_gets_one_notice_for_a_comment(pg: bool) {
             StatusCode::CREATED,
         )
         .await;
-    let all = codeyard::backend::db::notifications::records::list_notifications_for_user(
+    let all = codeyard_db_repos::notifications::records::list_notifications_for_user(
         world.pool(),
         world.bob_id,
         100,
@@ -653,18 +653,15 @@ async fn restricted_accounts_do_not_use_the_budget(pg: bool) {
 
 async fn unreadable_names_are_bounded_per_write(pg: bool) {
     let world = World::new(pg).await;
-    let vault = codeyard::backend::db::repositories::records::get_repository(
-        world.pool(),
-        "alice",
-        "vault",
-    )
-    .await
-    .unwrap()
-    .unwrap()
-    .id;
+    let vault =
+        codeyard_db_repos::repositories::records::get_repository(world.pool(), "alice", "vault")
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
     // Bob and carol can read the private repository. Three hundred other users cannot.
     for user in [world.bob_id, world.carol_id] {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             world.pool(),
             user,
             vault,
@@ -871,7 +868,7 @@ async fn sqlite_native_form_issue_mentions() {
 async fn watch_levels(pg: bool) {
     let world = World::new(pg).await;
     let proj =
-        codeyard::backend::db::repositories::records::get_repository(world.pool(), "alice", "proj")
+        codeyard_db_repos::repositories::records::get_repository(world.pool(), "alice", "proj")
             .await
             .unwrap()
             .unwrap();
@@ -880,7 +877,7 @@ async fn watch_levels(pg: bool) {
         (world.carol_id, "custom", "pulls"),
         (world.dave_id, "ignoring", ""),
     ] {
-        codeyard::backend::db::repositories::engagement::set_watch_level(
+        codeyard_db_repos::repositories::engagement::set_watch_level(
             world.pool(),
             user,
             proj.id,
@@ -928,20 +925,20 @@ async fn sqlite_watch_levels() {
 async fn watchers_past_the_first_batch_are_notified(pg: bool) {
     let world = World::new(pg).await;
     let proj =
-        codeyard::backend::db::repositories::records::get_repository(world.pool(), "alice", "proj")
+        codeyard_db_repos::repositories::records::get_repository(world.pool(), "alice", "proj")
             .await
             .unwrap()
             .unwrap();
     // Two hundred custom watchers who picked pull requests come before the one who picked issues.
     for index in 0..200 {
-        let user = codeyard::backend::db::users::accounts::create_user(
+        let user = codeyard_db_identity::users::accounts::create_user(
             world.pool(),
             &format!("pulls{index}"),
             None,
         )
         .await
         .unwrap();
-        codeyard::backend::db::repositories::engagement::set_watch_level(
+        codeyard_db_repos::repositories::engagement::set_watch_level(
             world.pool(),
             user.id,
             proj.id,
@@ -951,11 +948,10 @@ async fn watchers_past_the_first_batch_are_notified(pg: bool) {
         .await
         .unwrap();
     }
-    let late =
-        codeyard::backend::db::users::accounts::create_user(world.pool(), "lateissues", None)
-            .await
-            .unwrap();
-    codeyard::backend::db::repositories::engagement::set_watch_level(
+    let late = codeyard_db_identity::users::accounts::create_user(world.pool(), "lateissues", None)
+        .await
+        .unwrap();
+    codeyard_db_repos::repositories::engagement::set_watch_level(
         world.pool(),
         late.id,
         proj.id,
@@ -967,14 +963,14 @@ async fn watchers_past_the_first_batch_are_notified(pg: bool) {
     // Two hundred "All activity" watchers come after it, so the reads take a second batch.
     let mut last_watcher = None;
     for index in 0..200 {
-        let user = codeyard::backend::db::users::accounts::create_user(
+        let user = codeyard_db_identity::users::accounts::create_user(
             world.pool(),
             &format!("watching{index}"),
             None,
         )
         .await
         .unwrap();
-        codeyard::backend::db::repositories::engagement::set_watch_level(
+        codeyard_db_repos::repositories::engagement::set_watch_level(
             world.pool(),
             user.id,
             proj.id,
@@ -986,10 +982,10 @@ async fn watchers_past_the_first_batch_are_notified(pg: bool) {
         last_watcher = Some(user.id);
     }
     let banned =
-        codeyard::backend::db::users::accounts::create_user(world.pool(), "bannedwatch", None)
+        codeyard_db_identity::users::accounts::create_user(world.pool(), "bannedwatch", None)
             .await
             .unwrap();
-    codeyard::backend::db::repositories::engagement::set_watch_level(
+    codeyard_db_repos::repositories::engagement::set_watch_level(
         world.pool(),
         banned.id,
         proj.id,

@@ -96,7 +96,7 @@ async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUse
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let authority = (admin.id, session).into();
-    let snapshot = crate::backend::db::users::accounts::admin_users_page(
+    let snapshot = codeyard_db_identity::users::accounts::admin_users_page(
         &ctx.state.pool,
         &authority,
         listing.search,
@@ -137,15 +137,16 @@ async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUse
             created: user.created_at.format("%b %e, %Y").to_string(),
         })
         .collect();
-    let managed_accounts = crate::backend::db::node_config::get_node_configuration(&ctx.state.pool)
-        .await
-        .map_err(|_| {
-            ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Unable to load account settings.",
-            )
-        })?
-        .is_some_and(|config| config.is_private());
+    let managed_accounts =
+        codeyard_db_cluster::node_config::get_node_configuration(&ctx.state.pool)
+            .await
+            .map_err(|_| {
+                ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load account settings.",
+                )
+            })?
+            .is_some_and(|config| config.is_private());
     let (requests, requests_count, requests_page) =
         load_requests(ctx, listing.requests_page).await?;
     Ok(AdminUsers {
@@ -311,7 +312,7 @@ pub(crate) async fn new_user_get(
     if let Err(response) = require_account(&ctx, true) {
         return response;
     }
-    match crate::backend::db::node_config::get_node_configuration(&ctx.state.pool).await {
+    match codeyard_db_cluster::node_config::get_node_configuration(&ctx.state.pool).await {
         Ok(config) if config.as_ref().is_some_and(|config| config.is_private()) => {
             new_user_response(&ctx, &Fields::new(), StatusCode::OK, None)
         }

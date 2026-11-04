@@ -14,13 +14,13 @@ use crate::backend::cluster::transport::Relay;
 use crate::backend::cluster::transport::ALPN_PAIR;
 use crate::backend::cluster::transport::CLOSE_UNAVAILABLE;
 
-use crate::backend::db::cluster::Authority;
-use crate::backend::db::cluster::DeclaredMember;
-use crate::backend::db::cluster::JoinRequest;
-use crate::backend::db::cluster::NewJoinToken;
 use crate::backend::node::NodeRoles;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use codeyard_db_cluster::cluster::Authority;
+use codeyard_db_cluster::cluster::DeclaredMember;
+use codeyard_db_cluster::cluster::JoinRequest;
+use codeyard_db_cluster::cluster::NewJoinToken;
 use codeyard_db_core::models::JoinOutcome;
 use codeyard_db_core::models::NodeStatusChange;
 use codeyard_db_core::DbPool;
@@ -236,7 +236,7 @@ pub async fn create_invite(
         "an invite can be valid for at most 365d"
     );
     let ticket = JoinTicket::new(node, address)?;
-    crate::backend::db::cluster::create_join_token(
+    codeyard_db_cluster::cluster::create_join_token(
         pool,
         NewJoinToken {
             token_hash: &ticket.secret_hash(),
@@ -465,7 +465,7 @@ impl PairingHandler {
                         .all(|byte| byte.is_ascii_alphanumeric() || b".-+".contains(&byte))
             })
             .unwrap_or("unknown");
-        let outcome = crate::backend::db::cluster::join_with_token(
+        let outcome = codeyard_db_cluster::cluster::join_with_token(
             &self.pool,
             JoinRequest {
                 token_hash: &hash_secret(&secret),
@@ -615,7 +615,7 @@ pub async fn apply_declared_nodes(
         .collect();
     // Two core nodes that start together lock the rows in the same order, so they cannot deadlock.
     members.sort_by(|a, b| a.public_key.cmp(&b.public_key));
-    let rows = crate::backend::db::cluster::upsert_declared_nodes(pool, &members)
+    let rows = codeyard_db_cluster::cluster::upsert_declared_nodes(pool, &members)
         .await
         .context("cannot apply the declared node list")?;
     let mut summary = DeclaredSummary::default();
@@ -636,7 +636,7 @@ pub async fn approve(
     authority: Authority<'_>,
     name: &str,
 ) -> Result<NodeStatusChange> {
-    crate::backend::db::cluster::set_node_status(pool, authority, &normalize_name(name)?, "active")
+    codeyard_db_cluster::cluster::set_node_status(pool, authority, &normalize_name(name)?, "active")
         .await
 }
 
@@ -646,8 +646,13 @@ pub async fn revoke(
     authority: Authority<'_>,
     name: &str,
 ) -> Result<NodeStatusChange> {
-    crate::backend::db::cluster::set_node_status(pool, authority, &normalize_name(name)?, "revoked")
-        .await
+    codeyard_db_cluster::cluster::set_node_status(
+        pool,
+        authority,
+        &normalize_name(name)?,
+        "revoked",
+    )
+    .await
 }
 
 #[cfg(test)]

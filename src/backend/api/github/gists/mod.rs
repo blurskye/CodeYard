@@ -3,9 +3,9 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::gists::GistList;
-use crate::backend::db::gists::GistRefusal;
-use crate::backend::db::gists::ListScope;
+use codeyard_db_repos::gists::GistList;
+use codeyard_db_repos::gists::GistRefusal;
+use codeyard_db_repos::gists::ListScope;
 
 use crate::backend::repositories::lifecycle::LifecycleFailure;
 use crate::backend::repositories::lifecycle::StorageError;
@@ -247,7 +247,7 @@ async fn collection(
             .await
             .map_err(failure)?;
     }
-    let mut entries = crate::backend::db::gists::list(
+    let mut entries = codeyard_db_repos::gists::list(
         &state.pool,
         &GistList {
             scope,
@@ -576,7 +576,7 @@ async fn forks(
         .await
         .map_err(failure)?;
     let (offset, limit) = page.window()?;
-    let mut forks = crate::backend::db::gists::list(
+    let mut forks = codeyard_db_repos::gists::list(
         &state.pool,
         &GistList {
             scope: ListScope::Forks(loaded.repository.id),
@@ -611,7 +611,7 @@ async fn check(
         .await
         .map_err(failure)?;
     Ok(
-        if crate::backend::db::gists::starred(&state.pool, actor.user.id, gist.repo_id)
+        if codeyard_db_repos::gists::starred(&state.pool, actor.user.id, gist.repo_id)
             .await
             .map_err(Error::unavailable)?
         {
@@ -632,7 +632,7 @@ async fn change_star(
     let gist = crate::backend::gists::metadata(&state.pool, &id)
         .await
         .map_err(failure)?;
-    crate::backend::db::gists::star(
+    codeyard_db_repos::gists::star(
         &state.pool,
         actor.user.id,
         &actor.credential(),

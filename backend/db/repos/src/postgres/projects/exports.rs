@@ -1,0 +1,72 @@
+use crate::postgres::projects::exports::fields_page;
+use crate::postgres::projects::exports::fields_window;
+use crate::postgres::projects::exports::list_page;
+use crate::postgres::projects::exports::list_window;
+use crate::postgres::projects::fields;
+use crate::postgres::projects::readable;
+
+pub async fn list_page(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    owner: Owner,
+    after: i64,
+    limit: i64,
+) -> Result<Vec<Project>> {
+    list_window(pool, viewer, owner, after, i64::MAX, limit).await
+}
+
+pub async fn list_window(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    owner: Owner,
+    after: i64,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<Project>> {
+    anyhow::ensure!(
+        after >= 0 && before > after && (1..=101).contains(&limit),
+        Refusal::Invalid
+    );
+    let (kind, id) = owner.parts();
+    let direction = if before < i64::MAX { "DESC" } else { "ASC" };
+    Ok(sqlx::query_as(&format!("SELECT * FROM projects p WHERE p.owner_kind=$1 AND p.owner_id=$2 AND {} AND p.id>$4 AND p.id<$5 ORDER BY p.id {direction} LIMIT $6", crate::projects::readable_condition("$3")))
+        .bind(kind).bind(id).bind(viewer).bind(after).bind(before).bind(limit).fetch_all(pool).await?)
+}
+
+pub async fn fields_page(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    after: i64,
+    limit: i64,
+) -> Result<Vec<Field>> {
+    fields_window(pool, viewer, project, after, i64::MAX, limit).await
+}
+
+pub async fn fields_window(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<Field>> {
+    anyhow::ensure!(
+        after >= 0 && before > after && (1..=101).contains(&limit),
+        Refusal::Invalid
+    );
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, viewer, project).await?;
+    let direction = if before < i64::MAX { "DESC" } else { "ASC" };
+    let fields = sqlx::query_as(&format!(
+        "SELECT * FROM project_fields WHERE project_id=$1 AND id>$2 AND id<$3 ORDER BY id {direction} LIMIT $4",
+    ))
+    .bind(project)
+    .bind(after)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(fields)
+}

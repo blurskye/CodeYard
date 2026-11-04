@@ -38,7 +38,7 @@ pub async fn create_issue_comment(
         &state.pool,
         &state.notification_broadcaster,
         current_actor.id,
-        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
         owner,
         repo,
         number,
@@ -90,7 +90,7 @@ pub async fn list_issue_comments(
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let (offset, limit) = json_page(query.page, query.per_page)?;
 
-    let issue = crate::backend::db::issues::get_issue(&state.pool, repository.id, number)
+    let issue = codeyard_db_repos::issues::get_issue(&state.pool, repository.id, number)
         .await
         .map_err(|_| storage_unavailable())?
         .ok_or_else(|| {
@@ -100,7 +100,7 @@ pub async fn list_issue_comments(
             )
         })?;
 
-    let comments = crate::backend::db::issues::list_issue_comments(
+    let comments = codeyard_db_repos::issues::list_issue_comments(
         &state.pool,
         issue.id,
         limit as i64,
@@ -115,7 +115,7 @@ pub async fn list_issue_comments(
         responses.push(CommentResponse::new(entry.comment, author));
     }
 
-    crate::backend::db::issues::get_issue_by_id(&state.pool, issue.id)
+    codeyard_db_repos::issues::get_issue_by_id(&state.pool, issue.id)
         .await
         .map_err(|_| storage_unavailable())?
         .filter(|issue| issue.repo_id == repository.id)
@@ -179,7 +179,7 @@ pub(crate) async fn native_comment(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         ctx.require_user()?.id,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -198,7 +198,7 @@ pub(crate) async fn native_comment(
     match result {
         Ok(id) => {
             let position =
-                crate::backend::db::issues::issue_comment_position(&ctx.state.pool, id).await;
+                codeyard_db_repos::issues::issue_comment_position(&ctx.state.pool, id).await;
             let base = format!("{}/{}", repo.view.family_url(kind), number);
             let location = comment_link(&base, id, position);
             Ok(ctx.redirect(&location))
@@ -254,7 +254,7 @@ pub(crate) async fn native_edit_comment(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         ctx.require_user()?.id,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -276,7 +276,7 @@ pub(crate) async fn native_edit_comment(
     match result {
         Ok(id) => {
             let position =
-                crate::backend::db::issues::issue_comment_position(&ctx.state.pool, id).await;
+                codeyard_db_repos::issues::issue_comment_position(&ctx.state.pool, id).await;
             let base = format!("{}/{}", repo.view.family_url(kind), number);
             Ok(ctx.redirect(&comment_link(&base, id, position)))
         }
@@ -311,7 +311,7 @@ pub(crate) async fn native_delete_comment(
     let result = crate::backend::issues::comments::delete_issue_comment(
         &ctx.state.pool,
         ctx.require_user()?.id,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),

@@ -112,7 +112,7 @@ pub(in crate::backend::api::repos) async fn rule_responses(
         .collect();
     ids.sort_unstable();
     ids.dedup();
-    let users = crate::backend::db::users::accounts::get_users_by_ids(pool, &ids)
+    let users = codeyard_db_identity::users::accounts::get_users_by_ids(pool, &ids)
         .await
         .map_err(|_| storage_unavailable())?;
     let users: std::collections::HashMap<_, _> = users
@@ -130,11 +130,11 @@ pub(in crate::backend::api::repos) async fn rule_responses(
         if ids.is_empty() {
             continue;
         }
-        for team in crate::backend::db::repositories::push_teams::by_ids(pool, rule.repo_id, &ids)
+        for team in codeyard_db_repos::repositories::push_teams::by_ids(pool, rule.repo_id, &ids)
             .await
             .map_err(|_| storage_unavailable())?
         {
-            if crate::backend::db::organizations::teams::get_team_by_id(pool, actor, team.team.id)
+            if codeyard_db_orgs::organizations::teams::get_team_by_id(pool, actor, team.team.id)
                 .await
                 .map_err(|_| storage_unavailable())?
                 .is_some()
@@ -189,12 +189,12 @@ fn project_rules(
 
 pub(in crate::backend::api::repos) async fn authorized_rule_responses(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repository: i64,
 ) -> Result<Vec<BranchProtectionRuleResponse>, (StatusCode, Json<ApiError>)> {
     let actor = actor.into();
     let viewer = actor.user_id;
-    let snapshot = crate::backend::db::repositories::protection::read_protection_snapshot(
+    let snapshot = codeyard_db_repos::repositories::protection::read_protection_snapshot(
         pool, actor, repository,
     )
     .await
@@ -203,7 +203,7 @@ pub(in crate::backend::api::repos) async fn authorized_rule_responses(
     // Secret team names stay with the people who may see the team, as in `rule_responses`.
     let mut teams = std::collections::HashMap::new();
     for (id, name) in snapshot.teams {
-        if crate::backend::db::organizations::teams::get_team_by_id(pool, viewer, id)
+        if codeyard_db_orgs::organizations::teams::get_team_by_id(pool, viewer, id)
             .await
             .map_err(|_| storage_unavailable())?
             .is_some()
@@ -251,17 +251,17 @@ pub async fn upsert_branch_protection_rule(
 /// the actor administers the repository first.
 pub(in crate::backend::api::repos) async fn save_rule(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repository: &codeyard_db_core::models::Repository,
     req: UpsertBranchProtectionRuleRequest,
 ) -> Result<codeyard_db_core::models::BranchProtectionRule, (StatusCode, Json<ApiError>)> {
     let authority = actor.into();
     let actor_id = authority.user_id;
     let pattern = req.pattern.trim();
-    crate::backend::db::repositories::protection::validate_branch_pattern(pattern)
+    codeyard_db_repos::repositories::protection::validate_branch_pattern(pattern)
         .map_err(|error| protection_write_error(error.into()))?;
 
-    let max_approvals = crate::backend::db::repositories::protection::MAX_REQUIRED_APPROVALS;
+    let max_approvals = codeyard_db_repos::repositories::protection::MAX_REQUIRED_APPROVALS;
     if !(0..=max_approvals).contains(&req.required_approving_reviews) {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -272,7 +272,7 @@ pub(in crate::backend::api::repos) async fn save_rule(
         ));
     }
 
-    crate::backend::db::repositories::protection::validate_required_checks(
+    codeyard_db_repos::repositories::protection::validate_required_checks(
         &req.required_status_checks,
     )
     .map_err(|error| protection_write_error(error.into()))?;
@@ -335,7 +335,7 @@ pub(in crate::backend::api::repos) async fn save_rule(
         ));
     }
 
-    let push_team_allowances = crate::backend::db::repositories::push_teams::resolve_names(
+    let push_team_allowances = codeyard_db_repos::repositories::push_teams::resolve_names(
         pool,
         repository.id,
         &req.push_team_allowances,
@@ -349,9 +349,9 @@ pub(in crate::backend::api::repos) async fn save_rule(
     )
     .await?;
 
-    let rule = crate::backend::db::repositories::protection::upsert_branch_protection_rule(
+    let rule = codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        crate::backend::db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id,
             credential: authority.credential(),
             repo_id: repository.id,
@@ -389,14 +389,14 @@ async fn write_user_ids(
 ) -> Result<[Vec<i64>; 2], (StatusCode, Json<ApiError>)> {
     let fields = ["push_allowances", "force_push_allowances"];
     for (names, field) in lists.iter().zip(fields) {
-        if names.len() > crate::backend::db::repositories::protection::MAX_ALLOWANCE_ACTORS {
+        if names.len() > codeyard_db_repos::repositories::protection::MAX_ALLOWANCE_ACTORS {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ApiError::new(
                     "validation_error",
                     &format!(
                         "{field} can list at most {} entries",
-                        crate::backend::db::repositories::protection::MAX_ALLOWANCE_ACTORS
+                        codeyard_db_repos::repositories::protection::MAX_ALLOWANCE_ACTORS
                     ),
                 )),
             ));
@@ -407,7 +407,7 @@ async fn write_user_ids(
         .flat_map(|names| names.iter())
         .map(|name| name.trim().to_owned())
         .collect();
-    let users = crate::backend::db::users::accounts::get_users_by_usernames(
+    let users = codeyard_db_identity::users::accounts::get_users_by_usernames(
         pool,
         &names.into_iter().collect::<Vec<_>>(),
     )
@@ -415,7 +415,7 @@ async fn write_user_ids(
     .map_err(|_| storage_unavailable())?;
     let ids: Vec<_> = users.iter().map(|user| user.id).collect();
     let allowed =
-        crate::backend::db::repositories::access::write_access_user_ids(pool, repository.id, &ids)
+        codeyard_db_repos::repositories::access::write_access_user_ids(pool, repository.id, &ids)
             .await
             .map_err(|_| storage_unavailable())?;
     let users: std::collections::HashMap<_, _> = users
@@ -454,7 +454,7 @@ pub async fn delete_branch_protection_rule(
 
     delete_rule(
         &state.pool,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -469,11 +469,11 @@ pub async fn delete_branch_protection_rule(
 /// this, so a missing rule is the same not-found answer in both.
 pub(in crate::backend::api::repos) async fn delete_rule(
     pool: &codeyard_db_core::DbPool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {
-    let deleted = crate::backend::db::repositories::protection::delete_branch_protection_rule(
+    let deleted = codeyard_db_repos::repositories::protection::delete_branch_protection_rule(
         pool, actor_id, repo_id, pattern,
     )
     .await

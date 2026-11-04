@@ -11,7 +11,7 @@ use crate::backend::api::graphql::RequestContext;
 use crate::backend::api::graphql::Result;
 use crate::backend::api::graphql::Value;
 
-use crate::backend::db::assignees::AssignedItem;
+use codeyard_db_repos::assignees::AssignedItem;
 use serde_json::json;
 pub(super) const FIELDS: &[&str] = &[
     "createLabel",

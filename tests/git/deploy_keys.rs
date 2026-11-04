@@ -150,19 +150,19 @@ async fn multiplexed_slot_wait_keeps_the_active_channel_readable(
 async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     bundle::install();
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard::backend::db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let owner =
-        codeyard::backend::db::users::accounts::create_user(&database.pool, "deploy_owner", None)
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "deploy_owner", None)
             .await
             .unwrap();
     let root = tempfile::tempdir().unwrap();
     let session = native::token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         &database.pool,
         &session,
         owner.id,
@@ -174,7 +174,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     .unwrap();
     let csrf = native::token();
     assert_eq!(
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             &database.pool,
             &session,
             Some(owner.id),
@@ -335,7 +335,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         .await,
     );
     let reader = work.join("reader");
-    let used = codeyard::backend::db::deploy_keys::get_deploy_key(&database.pool, reader_id)
+    let used = codeyard_db_identity::deploy_keys::get_deploy_key(&database.pool, reader_id)
         .await
         .unwrap()
         .unwrap();
@@ -375,7 +375,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
 
     // A rule that exempts administrators still applies to a deploy key, even though the key
     // acts for the administrator who added it.
-    let project = codeyard::backend::db::repositories::records::get_repository(
+    let project = codeyard_db_repos::repositories::records::get_repository(
         &database.pool,
         "deploy_owner",
         "project",
@@ -399,9 +399,9 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         codeyard_git::PublicationActor::DeployKey(writer_id)
     );
     assert_eq!(provenance.publication.actor.user_id(), None);
-    codeyard::backend::db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         &database.pool,
-        codeyard::backend::db::repositories::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::BranchProtectionRuleUpsert {
             actor_id: owner.id,
             repo_id: project.id,
             pattern: "guarded",
@@ -468,7 +468,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         "the Git write itself was accepted"
     );
     assert!(
-        codeyard::backend::db::ci::list_ci_runs_for_repo(&database.pool, project.id, 100)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(&database.pool, project.id, 100)
             .await
             .unwrap()
             .iter()
@@ -495,17 +495,14 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
         .await,
     );
     assert!(listed.starts_with(&deployment_sha));
-    let pull = codeyard::backend::db::pull_requests::records::get_pull_request(
-        &database.pool,
-        project.id,
-        1,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let pull =
+        codeyard_db_repos::pull_requests::records::get_pull_request(&database.pool, project.id, 1)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(pull.head_sha, deployment_sha);
     assert!(
-        codeyard::backend::db::ci::list_ci_runs_for_repo(&database.pool, project.id, 100)
+        codeyard_db_actions::ci::list_ci_runs_for_repo(&database.pool, project.id, 100)
             .await
             .unwrap()
             .iter()

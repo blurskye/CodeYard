@@ -1,14 +1,14 @@
 use super::*;
 
 pub(super) fn error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<crate::backend::db::issues::management::Refusal>() {
+    match error.downcast_ref::<codeyard_db_repos::issues::management::Refusal>() {
         Some(refusal) => Error::new(refusal.to_string()),
         None => unavailable(error),
     }
 }
 
 pub(super) async fn linked(
-    branch: crate::backend::db::issues::management::LinkedBranch,
+    branch: codeyard_db_repos::issues::management::LinkedBranch,
     request: &RequestContext,
 ) -> Result<Option<Value>> {
     linked_at(branch, request, &mut std::collections::HashMap::new()).await
@@ -23,7 +23,7 @@ type LinkedSnapshots = std::collections::HashMap<
 >;
 
 async fn linked_target(
-    branch: &crate::backend::db::issues::management::LinkedBranch,
+    branch: &codeyard_db_repos::issues::management::LinkedBranch,
     request: &RequestContext,
     snapshots: &mut LinkedSnapshots,
 ) -> Result<Option<String>> {
@@ -58,7 +58,7 @@ async fn linked_target(
 }
 
 async fn linked_at(
-    branch: crate::backend::db::issues::management::LinkedBranch,
+    branch: codeyard_db_repos::issues::management::LinkedBranch,
     request: &RequestContext,
     snapshots: &mut LinkedSnapshots,
 ) -> Result<Option<Value>> {
@@ -86,7 +86,7 @@ pub(super) async fn resolve(
     id: i64,
 ) -> Result<Value> {
     match field {
-        "isPinned" => Ok(json!(crate::backend::db::issues::management::pinned(
+        "isPinned" => Ok(json!(codeyard_db_repos::issues::management::pinned(
             &request.state.pool,
             repo.id
         )
@@ -136,7 +136,7 @@ pub(super) async fn resolve(
             let mut branches = Vec::new();
             let mut snapshots = LinkedSnapshots::new();
             for branch in
-                crate::backend::db::issues::management::linked_branches(&request.state.pool, id)
+                codeyard_db_repos::issues::management::linked_branches(&request.state.pool, id)
                     .await
                     .map_err(unavailable)?
             {
@@ -179,7 +179,7 @@ pub(super) async fn mutation(
     let mut payload = json!({"clientMutationId":input["clientMutationId"]});
     match field {
         "pinIssue" | "unpinIssue" => {
-            crate::backend::db::issues::management::pin(
+            codeyard_db_repos::issues::management::pin(
                 pool,
                 actor,
                 repo.id,
@@ -196,7 +196,7 @@ pub(super) async fn mutation(
             );
         }
         "deleteIssue" => {
-            crate::backend::db::issues::management::delete(pool, actor, repo.id, id)
+            codeyard_db_repos::issues::management::delete(pool, actor, repo.id, id)
                 .await
                 .map_err(error)?;
             payload["repository"] = repository::object(repo);
@@ -212,7 +212,7 @@ pub(super) async fn mutation(
             let target = repository::by_id(destination, request).await?;
             request.authorize(target.id, "issues", true).await?;
             payload["issue"] = object(
-                &crate::backend::db::issues::management::transfer(
+                &codeyard_db_repos::issues::management::transfer(
                     pool,
                     actor,
                     repo.id,

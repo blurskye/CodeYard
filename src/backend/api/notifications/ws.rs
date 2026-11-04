@@ -54,7 +54,7 @@ pub async fn handle_socket(
                 if awaiting_pong { break; }
                 if !matches!(tokio::time::timeout(Duration::from_secs(5), sender.send(Message::Ping(b"heartbeat".to_vec()))).await, Ok(Ok(()))) { break; }
                 awaiting_pong = true;
-                let identity = tokio::time::timeout(Duration::from_secs(5), crate::backend::db::users::sessions::get_session_user(&pool, &session_id)).await;
+                let identity = tokio::time::timeout(Duration::from_secs(5), codeyard_db_identity::users::sessions::get_session_user(&pool, &session_id)).await;
                 if !matches!(identity, Ok(Ok(Some(user))) if user.id == user_id) { break; }
             }
             event = rx.recv() => {

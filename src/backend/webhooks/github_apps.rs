@@ -24,7 +24,7 @@ fn targets_app(event: &str, action: Option<&str>) -> bool {
 }
 
 fn accepts(
-    subscription: &crate::backend::db::github_app_hooks::Subscription,
+    subscription: &codeyard_db_identity::github_app_hooks::Subscription,
     event: &str,
 ) -> anyhow::Result<bool> {
     let permissions: Value = serde_json::from_str(&subscription.permissions)?;
@@ -38,7 +38,7 @@ pub(super) async fn has_subscription(
     repo: i64,
     event: &str,
 ) -> anyhow::Result<bool> {
-    for subscription in crate::backend::db::github_app_hooks::for_repository(pool, repo).await? {
+    for subscription in codeyard_db_identity::github_app_hooks::for_repository(pool, repo).await? {
         if accepts(&subscription, event)? {
             return Ok(true);
         }
@@ -58,15 +58,15 @@ pub async fn emit_repository(
         let Some(client) = payload[event]["app"]["client_id"].as_str() else {
             return Ok(());
         };
-        let Some(app) = crate::backend::db::github_apps::app(pool, client)
+        let Some(app) = codeyard_db_identity::github_apps::app(pool, client)
             .await?
             .filter(|app| app.client_id == client)
         else {
             return Ok(());
         };
-        crate::backend::db::github_app_hooks::for_repository_app(pool, repo.id, app.id).await?
+        codeyard_db_identity::github_app_hooks::for_repository_app(pool, repo.id, app.id).await?
     } else {
-        crate::backend::db::github_app_hooks::for_repository(pool, repo.id).await?
+        codeyard_db_identity::github_app_hooks::for_repository(pool, repo.id).await?
     };
     for subscription in subscriptions {
         if !accepts(&subscription, event)? {
@@ -89,13 +89,13 @@ pub async fn current(
     hook: &Webhook,
     outgoing: &Outgoing,
 ) -> anyhow::Result<bool> {
-    let Some(application) = crate::backend::db::github_apps::app(pool, &app.to_string())
+    let Some(application) = codeyard_db_identity::github_apps::app(pool, &app.to_string())
         .await?
         .filter(|row| row.id == app)
     else {
         return Ok(false);
     };
-    let Some(current) = crate::backend::db::github_app_hooks::hook(pool, app).await? else {
+    let Some(current) = codeyard_db_identity::github_app_hooks::hook(pool, app).await? else {
         return Ok(false);
     };
     if current.payload_url != hook.payload_url
@@ -132,7 +132,7 @@ pub async fn current(
         let Some(run) = payload["run_id"].as_i64() else {
             return Ok(false);
         };
-        if !crate::backend::db::deployment_protection::gates(pool, run)
+        if !codeyard_db_actions::deployment_protection::gates(pool, run)
             .await?
             .iter()
             .any(|gate| gate.app_id == app && gate.state == "pending")
@@ -140,7 +140,7 @@ pub async fn current(
             return Ok(false);
         }
     }
-    let Some(subscription) = crate::backend::db::github_app_hooks::subscription(
+    let Some(subscription) = codeyard_db_identity::github_app_hooks::subscription(
         pool,
         repo,
         app,

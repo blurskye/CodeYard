@@ -63,7 +63,8 @@ pub(crate) async fn follow_post(
         .id;
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
     let result = crate::backend::identity::following::change(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,

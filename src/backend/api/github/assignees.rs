@@ -23,7 +23,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let (offset, limit) = page.window()?;
-    let users = crate::backend::db::assignees::list_assignable_users(
+    let users = codeyard_db_repos::assignees::list_assignable_users(
         &state.pool,
         repo.id,
         "",
@@ -51,11 +51,11 @@ async fn check(
         crate::backend::api::github::labels::item(&state.pool, repo.id, number).await?;
     }
     let user =
-        crate::backend::db::users::accounts::get_user_by_username(&state.pool, &p["assignee"])
+        codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &p["assignee"])
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-    if !crate::backend::db::assignees::assignable_user_ids(&state.pool, repo.id, &[user.id])
+    if !codeyard_db_repos::assignees::assignable_user_ids(&state.pool, repo.id, &[user.id])
         .await
         .map_err(Error::unavailable)?
         .is_empty()

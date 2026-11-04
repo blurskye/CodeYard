@@ -44,7 +44,7 @@ async fn owned_files(
         .iter()
         .any(|owner| owner.starts_with('@') && owner.contains('/'))
     {
-        crate::backend::db::pull_requests::team_reviewers::list(pool, repository.id, None, None)
+        codeyard_db_repos::pull_requests::team_reviewers::list(pool, repository.id, None, None)
             .await?
             .into_iter()
             .map(|row| format!("@{}/{}", row.org_slug, row.team.slug))
@@ -117,11 +117,11 @@ pub async fn request_code_owner_reviews(
             return;
         }
     };
-    let requester = match crate::backend::db::users::accounts::get_user_by_id(pool, actor_id).await
-    {
-        Ok(Some(requester)) => requester,
-        _ => return,
-    };
+    let requester =
+        match codeyard_db_identity::users::accounts::get_user_by_id(pool, actor_id).await {
+            Ok(Some(requester)) => requester,
+            _ => return,
+        };
     let mut teams: Vec<_> = files
         .iter()
         .flat_map(|file| file.teams.iter().cloned())
@@ -130,12 +130,12 @@ pub async fn request_code_owner_reviews(
     teams.dedup();
     let mut requested = Vec::new();
     for slugs in teams.chunks(100) {
-        match crate::backend::db::pull_requests::team_reviewers::change(
+        match codeyard_db_repos::pull_requests::team_reviewers::change(
             pool,
             actor_id,
             pull.id,
             slugs,
-            crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Request,
+            codeyard_db_repos::pull_requests::team_reviewers::ReviewTeamAction::Request,
             Some(pull),
         )
         .await
@@ -175,18 +175,18 @@ pub async fn request_code_owner_reviews(
     // An owner who is already requested needs no write, so a refresh with nothing new does not
     // take the write lock. The insertion decides every other case.
     if let Ok(existing) =
-        crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id).await
+        codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id).await
     {
         wanted.retain(|id| !existing.iter().any(|reviewer| reviewer.id == *id));
     }
     if wanted.is_empty() {
         return;
     }
-    let owner = match crate::backend::db::ci::ci_repository_owner(pool, repository.id).await {
+    let owner = match codeyard_db_actions::ci::ci_repository_owner(pool, repository.id).await {
         Ok(Some(owner)) => owner,
         _ => return,
     };
-    let targets = match crate::backend::db::pull_requests::reviews::request_code_owner_reviews(
+    let targets = match codeyard_db_repos::pull_requests::reviews::request_code_owner_reviews(
         pool, pull, actor_id, &wanted,
     )
     .await

@@ -1,8 +1,8 @@
 //! Bind environment values to admitted job IDs before either engine receives them.
 use codeyard_support::secrets::SecretEncryptor;
 
-use crate::backend::db::environment_values::WorkflowValues;
 use anyhow::{ensure, Context, Result};
+use codeyard_db_actions::environment_values::WorkflowValues;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::DbPool;
 use serde::{Deserialize, Serialize};
@@ -42,11 +42,11 @@ pub(super) async fn load(
                 !environment.contains("${{"),
                 "CI requires literal job environment names"
             );
-            let key = crate::backend::db::environment_values::environment_key(environment)?;
+            let key = codeyard_db_actions::environment_values::environment_key(environment)?;
             if let std::collections::btree_map::Entry::Vacant(entry) =
                 result.environments.entry(key.clone())
             {
-                let scoped = crate::backend::db::environment_values::for_run(
+                let scoped = codeyard_db_actions::environment_values::for_run(
                     pool,
                     encryptor,
                     run.repo_id,

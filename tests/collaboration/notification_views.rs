@@ -42,9 +42,7 @@ async fn setup(pg: bool) -> World {
         let repo = codeyard::backend::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
-            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
-                alice_id,
-            ),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
             name,
             None,
             private,
@@ -71,9 +69,9 @@ async fn setup(pg: bool) -> World {
 }
 
 async fn notify(database: &Database, user: i64, repo: Option<i64>, kind: &str, title: &str) -> i64 {
-    codeyard::backend::db::notifications::records::create_notification(
+    codeyard_db_repos::notifications::records::create_notification(
         database.pool(),
-        codeyard::backend::db::notifications::NewNotification {
+        codeyard_db_repos::notifications::NewNotification {
             user_id: user,
             actor_id: None,
             repo_id: repo,
@@ -106,9 +104,9 @@ async fn bounded_previews_and_current_targets(pg: bool) {
     let body = "preview words ".repeat(4000);
     let mut ids = Vec::new();
     for actor in [w.alice_id, w.bob_id] {
-        let notification = codeyard::backend::db::notifications::records::create_notification(
+        let notification = codeyard_db_repos::notifications::records::create_notification(
             w.database.pool(),
-            codeyard::backend::db::notifications::NewNotification {
+            codeyard_db_repos::notifications::NewNotification {
                 user_id: w.alice_id,
                 actor_id: Some(actor),
                 repo_id: Some(w.proj),
@@ -123,7 +121,7 @@ async fn bounded_previews_and_current_targets(pg: bool) {
         .unwrap();
         ids.push(notification.id);
     }
-    codeyard::backend::db::repositories::records::rename_repository(
+    codeyard_db_repos::repositories::records::rename_repository(
         w.database.pool(),
         w.alice_id,
         w.proj,
@@ -139,7 +137,7 @@ async fn bounded_previews_and_current_targets(pg: bool) {
         assert_eq!(item["body"], body);
         assert_eq!(item["link"], "/alice/renamed/issues/7?page=3#comment-9");
     }
-    use codeyard::backend::db::organizations::{
+    use codeyard_db_orgs::organizations::{
         self, NewOrganization, OrganizationOutcome, OrganizationProfile,
     };
     assert!(matches!(
@@ -262,7 +260,7 @@ async fn notification_socket_admission(pg: bool) {
             String::from_utf8_lossy(&headers)
         );
     }
-    codeyard::backend::db::users::sessions::delete_session(w.database.pool(), &w.alice.session)
+    codeyard_db_identity::users::sessions::delete_session(w.database.pool(), &w.alice.session)
         .await
         .unwrap();
     let mut socket = tokio::net::TcpStream::connect(address).await.unwrap();
@@ -649,7 +647,7 @@ async fn other_users_and_hidden_history_are_untouched(pg: bool) {
         "alice's item",
     )
     .await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         w.database.pool(),
         w.bob_id,
         w.vault,
@@ -660,7 +658,7 @@ async fn other_users_and_hidden_history_are_untouched(pg: bool) {
     let account = notify(&w.database, w.bob_id, None, "user_followed", "bob's item").await;
     let vault_one = notify(&w.database, w.bob_id, Some(w.vault), "mention", "vault one").await;
     let vault_two = notify(&w.database, w.bob_id, Some(w.vault), "mention", "vault two").await;
-    codeyard::backend::db::repositories::access::revoke_repo_access(
+    codeyard_db_repos::repositories::access::revoke_repo_access(
         w.database.pool(),
         w.bob_id,
         w.vault,
@@ -710,7 +708,7 @@ async fn other_users_and_hidden_history_are_untouched(pg: bool) {
     assert_eq!(bulk["updated"], 1);
     assert_eq!(bulk["unread_count"], 0);
     // Granting access again shows the rows as they were: neither done nor saved.
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         w.database.pool(),
         w.bob_id,
         w.vault,
@@ -873,9 +871,9 @@ async fn sqlite_search_ignores_case_beyond_ascii() {
 /// count leave it out. The search text finds a notification by its subject as well as its sentence.
 async fn done_is_never_unread_and_search_finds_the_subject(pg: bool) {
     let mut w = setup(pg).await;
-    let subject = codeyard::backend::db::notifications::records::create_notification(
+    let subject = codeyard_db_repos::notifications::records::create_notification(
         w.database.pool(),
-        codeyard::backend::db::notifications::NewNotification {
+        codeyard_db_repos::notifications::NewNotification {
             user_id: w.alice_id,
             actor_id: None,
             repo_id: Some(w.proj),

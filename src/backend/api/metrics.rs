@@ -36,7 +36,7 @@ async fn allowed(state: &AppState, headers: &HeaderMap) -> bool {
         crate::backend::identity::github_apps::authority(&state.pool, auth.token.id).await,
         Ok(None)
     ) && matches!(
-        crate::backend::db::oauth_apps::token(&state.pool, auth.token.id).await,
+        codeyard_db_identity::oauth_apps::token(&state.pool, auth.token.id).await,
         Ok(None)
     )
 }
@@ -66,10 +66,10 @@ fn gauge(body: &mut String, name: &str) {
 }
 
 async fn collect(state: &AppState) -> anyhow::Result<String> {
-    let nodes = crate::backend::db::metrics::storage_nodes(&state.pool).await?;
-    let lag = crate::backend::db::metrics::replica_lag(&state.pool).await?;
-    let ci = crate::backend::db::metrics::ci_queue(&state.pool).await?;
-    let counts = crate::backend::db::metrics::node_counts(&state.pool).await?;
+    let nodes = codeyard_db_cluster::metrics::storage_nodes(&state.pool).await?;
+    let lag = codeyard_db_cluster::metrics::replica_lag(&state.pool).await?;
+    let ci = codeyard_db_cluster::metrics::ci_queue(&state.pool).await?;
+    let counts = codeyard_db_cluster::metrics::node_counts(&state.pool).await?;
     let mut body = String::new();
     gauge(&mut body, "repository_bytes");
     for node in &nodes {

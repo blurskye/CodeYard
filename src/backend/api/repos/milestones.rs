@@ -24,15 +24,15 @@ use crate::backend::api::repos::forms::with_status;
 use crate::backend::api::repos::issues::assignees::assigned_item;
 use crate::backend::app::AppState;
 
-use crate::backend::db::assignees::AssignedItem;
-use crate::backend::db::discussions::ListFilter;
-use crate::backend::db::discussions::Pick;
-use crate::backend::db::milestones::MilestoneWriteRefusal;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
 use codeyard_db_core::models::MilestoneSummary;
+use codeyard_db_repos::assignees::AssignedItem;
+use codeyard_db_repos::discussions::ListFilter;
+use codeyard_db_repos::discussions::Pick;
+use codeyard_db_repos::milestones::MilestoneWriteRefusal;
 use codeyard_model::issue_input::parse_due_date;
 use codeyard_model::issue_input::validate_milestone;
 use codeyard_webui::pages::repos::issues::{self as view, ListCounts, MilestoneDraft};
@@ -175,7 +175,7 @@ pub(crate) async fn native_index(
     let repo = repository(&ctx, &owner, &name).await?;
     let tab = state_tab(&ctx, &["open", "closed"])?;
     let (open, closed) =
-        crate::backend::db::milestones::count_milestones(&ctx.state.pool, repo.record.id)
+        codeyard_db_repos::milestones::count_milestones(&ctx.state.pool, repo.record.id)
             .await
             .map_err(|_| unavailable(&ctx))?;
     let counts = ListCounts { open, closed };
@@ -186,13 +186,13 @@ pub(crate) async fn native_index(
         1,
         1..=crate::backend::api::repos::paging::MAX_PAGE,
     )?;
-    let offset = (page_number - 1) as i64 * crate::backend::db::milestones::MILESTONES_PER_PAGE;
-    let items = crate::backend::db::milestones::list_milestones_page(
+    let offset = (page_number - 1) as i64 * codeyard_db_repos::milestones::MILESTONES_PER_PAGE;
+    let items = codeyard_db_repos::milestones::list_milestones_page(
         &ctx.state.pool,
         repo.record.id,
         Some(tab),
         &sort,
-        crate::backend::db::milestones::MILESTONES_PER_PAGE,
+        codeyard_db_repos::milestones::MILESTONES_PER_PAGE,
         offset,
     )
     .await
@@ -210,7 +210,7 @@ pub(crate) async fn native_index(
             sort,
             page_number,
             has_next: page_number < crate::backend::api::repos::paging::MAX_PAGE
-                && offset + crate::backend::db::milestones::MILESTONES_PER_PAGE
+                && offset + codeyard_db_repos::milestones::MILESTONES_PER_PAGE
                     < if tab == "open" { open } else { closed },
         }),
     ))
@@ -308,7 +308,7 @@ pub(crate) async fn native_create(
         Err(failure) => return Ok(new_form_refused(&ctx, &repo, &draft, &failure)),
     };
     let actor = ctx.database_actor(ctx.require_user()?.id);
-    match crate::backend::db::milestones::create_milestone(
+    match codeyard_db_repos::milestones::create_milestone(
         &ctx.state.pool,
         actor,
         repo.record.id,
@@ -342,7 +342,7 @@ async fn milestone_page(
     refused: Option<(MilestoneDraft, ApiFailure)>,
 ) -> ResultPage<Response> {
     let summary =
-        crate::backend::db::milestones::get_milestone(&ctx.state.pool, repo.record.id, number)
+        codeyard_db_repos::milestones::get_milestone(&ctx.state.pool, repo.record.id, number)
             .await
             .map_err(|_| unavailable(ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Milestone not found."))?;
@@ -360,7 +360,7 @@ async fn milestone_page(
         "all" => None,
         open_or_closed => Some(open_or_closed),
     };
-    let mut entries = crate::backend::db::issues::list_repo_issues(
+    let mut entries = codeyard_db_repos::issues::list_repo_issues(
         &ctx.state.pool,
         repo.record.id,
         &ListFilter {
@@ -380,7 +380,7 @@ async fn milestone_page(
         .map(|entry| entry.issue.id)
         .collect::<Vec<_>>();
     let mut labels =
-        crate::backend::db::labels::get_issues_labels(&ctx.state.pool, repo.record.id, &ids)
+        codeyard_db_repos::labels::get_issues_labels(&ctx.state.pool, repo.record.id, &ids)
             .await
             .map_err(|_| unavailable(ctx))?;
     let mut assignees = listed_assignees(ctx, &ids, false).await?;
@@ -397,7 +397,7 @@ async fn milestone_page(
         items.push(row);
     }
     // Filter before the limit; merged pull requests belong to the closed tab.
-    let mut pulls = crate::backend::db::pull_requests::records::list_repo_pull_requests(
+    let mut pulls = codeyard_db_repos::pull_requests::records::list_repo_pull_requests(
         &ctx.state.pool,
         repo.record.id,
         &ListFilter {
@@ -418,7 +418,7 @@ async fn milestone_page(
         .iter()
         .map(|value| value.pull_request.id)
         .collect::<Vec<_>>();
-    let mut pull_labels = crate::backend::db::labels::get_pull_requests_labels(
+    let mut pull_labels = codeyard_db_repos::labels::get_pull_requests_labels(
         &ctx.state.pool,
         repo.record.id,
         &pull_ids,
@@ -527,16 +527,16 @@ pub(crate) async fn native_update(
         }
     };
     let actor = ctx.database_actor(ctx.require_user()?.id);
-    match crate::backend::db::milestones::save_milestone_checked(
+    match codeyard_db_repos::milestones::save_milestone_checked(
         &ctx.state.pool,
         actor,
         repo.record.id,
         Some(number),
-        crate::backend::db::milestones::MilestoneInput {
+        codeyard_db_repos::milestones::MilestoneInput {
             title: Some(&input.title),
             description: Some(input.description.as_deref()),
             due_on: Some(
-                crate::backend::db::milestones::due_on(input.due_date.as_deref())
+                codeyard_db_repos::milestones::due_on(input.due_date.as_deref())
                     .map_err(|_| unavailable(&ctx))?,
             ),
             state: None,
@@ -570,7 +570,7 @@ async fn change_state(
     state: &str,
 ) -> ResultPage<Response> {
     let actor = ctx.database_actor(ctx.require_user()?.id);
-    match crate::backend::db::milestones::set_milestone_state(
+    match codeyard_db_repos::milestones::set_milestone_state(
         &ctx.state.pool,
         actor,
         repo.record.id,
@@ -634,7 +634,7 @@ pub(crate) async fn native_delete(
     let actor = ctx.database_actor(ctx.require_user()?.id);
     let expected_id = field(&form, "milestone_id").parse::<i64>().unwrap_or(0);
     require_current_repository(&ctx, &form, &repo)?;
-    match crate::backend::db::milestones::delete_milestone(
+    match codeyard_db_repos::milestones::delete_milestone(
         &ctx.state.pool,
         actor,
         repo.record.id,
@@ -696,7 +696,7 @@ pub(crate) async fn native_set_item_milestone(
     let actor = ctx.database_actor(ctx.require_user()?.id);
     let outcome = match subject {
         AssignedItem::Issue(item_id) => {
-            crate::backend::db::milestones::set_issue_milestone(
+            codeyard_db_repos::milestones::set_issue_milestone(
                 &ctx.state.pool,
                 actor,
                 repo.record.id,
@@ -706,7 +706,7 @@ pub(crate) async fn native_set_item_milestone(
             .await
         }
         AssignedItem::PullRequest(item_id) => {
-            crate::backend::db::milestones::set_pull_request_milestone(
+            codeyard_db_repos::milestones::set_pull_request_milestone(
                 &ctx.state.pool,
                 actor,
                 repo.record.id,

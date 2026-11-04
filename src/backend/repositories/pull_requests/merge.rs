@@ -118,7 +118,7 @@ pub(super) fn prepare_error(error: RepoError) -> OperationError {
 /// `dismiss_stale_reviews` is set; otherwise it counts for any commit. A change request
 /// blocks whatever commit it was written on.
 fn count_effective_approvals(
-    decisions: &[crate::backend::db::pull_requests::reviews::PullRequestReviewDecision],
+    decisions: &[codeyard_db_repos::pull_requests::reviews::PullRequestReviewDecision],
     head_sha: &str,
     dismiss_stale_reviews: bool,
 ) -> (usize, bool) {
@@ -146,8 +146,8 @@ async fn eligible_reviews(
     pool: &codeyard_db_core::DbPool,
     pull_request: &codeyard_db_core::models::PullRequest,
     repository: &codeyard_db_core::models::Repository,
-) -> anyhow::Result<Vec<crate::backend::db::pull_requests::reviews::PullRequestReviewDecision>> {
-    let decisions = crate::backend::db::pull_requests::reviews::list_pull_request_review_decisions(
+) -> anyhow::Result<Vec<codeyard_db_repos::pull_requests::reviews::PullRequestReviewDecision>> {
+    let decisions = codeyard_db_repos::pull_requests::reviews::list_pull_request_review_decisions(
         pool,
         pull_request.id,
     )
@@ -158,7 +158,7 @@ async fn eligible_reviews(
         .filter(|id| *id != pull_request.author_id)
         .collect();
     let writers =
-        crate::backend::db::repositories::access::write_access_user_ids(pool, repository.id, &ids)
+        codeyard_db_repos::repositories::access::write_access_user_ids(pool, repository.id, &ids)
             .await?;
     Ok(decisions
         .into_iter()
@@ -172,9 +172,9 @@ async fn last_push_approved(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
     pull: &codeyard_db_core::models::PullRequest,
-    decisions: &[crate::backend::db::pull_requests::reviews::PullRequestReviewDecision],
+    decisions: &[codeyard_db_repos::pull_requests::reviews::PullRequestReviewDecision],
 ) -> anyhow::Result<bool> {
-    let Some(repository) = crate::backend::db::repositories::records::get_repository_by_id(
+    let Some(repository) = codeyard_db_repos::repositories::records::get_repository_by_id(
         pool,
         pull.head_repo_id.unwrap_or(pull.repo_id),
     )
@@ -267,7 +267,7 @@ pub async fn review_decision(
 
 /// A check run passes when it completed with success, or as neutral or skipped, as on GitHub and
 /// on the Checks tab. Anything else is reported as a failure or as still pending.
-fn check_run_state(run: &crate::backend::db::checks::Run) -> &'static str {
+fn check_run_state(run: &codeyard_db_actions::checks::Run) -> &'static str {
     match (run.status.as_str(), run.conclusion.as_deref()) {
         ("completed", Some("success" | "neutral" | "skipped")) => "success",
         ("completed", _) => "failure",
@@ -281,7 +281,7 @@ fn required_status_check_failures(
     statuses: &[codeyard_db_core::models::CommitStatus],
     ci_runs: &[codeyard_db_core::models::CiRun],
     // The newest check run of each required name, from its bound app when the context has one.
-    check_runs: &[&crate::backend::db::checks::Run],
+    check_runs: &[&codeyard_db_actions::checks::Run],
     // None stands for a bound app that no longer exists, so nothing meets its context.
     bound_apps: &HashMap<&str, Option<i64>>,
 ) -> Vec<String> {
@@ -317,7 +317,7 @@ fn required_status_check_failures(
         // A stored success can hide another producer's failure, so a server-owned requirement
         // is checked against the actual runs, under their full names and their aliases.
         if !bound_apps.contains_key(required.as_str())
-            && crate::backend::db::repositories::protection::server_owned_status_context(required)
+            && codeyard_db_repos::repositories::protection::server_owned_status_context(required)
         {
             match ci_by_context.get(&required.to_ascii_lowercase()) {
                 Some(runs) => {
@@ -402,7 +402,7 @@ async fn merge_blockers(
     let mut statuses: Option<Vec<codeyard_db_core::models::CommitStatus>> = None;
     let mut ci_runs: Option<Vec<codeyard_db_core::models::CiRun>> = None;
     let mut app_clients: HashMap<i64, Option<i64>> = HashMap::new();
-    let mut latest_runs: HashMap<(String, Option<i64>), Option<crate::backend::db::checks::Run>> =
+    let mut latest_runs: HashMap<(String, Option<i64>), Option<codeyard_db_actions::checks::Run>> =
         HashMap::new();
     let mut changes_requested_reported = false;
     for rule in &rules {
@@ -419,7 +419,7 @@ async fn merge_blockers(
             &pull_request.head_sha,
             rule.dismiss_stale_reviews,
         );
-        if crate::backend::db::repositories::protection::has_review_requirements(rule)
+        if codeyard_db_repos::repositories::protection::has_review_requirements(rule)
             && has_changes_requested
             && !changes_requested_reported
         {
@@ -495,7 +495,7 @@ async fn merge_blockers(
 
         if rule.require_conversation_resolution {
             let unresolved =
-                crate::backend::db::pull_requests::reviews::count_unresolved_conversations(
+                codeyard_db_repos::pull_requests::reviews::count_unresolved_conversations(
                     pool,
                     pull_request.id,
                 )
@@ -522,7 +522,7 @@ async fn merge_blockers(
             if !required_status_checks.is_empty() {
                 if statuses.is_none() {
                     statuses = Some(
-                        crate::backend::db::repositories::protection::list_commit_statuses(
+                        codeyard_db_repos::repositories::protection::list_commit_statuses(
                             pool,
                             repository.id,
                             &pull_request.head_sha,
@@ -533,7 +533,7 @@ async fn merge_blockers(
                 }
                 if ci_runs.is_none() {
                     ci_runs = Some(
-                        crate::backend::db::ci::latest_ci_runs_for_commit(
+                        codeyard_db_actions::ci::latest_ci_runs_for_commit(
                             pool,
                             repository.id,
                             &pull_request.head_sha,
@@ -546,7 +546,7 @@ async fn merge_blockers(
                 }
                 // Old ambiguous bindings must fail closed as well as being refused by new writes.
                 let mut bindings = rule.github_settings.checks.clone();
-                crate::backend::db::repositories::protection::normalize_check_bindings(
+                codeyard_db_repos::repositories::protection::normalize_check_bindings(
                     &mut bindings,
                 )
                 .map_err(|_| OperationError::Conflict {
@@ -566,12 +566,12 @@ async fn merge_blockers(
                     let client = match app_clients.get(&id) {
                         Some(client) => *client,
                         None => {
-                            let app = crate::backend::db::github_apps::app(pool, &id.to_string())
+                            let app = codeyard_db_identity::github_apps::app(pool, &id.to_string())
                                 .await
                                 .map_err(database_error)?
                                 .filter(|app| app.id == id);
                             let client = match app {
-                                Some(app) => crate::backend::db::oauth_apps::application(
+                                Some(app) => codeyard_db_identity::oauth_apps::application(
                                     pool,
                                     &app.client_id,
                                 )
@@ -596,7 +596,7 @@ async fn merge_blockers(
                         None => None,
                     };
                     if !bound_apps.contains_key(required.as_str())
-                        && crate::backend::db::repositories::protection::server_owned_status_context(
+                        && codeyard_db_repos::repositories::protection::server_owned_status_context(
                             required,
                         )
                     {
@@ -604,10 +604,10 @@ async fn merge_blockers(
                     }
                     let key = (required.clone(), app_id);
                     if !latest_runs.contains_key(&key) {
-                        let run = crate::backend::db::checks::runs(
+                        let run = codeyard_db_actions::checks::runs(
                             pool,
                             repository.id,
-                            &crate::backend::db::checks::Filter {
+                            &codeyard_db_actions::checks::Filter {
                                 head_sha: Some(pull_request.head_sha.clone()),
                                 name: Some(required.clone()),
                                 app_id,
@@ -624,7 +624,7 @@ async fn merge_blockers(
                     }
                     wanted.push(key);
                 }
-                let check_runs: Vec<&crate::backend::db::checks::Run> = wanted
+                let check_runs: Vec<&codeyard_db_actions::checks::Run> = wanted
                     .iter()
                     .filter_map(|key| latest_runs.get(key).and_then(Option::as_ref))
                     .collect();
@@ -861,7 +861,7 @@ async fn refresh_chain(
             message: "Pull request revisions could not be refreshed; merge denied.".into(),
         })?;
         let refreshed =
-            crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, layer.id)
+            codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, layer.id)
                 .await
                 .map_err(database_error)?
                 .ok_or_else(|| OperationError::Missing {
@@ -901,7 +901,7 @@ async fn head_branch_exists(
     let Some(id) = pull_request.head_repo_id else {
         return Ok(true);
     };
-    match crate::backend::db::repositories::records::get_repository_by_id(pool, id).await {
+    match codeyard_db_repos::repositories::records::get_repository_by_id(pool, id).await {
         Ok(Some(head)) => Ok(repo_store(&head, ci.cluster.as_ref())
             .refs()
             .await
@@ -1045,7 +1045,7 @@ fn same_revision(
 
 pub struct PreparedMerge {
     actor_id: i64,
-    authority: crate::backend::db::credentials::Actor,
+    authority: codeyard_db_core::queries::credentials::Actor,
     owner: String,
     repo: String,
     repository: codeyard_db_core::models::Repository,
@@ -1056,7 +1056,7 @@ pub struct PreparedMerge {
     merge: StoreMerge,
     merge_sha: String,
     async_request: Option<(String, i64)>,
-    auto_merge: Option<crate::backend::db::pull_requests::merge_policy::AutoMergeIdentity>,
+    auto_merge: Option<codeyard_db_repos::pull_requests::merge_policy::AutoMergeIdentity>,
 }
 
 impl PreparedMerge {
@@ -1065,7 +1065,7 @@ impl PreparedMerge {
     }
     pub(super) fn bind_auto_merge(&mut self, pull_request_id: i64, generation: &str) {
         self.auto_merge = Some(
-            crate::backend::db::pull_requests::merge_policy::AutoMergeIdentity {
+            codeyard_db_repos::pull_requests::merge_policy::AutoMergeIdentity {
                 pull_request_id,
                 generation: generation.into(),
             },
@@ -1079,7 +1079,7 @@ impl PreparedMerge {
 pub async fn prepare_pull_request_merge(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
 ) -> Result<PreparedMerge, OperationError> {
@@ -1088,13 +1088,13 @@ pub async fn prepare_pull_request_merge(
 async fn prepare_pull_request_merge_checked(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
-    authority: crate::backend::db::credentials::Actor,
+    authority: codeyard_db_core::queries::credentials::Actor,
     (owner, repo, number): (String, String, i32),
     request: MergeRequest,
     expected: Option<(i64, i64)>,
 ) -> Result<PreparedMerge, OperationError> {
     let actor_id = authority.user_id;
-    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -1112,7 +1112,7 @@ async fn prepare_pull_request_merge_checked(
         .map_err(|error| publish_failure(error.into(), request.merge_method))?;
 
     let pull_request =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -1138,7 +1138,7 @@ async fn prepare_pull_request_merge_checked(
         message: "Pull request revisions could not be refreshed; merge denied.".into(),
     })?;
     let pull_request =
-        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -1216,7 +1216,7 @@ async fn prepare_pull_request_merge_checked(
     // A squash commit is authored by the pull request's author under the no-reply address, so the
     // account's own email is not published. When that account is gone, the merger is the author.
     let author = if request.merge_method == MergeMethod::Squash {
-        crate::backend::db::users::accounts::get_user_by_id(pool, pull_request.author_id)
+        codeyard_db_identity::users::accounts::get_user_by_id(pool, pull_request.author_id)
             .await
             .map_err(database_error)?
     } else {
@@ -1411,14 +1411,14 @@ async fn publish_prepared_merge_owned(
         async_request,
         auto_merge,
     } = prepared;
-    let policy = crate::backend::db::pull_requests::merge_policy::Snapshot {
-        revision: crate::backend::db::pull_requests::merge_policy::revision(pool, repository.id)
+    let policy = codeyard_db_repos::pull_requests::merge_policy::Snapshot {
+        revision: codeyard_db_repos::pull_requests::merge_policy::revision(pool, repository.id)
             .await
             .map_err(database_error)?,
         auto_merge,
     };
     let repository =
-        crate::backend::db::repositories::records::get_repository_by_id(pool, repository.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository.id)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -1432,7 +1432,7 @@ async fn publish_prepared_merge_owned(
     let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
     crate::backend::repositories::pull_requests::require_write(pool, &user, &repository).await?;
     let current =
-        crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Conflict {
@@ -1519,7 +1519,7 @@ async fn publish_prepared_merge_owned(
             false
         }
     };
-    let marked = crate::backend::db::pull_requests::records::mark_pull_requests_merged(
+    let marked = codeyard_db_repos::pull_requests::records::mark_pull_requests_merged(
         pool, &chain, user.id, &merge_sha,
     )
     .await;
@@ -1534,7 +1534,7 @@ async fn publish_prepared_merge_owned(
     // push workflows for the merge commit.
     let mut moved = Vec::new();
     for layer in chain.iter().filter(|_| marked) {
-        match crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, layer.id)
+        match codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, layer.id)
             .await
         {
             Ok(Some(merged_row)) => moved.extend(
@@ -1594,7 +1594,7 @@ async fn publish_prepared_merge_owned(
 
     for layer in &chain {
         if let Ok(Some(merged)) =
-            crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, layer.id).await
+            codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, layer.id).await
         {
             let (merged_for_hook, repository_for_hook) = (merged.clone(), repository.clone());
             let (author_id, sender_id) = (merged.author_id, user.id);
@@ -1713,7 +1713,7 @@ async fn close_linked_issues(
             if !seen.insert(number) {
                 continue;
             }
-            let issue = match crate::backend::db::issues::get_issue(pool, repository.id, number)
+            let issue = match codeyard_db_repos::issues::get_issue(pool, repository.id, number)
                 .await
             {
                 Ok(Some(issue)) if issue.state == "open" => issue,
@@ -1752,7 +1752,7 @@ async fn close_linked_issues(
 /// request.
 pub async fn merge_pull_request(
     state: &crate::backend::app::AppState,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
 ) -> Result<MergeResponse, OperationError> {
@@ -1763,7 +1763,7 @@ pub async fn merge_pull_request(
 /// read, so a renamed or replaced one is refused.
 pub async fn merge_pull_request_checked(
     state: &crate::backend::app::AppState,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
     expected: Option<(i64, i64)>,
@@ -1798,7 +1798,7 @@ pub async fn merge_pull_request_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::db::pull_requests::reviews::PullRequestReviewDecision;
+    use codeyard_db_repos::pull_requests::reviews::PullRequestReviewDecision;
 
     #[test]
     fn publication_errors_keep_conflicts_denials_and_outages_distinct() {
@@ -1943,23 +1943,23 @@ mod tests {
 
     #[test]
     fn check_runs_and_statuses_both_decide_their_context() {
-        let run = |status: &str, conclusion: Option<&str>| crate::backend::db::checks::Run {
+        let run = |status: &str, conclusion: Option<&str>| codeyard_db_actions::checks::Run {
             id: 1,
             suite_id: 1,
             repo_id: 1,
             name: "lint".into(),
             status: status.into(),
             conclusion: conclusion.map(str::to_owned),
-            data: sqlx::types::Json(crate::backend::db::checks::RunData::default()),
+            data: sqlx::types::Json(codeyard_db_actions::checks::RunData::default()),
             created_at: chrono::Utc::now(),
             updated_at: chrono::Utc::now(),
         };
         let required = vec!["lint".to_string()];
         let none = HashMap::new();
-        let failures = |runs: &[crate::backend::db::checks::Run],
+        let failures = |runs: &[codeyard_db_actions::checks::Run],
                         statuses: &[codeyard_db_core::models::CommitStatus],
                         bound: &HashMap<&str, Option<i64>>| {
-            let runs: Vec<&crate::backend::db::checks::Run> = runs.iter().collect();
+            let runs: Vec<&codeyard_db_actions::checks::Run> = runs.iter().collect();
             required_status_check_failures("H1", &required, statuses, &[], &runs, bound)
         };
         let passed = [run("completed", Some("success"))];

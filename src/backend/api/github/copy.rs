@@ -8,8 +8,8 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::repositories::creation::RepositoryCreationOwner;
-use crate::backend::db::repositories::creation::RepositoryTarget;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
 use axum::{
     extract::{Path, State},
@@ -27,11 +27,10 @@ async fn organization_owner(
     actor: i64,
     slug: &str,
 ) -> Result<RepositoryCreationOwner> {
-    let org =
-        crate::backend::db::organizations::profiles::get_public_organization(&state.pool, slug)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+    let org = codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, slug)
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
     Ok(RepositoryCreationOwner {
         actor_id: actor,
         target: RepositoryTarget::Organization(org.id),

@@ -1,0 +1,29 @@
+[package]
+name = "codeyard-db-cluster"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+codeyard-db-core.workspace = true
+codeyard-git.workspace = true
+codeyard-support.workspace = true
+futures-util.workspace = true
+git2.workspace = true
+hex.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies.codeyard-db-actions]
+workspace = true
+
+[dependencies.codeyard-db-identity]
+workspace = true

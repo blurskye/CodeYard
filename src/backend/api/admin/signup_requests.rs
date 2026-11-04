@@ -24,7 +24,7 @@ pub(crate) async fn load_requests(
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let authority = (admin.id, session).into();
-    let snapshot = crate::backend::db::users::signup_requests::admin_pending_page(
+    let snapshot = codeyard_db_identity::users::signup_requests::admin_pending_page(
         &ctx.state.pool,
         &authority,
         SIGNUP_REQUESTS_PER_PAGE as i64,
@@ -33,8 +33,8 @@ pub(crate) async fn load_requests(
     .await
     .map_err(|error| {
         if matches!(
-            error.downcast_ref::<crate::backend::db::users::signup_requests::ReviewError>(),
-            Some(crate::backend::db::users::signup_requests::ReviewError::Denied)
+            error.downcast_ref::<codeyard_db_identity::users::signup_requests::ReviewError>(),
+            Some(codeyard_db_identity::users::signup_requests::ReviewError::Denied)
         ) {
             ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.")
         } else {

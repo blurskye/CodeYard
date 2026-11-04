@@ -1,0 +1,28 @@
+[package]
+name = "codeyard-db-orgs"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+anyhow.workspace = true
+chrono.workspace = true
+codeyard-actions.workspace = true
+codeyard-db-core.workspace = true
+codeyard-model.workspace = true
+codeyard-support.workspace = true
+crypto_box.workspace = true
+lettre.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true
+
+
+
+[dependencies.codeyard-db-identity]
+workspace = true

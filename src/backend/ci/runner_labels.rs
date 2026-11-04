@@ -29,7 +29,7 @@ pub(super) fn labels_from_value(workflow: &Value, local: bool) -> Result<BTreeSe
 pub(super) fn scheduling_from_value(
     workflow: &Value,
     local: bool,
-) -> Result<crate::backend::db::runners::Scheduling> {
+) -> Result<codeyard_db_actions::runners::Scheduling> {
     let jobs = workflow
         .get("jobs")
         .and_then(Value::as_mapping)
@@ -66,7 +66,7 @@ pub(super) fn scheduling_from_value(
             .transpose()?;
         if let Some(selected) = selected {
             ensure!(
-                crate::backend::db::runners::valid_group_name(selected)
+                codeyard_db_actions::runners::valid_group_name(selected)
                     && !selected.contains("${{"),
                 "runner group must be a literal string"
             );
@@ -98,13 +98,13 @@ pub(super) fn scheduling_from_value(
                 .as_str()
                 .context("`runs-on` must be a literal label")?;
             ensure!(
-                crate::backend::db::runners::valid_label(label),
+                codeyard_db_actions::runners::valid_label(label),
                 "`runs-on` must be a literal label, not an expression"
             );
             labels.insert(label.to_ascii_lowercase());
         }
     }
-    Ok(crate::backend::db::runners::Scheduling {
+    Ok(codeyard_db_actions::runners::Scheduling {
         labels: labels.into_iter().collect(),
         group,
         concurrency: None,

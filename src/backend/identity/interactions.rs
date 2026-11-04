@@ -14,7 +14,7 @@ pub async fn prepare(
     actor: &codeyard_db_core::models::User,
     repository: &codeyard_db_core::models::Repository,
 ) -> Result<()> {
-    if !crate::backend::db::interactions::proof_required(&state.pool, actor.id, repository.id)
+    if !codeyard_db_identity::interactions::proof_required(&state.pool, actor.id, repository.id)
         .await?
     {
         return Ok(());
@@ -26,15 +26,15 @@ pub async fn prepare(
     {
         return Ok(());
     }
-    let source = crate::backend::db::interactions::source(&state.pool, repository.id)
+    let source = codeyard_db_identity::interactions::source(&state.pool, repository.id)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Repository changed"))?;
     anyhow::ensure!(
         repository.storage_node_id == source.storage_node_id,
         "Repository placement changed"
     );
-    let emails = crate::backend::db::interactions::verified_emails(&state.pool, actor.id).await?;
-    if crate::backend::db::interactions::proof_current(&state.pool, actor.id, &source, &emails)
+    let emails = codeyard_db_identity::interactions::verified_emails(&state.pool, actor.id).await?;
+    if codeyard_db_identity::interactions::proof_current(&state.pool, actor.id, &source, &emails)
         .await?
         .is_some()
     {
@@ -61,7 +61,7 @@ pub async fn prepare(
         false
     };
     anyhow::ensure!(
-        crate::backend::db::interactions::save_proof(
+        codeyard_db_identity::interactions::save_proof(
             &state.pool,
             actor.id,
             &source,

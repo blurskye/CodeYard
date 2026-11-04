@@ -544,13 +544,13 @@ mod tests {
         let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
         let root = tempfile::tempdir().unwrap();
-        let user = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
+        let user = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let repository = crate::backend::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
-            crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(user.id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),
             "proj",
             None,
             false,

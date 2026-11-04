@@ -1,9 +1,6 @@
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::attestation_validation as store;
-use crate::backend::db::attestation_validation::AttestationError;
-use crate::backend::db::attestation_validation::PreparedBundle;
 use axum::{
     extract::{
         rejection::{JsonRejection, QueryRejection},
@@ -15,6 +12,9 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use codeyard_db_core::queries::attestation_validation::AttestationError;
+use codeyard_db_security::attestation_validation as store;
+use codeyard_db_security::attestation_validation::PreparedBundle;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;

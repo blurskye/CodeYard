@@ -30,7 +30,7 @@ async fn documents(
     let mut ids: Vec<_> = rows.iter().filter_map(|row| row.creator_id).collect();
     ids.sort_unstable();
     ids.dedup();
-    let users = crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &ids)
+    let users = codeyard_db_identity::users::accounts::get_users_by_ids(&state.pool, &ids)
         .await
         .map_err(Error::unavailable)?;
     let users: std::collections::HashMap<_, _> = users
@@ -82,7 +82,7 @@ async fn create(
         return Err(Error::invalid("sha must be a full commit ID"));
     }
     let context = input.context.as_deref().unwrap_or("default");
-    if crate::backend::db::repositories::protection::server_owned_status_context(context) {
+    if codeyard_db_repos::repositories::protection::server_owned_status_context(context) {
         return Err(Error::new(
             StatusCode::FORBIDDEN,
             "This status context is managed by Actions",
@@ -94,9 +94,9 @@ async fn create(
     if commit.sha != sha {
         return Err(Error::invalid("sha must name an existing commit object"));
     }
-    let saved = crate::backend::db::repositories::protection::upsert_commit_status_with_token(
+    let saved = codeyard_db_repos::repositories::protection::upsert_commit_status_with_token(
         &state.pool,
-        crate::backend::db::repositories::protection::CommitStatusUpsert {
+        codeyard_db_repos::repositories::protection::CommitStatusUpsert {
             repo_id: repo.id,
             sha: &sha,
             context,
@@ -108,16 +108,14 @@ async fn create(
         Some(auth.token.id),
     )
     .await
-    .map_err(|error| {
-        match error
-            .downcast_ref::<crate::backend::db::repositories::protection::ProtectionWriteRefusal>()
-        {
-            Some(crate::backend::db::repositories::protection::ProtectionWriteRefusal::Denied) => {
-                Error::new(StatusCode::FORBIDDEN, "Status write denied")
-            }
-            Some(_) => Error::invalid("Invalid commit status"),
-            None => Error::unavailable(()),
+    .map_err(|error| match error
+        .downcast_ref::<codeyard_db_repos::repositories::protection::ProtectionWriteRefusal>(
+    ) {
+        Some(codeyard_db_repos::repositories::protection::ProtectionWriteRefusal::Denied) => {
+            Error::new(StatusCode::FORBIDDEN, "Status write denied")
         }
+        Some(_) => Error::invalid("Invalid commit status"),
+        None => Error::unavailable(()),
     })?;
     crate::backend::webhooks::statuses::emit_status(
         &state.pool,
@@ -154,7 +152,7 @@ async fn read(
         .sha;
     let (offset, limit) = page.window()?;
     let history = uri.path().ends_with("/statuses");
-    let page_rows = crate::backend::db::repositories::protection::commit_status_page(
+    let page_rows = codeyard_db_repos::repositories::protection::commit_status_page(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
@@ -167,7 +165,7 @@ async fn read(
     .map_err(Error::unavailable)?
     .ok_or_else(Error::missing)?;
     if let Some(auth) = auth.as_ref() {
-        if crate::backend::db::users::tokens::token_user(&state.pool, auth.token.id, false)
+        if codeyard_db_identity::users::tokens::token_user(&state.pool, auth.token.id, false)
             .await
             .map_err(Error::unavailable)?
             .is_none_or(|user| user.id != auth.user.id)
@@ -178,7 +176,7 @@ async fn read(
             .await
             .map_err(crate::backend::api::github::auth::scope_error)?;
     }
-    let crate::backend::db::repositories::protection::CommitStatusPage {
+    let codeyard_db_repos::repositories::protection::CommitStatusPage {
         total,
         counts,
         statuses,

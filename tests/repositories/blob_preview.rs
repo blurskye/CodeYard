@@ -42,7 +42,7 @@ async fn contract(pg: bool) {
     )
     .unwrap();
     git.set_head("refs/heads/main").unwrap();
-    codeyard::backend::db::repositories::records::create_repository(
+    codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         actor,
         "preview",

@@ -7,13 +7,13 @@ use crate::backend::api::organizations::organization::Fields;
 use crate::backend::api::organizations::INDEX;
 use crate::backend::app::AppState;
 
-use crate::backend::db::organizations::OrganizationOutcome::Applied;
-use crate::backend::db::organizations::OrganizationOutcome::Denied;
-use crate::backend::db::organizations::OrganizationOutcome::Missing;
-use crate::backend::db::organizations::OrganizationOutcome::Suspended;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_db_core::queries::organizations::OrganizationOutcome::Applied;
+use codeyard_db_core::queries::organizations::OrganizationOutcome::Denied;
+use codeyard_db_core::queries::organizations::OrganizationOutcome::Missing;
+use codeyard_db_core::queries::organizations::OrganizationOutcome::Suspended;
 use std::sync::Arc;
 
 pub(super) async fn accept(
@@ -72,7 +72,7 @@ async fn answer(
     };
     let pool = &ctx.state.pool;
     let outcome = if accept {
-        crate::backend::db::organizations::accept_organization_invitation(
+        codeyard_db_orgs::organizations::accept_organization_invitation(
             pool,
             ctx.database_actor(actor),
             org,
@@ -81,7 +81,7 @@ async fn answer(
         .await
         .map(unit)
     } else {
-        crate::backend::db::organizations::decline_organization_invitation(
+        codeyard_db_orgs::organizations::decline_organization_invitation(
             pool,
             ctx.database_actor(actor),
             org,

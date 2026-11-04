@@ -12,13 +12,13 @@ use axum::{
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 fn error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<crate::backend::db::pins::PinRefusal>() {
-        Some(crate::backend::db::pins::PinRefusal::Denied) => Error::new(
+    match error.downcast_ref::<codeyard_db_repos::pins::PinRefusal>() {
+        Some(codeyard_db_repos::pins::PinRefusal::Denied) => Error::new(
             StatusCode::FORBIDDEN,
             "Pinning comments requires write access",
         ),
-        Some(crate::backend::db::pins::PinRefusal::Missing) => Error::missing(),
-        Some(crate::backend::db::pins::PinRefusal::Occupied) => {
+        Some(codeyard_db_repos::pins::PinRefusal::Missing) => Error::missing(),
+        Some(codeyard_db_repos::pins::PinRefusal::Occupied) => {
             Error::invalid("Unpin the current comment before pinning another")
         }
         None => Error::unavailable(error),
@@ -37,7 +37,7 @@ async fn change(
     let actor = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let id = p["comment_id"].parse().map_err(|_| Error::missing())?;
     let comment = crate::backend::api::github::comments::find(&state.pool, repo.id, id).await?;
-    crate::backend::db::pins::set_pin(
+    codeyard_db_repos::pins::set_pin(
         &state.pool,
         actor.user.id,
         &actor.credential(),

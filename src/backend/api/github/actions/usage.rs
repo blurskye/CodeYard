@@ -16,7 +16,7 @@ use chrono::{Datelike, TimeZone, Utc};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 
-fn document(jobs: Vec<crate::backend::db::action_jobs::Usage>, elapsed: Option<i64>) -> Value {
+fn document(jobs: Vec<codeyard_db_actions::action_jobs::Usage>, elapsed: Option<i64>) -> Value {
     let details = elapsed.is_some();
     let mut platforms: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
     for job in jobs {
@@ -71,7 +71,7 @@ async fn run_usage(
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let run = run(&state, repo.id, id).await?;
-    let jobs = crate::backend::db::action_jobs::usage(
+    let jobs = codeyard_db_actions::action_jobs::usage(
         &state.pool,
         repo.id,
         Some(run.workflow_run_id.unwrap_or(run.id)),
@@ -80,7 +80,7 @@ async fn run_usage(
     )
     .await
     .map_err(Error::unavailable)?;
-    let elapsed = crate::backend::db::action_jobs::elapsed(
+    let elapsed = codeyard_db_actions::action_jobs::elapsed(
         &state.pool,
         repo.id,
         run.workflow_run_id.unwrap_or(run.id),
@@ -103,7 +103,7 @@ async fn workflow_usage(
         .with_ymd_and_hms(now.year(), now.month(), 1, 0, 0, 0)
         .single()
         .ok_or_else(|| Error::unavailable(()))?;
-    let jobs = crate::backend::db::action_jobs::usage(
+    let jobs = codeyard_db_actions::action_jobs::usage(
         &state.pool,
         repo.id,
         None,

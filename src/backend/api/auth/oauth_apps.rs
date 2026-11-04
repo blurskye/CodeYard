@@ -5,8 +5,8 @@ use codeyard_model::http_config::link_origin;
 use crate::backend::api::user::responses::field;
 use crate::backend::app::AppState;
 
-use crate::backend::db::oauth_apps::Exchange;
-use crate::backend::db::oauth_apps::Grant;
+use codeyard_db_identity::oauth_apps::Exchange;
+use codeyard_db_identity::oauth_apps::Grant;
 
 use axum::{
     body::Bytes,
@@ -100,7 +100,7 @@ fn failure(headers: &HeaderMap, code: &str) -> Response {
 }
 
 async fn admit(state: &AppState, headers: &HeaderMap, key: &str) -> Result<(), Response> {
-    if crate::backend::db::node_config::get_node_configuration(&state.pool)
+    if codeyard_db_cluster::node_config::get_node_configuration(&state.pool)
         .await
         .ok()
         .flatten()
@@ -150,7 +150,7 @@ async fn device_code(
     else {
         return failure(&headers, "invalid_scope");
     };
-    match crate::backend::db::github_apps::app(&state.pool, id).await {
+    match codeyard_db_identity::github_apps::app(&state.pool, id).await {
         Ok(Some(_)) => scopes.clear(),
         Ok(None) => {}
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
@@ -173,7 +173,7 @@ async fn device_code(
         state: String::new(),
         challenge: String::new(),
     };
-    if crate::backend::db::oauth_apps::save_grant(&state.pool, &grant)
+    if codeyard_db_identity::oauth_apps::save_grant(&state.pool, &grant)
         .await
         .is_err()
     {
@@ -219,13 +219,13 @@ async fn access_token(
             },
         );
     }
-    let value = match crate::backend::db::github_apps::app(&state.pool, id).await {
+    let value = match codeyard_db_identity::github_apps::app(&state.pool, id).await {
         Ok(Some(_)) => format!("ghu_{}", codeyard_support::crypto::random_hex()),
         Ok(None) => codeyard_support::crypto::random_hex(),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
     // Device polling has its own durable interval; it must not consume the password-login budget.
-    match crate::backend::db::oauth_apps::exchange(
+    match codeyard_db_identity::oauth_apps::exchange(
         &state.pool,
         &token_hash(code),
         id,
@@ -317,7 +317,7 @@ async fn device_post(
     if let Err(response) = admit(&ctx.state, &ctx.headers, "oauth-user-code").await {
         return response;
     }
-    let grant = match crate::backend::db::oauth_apps::device_grant(&ctx.state.pool, &code).await {
+    let grant = match codeyard_db_identity::oauth_apps::device_grant(&ctx.state.pool, &code).await {
         Ok(Some(grant)) => grant,
         Ok(None) => {
             return device_page(
@@ -336,7 +336,7 @@ async fn device_post(
         _ => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"),
     };
     let display_scopes =
-        match crate::backend::db::github_apps::app(&ctx.state.pool, &grant.client_id).await {
+        match codeyard_db_identity::github_apps::app(&ctx.state.pool, &grant.client_id).await {
             Ok(Some(app)) => app.permissions,
             Ok(None) => grant.scopes.clone(),
             Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"),
@@ -347,7 +347,7 @@ async fn device_post(
         else {
             return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
         };
-        match crate::backend::db::oauth_apps::approve(
+        match codeyard_db_identity::oauth_apps::approve(
             &ctx.state.pool,
             &code,
             actor,
@@ -385,16 +385,27 @@ async fn device_post(
 async fn authorization(
     ctx: &PageContext,
     form: &Fields,
-) -> Result<(crate::backend::db::oauth_apps::Application, String, String), Response> {
+) -> Result<
+    (
+        codeyard_db_identity::oauth_apps::Application,
+        String,
+        String,
+    ),
+    Response,
+> {
     let mut app =
         crate::backend::identity::oauth_apps::client(&ctx.state.pool, field(form, "client_id"))
             .await
             .map_err(|_| ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Application not found"))?;
     if let Some(uri) = form.get("redirect_uri") {
-        if crate::backend::db::github_app_manifests::callback(&ctx.state.pool, &app.client_id, uri)
-            .await
-            .map_err(|_| ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"))?
+        if codeyard_db_identity::github_app_manifests::callback(
+            &ctx.state.pool,
+            &app.client_id,
+            uri,
+        )
+        .await
+        .map_err(|_| ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"))?
         {
             app.redirect_uri = uri.clone();
         }
@@ -414,9 +425,10 @@ async fn authorization(
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid authorization request"));
     }
     let mut scopes = scopes;
-    if let Some(github_app) = crate::backend::db::github_apps::app(&ctx.state.pool, &app.client_id)
-        .await
-        .map_err(|_| ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"))?
+    if let Some(github_app) =
+        codeyard_db_identity::github_apps::app(&ctx.state.pool, &app.client_id)
+            .await
+            .map_err(|_| ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"))?
     {
         app.name = format!(
             "{} (repository permissions: {})",
@@ -508,7 +520,7 @@ async fn authorize_post(
         state: field(&form, "state").to_owned(),
         challenge: field(&form, "code_challenge").to_owned(),
     };
-    if crate::backend::db::oauth_apps::save_grant(&ctx.state.pool, &grant)
+    if codeyard_db_identity::oauth_apps::save_grant(&ctx.state.pool, &grant)
         .await
         .is_err()
     {
@@ -539,9 +551,9 @@ async fn applications(
         .and_then(|value| value.parse::<i64>().ok())
         .unwrap_or(1)
         .max(1);
-    let size = crate::backend::db::oauth_apps::APPLICATION_PAGE_SIZE;
+    let size = codeyard_db_identity::oauth_apps::APPLICATION_PAGE_SIZE;
     let actor = ctx.database_actor(ctx.user.as_ref().unwrap().id);
-    match crate::backend::db::oauth_apps::applications(
+    match codeyard_db_identity::oauth_apps::applications(
         &ctx.state.pool,
         actor,
         page.saturating_sub(1).saturating_mul(size),
@@ -625,7 +637,7 @@ async fn register_post(
     };
     let id = codeyard_support::crypto::random_hex();
     let secret = codeyard_support::crypto::random_hex();
-    match crate::backend::db::oauth_apps::register(
+    match codeyard_db_identity::oauth_apps::register(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,
         &session,

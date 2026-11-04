@@ -26,7 +26,7 @@ async fn document(
     pull: &codeyard_db_core::models::PullRequest,
     review: &codeyard_db_core::models::PullRequestReview,
 ) -> Result<Value> {
-    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, review.author_id)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, review.author_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -49,7 +49,7 @@ async fn read(
 ) -> Result<Json<Value>> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let viewer = crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
-    let review = crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(
+    let review = codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(
         &state.pool,
         review_id,
     )
@@ -76,7 +76,7 @@ async fn list(
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let viewer = crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::pull_requests::reviews::list_visible_pull_request_reviews(
+    let rows = codeyard_db_repos::pull_requests::reviews::list_visible_pull_request_reviews(
         &state.pool,
         pull.id,
         viewer.as_ref().map(|auth| auth.user.id),
@@ -166,7 +166,7 @@ async fn requested(
         viewer.as_ref().map(|viewer| viewer.user.id),
     )
     .await?;
-    let rows = crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+    let rows = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
         &state.pool,
         pull.id,
     )

@@ -53,7 +53,7 @@ pub(crate) async fn load_sessions(
     current: Option<&str>,
     before: i64,
 ) -> Result<SessionListing, ApiFailure> {
-    let mut sessions = crate::backend::db::users::sessions::session_page(
+    let mut sessions = codeyard_db_identity::users::sessions::session_page(
         pool,
         user_id,
         current.unwrap_or_default(),
@@ -128,10 +128,14 @@ async fn revoke_one(
     let Some(current) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return Ok(false);
     };
-    let sessions =
-        crate::backend::db::users::sessions::session_page(&ctx.state.pool, actor, &current, before)
-            .await
-            .map_err(session_failure)?;
+    let sessions = codeyard_db_identity::users::sessions::session_page(
+        &ctx.state.pool,
+        actor,
+        &current,
+        before,
+    )
+    .await
+    .map_err(session_failure)?;
     let Some(target) = sessions
         .into_iter()
         .take(100)
@@ -139,7 +143,7 @@ async fn revoke_one(
     else {
         return Ok(false);
     };
-    crate::backend::db::users::sessions::revoke_user_session(
+    codeyard_db_identity::users::sessions::revoke_user_session(
         &ctx.state.pool,
         actor,
         &target.session.id,
@@ -168,7 +172,7 @@ pub(crate) async fn revoke_others_post(
         .expect("mutation guard checked account")
         .id;
     let result = match crate::backend::api::http::session::extract_session_id(&ctx.headers) {
-        Some(keep) => crate::backend::db::users::sessions::revoke_other_user_sessions(
+        Some(keep) => codeyard_db_identity::users::sessions::revoke_other_user_sessions(
             &ctx.state.pool,
             actor,
             &keep,

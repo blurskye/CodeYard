@@ -21,13 +21,13 @@ async fn document(
     state: &AppState,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
-    job: &crate::backend::db::action_jobs::Job,
+    job: &codeyard_db_actions::action_jobs::Job,
 ) -> Result<Value> {
-    let run = crate::backend::db::ci::get_ci_run_by_id(&state.pool, repo.id, job.run_id)
+    let run = codeyard_db_actions::ci::get_ci_run_by_id(&state.pool, repo.id, job.run_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let steps = crate::backend::db::action_jobs::steps(&state.pool, repo.id, job.id)
+    let steps = codeyard_db_actions::action_jobs::steps(&state.pool, repo.id, job.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(crate::backend::webhooks::payloads::action_job(
@@ -40,7 +40,7 @@ async fn get_one(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let job = crate::backend::db::action_jobs::get(&state.pool, repo.id, id, false)
+    let job = codeyard_db_actions::action_jobs::get(&state.pool, repo.id, id, false)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -66,11 +66,15 @@ async fn list(
     } else {
         None
     };
-    let run =
-        crate::backend::db::action_runs::get(&state.pool, repo.id, id(&params, "run_id")?, attempt)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+    let run = codeyard_db_actions::action_runs::get(
+        &state.pool,
+        repo.id,
+        id(&params, "run_id")?,
+        attempt,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(Error::missing)?;
     let all = match filter.filter.as_deref().unwrap_or("latest") {
         "latest" => false,
         "all" if attempt.is_none() => true,
@@ -79,7 +83,7 @@ async fn list(
     };
     if !all
         && run.started_at.is_some()
-        && !crate::backend::db::action_jobs::observed(&state.pool, repo.id, run.id)
+        && !codeyard_db_actions::action_jobs::observed(&state.pool, repo.id, run.id)
             .await
             .map_err(Error::unavailable)?
     {
@@ -89,7 +93,7 @@ async fn list(
         ));
     }
     let (offset, limit) = page.window()?;
-    let result = crate::backend::db::action_jobs::list(
+    let result = codeyard_db_actions::action_jobs::list(
         &state.pool,
         repo.id,
         if all {
@@ -123,12 +127,12 @@ pub(in crate::backend::api::github) async fn annotations(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    crate::backend::db::action_jobs::get(&state.pool, repo.id, id, false)
+    codeyard_db_actions::action_jobs::get(&state.pool, repo.id, id, false)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let (offset, limit) = page.window()?;
-    let (total, annotations) = crate::backend::db::action_jobs::annotations(
+    let (total, annotations) = codeyard_db_actions::action_jobs::annotations(
         &state.pool,
         repo.id,
         id,

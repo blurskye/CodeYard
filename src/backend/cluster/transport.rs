@@ -190,7 +190,7 @@ impl EndpointHooks for MembersOnly {
 /// An active member whose roles the installation's mode allows: in single-node mode only
 /// runners connect, so a node joined for another role is refused on its next request.
 pub(crate) async fn active_member(pool: &DbPool, peer: PublicKey) -> Result<bool> {
-    crate::backend::db::cluster::is_admitted_node(pool, &peer.to_string()).await
+    codeyard_db_cluster::cluster::is_admitted_node(pool, &peer.to_string()).await
 }
 
 /// iroh's connections wait 30 s for a silent peer. Three missed 5 s heartbeats is enough

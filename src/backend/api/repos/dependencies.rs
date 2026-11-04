@@ -8,11 +8,11 @@ use crate::backend::api::repos::forms::field;
 use crate::backend::api::repos::forms::with_status;
 use crate::backend::app::AppState;
 
-use crate::backend::db::repositories::dependencies as records;
-use crate::backend::db::repositories::dependencies::AlertState;
-use crate::backend::db::repositories::dependencies::Feature;
-use crate::backend::db::repositories::dependencies::Refusal;
 use crate::backend::repositories::access::AccessError;
+use codeyard_db_repos::repositories::dependencies as records;
+use codeyard_db_repos::repositories::dependencies::AlertState;
+use codeyard_db_repos::repositories::dependencies::Feature;
+use codeyard_db_repos::repositories::dependencies::Refusal;
 
 use crate::backend::repositories::dependencies::DependencyError;
 use axum::{
@@ -348,7 +348,7 @@ async fn configure(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             ctx.user.as_ref().unwrap().id,
-            crate::backend::db::users::accounts::OwnedAccountCredential::Session(
+            codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Session(
                 crate::backend::api::http::session::extract_session_id(&ctx.headers)
                     .unwrap_or_default(),
             ),

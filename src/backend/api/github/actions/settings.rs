@@ -8,10 +8,6 @@ use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use codeyard_model::urls::repo_url;
 
-use crate::backend::db::action_settings::Policy;
-use crate::backend::db::action_settings::Refusal;
-use crate::backend::db::action_settings::Scope;
-use crate::backend::db::action_settings::Setting;
 use axum::{
     extract::{OriginalUri, Path, Query, Request, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -19,6 +15,10 @@ use axum::{
     routing::{delete, get, post, put, MethodRouter},
     Json,
 };
+use codeyard_db_actions::action_settings::Policy;
+use codeyard_db_core::queries::action_settings::Refusal;
+use codeyard_db_core::queries::action_settings::Scope;
+use codeyard_db_core::queries::action_settings::Setting;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
@@ -97,7 +97,7 @@ async fn settings(
     } else {
         None
     };
-    let stored = crate::backend::db::action_settings::settings(
+    let stored = codeyard_db_actions::action_settings::settings(
         &state.pool,
         actor,
         &scope,
@@ -162,7 +162,7 @@ async fn organization_switch(
                 "invalid",
             ));
         }
-        crate::backend::db::action_settings::settings(
+        codeyard_db_actions::action_settings::settings(
             &state.pool,
             actor,
             &scope,
@@ -174,7 +174,7 @@ async fn organization_switch(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     let stored =
-        crate::backend::db::action_settings::settings(&state.pool, actor, &scope, setting, None)
+        codeyard_db_actions::action_settings::settings(&state.pool, actor, &scope, setting, None)
             .await
             .map_err(failure)?;
     let mut value = setting.defaults();
@@ -209,7 +209,7 @@ async fn organization_repositories(
     let (scope, auth) = scope(&state, &headers, &params, write).await?;
     let actor = auth.database_actor();
     let setting = switch(&uri);
-    use crate::backend::db::action_settings::SelectionChange;
+    use codeyard_db_core::queries::action_settings::SelectionChange;
     let change = if !write {
         None
     } else if params.contains_key("repository_id") {
@@ -234,7 +234,7 @@ async fn organization_repositories(
         Some(SelectionChange::Set(ids))
     };
     let (offset, limit) = page.window()?;
-    let (total, rows) = crate::backend::db::action_settings::repositories(
+    let (total, rows) = codeyard_db_actions::action_settings::repositories(
         &state.pool,
         actor,
         &scope,
@@ -319,7 +319,7 @@ async fn policies(
         .transpose()?;
     if !write && id.is_none() {
         let (offset, limit) = page.window()?;
-        let (total, rows) = crate::backend::db::action_settings::policies_page(
+        let (total, rows) = codeyard_db_actions::action_settings::policies_page(
             &state.pool,
             actor,
             &scope,
@@ -346,7 +346,7 @@ async fn policies(
     };
     let change = if write { Some(body.as_ref()) } else { None };
     let rows =
-        crate::backend::db::action_settings::policies(&state.pool, actor, &scope, id, change)
+        codeyard_db_actions::action_settings::policies(&state.pool, actor, &scope, id, change)
             .await
             .map_err(failure)?;
     if method == axum::http::Method::DELETE {

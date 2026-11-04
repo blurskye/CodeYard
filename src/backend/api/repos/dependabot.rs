@@ -6,8 +6,6 @@ use crate::backend::api::repos::chrome::Loaded;
 use crate::backend::api::repos::forms::authorize_post;
 use crate::backend::app::AppState;
 
-use crate::backend::db::dependabot_alerts as store;
-use crate::backend::db::dependabot_alerts::Update;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -15,6 +13,8 @@ use axum::{
     routing::{get, post},
     Form, Router,
 };
+use codeyard_db_security::dependabot_alerts as store;
+use codeyard_db_security::dependabot_alerts::Update;
 use codeyard_webui::{
     app::Page,
     pages::repos::{dependabot as view, page::Page as RepoPage},

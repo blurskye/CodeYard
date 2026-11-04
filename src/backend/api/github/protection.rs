@@ -7,7 +7,7 @@ use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use codeyard_model::urls::repo_url;
 
-use crate::backend::db::repositories::protection::ProtectionUpdate;
+use codeyard_db_repos::repositories::protection::ProtectionUpdate;
 
 use crate::backend::repositories::store::repo_store;
 
@@ -25,12 +25,12 @@ use std::sync::Arc;
 
 pub(super) fn write_error(error: anyhow::Error) -> Error {
     match error
-        .downcast_ref::<crate::backend::db::repositories::protection::ProtectionWriteRefusal>()
+        .downcast_ref::<codeyard_db_repos::repositories::protection::ProtectionWriteRefusal>()
     {
-        Some(crate::backend::db::repositories::protection::ProtectionWriteRefusal::Denied) => {
+        Some(codeyard_db_repos::repositories::protection::ProtectionWriteRefusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Branch protection write denied")
         }
-        Some(crate::backend::db::repositories::protection::ProtectionWriteRefusal::NotFound) => {
+        Some(codeyard_db_repos::repositories::protection::ProtectionWriteRefusal::NotFound) => {
             Error::missing()
         }
         Some(_) => Error::invalid("Invalid branch protection"),
@@ -47,7 +47,7 @@ pub(super) async fn protected(
     write: bool,
 ) -> Result<(
     BranchProtectionRule,
-    crate::backend::db::credentials::Actor,
+    codeyard_db_core::queries::credentials::Actor,
     String,
 )> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
@@ -71,7 +71,7 @@ pub(super) async fn protected(
     }
     let rule = if write {
         // A concrete-branch edit must not silently modify a wildcard that protects other branches.
-        crate::backend::db::repositories::protection::list_branch_protection_rules(
+        codeyard_db_repos::repositories::protection::list_branch_protection_rules(
             &state.pool,
             repo.id,
         )
@@ -154,7 +154,7 @@ async fn restriction_document(
     actor: i64,
 ) -> Result<Value> {
     let users =
-        crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &rule.push_allowances)
+        codeyard_db_identity::users::accounts::get_users_by_ids(&state.pool, &rule.push_allowances)
             .await
             .map_err(Error::unavailable)?;
     let teams = crate::backend::api::github::push_teams::documents(state, rule, actor).await?;
@@ -181,7 +181,7 @@ pub(super) async fn document(
     if rule.require_status_checks {
         value["required_status_checks"] = checks(rule, url);
     }
-    if crate::backend::db::repositories::protection::has_review_requirements(rule) {
+    if codeyard_db_repos::repositories::protection::has_review_requirements(rule) {
         value["required_pull_request_reviews"] = review_document(rule, url);
     }
     if rule.restrict_pushes {
@@ -206,7 +206,7 @@ async fn branch(
     )
     .await?;
     if method == Method::DELETE {
-        if !crate::backend::db::repositories::protection::delete_branch_protection_rule(
+        if !codeyard_db_repos::repositories::protection::delete_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -238,7 +238,7 @@ async fn admin(
     )
     .await?;
     if !read_method(&method) {
-        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
+        rule = codeyard_db_repos::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -299,7 +299,7 @@ async fn status_checks(
                 .get_or_insert_with(Vec::new)
                 .extend(checks.into_iter().map(|check| check.context));
         }
-        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
+        rule = codeyard_db_repos::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -313,7 +313,7 @@ async fn status_checks(
         .await
         .map_err(write_error)?;
     } else if method == Method::DELETE {
-        crate::backend::db::repositories::protection::update_branch_protection_rule(
+        codeyard_db_repos::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -383,7 +383,7 @@ async fn contexts(
             },
             _ => ProtectionUpdate::RemoveContexts(values),
         };
-        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
+        rule = codeyard_db_repos::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -411,11 +411,11 @@ async fn review_requirements(
         !read_method(&method),
     )
     .await?;
-    if !crate::backend::db::repositories::protection::has_review_requirements(&rule) {
+    if !codeyard_db_repos::repositories::protection::has_review_requirements(&rule) {
         return Err(Error::missing());
     }
     if method == Method::DELETE {
-        crate::backend::db::repositories::protection::update_branch_protection_rule(
+        codeyard_db_repos::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -448,7 +448,7 @@ async fn restrictions(
         return Err(Error::missing());
     }
     if method == Method::DELETE {
-        crate::backend::db::repositories::protection::update_branch_protection_rule(
+        codeyard_db_repos::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,
@@ -497,14 +497,14 @@ async fn users(
         };
         let ids =
             crate::backend::api::github::protection_operations::user_ids(&state, &names).await?;
-        use crate::backend::db::repositories::protection::ActorListUpdate;
+        use codeyard_db_repos::repositories::protection::ActorListUpdate;
         let update = match method {
             Method::POST => ActorListUpdate::Add(ids),
             Method::PUT => ActorListUpdate::Set(ids),
             Method::DELETE => ActorListUpdate::Remove(ids),
             _ => unreachable!(),
         };
-        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
+        rule = codeyard_db_repos::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor.clone(),
             rule.repo_id,

@@ -62,7 +62,7 @@ pub(crate) fn setting_value(raw: &str) -> Option<&'static str> {
 /// setting is an error, not allow.
 pub(crate) async fn ai_crawlers_blocked(pool: &codeyard_db_core::DbPool) -> anyhow::Result<bool> {
     Ok(
-        crate::backend::db::node_config::get_node_configuration(pool)
+        codeyard_db_cluster::node_config::get_node_configuration(pool)
             .await?
             .is_none_or(|config| config.ai_crawlers != ALLOW),
     )

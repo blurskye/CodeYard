@@ -7,7 +7,7 @@ async fn associated_pulls_use_primary_storage_without_changing_refs_or_metadata(
     let _session_cap = lock_git_session_cap().await;
     bundle::install();
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)

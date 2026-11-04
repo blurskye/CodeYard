@@ -35,7 +35,7 @@ async fn approve(
             "Workflow run is not awaiting approval",
         ));
     }
-    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         &state.pool,
         run.pull_request_id.ok_or_else(Error::missing)?,
     )

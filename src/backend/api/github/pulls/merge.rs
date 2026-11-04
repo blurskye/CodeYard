@@ -84,13 +84,11 @@ async fn merge_pull(
         )
         .await
         .map_err(Error::unavailable)?;
-        pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
-            &state.pool,
-            pull.id,
-        )
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+        pull =
+            codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&state.pool, pull.id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
     }
     if input
         .sha
@@ -148,7 +146,7 @@ async fn update_branch(
     // The update moves the head branch, which may live in a fork, so the credential needs
     // contents write on the head repository.
     let pull =
-        crate::backend::db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;

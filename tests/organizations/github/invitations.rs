@@ -1,14 +1,14 @@
 use super::request;
 use crate::support::{
-    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
 };
 use axum::http::StatusCode;
 
-use codeyard::backend::db::organizations::NewOrganization;
-use codeyard::backend::db::organizations::NewTeam;
-use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::db::organizations::TeamPrivacy;
-use codeyard::backend::db::organizations::TeamProfile;
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::NewTeam;
+use codeyard_db_orgs::organizations::OrganizationProfile;
+use codeyard_db_orgs::organizations::TeamPrivacy;
+use codeyard_db_orgs::organizations::TeamProfile;
 
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
@@ -29,7 +29,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -38,7 +38,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let foreign = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("foreign", OrganizationProfile::new(None, None).unwrap())
@@ -49,7 +49,7 @@ async fn contract(pg: bool) {
     );
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 f.pool(),
                 owner,
                 org.id,
@@ -68,7 +68,7 @@ async fn contract(pg: bool) {
     ] {
         teams.push(
             applied(
-                codeyard::backend::db::organizations::create_organization_team(
+                codeyard_db_orgs::organizations::create_organization_team(
                     f.pool(),
                     owner,
                     org,
@@ -487,7 +487,7 @@ async fn contract(pg: bool) {
     let email_invitation = body["id"].as_i64().unwrap();
     assert_eq!(body["login"], Value::Null);
     assert_eq!(body["email"], "late@example.com");
-    let late = codeyard::backend::db::users::accounts::create_user(
+    let late = codeyard_db_identity::users::accounts::create_user(
         f.pool(),
         "late",
         Some("late@example.com"),
@@ -540,9 +540,9 @@ async fn contract(pg: bool) {
     )
     .await;
     let code = "email-invitation-verification-code";
-    assert!(codeyard::backend::db::email::save_email_token(
+    assert!(codeyard_db_identity::email::save_email_token(
         f.pool(),
-        &codeyard::backend::db::email::EmailLink {
+        &codeyard_db_identity::email::EmailLink {
             user_id: late,
             purpose: "verify",
             email: "late@example.com",
@@ -709,7 +709,7 @@ async fn contract(pg: bool) {
         .await;
     f.execute("UPDATE email_outbox SET attempts=5 WHERE id=$1", &[mail])
         .await;
-    codeyard::backend::db::email::mark_email_failed(
+    codeyard_db_identity::email::mark_email_failed(
         f.pool(),
         mail,
         5,

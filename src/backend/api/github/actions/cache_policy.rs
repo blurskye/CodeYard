@@ -5,8 +5,8 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::actions::CacheLimit;
-use crate::backend::db::actions::CachePolicyError;
+use codeyard_db_core::queries::actions::CacheLimit;
+use codeyard_db_core::queries::actions::CachePolicyError;
 
 use axum::{
     extract::{Path, State},
@@ -38,10 +38,10 @@ async fn get_policy(
             "Repository administration denied",
         ));
     }
-    let site = crate::backend::db::actions::get_actions_settings(&state.pool)
+    let site = codeyard_db_actions::actions::get_actions_settings(&state.pool)
         .await
         .map_err(Error::unavailable)?;
-    let own = crate::backend::db::actions::get_repo_actions_settings(&state.pool, repo.id)
+    let own = codeyard_db_actions::actions::get_repo_actions_settings(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(Json(match kind {
@@ -82,7 +82,7 @@ async fn set_policy(
         .user
         .id;
     let value = input.value(kind)?;
-    crate::backend::db::actions::set_cache_limit(&state.pool, actor, repo.id, kind, value)
+    codeyard_db_actions::actions::set_cache_limit(&state.pool, actor, repo.id, kind, value)
         .await
         .map_err(|error| match error.downcast_ref::<CachePolicyError>() {
             Some(CachePolicyError::Denied) => {

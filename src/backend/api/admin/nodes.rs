@@ -40,30 +40,27 @@ async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) 
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let authority = (administrator.id, session).into();
     let after = ctx.query.get("after").map(String::as_str).unwrap_or("");
-    let mut nodes = match crate::backend::db::cluster::admin_node_page(
-        &ctx.state.pool,
-        &authority,
-        after,
-    )
-    .await
-    {
-        Ok(nodes) => nodes,
-        Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => {
-            return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
-        }
-        Err(_) => {
-            return ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "The node list is unavailable.",
-            )
-        }
-    };
+    let mut nodes =
+        match codeyard_db_cluster::cluster::admin_node_page(&ctx.state.pool, &authority, after)
+            .await
+        {
+            Ok(nodes) => nodes,
+            Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => {
+                return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
+            }
+            Err(_) => {
+                return ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "The node list is unavailable.",
+                )
+            }
+        };
     let more = nodes.len() > 100;
     nodes.truncate(100);
     let next_after = more
         .then(|| nodes.last().map(|node| node.name.clone()))
         .flatten();
-    let Ok(cluster_enabled) = crate::backend::db::cluster::cluster_enabled(&ctx.state.pool).await
+    let Ok(cluster_enabled) = codeyard_db_cluster::cluster::cluster_enabled(&ctx.state.pool).await
     else {
         return ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -143,7 +140,7 @@ async fn change(
         .id;
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let authority = crate::backend::db::cluster::Authority::Administrator {
+    let authority = codeyard_db_cluster::cluster::Authority::Administrator {
         user_id: actor,
         session: &session,
     };

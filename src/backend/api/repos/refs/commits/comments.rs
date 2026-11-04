@@ -57,7 +57,7 @@ pub(super) async fn discussion(
     };
     let mut page = crate::backend::api::repos::paging::number(ctx, "comments_page", 1, 1..=50_001)?;
     if let Some(id) = target {
-        match crate::backend::db::repositories::commit_comments::get_comment(
+        match codeyard_db_repos::repositories::commit_comments::get_comment(
             pool,
             loaded.repository.id,
             id,
@@ -66,7 +66,7 @@ pub(super) async fn discussion(
         .map_err(|_| unavailable())?
         {
             Some(comment) if comment.sha == sha => {
-                let through = crate::backend::db::repositories::commit_comments::count_comments(
+                let through = codeyard_db_repos::repositories::commit_comments::count_comments(
                     pool,
                     loaded.repository.id,
                     sha,
@@ -86,7 +86,7 @@ pub(super) async fn discussion(
         .checked_mul(PER_PAGE)
         .filter(|offset| *offset <= 1_000_000)
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Comment page exceeds its limit."))?;
-    let mut rows = crate::backend::db::repositories::commit_comments::list_comments(
+    let mut rows = codeyard_db_repos::repositories::commit_comments::list_comments(
         pool,
         loaded.repository.id,
         Some(sha),
@@ -97,7 +97,7 @@ pub(super) async fn discussion(
     .map_err(|_| unavailable())?;
     let has_more = rows.len() > PER_PAGE;
     rows.truncate(PER_PAGE);
-    let total = crate::backend::db::repositories::commit_comments::count_comments(
+    let total = codeyard_db_repos::repositories::commit_comments::count_comments(
         pool,
         loaded.repository.id,
         sha,
@@ -126,7 +126,7 @@ pub(super) async fn discussion(
         .iter()
         .map(|entry| entry.comment.id)
         .collect::<Vec<_>>();
-    let counts = crate::backend::db::reactions::reaction_counts(
+    let counts = codeyard_db_repos::reactions::reaction_counts(
         pool,
         "commit_comment",
         &ids,
@@ -153,7 +153,7 @@ pub(super) async fn discussion(
                         .map_or_else(|| path.clone(), |line| format!("{path}:{line}"))
                 }),
                 association: entry.association,
-                revision: crate::backend::db::discussions::comment_revision(&comment.body),
+                revision: codeyard_db_repos::discussions::comment_revision(&comment.body),
                 can_edit: can_comment && own,
                 can_delete: can_comment && (own || maintain),
                 reactions: counts
@@ -222,7 +222,7 @@ pub(super) async fn react(
         Ok(id) => id,
         Err(_) => return ctx.error(StatusCode::NOT_FOUND, "Commit comment not found."),
     };
-    let row = match crate::backend::db::repositories::commit_comments::get_comment(
+    let row = match codeyard_db_repos::repositories::commit_comments::get_comment(
         &ctx.state.pool,
         loaded.repository.id,
         id,
@@ -239,34 +239,34 @@ pub(super) async fn react(
         }
     };
     let content = field(&form, "content");
-    if !crate::backend::db::reactions::valid_content(
-        crate::backend::db::reactions::Subject::CommitComment,
+    if !codeyard_db_repos::reactions::valid_content(
+        codeyard_db_repos::reactions::Subject::CommitComment,
         &content,
     ) {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Unknown reaction.");
     }
-    if let Err(error) = crate::backend::db::reactions::toggle_reaction(
+    if let Err(error) = codeyard_db_repos::reactions::toggle_reaction(
         &ctx.state.pool,
         actor,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
         loaded.repository.id,
         row.id,
-        crate::backend::db::reactions::Subject::CommitComment,
+        codeyard_db_repos::reactions::Subject::CommitComment,
         row.id,
         &content,
     )
     .await
     {
         return if error
-            .downcast_ref::<crate::backend::db::reactions::ReactionRefusal>()
+            .downcast_ref::<codeyard_db_repos::reactions::ReactionRefusal>()
             .is_some()
         {
             ctx.error(StatusCode::NOT_FOUND, "Commit comment not found.")
         } else if error
-            .downcast_ref::<crate::backend::db::discussions::DiscussionWriteRefusal>()
+            .downcast_ref::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>()
             .is_some()
         {
             ctx.error(StatusCode::FORBIDDEN, "Reaction mutation denied.")
@@ -369,7 +369,7 @@ pub(super) async fn submit(
             return Err(CommentError::Denied);
         }
         if let Some(id) = id {
-            let comment = crate::backend::db::repositories::commit_comments::get_comment(
+            let comment = codeyard_db_repos::repositories::commit_comments::get_comment(
                 &ctx.state.pool,
                 loaded.repository.id,
                 id,
@@ -413,7 +413,7 @@ pub(super) async fn submit(
                     &ctx.state.pool,
                     ctx.state.cluster.as_ref(),
                     &ctx.state.notification_broadcaster,
-                    crate::backend::db::repositories::commit_comments::CommentEdit {
+                    codeyard_db_repos::repositories::commit_comments::CommentEdit {
                         actor: ctx.database_actor(actor),
                         repo_id: loaded.repository.id,
                         id,

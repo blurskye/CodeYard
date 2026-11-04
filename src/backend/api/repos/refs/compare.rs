@@ -208,7 +208,7 @@ pub(crate) async fn native_compare_page(
     let open_pull = if !branch_pair || base == head {
         None
     } else {
-        crate::backend::db::pull_requests::records::find_open_pull_request_from_branches(
+        codeyard_db_repos::pull_requests::records::find_open_pull_request_from_branches(
             &ctx.state.pool,
             repo.record.id,
             &base,

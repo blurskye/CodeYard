@@ -42,7 +42,7 @@ pub(super) async fn authenticate(
     if value == "cyp_registry_anonymous" {
         return crate::backend::api::packages::authenticate(state, &HeaderMap::new(), write).await;
     }
-    let grant = crate::backend::db::packages::registry_token(&state.pool, &token_hash(value))
+    let grant = codeyard_db_repos::packages::registry_token(&state.pool, &token_hash(value))
         .await
         .map_err(Error::db)?
         .ok_or(Error(
@@ -74,14 +74,14 @@ pub(super) async fn authenticate(
     let Some(id) = grant.token_id else {
         return crate::backend::api::packages::authenticate(state, &HeaderMap::new(), write).await;
     };
-    let configured = crate::backend::db::node_config::get_node_configuration(&state.pool)
+    let configured = codeyard_db_cluster::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(Error::db)?
         .is_some_and(|config| config.setup_completed);
     if !configured {
         return Err(Error::missing());
     }
-    let user = crate::backend::db::users::tokens::token_user(&state.pool, id, write)
+    let user = codeyard_db_identity::users::tokens::token_user(&state.pool, id, write)
         .await
         .map_err(Error::db)?
         .ok_or(Error(
@@ -89,7 +89,7 @@ pub(super) async fn authenticate(
             "UNAUTHORIZED",
             "Registry credentials revoked",
         ))?;
-    let token = crate::backend::db::packages::registry_source(&state.pool, id)
+    let token = codeyard_db_repos::packages::registry_source(&state.pool, id)
         .await
         .map_err(Error::db)?
         .ok_or(Error(
@@ -174,7 +174,7 @@ pub(super) async fn exchange(
         "cyp_registry_{}",
         crate::backend::api::http::session::generate_session_id()
     );
-    crate::backend::db::packages::issue_registry_token(
+    codeyard_db_repos::packages::issue_registry_token(
         &state.pool,
         &token_hash(&value),
         auth.as_ref().map(|auth| auth.token.id),

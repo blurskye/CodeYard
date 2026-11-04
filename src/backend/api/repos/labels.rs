@@ -53,23 +53,23 @@ pub struct CreateLabelRequest {
 
 pub(crate) fn label_write_error(error: anyhow::Error) -> (StatusCode, Json<ApiError>) {
     let (status, code, message) =
-        match error.downcast_ref::<crate::backend::db::labels::LabelWriteRefusal>() {
-            Some(crate::backend::db::labels::LabelWriteRefusal::Denied) => (
+        match error.downcast_ref::<codeyard_db_repos::labels::LabelWriteRefusal>() {
+            Some(codeyard_db_repos::labels::LabelWriteRefusal::Denied) => (
                 StatusCode::FORBIDDEN,
                 "label_write_denied",
                 "Label mutation denied",
             ),
-            Some(crate::backend::db::labels::LabelWriteRefusal::InvalidLabels) => (
+            Some(codeyard_db_repos::labels::LabelWriteRefusal::InvalidLabels) => (
                 StatusCode::CONFLICT,
                 "invalid_labels",
                 "Invalid label scope or batch",
             ),
-            Some(crate::backend::db::labels::LabelWriteRefusal::Conflict) => (
+            Some(codeyard_db_repos::labels::LabelWriteRefusal::Conflict) => (
                 StatusCode::CONFLICT,
                 "label_changed",
                 "The label changed. Your draft is preserved; reload before saving.",
             ),
-            Some(crate::backend::db::labels::LabelWriteRefusal::DuplicateName) => (
+            Some(codeyard_db_repos::labels::LabelWriteRefusal::DuplicateName) => (
                 StatusCode::CONFLICT,
                 "duplicate_label",
                 "A label with this name already exists. Choose another name.",
@@ -95,7 +95,7 @@ pub async fn list_labels(
 ) -> Result<Json<Vec<LabelResponse>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    let labels = crate::backend::db::labels::list_repo_labels(&state.pool, repository.id)
+    let labels = codeyard_db_repos::labels::list_repo_labels(&state.pool, repository.id)
         .await
         .map_err(|_| storage_unavailable())?;
 
@@ -131,7 +131,7 @@ pub async fn create_label(
         ));
     };
 
-    let label = crate::backend::db::labels::create_label(
+    let label = codeyard_db_repos::labels::create_label(
         &state.pool,
         (actor.id, extract_session_id(&headers).unwrap_or_default()),
         repository.id,
@@ -154,7 +154,7 @@ pub async fn delete_label(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
-    crate::backend::db::labels::delete_label(
+    codeyard_db_repos::labels::delete_label(
         &state.pool,
         (actor.id, extract_session_id(&headers).unwrap_or_default()),
         repository.id,
@@ -190,7 +190,7 @@ pub(crate) async fn native_index(
     let page_number = query.page.unwrap_or(1);
     let (offset, limit) = crate::backend::api::repos::paging::page_window(page_number, 100)
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid label page."))?;
-    let mut items: Vec<_> = crate::backend::db::labels::list_repo_labels_page(
+    let mut items: Vec<_> = codeyard_db_repos::labels::list_repo_labels_page(
         &ctx.state.pool,
         repo.record.id,
         &query.q,
@@ -210,7 +210,7 @@ pub(crate) async fn native_index(
         crate::backend::api::repos::paging::MAX_PAGE,
     );
     items.truncate(limit);
-    let usage: std::collections::BTreeMap<i64, i64> = crate::backend::db::labels::list_label_usage(
+    let usage: std::collections::BTreeMap<i64, i64> = codeyard_db_repos::labels::list_label_usage(
         &ctx.state.pool,
         repo.record.id,
         &items.iter().map(|item| item.id).collect::<Vec<_>>(),
@@ -261,11 +261,11 @@ mod tests {
     fn write_errors_are_typed_and_sanitized() {
         for (refusal, status) in [
             (
-                crate::backend::db::labels::LabelWriteRefusal::Denied,
+                codeyard_db_repos::labels::LabelWriteRefusal::Denied,
                 StatusCode::FORBIDDEN,
             ),
             (
-                crate::backend::db::labels::LabelWriteRefusal::InvalidLabels,
+                codeyard_db_repos::labels::LabelWriteRefusal::InvalidLabels,
                 StatusCode::CONFLICT,
             ),
         ] {

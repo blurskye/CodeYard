@@ -1,7 +1,7 @@
 //! Workflow permissions are replaced, not merged, at each explicit permissions block.
 
-use crate::backend::db::ci_tokens::NewJobToken;
 use anyhow::{ensure, Result};
+use codeyard_db_actions::ci_tokens::NewJobToken;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::DbPool;
 use codeyard_model::ci::MAX_EXPANDED_JOBS;
@@ -195,7 +195,7 @@ pub(crate) async fn issue_selected(
             write: *write,
         })
         .collect();
-    crate::backend::db::ci_tokens::issue(
+    codeyard_db_actions::ci_tokens::issue(
         pool,
         run.id,
         run.worker
@@ -262,7 +262,7 @@ pub(crate) async fn issue_selected(
                 "OIDC environment identity requires the native runner"
             );
         }
-        crate::backend::db::oidc::bind_job(
+        codeyard_db_actions::oidc::bind_job(
             pool,
             &crate::backend::ci::runtime::token_hash(&values[key]),
             path,

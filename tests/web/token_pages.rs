@@ -2,12 +2,12 @@
 //! JavaScript, and they are only for the signed-in account and the organization's owners.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::{
-    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
 };
 use chrono::{Duration, Utc};
 
-use codeyard::backend::db::organizations::NewOrganization;
-use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::OrganizationProfile;
 
 use codeyard::backend::identity::fine_grained::Access;
 use codeyard::backend::identity::fine_grained::Owner;
@@ -20,7 +20,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let carol = f.actor("carol").await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             alice,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -30,7 +30,7 @@ async fn contract(pg: bool) {
     )
     .id;
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             f.pool(),
             alice,
             org,

@@ -2,14 +2,14 @@
 //! membership, through the REST grant endpoints and the settings page on both engines.
 use super::request;
 use crate::support::{
-    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
 };
 use chrono::{Duration, Utc};
 
-use codeyard::backend::db::organizations::NewOrganization;
-use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
-use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::OrganizationProfile;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
 use codeyard::backend::identity::fine_grained::Access;
 use codeyard::backend::identity::fine_grained::Owner;
@@ -77,7 +77,7 @@ async fn contract(pg: bool) {
     let carol = f.actor("carol").await;
     let dave = f.actor("dave").await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             alice,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -88,7 +88,7 @@ async fn contract(pg: bool) {
     .id;
     for user in [carol, dave] {
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 f.pool(),
                 alice,
                 org,
@@ -120,7 +120,7 @@ async fn contract(pg: bool) {
         );
     }
     for user in [carol, dave] {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.pool(),
             user,
             repos[0].id,
@@ -155,7 +155,7 @@ async fn contract(pg: bool) {
     let reply = owner.form_reply(&settings, &policy).await;
     assert_eq!(reply.status, 303, "{}", reply.text());
     assert_eq!(reply.location.as_deref(), Some(tab.as_str()));
-    let saved = codeyard::backend::db::fine_grained_tokens::policy(f.pool(), org)
+    let saved = codeyard_db_identity::fine_grained_tokens::policy(f.pool(), org)
         .await
         .unwrap();
     assert_eq!(saved.max_lifetime_days, Some(30));
@@ -289,7 +289,7 @@ async fn contract(pg: bool) {
     // A banned owner keeps the membership row but cannot review requests or set the policy.
     let erin = f.actor("erin").await;
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             f.pool(),
             alice,
             org,
@@ -302,7 +302,7 @@ async fn contract(pg: bool) {
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[erin])
         .await;
     assert_eq!(
-        codeyard::backend::db::fine_grained_tokens::review(
+        codeyard_db_identity::fine_grained_tokens::review(
             f.pool(),
             org,
             erin,
@@ -315,16 +315,16 @@ async fn contract(pg: bool) {
         .unwrap(),
         0
     );
-    assert!(!codeyard::backend::db::fine_grained_tokens::set_policy(
+    assert!(!codeyard_db_identity::fine_grained_tokens::set_policy(
         f.pool(),
         (
             erin,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), erin).await
             ),
         ),
         org,
-        &codeyard::backend::db::fine_grained_tokens::policy(f.pool(), org)
+        &codeyard_db_identity::fine_grained_tokens::policy(f.pool(), org)
             .await
             .unwrap()
     )
@@ -464,14 +464,9 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        codeyard::backend::db::organizations::remove_organization_member(
-            f.pool(),
-            alice,
-            org,
-            carol,
-        )
-        .await
-        .unwrap(),
+        codeyard_db_orgs::organizations::remove_organization_member(f.pool(), alice, org, carol)
+            .await
+            .unwrap(),
     );
     request(
         &router,
@@ -524,7 +519,7 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
-    let token = codeyard::backend::db::fine_grained_tokens::get(f.pool(), denied)
+    let token = codeyard_db_identity::fine_grained_tokens::get(f.pool(), denied)
         .await
         .unwrap()
         .unwrap();

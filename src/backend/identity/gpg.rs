@@ -1,15 +1,15 @@
 //! OpenPGP enrollment verifies self-certifications and signing-subkey back signatures.
 
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_support::credentials::AccountRestricted;
 
-use crate::backend::db::users::gpg_keys::GpgKey;
-use crate::backend::db::users::gpg_keys::GpgKeyRefusal;
-use crate::backend::db::users::gpg_keys::GpgMaterial;
-use crate::backend::db::users::gpg_keys::NewGpgKey;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::DbPool;
+use codeyard_db_identity::users::gpg_keys::GpgKey;
+use codeyard_db_identity::users::gpg_keys::GpgKeyRefusal;
+use codeyard_db_identity::users::gpg_keys::GpgMaterial;
+use codeyard_db_identity::users::gpg_keys::NewGpgKey;
 use pgp::{
     composed::{Deserializable, SignedPublicKey, SignedPublicSubKey},
     packet::{Packet, PacketParser, PacketTrait, Signature, SignatureType, SubpacketData},
@@ -354,7 +354,7 @@ pub async fn enroll(
     let key = crypto(move || parse(&armored))
         .await
         .map_err(|_| GpgError::Unavailable)??;
-    crate::backend::db::users::gpg_keys::add_gpg_key(pool, actor, credential, name, &key)
+    codeyard_db_identity::users::gpg_keys::add_gpg_key(pool, actor, credential, name, &key)
         .await
         .map_err(write_error)
 }
@@ -364,7 +364,7 @@ pub async fn delete(
     credential: &AccountCredential<'_>,
     id: i64,
 ) -> Result<(), GpgError> {
-    if crate::backend::db::users::gpg_keys::delete_gpg_key(pool, actor, credential, id)
+    if codeyard_db_identity::users::gpg_keys::delete_gpg_key(pool, actor, credential, id)
         .await
         .map_err(write_error)?
     {

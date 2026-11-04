@@ -61,7 +61,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 }
 
 pub(super) async fn target(state: &AppState, username: &str) -> Result<User> {
-    crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
+    codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)
@@ -69,19 +69,19 @@ pub(super) async fn target(state: &AppState, username: &str) -> Result<User> {
 
 pub(super) async fn document(state: &AppState, user: &User, token: Option<i64>) -> Result<Value> {
     let repos =
-        crate::backend::db::repositories::count_user_repositories(&state.pool, user.id, None)
+        codeyard_db_repos::repositories::count_user_repositories(&state.pool, user.id, None)
             .await
             .map_err(Error::unavailable)?;
     let status = crate::backend::identity::following::status(&state.pool, user.id, None)
         .await
         .map_err(Error::unavailable)?;
-    let profile = crate::backend::db::users::profiles::get_profile_settings(&state.pool, user.id)
+    let profile = codeyard_db_identity::users::profiles::get_profile_settings(&state.pool, user.id)
         .await
         .map_err(Error::unavailable)?;
     // Eligibility and the private aggregates are one statement snapshot, shared by GET and PATCH.
     let statistics = match token {
         Some(token) => {
-            crate::backend::db::users::profiles::account_statistics(&state.pool, user.id, token)
+            codeyard_db_identity::users::profiles::account_statistics(&state.pool, user.id, token)
                 .await
                 .map_err(Error::unavailable)?
         }
@@ -89,7 +89,7 @@ pub(super) async fn document(state: &AppState, user: &User, token: Option<i64>) 
     };
     let public_gists = match &statistics {
         Some(statistics) => statistics.public_gists,
-        None => crate::backend::db::gists::count_owned(&state.pool, user.id, false, None)
+        None => codeyard_db_repos::gists::count_owned(&state.pool, user.id, false, None)
             .await
             .map_err(Error::unavailable)?,
     };
@@ -121,8 +121,8 @@ async fn update(
     headers: HeaderMap,
     input: std::result::Result<Json<Value>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
-    use crate::backend::db::users::{
-        crate::backend::db::users::accounts::AccountCredential, profiles::ProfilePatch,
+    use codeyard_db_identity::users::{
+        codeyard_db_core::queries::users::accounts::AccountCredential, profiles::ProfilePatch,
     };
     let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
@@ -185,7 +185,7 @@ async fn by_username(
 ) -> Result<Json<Value>> {
     crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     if let Some(user) =
-        crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
+        codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &username)
             .await
             .map_err(Error::unavailable)?
     {
@@ -238,7 +238,7 @@ async fn by_id(
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
     crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
-    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -258,7 +258,7 @@ async fn list(
 ) -> Result<Response> {
     crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     let limit = crate::backend::api::github::pagination::page_size(query.per_page);
-    let mut users = crate::backend::db::users::accounts::list_users_since(
+    let mut users = codeyard_db_identity::users::accounts::list_users_since(
         &state.pool,
         query.since.unwrap_or(0).max(0),
         (limit + 1) as i64,
@@ -304,7 +304,7 @@ async fn connections(
     uri: axum::http::Uri,
 ) -> Result<Response> {
     let (offset, limit) = pagination.window()?;
-    let users = crate::backend::db::following::list_connections(
+    let users = codeyard_db_identity::following::list_connections(
         &state.pool,
         user,
         followers,
@@ -383,13 +383,13 @@ async fn own_following(
 
 async fn check(state: &AppState, actor: i64, username: &str) -> Result<StatusCode> {
     let Some(user) =
-        crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
+        codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)
             .await
             .map_err(Error::unavailable)?
     else {
         return Ok(StatusCode::NOT_FOUND);
     };
-    if crate::backend::db::following::is_user_following(&state.pool, actor, user.id)
+    if codeyard_db_identity::following::is_user_following(&state.pool, actor, user.id)
         .await
         .map_err(Error::unavailable)?
     {
@@ -406,7 +406,7 @@ async fn check_following(
 ) -> Result<StatusCode> {
     crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     let Some(user) =
-        crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
+        codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &username)
             .await
             .map_err(Error::unavailable)?
     else {
@@ -506,7 +506,7 @@ async fn hovercard(
         _ => return Err(Error::validation("Hovercard", "subject_type", "invalid")),
     };
     let mut contexts =
-        if crate::backend::db::following::is_user_following(&state.pool, user.id, actor.user.id)
+        if codeyard_db_identity::following::is_user_following(&state.pool, user.id, actor.user.id)
             .await
             .map_err(Error::unavailable)?
         {
@@ -519,7 +519,7 @@ async fn hovercard(
             contexts.push(context);
         }
     }
-    if crate::backend::db::users::tokens::token_user(&state.pool, actor.token.id, false)
+    if codeyard_db_identity::users::tokens::token_user(&state.pool, actor.token.id, false)
         .await
         .map_err(Error::unavailable)?
         .is_none_or(|user| user.id != actor.user.id)
@@ -539,7 +539,7 @@ async fn hovercard_subject(
     let pool = &state.pool;
     let (related, message, icon) = match kind {
         "repository" => {
-            let repo = crate::backend::db::repositories::records::get_repository_by_id(pool, id)
+            let repo = codeyard_db_repos::repositories::records::get_repository_by_id(pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .filter(|repo| !repo.is_gist)
@@ -562,13 +562,13 @@ async fn hovercard_subject(
             )
         }
         "organization" => {
-            crate::backend::db::organizations::profiles::get_public_organization_by_id(pool, id)
+            codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
             crate::backend::api::github::auth::refuse_classic(state, auth.token.id, id).await?;
             // Hovercards may reveal public membership, not a profile token's owner's private roster.
-            let rows = crate::backend::db::organizations::discovery::list_organizations(
+            let rows = codeyard_db_orgs::organizations::discovery::list_organizations(
                 pool,
                 Some(user),
                 false,
@@ -591,7 +591,7 @@ async fn hovercard_subject(
                 "pull-requests"
             };
             let code = if kind == "issue" { "I" } else { "PR" };
-            let repo = crate::backend::db::graphql::node_repository(pool, code, id)
+            let repo = codeyard_db_repos::graphql::node_repository(pool, code, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -607,14 +607,14 @@ async fn hovercard_subject(
                 return Err(Error::missing());
             }
             let (repo, author) = if kind == "issue" {
-                let row = crate::backend::db::issues::get_issue_by_id(pool, id)
+                let row = codeyard_db_repos::issues::get_issue_by_id(pool, id)
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?;
                 (row.repo_id, row.author_id)
             } else {
                 let row =
-                    crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, id)
+                    codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, id)
                         .await
                         .map_err(Error::unavailable)?
                         .ok_or_else(Error::missing)?;
@@ -694,7 +694,7 @@ async fn key_list(
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
     // One row past the page says whether another page follows.
-    let keys = crate::backend::db::users::ssh_keys::user_keys_page(
+    let keys = codeyard_db_identity::users::ssh_keys::user_keys_page(
         &state.pool,
         user,
         offset as i64,
@@ -714,7 +714,7 @@ async fn key(
     let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
-    let key = crate::backend::db::users::ssh_keys::get_user_key(&state.pool, actor.user.id, id)
+    let key = codeyard_db_identity::users::ssh_keys::get_user_key(&state.pool, actor.user.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -742,7 +742,7 @@ async fn create_key(
         .unwrap_or("SSH key");
     crate::backend::identity::keys::validate_name(title)
         .map_err(|_| Error::validation("Key", "title", "invalid"))?;
-    let key = crate::backend::db::users::ssh_keys::add_ssh_key_for_token(
+    let key = codeyard_db_identity::users::ssh_keys::add_ssh_key_for_token(
         &state.pool,
         actor.user.id,
         actor.token.id,
@@ -779,7 +779,7 @@ async fn delete_key(
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    let deleted = crate::backend::db::users::ssh_keys::delete_user_ssh_key_for_token(
+    let deleted = codeyard_db_identity::users::ssh_keys::delete_user_ssh_key_for_token(
         &state.pool,
         actor.user.id,
         actor.token.id,

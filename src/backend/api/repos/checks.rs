@@ -2,8 +2,8 @@ use crate::backend::api::http::context::PageContext;
 
 use crate::backend::app::AppState;
 
-use crate::backend::db::checks::Credential;
-use crate::backend::db::checks::ANNOTATIONS_PER_PAGE;
+use codeyard_db_actions::checks::Credential;
+use codeyard_db_actions::checks::ANNOTATIONS_PER_PAGE;
 
 use axum::{
     extract::{Form, OriginalUri, Path, State},
@@ -65,12 +65,12 @@ async fn page(
         _ => return ctx.error(StatusCode::BAD_REQUEST, "Invalid annotation page."),
     };
     let session = crate::backend::api::http::session::extract_session_id(&ctx.headers);
-    let crate::backend::db::checks::PageSnapshot {
+    let codeyard_db_actions::checks::PageSnapshot {
         run,
         suite,
         annotations,
         total,
-    } = match crate::backend::db::checks::page_snapshot(
+    } = match codeyard_db_actions::checks::page_snapshot(
         &ctx.state.pool,
         ctx.user.as_ref().map(|user| user.id),
         session.as_deref(),
@@ -81,7 +81,7 @@ async fn page(
     .await
     {
         Ok(snapshot) => snapshot,
-        Err(error) if error.is::<crate::backend::db::checks::Refusal>() => {
+        Err(error) if error.is::<codeyard_db_actions::checks::Refusal>() => {
             return ctx.error(StatusCode::NOT_FOUND, "Check not found.")
         }
         Err(_) => return crate::backend::api::repos::chrome::unavailable(&ctx),
@@ -182,12 +182,12 @@ async fn submit(
     let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to re-run checks.");
     };
-    let run = match crate::backend::db::checks::run(&ctx.state.pool, loaded.repository.id, id).await
-    {
-        Ok(Some(run)) => run,
-        Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Check not found."),
-        Err(_) => return crate::backend::api::repos::chrome::unavailable(&ctx),
-    };
+    let run =
+        match codeyard_db_actions::checks::run(&ctx.state.pool, loaded.repository.id, id).await {
+            Ok(Some(run)) => run,
+            Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Check not found."),
+            Err(_) => return crate::backend::api::repos::chrome::unavailable(&ctx),
+        };
     let result = if uri.path().ends_with("/action") {
         crate::backend::api::github::checks::request_action(
             &ctx.state,
@@ -206,7 +206,7 @@ async fn submit(
             &owner,
             actor,
             Credential::Session(&session),
-            crate::backend::db::ci::CiCredential::Session(session.clone()),
+            codeyard_db_core::queries::ci::CiCredential::Session(session.clone()),
             run.suite_id,
             None,
         )

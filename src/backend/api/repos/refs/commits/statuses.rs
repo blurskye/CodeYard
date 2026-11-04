@@ -59,7 +59,7 @@ pub async fn list_commit_statuses(
     let sha = sha.to_ascii_lowercase();
 
     let (offset, limit) = json_page(query.page, query.per_page)?;
-    let statuses = crate::backend::db::repositories::protection::list_commit_statuses_page(
+    let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses_page(
         &state.pool,
         repository.id,
         &sha,
@@ -83,7 +83,7 @@ pub(super) async fn status_responses(
         .collect();
     ids.sort_unstable();
     ids.dedup();
-    let users = crate::backend::db::users::accounts::get_users_by_ids(pool, &ids)
+    let users = codeyard_db_identity::users::accounts::get_users_by_ids(pool, &ids)
         .await
         .map_err(|_| {
             (
@@ -129,7 +129,7 @@ pub async fn create_commit_status(
     let sha = sha.to_ascii_lowercase();
 
     let state_value = req.state.trim().to_lowercase();
-    if !crate::backend::db::repositories::protection::valid_commit_status_state(&state_value) {
+    if !codeyard_db_repos::repositories::protection::valid_commit_status_state(&state_value) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -140,7 +140,7 @@ pub async fn create_commit_status(
     }
 
     let context = req.context.trim();
-    if crate::backend::db::repositories::protection::server_owned_status_context(context) {
+    if codeyard_db_repos::repositories::protection::server_owned_status_context(context) {
         return Err((
             StatusCode::FORBIDDEN,
             Json(ApiError::new(
@@ -177,9 +177,9 @@ pub async fn create_commit_status(
         .await
         .map_err(|error| repo_store_error(error, StatusCode::SERVICE_UNAVAILABLE))?;
 
-    let status = crate::backend::db::repositories::protection::upsert_commit_status(
+    let status = codeyard_db_repos::repositories::protection::upsert_commit_status(
         &state.pool,
-        crate::backend::db::repositories::protection::CommitStatusUpsert {
+        codeyard_db_repos::repositories::protection::CommitStatusUpsert {
             repo_id: repository.id,
             sha: &sha,
             context,

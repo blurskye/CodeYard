@@ -42,3 +42,18 @@ workspace = true
 
 [dependencies.serde_yaml]
 workspace = true
+
+[dependencies.codeyard-support]
+workspace = true
+
+[dependencies.regex]
+workspace = true
+
+[dependencies.semver]
+workspace = true
+
+[dependencies.tempfile]
+workspace = true
+
+[dependencies.tracing-subscriber]
+workspace = true

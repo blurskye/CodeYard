@@ -24,7 +24,7 @@ async fn contract(pg: bool) {
     let repository = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner_id),
         "proj",
         None,
         false,
@@ -34,7 +34,7 @@ async fn contract(pg: bool) {
     .unwrap();
     assert_eq!(repository.size_bytes, 0);
     // A repository whose files are missing must not fail the list either.
-    codeyard::backend::db::repositories::records::create_repository(
+    codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         owner_id,
         "gone",
@@ -56,7 +56,7 @@ async fn contract(pg: bool) {
     assert!(model.storage_bytes.iter().all(|bytes| *bytes == 0));
     assert!(model.activity.iter().all(|point| point.commits == 0));
     let accounts =
-        codeyard::backend::db::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
+        codeyard_db_identity::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
             .await
             .unwrap();
     let owner = accounts
@@ -65,7 +65,7 @@ async fn contract(pg: bool) {
         .unwrap();
     assert_eq!(owner.total_bytes, 0);
     assert_eq!(owner.commits_total, 0);
-    codeyard::backend::db::activity::record_repository_push(
+    codeyard_db_repos::activity::record_repository_push(
         f.pool(),
         repository.id,
         owner_id,
@@ -91,7 +91,7 @@ async fn contract(pg: bool) {
         5
     );
     let recorded =
-        codeyard::backend::db::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
+        codeyard_db_identity::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
             .await
             .unwrap();
     let recorded = recorded
@@ -100,13 +100,13 @@ async fn contract(pg: bool) {
         .unwrap();
     assert_eq!(recorded.commits_total, 5);
     assert_eq!(recorded.pushes_total, 0, "the push counter counts CI runs");
-    let chart = codeyard::backend::db::users::accounts::list_admin_activity_points(f.pool(), 7)
+    let chart = codeyard_db_identity::users::accounts::list_admin_activity_points(f.pool(), 7)
         .await
         .unwrap();
     assert!(chart.last().unwrap().commits >= 5);
     // The GET did not scan the repository or record its size.
     let stored =
-        codeyard::backend::db::repositories::records::get_repository_by_id(f.pool(), repository.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repository.id)
             .await
             .unwrap()
             .unwrap();

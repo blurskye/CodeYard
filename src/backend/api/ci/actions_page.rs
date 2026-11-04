@@ -198,13 +198,14 @@ async fn actions(
                     return ctx.error(StatusCode::BAD_REQUEST, "Run identifier must be a UUID.")
                 }
             };
-            let run =
-                match crate::backend::db::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id).await {
-                    Ok(Some(run)) => run,
-                    Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Run not found."),
-                    Err(_) => return unavailable(&ctx),
-                };
-            let repo = match crate::backend::db::repositories::records::get_repository_by_id(
+            let run = match codeyard_db_actions::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id)
+                .await
+            {
+                Ok(Some(run)) => run,
+                Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Run not found."),
+                Err(_) => return unavailable(&ctx),
+            };
+            let repo = match codeyard_db_repos::repositories::records::get_repository_by_id(
                 &ctx.state.pool,
                 run.repo_id,
             )
@@ -220,7 +221,7 @@ async fn actions(
             {
                 return read_error(&ctx, status);
             }
-            let owner = match crate::backend::db::repositories::records::repository_owner_name(
+            let owner = match codeyard_db_repos::repositories::records::repository_owner_name(
                 &ctx.state.pool,
                 repo.id,
             )
@@ -311,7 +312,7 @@ async fn actions(
     } else {
         view_actions::logs::normalize_status(value("status"))
     };
-    let filters = crate::backend::db::ci::CiRunFilter {
+    let filters = codeyard_db_actions::ci::CiRunFilter {
         workflow: value("workflow").to_owned(),
         event: value("event").to_owned(),
         status: status.to_owned(),
@@ -320,7 +321,7 @@ async fn actions(
         text: value("q").to_owned(),
         before: (before > 0).then_some(before),
     };
-    let mut persisted_runs = match crate::backend::db::ci::list_filtered_ci_runs(
+    let mut persisted_runs = match codeyard_db_actions::ci::list_filtered_ci_runs(
         &ctx.state.pool,
         user.id,
         repository.as_ref().map(|repo| repo.id),
@@ -349,7 +350,7 @@ async fn actions(
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .collect();
-        match crate::backend::db::repositories::access::readable_repositories_by_ids(
+        match codeyard_db_repos::repositories::access::readable_repositories_by_ids(
             &ctx.state.pool,
             user.id,
             &ids,
@@ -391,7 +392,7 @@ async fn actions(
             Ok(id) => id,
             Err(_) => return ctx.error(StatusCode::BAD_REQUEST, "Run identifier must be a UUID."),
         };
-        let run = match crate::backend::db::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id).await
+        let run = match codeyard_db_actions::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id).await
         {
             Ok(Some(run)) => run,
             Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Run not found."),
@@ -400,7 +401,7 @@ async fn actions(
         if !run_matches_repository(run.repo_id, repository.as_ref().map(|repo| repo.id)) {
             return ctx.error(StatusCode::NOT_FOUND, "Run not found in this repository.");
         }
-        let run_repository = match crate::backend::db::repositories::records::get_repository_by_id(
+        let run_repository = match codeyard_db_repos::repositories::records::get_repository_by_id(
             &ctx.state.pool,
             run.repo_id,
         )
@@ -419,7 +420,7 @@ async fn actions(
         {
             return read_error(&ctx, status);
         }
-        let access = match crate::backend::db::repositories::access::get_user_repo_access(
+        let access = match codeyard_db_repos::repositories::access::get_user_repo_access(
             &ctx.state.pool,
             user.id,
             run_repository.id,
@@ -434,7 +435,7 @@ async fn actions(
             && run_repository.owner_org_id.is_none();
         can_cancel = !user.is_banned
             && !user.must_change_password
-            && crate::backend::db::ci::may_cancel_run(
+            && codeyard_db_actions::ci::may_cancel_run(
                 user.id,
                 run.triggered_by_id,
                 personal_admin,
@@ -444,7 +445,7 @@ async fn actions(
             can_manage_runs &= personal_admin || access.can_admin();
         }
         let persisted_logs =
-            match crate::backend::db::ci::list_ci_logs(&ctx.state.pool, run.id, log_limit as i64)
+            match codeyard_db_actions::ci::list_ci_logs(&ctx.state.pool, run.id, log_limit as i64)
                 .await
             {
                 Ok(lines) => lines,
@@ -461,24 +462,22 @@ async fn actions(
                 timestamp: line.created_at.timestamp(),
             })
             .collect();
-        let deployment = match crate::backend::db::ci::get_ci_deployment_by_run_id(
-            &ctx.state.pool,
-            run.id,
-        )
-        .await
-        {
-            Ok(Some(deployment)) if deployment.repo_id == run.repo_id => {
-                Some(view_actions::Deployment {
-                    environment: deployment.environment,
-                    status: deployment.status,
-                    approved_at: deployment.approved_at.map(|value| value.timestamp()),
-                    started_at: deployment.started_at.map(|value| value.timestamp()),
-                    completed_at: deployment.completed_at.map(|value| value.timestamp()),
-                })
-            }
-            Ok(None) => None,
-            _ => return unavailable(&ctx),
-        };
+        let deployment =
+            match codeyard_db_actions::ci::get_ci_deployment_by_run_id(&ctx.state.pool, run.id)
+                .await
+            {
+                Ok(Some(deployment)) if deployment.repo_id == run.repo_id => {
+                    Some(view_actions::Deployment {
+                        environment: deployment.environment,
+                        status: deployment.status,
+                        approved_at: deployment.approved_at.map(|value| value.timestamp()),
+                        started_at: deployment.started_at.map(|value| value.timestamp()),
+                        completed_at: deployment.completed_at.map(|value| value.timestamp()),
+                    })
+                }
+                Ok(None) => None,
+                _ => return unavailable(&ctx),
+            };
         // When the workflow list above could not be read, the storage node is not answering,
         // so the page does not wait on it a second time.
         let planned = if workflow_warning.is_some() || run.engine.as_deref() != Some("act") {
@@ -492,7 +491,7 @@ async fn actions(
             )
             .await
         };
-        let artifacts = match crate::backend::db::action_objects::list_artifacts(
+        let artifacts = match codeyard_db_actions::action_objects::list_artifacts(
             &ctx.state.pool,
             run.id,
             None,
@@ -514,7 +513,7 @@ async fn actions(
                 .collect(),
             Err(_) => return unavailable(&ctx),
         };
-        let groups = match crate::backend::db::action_concurrency::groups(
+        let groups = match codeyard_db_actions::action_concurrency::groups(
             &ctx.state.pool,
             run.repo_id,
             Some(run.workflow_run_id.unwrap_or(run.id)),
@@ -526,7 +525,7 @@ async fn actions(
         };
         let mut waiting_for_concurrency = false;
         for group in &groups {
-            let members = match crate::backend::db::action_concurrency::members(
+            let members = match codeyard_db_actions::action_concurrency::members(
                 &ctx.state.pool,
                 run.repo_id,
                 &group.name,
@@ -542,7 +541,7 @@ async fn actions(
         }
         let approval_pull = if run.approval_required {
             if let Some(id) = run.pull_request_id {
-                let pull = match crate::backend::db::pull_requests::records::get_pull_request_by_id(
+                let pull = match codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
                     &ctx.state.pool,
                     id,
                 )
@@ -551,13 +550,15 @@ async fn actions(
                     Ok(pull) => pull,
                     Err(_) => return unavailable(&ctx),
                 };
-                let owner =
-                    match crate::backend::db::ci::ci_repository_owner(&ctx.state.pool, run.repo_id)
-                        .await
-                    {
-                        Ok(Some(owner)) => owner,
-                        _ => return unavailable(&ctx),
-                    };
+                let owner = match codeyard_db_actions::ci::ci_repository_owner(
+                    &ctx.state.pool,
+                    run.repo_id,
+                )
+                .await
+                {
+                    Ok(Some(owner)) => owner,
+                    _ => return unavailable(&ctx),
+                };
                 pull.map(|pull| {
                     format!(
                         "/{}/{}/pulls/{}",
@@ -573,7 +574,7 @@ async fn actions(
             None
         };
         let summaries =
-            match crate::backend::db::action_jobs::summaries(&ctx.state.pool, run.repo_id, run.id)
+            match codeyard_db_actions::action_jobs::summaries(&ctx.state.pool, run.repo_id, run.id)
                 .await
             {
                 Ok(summaries) => summaries

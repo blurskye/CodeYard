@@ -14,7 +14,7 @@ async fn contract(pg: bool) {
     let repo = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         true,
@@ -219,7 +219,7 @@ async fn contract(pg: bool) {
         )
         .await;
     }
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         repo.id,
@@ -261,7 +261,7 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
-    assert!(codeyard::backend::db::variables::for_run(f.pool(), repo.id)
+    assert!(codeyard_db_actions::variables::for_run(f.pool(), repo.id)
         .await
         .unwrap()
         .contains(&("FROM_FORM".into(), "native form variable".into())));

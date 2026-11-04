@@ -8,10 +8,10 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::action_objects as objects;
-use crate::backend::db::action_objects::ActionObject;
-use crate::backend::db::action_objects::ObjectOrder;
-use crate::backend::db::action_objects::ObjectQuery;
+use codeyard_db_actions::action_objects as objects;
+use codeyard_db_actions::action_objects::ActionObject;
+use codeyard_db_actions::action_objects::ObjectOrder;
+use codeyard_db_actions::action_objects::ObjectQuery;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -78,7 +78,7 @@ async fn artifact_document(
 ) -> Result<Value> {
     let run = match object.run_id {
         Some(id) => Some(
-            crate::backend::db::ci::get_ci_run_by_id(&state.pool, object.repo_id, id)
+            codeyard_db_actions::ci::get_ci_run_by_id(&state.pool, object.repo_id, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?,

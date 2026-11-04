@@ -29,7 +29,7 @@ async fn contract(pg: bool) {
     let repo = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "project",
         None,
         true,
@@ -40,7 +40,7 @@ async fn contract(pg: bool) {
     let other = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "other",
         None,
         true,
@@ -67,7 +67,7 @@ async fn contract(pg: bool) {
         StatusCode::OK,
     )
     .await;
-    let run = codeyard::backend::db::ci::claim_ci_run(
+    let run = codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "jobs",
         "local",
@@ -80,7 +80,7 @@ async fn contract(pg: bool) {
     assert_eq!(dispatch["workflow_run_id"], run.id);
     let workflow = ".github/workflows/ci.yml";
     let generation = codeyard::backend::ci::runtime::token_hash("private-runtime");
-    codeyard::backend::db::action_objects::issue_token(
+    codeyard_db_actions::action_objects::issue_token(
         f.pool(),
         run.id,
         run.worker.as_deref().unwrap_or(""),
@@ -90,7 +90,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     super::actions_objects::job_credentials(&f, &run, &["build"]).await;
-    codeyard::backend::db::action_jobs::save_state(
+    codeyard_db_actions::action_jobs::save_state(
         f.pool(),
         "jobs",
         run.id,
@@ -111,7 +111,7 @@ async fn contract(pg: bool) {
             }),
         },
     );
-    assert!(codeyard::backend::db::action_jobs::apply(
+    assert!(codeyard_db_actions::action_jobs::apply(
         f.pool(),
         "other",
         run.id,
@@ -121,7 +121,7 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    assert!(codeyard::backend::db::action_jobs::apply(
+    assert!(codeyard_db_actions::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -131,7 +131,7 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    assert!(codeyard::backend::db::action_jobs::apply(
+    assert!(codeyard_db_actions::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -141,7 +141,7 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    let job = codeyard::backend::db::action_jobs::apply(
+    let job = codeyard_db_actions::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -153,7 +153,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .id;
     assert!(
-        codeyard::backend::db::action_jobs::get(f.pool(), repo.id, job, false)
+        codeyard_db_actions::action_jobs::get(f.pool(), repo.id, job, false)
             .await
             .unwrap()
             .is_none()
@@ -177,7 +177,7 @@ async fn contract(pg: bool) {
         },
     ] {
         assert_eq!(
-            codeyard::backend::db::action_jobs::apply(
+            codeyard_db_actions::action_jobs::apply(
                 f.pool(),
                 "jobs",
                 run.id,
@@ -192,7 +192,7 @@ async fn contract(pg: bool) {
         );
     }
     assert_eq!(
-        codeyard::backend::db::action_jobs::get(f.pool(), repo.id, job, false)
+        codeyard_db_actions::action_jobs::get(f.pool(), repo.id, job, false)
             .await
             .unwrap()
             .unwrap()
@@ -202,12 +202,12 @@ async fn contract(pg: bool) {
         json!({"os":"linux"})
     );
     assert!(
-        codeyard::backend::db::action_jobs::get(f.pool(), other.id, job, false)
+        codeyard_db_actions::action_jobs::get(f.pool(), other.id, job, false)
             .await
             .unwrap()
             .is_none()
     );
-    assert!(codeyard::backend::db::ci::append_ci_logs(
+    assert!(codeyard_db_actions::ci::append_ci_logs(
         f.pool(),
         run.id,
         "jobs",
@@ -222,7 +222,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap());
-    assert!(codeyard::backend::db::ci::append_ci_logs(
+    assert!(codeyard_db_actions::ci::append_ci_logs(
         f.pool(),
         run.id,
         "jobs",
@@ -237,7 +237,7 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    assert!(codeyard::backend::db::ci::append_ci_logs(
+    assert!(codeyard_db_actions::ci::append_ci_logs(
         f.pool(),
         run.id,
         "jobs",
@@ -252,7 +252,7 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    codeyard::backend::db::action_jobs::apply(
+    codeyard_db_actions::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -269,7 +269,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let second = codeyard::backend::db::action_jobs::apply(
+    let second = codeyard_db_actions::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -290,7 +290,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .id;
-    codeyard::backend::db::action_jobs::apply(
+    codeyard_db_actions::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -300,7 +300,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::action_jobs::apply(
+    codeyard_db_actions::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -397,7 +397,7 @@ async fn contract(pg: bool) {
             outputs: BTreeMap::new(),
         },
     );
-    assert!(codeyard::backend::db::action_jobs::save_state(
+    assert!(codeyard_db_actions::action_jobs::save_state(
         f.pool(),
         "jobs",
         run.id,
@@ -418,7 +418,7 @@ async fn contract(pg: bool) {
             },
         )]),
     );
-    assert!(codeyard::backend::db::action_jobs::save_state(
+    assert!(codeyard_db_actions::action_jobs::save_state(
         f.pool(),
         "jobs",
         run.id,
@@ -428,7 +428,7 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    codeyard::backend::db::action_jobs::apply(
+    codeyard_db_actions::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -444,7 +444,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::action_jobs::save_state(
+    codeyard_db_actions::action_jobs::save_state(
         f.pool(),
         "jobs",
         run.id,
@@ -454,11 +454,11 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::ci::finish_ci_run(f.pool(), run.id, "jobs", "cancelled", None)
+    codeyard_db_actions::ci::finish_ci_run(f.pool(), run.id, "jobs", "cancelled", None)
         .await
         .unwrap()
         .unwrap();
-    assert!(codeyard::backend::db::action_jobs::apply(
+    assert!(codeyard_db_actions::action_jobs::apply(
         f.pool(),
         "jobs",
         run.id,
@@ -565,7 +565,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(
-        codeyard::backend::db::action_jobs::get(f.pool(), repo.id, job, false)
+        codeyard_db_actions::action_jobs::get(f.pool(), repo.id, job, false)
             .await
             .unwrap()
             .is_none()
@@ -628,7 +628,7 @@ async fn summaries(f: &Database, (run, job, repo, other): (i64, i64, i64, i64), 
             markdown: markdown.into(),
         };
         async move {
-            codeyard::backend::db::action_jobs::apply(
+            codeyard_db_actions::action_jobs::apply(
                 f.pool(),
                 worker,
                 run,
@@ -656,14 +656,14 @@ async fn summaries(f: &Database, (run, job, repo, other): (i64, i64, i64, i64), 
         send("jobs", 1, "### Build\nall green").await.unwrap().id,
         job
     );
-    let stored = codeyard::backend::db::action_jobs::summaries(f.pool(), repo, run)
+    let stored = codeyard_db_actions::action_jobs::summaries(f.pool(), repo, run)
         .await
         .unwrap();
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].number, 1);
     assert_eq!(stored[0].markdown, "### Build\nall green");
     assert!(
-        codeyard::backend::db::action_jobs::summaries(f.pool(), other, run)
+        codeyard_db_actions::action_jobs::summaries(f.pool(), other, run)
             .await
             .unwrap()
             .is_empty()
@@ -700,7 +700,7 @@ async fn annotations(
         ("jobs", &annotation),
         ("jobs", &second),
     ] {
-        let result = codeyard::backend::db::action_jobs::apply(
+        let result = codeyard_db_actions::action_jobs::apply(
             f.pool(),
             worker,
             run,
@@ -721,7 +721,7 @@ async fn annotations(
         }
     }
     assert!(
-        codeyard::backend::db::action_jobs::annotations(f.pool(), other, job, 0, 100)
+        codeyard_db_actions::action_jobs::annotations(f.pool(), other, job, 0, 100)
             .await
             .unwrap()
             .1

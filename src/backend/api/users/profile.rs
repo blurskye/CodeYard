@@ -26,7 +26,7 @@ async fn profile_stars(
             "Unable to load this user's stars.",
         )
     };
-    let count = crate::backend::db::repositories::engagement::count_starred_repositories(
+    let count = codeyard_db_repos::repositories::engagement::count_starred_repositories(
         &ctx.state.pool,
         target,
         viewer,
@@ -131,7 +131,7 @@ pub(crate) async fn profile_response(
     };
     let following = if let Some(viewer) = ctx.user.as_ref().filter(|viewer| viewer.id != target.id)
     {
-        match crate::backend::db::following::is_user_following(
+        match codeyard_db_identity::following::is_user_following(
             &ctx.state.pool,
             viewer.id,
             target.id,
@@ -150,7 +150,8 @@ pub(crate) async fn profile_response(
         false
     };
     let followers =
-        match crate::backend::db::following::count_user_followers(&ctx.state.pool, target.id).await
+        match codeyard_db_identity::following::count_user_followers(&ctx.state.pool, target.id)
+            .await
         {
             Ok(value) => value,
             Err(_) => {
@@ -161,7 +162,8 @@ pub(crate) async fn profile_response(
             }
         };
     let follows =
-        match crate::backend::db::following::count_user_following(&ctx.state.pool, target.id).await
+        match codeyard_db_identity::following::count_user_following(&ctx.state.pool, target.id)
+            .await
         {
             Ok(value) => value,
             Err(_) => {
@@ -180,7 +182,7 @@ pub(crate) async fn profile_response(
                 .as_ref()
                 .zip(ctx.session_id.as_deref())
                 .map(
-                    |(user, session)| crate::backend::db::activity::ActivityViewer {
+                    |(user, session)| codeyard_db_repos::activity::ActivityViewer {
                         user: user.id,
                         session,
                     },
@@ -254,7 +256,7 @@ pub(crate) async fn profile_repositories(
 ) -> anyhow::Result<Vec<users::Repository>> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let mut counts =
-        crate::backend::db::repositories::discovery::public_fork_counts(pool, &ids).await?;
+        codeyard_db_repos::repositories::discovery::public_fork_counts(pool, &ids).await?;
     Ok(repos
         .into_iter()
         .map(|repo| {
@@ -289,7 +291,7 @@ pub(crate) async fn profile_get(
         Err(response) => return response,
     };
     // Users and organizations share one name namespace, so a name that is no user may be an organization.
-    match crate::backend::db::users::accounts::get_user_by_username(&ctx.state.pool, &username)
+    match codeyard_db_identity::users::accounts::get_user_by_username(&ctx.state.pool, &username)
         .await
     {
         Ok(None) => {

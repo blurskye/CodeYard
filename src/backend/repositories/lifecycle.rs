@@ -49,16 +49,17 @@ pub(crate) fn storage_error(error: anyhow::Error) -> StorageError {
         };
     }
     if let Some(refusal) =
-        error.downcast_ref::<crate::backend::db::organizations::properties::Refusal>()
+        error.downcast_ref::<codeyard_db_core::queries::organizations::properties::Refusal>()
     {
         return match refusal {
-            crate::backend::db::organizations::properties::Refusal::Invalid { message, .. } => {
-                StorageError {
-                    kind: LifecycleFailure::Invalid,
-                    message,
-                }
-            }
-            crate::backend::db::organizations::properties::Refusal::Denied => StorageError {
+            codeyard_db_core::queries::organizations::properties::Refusal::Invalid {
+                message,
+                ..
+            } => StorageError {
+                kind: LifecycleFailure::Invalid,
+                message,
+            },
+            codeyard_db_core::queries::organizations::properties::Refusal::Denied => StorageError {
                 kind: LifecycleFailure::Denied,
                 message: "Organization policy does not allow setting these repository properties.",
             },
@@ -69,73 +70,73 @@ pub(crate) fn storage_error(error: anyhow::Error) -> StorageError {
         };
     }
     match error
-        .downcast_ref::<crate::backend::db::repositories::creation::RepositoryStorageRefusal>()
+        .downcast_ref::<codeyard_db_repos::repositories::creation::RepositoryStorageRefusal>()
     {
-        Some(crate::backend::db::repositories::creation::RepositoryStorageRefusal::Denied) => {
+        Some(codeyard_db_repos::repositories::creation::RepositoryStorageRefusal::Denied) => {
             StorageError {
                 kind: LifecycleFailure::Denied,
                 message: "You are not allowed to create this repository.",
             }
         }
         Some(
-            crate::backend::db::repositories::creation::RepositoryStorageRefusal::StalePlacement,
+            codeyard_db_repos::repositories::creation::RepositoryStorageRefusal::StalePlacement,
         ) => unavailable(),
         None => {
-            match error.downcast_ref::<crate::backend::db::repositories::records::RepositorySettingsRefusal>() {
+            match error.downcast_ref::<codeyard_db_repos::repositories::records::RepositorySettingsRefusal>() {
                 Some(
-                    crate::backend::db::repositories::records::RepositorySettingsRefusal::Denied
-                    | crate::backend::db::repositories::records::RepositorySettingsRefusal::VisibilityLocked,
+                    codeyard_db_repos::repositories::records::RepositorySettingsRefusal::Denied
+                    | codeyard_db_repos::repositories::records::RepositorySettingsRefusal::VisibilityLocked,
                 ) => StorageError {
                     kind: LifecycleFailure::Denied,
                     message: "Repository mutation is not permitted.",
                 },
-                Some(crate::backend::db::repositories::records::RepositorySettingsRefusal::InvalidName) => {
+                Some(codeyard_db_repos::repositories::records::RepositorySettingsRefusal::InvalidName) => {
                     StorageError {
                         kind: LifecycleFailure::Invalid,
                         message: "Invalid repository name.",
                     }
                 }
-                Some(crate::backend::db::repositories::records::RepositorySettingsRefusal::NameConflict) => {
+                Some(codeyard_db_repos::repositories::records::RepositorySettingsRefusal::NameConflict) => {
                     StorageError {
                         kind: LifecycleFailure::Conflict,
                         message: "A repository with this name already exists.",
                     }
                 }
-                Some(crate::backend::db::repositories::records::RepositorySettingsRefusal::NoMergeMethod) => {
+                Some(codeyard_db_repos::repositories::records::RepositorySettingsRefusal::NoMergeMethod) => {
                     StorageError {
                         kind: LifecycleFailure::Invalid,
                         message: "At least one merge method must stay allowed.",
                     }
                 }
-                Some(crate::backend::db::repositories::records::RepositorySettingsRefusal::InvalidTopics) => {
+                Some(codeyard_db_repos::repositories::records::RepositorySettingsRefusal::InvalidTopics) => {
                     StorageError {
                         kind: LifecycleFailure::Invalid,
                         message: "Invalid repository topics.",
                     }
                 }
-                Some(crate::backend::db::repositories::records::RepositorySettingsRefusal::InvalidWebsite) => {
+                Some(codeyard_db_repos::repositories::records::RepositorySettingsRefusal::InvalidWebsite) => {
                     StorageError {
                         kind: LifecycleFailure::Invalid,
                         message: "Invalid repository website.",
                     }
                 }
                 Some(
-                    crate::backend::db::repositories::records::RepositorySettingsRefusal::InternalNeedsOrganization,
+                    codeyard_db_repos::repositories::records::RepositorySettingsRefusal::InternalNeedsOrganization,
                 ) => StorageError {
                     kind: LifecycleFailure::Invalid,
                     message: "Only organization repositories can be internal.",
                 },
                 Some(
-                    crate::backend::db::repositories::records::RepositorySettingsRefusal::InvalidSquashMessage,
+                    codeyard_db_repos::repositories::records::RepositorySettingsRefusal::InvalidSquashMessage,
                 ) => StorageError {
                     kind: LifecycleFailure::Invalid,
                     message: "Invalid squash merge commit title or message.",
                 },
                 None if matches!(
-                    error.downcast_ref::<crate::backend::db::secrets::SecretsError>(),
+                    error.downcast_ref::<codeyard_db_core::queries::secrets::SecretsError>(),
                     Some(
-                        crate::backend::db::secrets::SecretsError::TotalTooLarge
-                            | crate::backend::db::secrets::SecretsError::TooManySecrets
+                        codeyard_db_core::queries::secrets::SecretsError::TotalTooLarge
+                            | codeyard_db_core::queries::secrets::SecretsError::TooManySecrets
                     )
                 ) =>
                 {
@@ -185,20 +186,20 @@ async fn cleanup_failed_initialization(
     // Re-read the row because a delete may commit even when its response is lost.
     // A row that has accepted writes is kept, so a failed creation never discards a push.
     let deleted = if repository.is_gist {
-        crate::backend::db::gists::discard(pool, repository.id, false)
+        codeyard_db_repos::gists::discard(pool, repository.id, false)
             .await
             .and_then(|row| {
                 row.ok_or_else(|| anyhow::anyhow!("Gist initialization is no longer discardable"))
             })
     } else {
-        crate::backend::db::repositories::records::delete_unwritten_repository(pool, repository.id)
+        codeyard_db_repos::repositories::records::delete_unwritten_repository(pool, repository.id)
             .await
             .and_then(|row| {
                 row.ok_or_else(|| anyhow::anyhow!("Repository has accepted writes and is kept"))
             })
     };
     let row_removed =
-        match crate::backend::db::repositories::records::get_repository_by_id(pool, repository.id)
+        match codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository.id)
             .await
         {
             Ok(row) => row.is_none(),
@@ -227,16 +228,16 @@ async fn cleanup_failed_initialization(
 /// Authority and initial organization metadata, validated together before storage is initialized.
 #[derive(Clone, Copy, Debug)]
 pub struct CreationInput<'a> {
-    pub owner: crate::backend::db::repositories::creation::RepositoryCreationOwner,
-    pub properties: &'a [crate::backend::db::organizations::properties::ValueInput],
-    pub admission: crate::backend::db::repositories::creation::CreationAdmission<'a>,
+    pub owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner,
+    pub properties: &'a [codeyard_db_core::queries::organizations::properties::ValueInput],
+    pub admission: codeyard_db_repos::repositories::creation::CreationAdmission<'a>,
 }
 
 /// UUID directory names never change on a rename or ownership transfer.
 pub async fn provision(
     node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
-    owner: crate::backend::db::repositories::creation::RepositoryCreationOwner,
+    owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner,
     name: &str,
     description: Option<&str>,
     private: bool,
@@ -286,7 +287,7 @@ pub async fn provision_with_properties(
 pub async fn provision_gist(
     node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
-    owner: crate::backend::db::repositories::creation::RepositoryCreationOwner,
+    owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner,
     name: &str,
     source: Option<&Repository>,
 ) -> Result<Repository, StorageError> {
@@ -337,12 +338,12 @@ impl<'a> CreationSource<'a> {
 async fn provision_from(
     node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
-    owner: crate::backend::db::repositories::creation::RepositoryCreationOwner,
+    owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner,
     name: &str,
     description: Option<&str>,
     options: ProvisionOptions<'_>,
-    chosen: &[crate::backend::db::organizations::properties::ValueInput],
-    authority: Option<&crate::backend::db::credentials::Actor>,
+    chosen: &[codeyard_db_core::queries::organizations::properties::ValueInput],
+    authority: Option<&codeyard_db_core::queries::credentials::Actor>,
 ) -> Result<Repository, StorageError> {
     let mut properties = inherited_properties(node.0, owner, options.creation_source).await?;
     // Values chosen in the creation form replace inherited ones.
@@ -360,7 +361,7 @@ async fn provision_from(
         CreationInput {
             owner,
             properties: &properties,
-            admission: crate::backend::db::repositories::creation::CreationAdmission {
+            admission: codeyard_db_repos::repositories::creation::CreationAdmission {
                 authority,
                 advisory: None,
             },
@@ -376,12 +377,12 @@ async fn provision_from(
 /// Another owner has its own definitions, so the copy starts from that owner's defaults.
 async fn inherited_properties(
     pool: &codeyard_db_core::DbPool,
-    owner: crate::backend::db::repositories::creation::RepositoryCreationOwner,
+    owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner,
     source: Option<CreationSource<'_>>,
-) -> Result<Vec<crate::backend::db::organizations::properties::ValueInput>, StorageError> {
+) -> Result<Vec<codeyard_db_core::queries::organizations::properties::ValueInput>, StorageError> {
     let (
         Some(source),
-        crate::backend::db::repositories::creation::RepositoryTarget::Organization(org),
+        codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(org),
     ) = (source.map(CreationSource::repository), owner.target)
     else {
         return Ok(Vec::new());
@@ -389,12 +390,12 @@ async fn inherited_properties(
     if source.owner_org_id != Some(org) {
         return Ok(Vec::new());
     }
-    let Some(crate::backend::db::organizations::properties::RepositoryMetadata {
+    let Some(codeyard_db_orgs::organizations::properties::RepositoryMetadata {
         values,
         definitions,
         organization_owner,
         ..
-    }) = crate::backend::db::organizations::properties::repository(
+    }) = codeyard_db_orgs::organizations::properties::repository(
         pool,
         Some(owner.actor_id),
         source.id,
@@ -416,7 +417,7 @@ async fn inherited_properties(
                         .eq_ignore_ascii_case(&value.property_name)
                         && (organization_owner
                             || definition.fields.values_editable_by
-                                == crate::backend::db::organizations::properties::EditableBy::OrgAndRepoActors)
+                                == codeyard_db_core::queries::organizations::properties::EditableBy::OrgAndRepoActors)
                 })
         })
         .collect())
@@ -486,7 +487,7 @@ async fn provision_stored(
                 CreationInput {
                     owner,
                     properties: &properties,
-                    admission: crate::backend::db::repositories::creation::CreationAdmission {
+                    admission: codeyard_db_repos::repositories::creation::CreationAdmission {
                         authority: authority.as_ref(),
                         advisory: advisory.as_deref(),
                     },
@@ -530,7 +531,7 @@ async fn provision_stored_owned(
         .await
         .map_err(git_storage_error)?;
     if storage_node_id.is_some()
-        && crate::backend::db::cluster::writes::write_settings(pool)
+        && codeyard_db_cluster::cluster::writes::write_settings(pool)
             .await
             .map_err(|_| unavailable())?
             .write_quorum
@@ -545,7 +546,7 @@ async fn provision_stored_owned(
     let root = std::path::absolute(repos_path).map_err(|_| unavailable())?;
     let location = crate::backend::repositories::store::primary_path(&root, Uuid::new_v4());
     let disk_path = location.to_str().ok_or_else(unavailable)?;
-    let input = crate::backend::db::repositories::creation::NewRepository {
+    let input = codeyard_db_repos::repositories::creation::NewRepository {
         owner,
         name,
         description,
@@ -559,9 +560,9 @@ async fn provision_stored_owned(
         },
     };
     let mut repository = if gist {
-        crate::backend::db::repositories::creation::insert_gist_repository(pool, input).await
+        codeyard_db_repos::repositories::creation::insert_gist_repository(pool, input).await
     } else {
-        crate::backend::db::repositories::creation::insert_repository_with_admission(
+        codeyard_db_repos::repositories::creation::insert_repository_with_admission(
             pool,
             input,
             creation.properties,
@@ -584,7 +585,7 @@ async fn provision_stored_owned(
         }
         if let Some(source) = source {
             if template {
-                crate::backend::db::repositories::records::update_repo_default_branch(
+                codeyard_db_repos::repositories::records::update_repo_default_branch(
                     pool,
                     repository.id,
                     &source.default_branch,
@@ -639,7 +640,7 @@ async fn provision_stored_owned(
         }
         // Fork initialization records its version on the owning store before refreshing languages.
         if source.is_none() {
-            crate::backend::db::cluster::bump_write_version(pool, repository.id, None)
+            codeyard_db_cluster::cluster::bump_write_version(pool, repository.id, None)
                 .await
                 .map_err(|_| unavailable())?;
         }
@@ -700,7 +701,7 @@ impl InitialFiles {
 pub async fn provision_with_initial_files(
     node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
-    owner: crate::backend::db::repositories::creation::RepositoryCreationOwner,
+    owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner,
     name: &str,
     description: Option<&str>,
     private: bool,
@@ -761,13 +762,13 @@ pub async fn provision_with_initial_properties(
 async fn commit_initial_files(
     pool: &codeyard_db_core::DbPool,
     context: Option<&NodeContext>,
-    authority: crate::backend::db::credentials::Actor,
+    authority: codeyard_db_core::queries::credentials::Actor,
     repository: &Repository,
     description: Option<&str>,
     files: InitialFiles,
 ) -> Result<(), StorageError> {
     let actor = authority.user_id;
-    let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| unavailable())?
         .ok_or_else(unavailable)?;
@@ -854,7 +855,7 @@ pub async fn visibility_locked(
     pool: &codeyard_db_core::DbPool,
     repository: &Repository,
 ) -> Result<bool, StorageError> {
-    crate::backend::db::repositories::creation::repository_visibility_locked(pool, repository.id)
+    codeyard_db_repos::repositories::creation::repository_visibility_locked(pool, repository.id)
         .await
         .map_err(|_| unavailable())
 }
@@ -887,7 +888,7 @@ pub fn validate_description(description: &str) -> Result<(), StorageError> {
 pub async fn delete(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
 ) -> Result<(), StorageError> {
     let actor = actor.into();
@@ -903,10 +904,9 @@ pub async fn delete(
         })?;
     // Remove files where the deleted row says they are. A promotion may have moved the
     // primary after the check above.
-    let deleted =
-        crate::backend::db::repositories::records::delete_repository(pool, actor, repo_id)
-            .await
-            .map_err(storage_error)?;
+    let deleted = codeyard_db_repos::repositories::records::delete_repository(pool, actor, repo_id)
+        .await
+        .map_err(storage_error)?;
     remove_deleted_repository(cluster, &deleted).await
 }
 
@@ -933,11 +933,11 @@ pub(crate) async fn remove_deleted_repository(
 pub async fn transfer(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
     new_owner: &str,
 ) -> Result<Repository, StorageError> {
-    let repository = crate::backend::db::repositories::records::get_repository_by_id(pool, repo_id)
+    let repository = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)
         .await
         .map_err(|_| unavailable())?
         .ok_or_else(unavailable)?;
@@ -969,27 +969,27 @@ pub(crate) async fn transfer_target(
     handle: &str,
 ) -> Result<
     (
-        crate::backend::db::repositories::creation::RepositoryTarget,
+        codeyard_db_repos::repositories::creation::RepositoryTarget,
         String,
     ),
     StorageError,
 > {
-    if let Some(user) = crate::backend::db::users::accounts::get_user_by_username(pool, handle)
+    if let Some(user) = codeyard_db_identity::users::accounts::get_user_by_username(pool, handle)
         .await
         .map_err(|_| unavailable())?
     {
         return Ok((
-            crate::backend::db::repositories::creation::RepositoryTarget::Personal(user.id),
+            codeyard_db_repos::repositories::creation::RepositoryTarget::Personal(user.id),
             user.username,
         ));
     }
     if let Some(org) =
-        crate::backend::db::organizations::profiles::get_public_organization(pool, handle)
+        codeyard_db_orgs::organizations::profiles::get_public_organization(pool, handle)
             .await
             .map_err(|_| unavailable())?
     {
         return Ok((
-            crate::backend::db::repositories::creation::RepositoryTarget::Organization(org.id),
+            codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(org.id),
             org.name,
         ));
     }
@@ -1018,7 +1018,7 @@ pub async fn fork(
     context: Option<&NodeContext>,
     repos_path: &Path,
     broadcaster: &crate::backend::notifications::NotificationBroadcaster,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     source_id: i64,
     owner: &str,
 ) -> Result<Repository, StorageError> {
@@ -1030,7 +1030,7 @@ pub async fn fork(
         repos_path,
         broadcaster,
         ForkOptions {
-            owner: crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
                 actor,
             ),
             name: None,
@@ -1045,12 +1045,12 @@ pub async fn fork(
 }
 
 pub struct ForkOptions<'a> {
-    pub owner: crate::backend::db::repositories::creation::RepositoryCreationOwner,
+    pub owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner,
     pub name: Option<&'a str>,
     pub default_branch_only: bool,
     /// Organization property values chosen for the copy.
-    pub properties: &'a [crate::backend::db::organizations::properties::ValueInput],
-    pub authority: Option<&'a crate::backend::db::credentials::Actor>,
+    pub properties: &'a [codeyard_db_core::queries::organizations::properties::ValueInput],
+    pub authority: Option<&'a codeyard_db_core::queries::credentials::Actor>,
 }
 
 pub async fn fork_into(
@@ -1064,7 +1064,7 @@ pub async fn fork_into(
 ) -> Result<Repository, StorageError> {
     let actor = options.owner.actor_id;
     live_creation_actor(pool, actor, options.authority).await?;
-    crate::backend::db::repositories::creation::check_creation_authority(pool, options.owner)
+    codeyard_db_repos::repositories::creation::check_creation_authority(pool, options.owner)
         .await
         .map_err(storage_error)?;
     let source = crate::backend::repositories::access::check_read(pool, source_id, Some(actor))
@@ -1079,7 +1079,7 @@ pub async fn fork_into(
         })?;
     // As on GitHub, the switch only governs forks of private and internal repositories.
     if source.is_private
-        && !crate::backend::db::repositories::records::repository_features(pool, source.id)
+        && !codeyard_db_repos::repositories::records::repository_features(pool, source.id)
             .await
             .map_err(|_| unavailable())?
             .allow_forking
@@ -1090,10 +1090,10 @@ pub async fn fork_into(
         });
     }
     let same_owner = match options.owner.target {
-        crate::backend::db::repositories::creation::RepositoryTarget::Personal(id) => {
+        codeyard_db_repos::repositories::creation::RepositoryTarget::Personal(id) => {
             source.is_personal_owner(id)
         }
-        crate::backend::db::repositories::creation::RepositoryTarget::Organization(id) => {
+        codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(id) => {
             source.owner_org_id == Some(id)
         }
     };
@@ -1107,17 +1107,17 @@ pub async fn fork_into(
         live_creation_actor(pool, actor, options.authority).await?;
         return Ok(existing);
     }
-    let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| unavailable())?
         .ok_or_else(unavailable)?;
     let fork_owner = match options.owner.target {
-        crate::backend::db::repositories::creation::RepositoryTarget::Personal(_) => {
+        codeyard_db_repos::repositories::creation::RepositoryTarget::Personal(_) => {
             user.username.clone()
         }
-        crate::backend::db::repositories::creation::RepositoryTarget::Organization(id) => {
-            let crate::backend::db::organizations::OrganizationOutcome::Applied(org) =
-                crate::backend::db::organizations::profiles::get_organization_metadata(
+        codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(id) => {
+            let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) =
+                codeyard_db_orgs::organizations::profiles::get_organization_metadata(
                     pool, actor, id,
                 )
                 .await
@@ -1204,18 +1204,15 @@ pub async fn fork_into(
     if fork.is_private {
         return Ok(fork);
     }
-    let public = match crate::backend::db::repositories::records::get_repository_by_id(
-        pool, fork.id,
-    )
-    .await
-    {
-        Ok(Some(current)) => !current.is_private,
-        Ok(None) => false,
-        Err(error) => {
-            tracing::warn!(repo_id = fork.id, %error, "fork webhook visibility unavailable");
-            false
-        }
-    };
+    let public =
+        match codeyard_db_repos::repositories::records::get_repository_by_id(pool, fork.id).await {
+            Ok(Some(current)) => !current.is_private,
+            Ok(None) => false,
+            Err(error) => {
+                tracing::warn!(repo_id = fork.id, %error, "fork webhook visibility unavailable");
+                false
+            }
+        };
     if !public {
         return Ok(fork);
     }
@@ -1243,7 +1240,7 @@ pub async fn fork_into(
 async fn live_creation_actor(
     pool: &codeyard_db_core::DbPool,
     actor: i64,
-    authority: Option<&crate::backend::db::credentials::Actor>,
+    authority: Option<&codeyard_db_core::queries::credentials::Actor>,
 ) -> Result<(), StorageError> {
     if let Some(authority) = authority {
         if authority.user_id != actor {
@@ -1261,11 +1258,11 @@ async fn live_creation_actor(
 async fn existing_fork(
     pool: &codeyard_db_core::DbPool,
     actor: i64,
-    owner: crate::backend::db::repositories::creation::RepositoryTarget,
+    owner: codeyard_db_repos::repositories::creation::RepositoryTarget,
     source: i64,
 ) -> Result<Option<Repository>, StorageError> {
     let Some(repo) =
-        crate::backend::db::repositories::discovery::get_owner_fork(pool, owner, source)
+        codeyard_db_repos::repositories::discovery::get_owner_fork(pool, owner, source)
             .await
             .map_err(|_| unavailable())?
     else {
@@ -1281,7 +1278,7 @@ async fn existing_fork(
             },
             message: "Fork is unavailable.",
         })?;
-    if !crate::backend::db::interactions::source(pool, repo.id)
+    if !codeyard_db_identity::interactions::source(pool, repo.id)
         .await
         .map_err(|_| unavailable())?
         .is_some_and(|source| source.write_version > 0)
@@ -1300,14 +1297,14 @@ pub struct TemplateOptions<'a> {
     pub private: bool,
     pub all_branches: bool,
     /// Organization property values chosen for the copy.
-    pub properties: &'a [crate::backend::db::organizations::properties::ValueInput],
-    pub authority: Option<&'a crate::backend::db::credentials::Actor>,
+    pub properties: &'a [codeyard_db_core::queries::organizations::properties::ValueInput],
+    pub authority: Option<&'a codeyard_db_core::queries::credentials::Actor>,
 }
 
 pub async fn generate(
     node: (&codeyard_db_core::DbPool, Option<&NodeContext>),
     repos_path: &Path,
-    owner: crate::backend::db::repositories::creation::RepositoryCreationOwner,
+    owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner,
     source_id: i64,
     options: TemplateOptions<'_>,
 ) -> Result<Repository, StorageError> {
@@ -1323,7 +1320,7 @@ pub async fn generate(
         validate_description(description)?;
     }
     live_creation_actor(node.0, owner.actor_id, authority).await?;
-    crate::backend::db::repositories::creation::check_creation_authority(node.0, owner)
+    codeyard_db_repos::repositories::creation::check_creation_authority(node.0, owner)
         .await
         .map_err(storage_error)?;
     let source =

@@ -12,10 +12,10 @@ pub mod ref_changes;
 pub mod settings;
 pub mod statuses;
 
-use crate::backend::db::webhooks::HookOwner;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::DbPool;
+use codeyard_db_repos::webhooks::HookOwner;
 use delivery::Outgoing;
 use payloads::Person;
 use serde_json::Value;
@@ -51,7 +51,7 @@ pub(crate) async fn shutdown(deadline: tokio::time::Instant) {
 
 static QUEUED: LazyLock<Mutex<Queue>> = LazyLock::new(|| Mutex::new(Queue::default()));
 static SLOTS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(SENDS_AT_ONCE));
-const OWNER_QUEUE_LIMIT: usize = crate::backend::db::webhooks::MAX_HOOKS_PER_OWNER;
+const OWNER_QUEUE_LIMIT: usize = codeyard_db_repos::webhooks::MAX_HOOKS_PER_OWNER;
 const HOOK_QUEUE_LIMIT: usize = 16;
 const MANUAL_PER_MINUTE: usize = 10;
 
@@ -298,7 +298,7 @@ pub(crate) async fn emit_repository_dispatch(
     sender: i64,
     event_type: String,
     client_payload: Value,
-    credential: crate::backend::db::ci::CiCredential,
+    credential: codeyard_db_core::queries::ci::CiCredential,
 ) -> Value {
     let snapshot = repo.clone();
     emit_checked(
@@ -321,14 +321,14 @@ async fn emit_checked<F>(
     repo: &Repository,
     event: &'static str,
     user_ids: Vec<i64>,
-    dispatch_actor: Option<(i64, crate::backend::db::ci::CiCredential)>,
+    dispatch_actor: Option<(i64, codeyard_db_core::queries::ci::CiCredential)>,
     build: F,
 ) -> Value
 where
     F: FnOnce(&str, &People) -> Value + Send + 'static,
 {
     let Ok(Some(current)) =
-        crate::backend::db::repositories::records::get_repository_by_id(pool, repo.id).await
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo.id).await
     else {
         return Value::Null;
     };
@@ -366,7 +366,7 @@ where
     let Ok(build_slot) = BUILD_SLOTS.clone().acquire_owned().await else {
         return Value::Null;
     };
-    let owner = crate::backend::db::repositories::records::repository_owner_names(pool, &[repo.id])
+    let owner = codeyard_db_repos::repositories::records::repository_owner_names(pool, &[repo.id])
         .await
         .ok()
         .and_then(|mut names| names.remove(&repo.id));
@@ -389,7 +389,7 @@ where
         return Value::Null;
     }
     if let Some(org) = current.owner_org_id {
-        match crate::backend::db::organizations::profiles::get_public_organization_by_id(pool, org)
+        match codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(pool, org)
             .await
         {
             Ok(Some(org)) => payload["organization"] = payloads::organization(&org),
@@ -404,7 +404,7 @@ where
     // Enrichment reads the stored issue or pull request as it is now. If the repository changed
     // owner meanwhile, those reads may hold the new owner's content, so the emission stops.
     if !matches!(
-        crate::backend::db::repositories::records::get_repository_by_id(pool, repo.id).await,
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo.id).await,
         Ok(Some(now)) if same_owner(&now, repo)
     ) {
         return Value::Null;
@@ -413,7 +413,7 @@ where
     // Accept it only after all bounded preparation, under the mutation authority lock.
     if let Some((actor, credential)) = dispatch_actor {
         if !matches!(
-            crate::backend::db::ci::accept_repository_dispatch(pool, actor, repo.id, &credential)
+            codeyard_db_actions::ci::accept_repository_dispatch(pool, actor, repo.id, &credential)
                 .await,
             Ok(true)
         ) {
@@ -523,8 +523,7 @@ async fn record_event(
     let Some(actor) = payload["sender"]["id"].as_i64() else {
         return Ok(());
     };
-    crate::backend::db::events::record_event(pool, repo.id, Some(actor), kind, payload, public)
-        .await
+    codeyard_db_repos::events::record_event(pool, repo.id, Some(actor), kind, payload, public).await
 }
 
 /// The repository's `open_issues_count` is counted when the payload is made, because the
@@ -534,14 +533,14 @@ pub(crate) async fn set_open_issues(pool: &DbPool, repo_id: i64, payload: &mut V
         return;
     };
     if let Ok(features) =
-        crate::backend::db::repositories::records::repository_features(pool, repo_id).await
+        codeyard_db_repos::repositories::records::repository_features(pool, repo_id).await
     {
         payloads::set_features(repository, &features);
     }
-    if let Ok(enabled) = crate::backend::db::repository_discussions::enabled(pool, repo_id).await {
+    if let Ok(enabled) = codeyard_db_repos::repository_discussions::enabled(pool, repo_id).await {
         repository.insert("has_discussions".into(), enabled.into());
     }
-    match crate::backend::db::repository_stats::repository_document_facts(pool, repo_id).await {
+    match codeyard_db_repos::repository_stats::repository_document_facts(pool, repo_id).await {
         Ok(facts) => {
             repository.insert("open_issues_count".into(), facts.open_items.into());
             repository.insert("open_issues".into(), facts.open_items.into());
@@ -557,7 +556,7 @@ async fn people(pool: &DbPool, mut ids: Vec<i64>) -> People {
     ids.dedup();
     let mut found = HashMap::new();
     for id in ids {
-        match crate::backend::db::users::accounts::get_user_by_id(pool, id).await {
+        match codeyard_db_identity::users::accounts::get_user_by_id(pool, id).await {
             Ok(Some(user)) => {
                 found.insert(id, Person::of(&user));
             }
@@ -569,10 +568,10 @@ async fn people(pool: &DbPool, mut ids: Vec<i64>) -> People {
 
 async fn hooks_for(pool: &DbPool, repo: &Repository) -> anyhow::Result<Vec<Webhook>> {
     let mut hooks =
-        crate::backend::db::webhooks::list_webhooks(pool, HookOwner::Repository(repo.id)).await?;
+        codeyard_db_repos::webhooks::list_webhooks(pool, HookOwner::Repository(repo.id)).await?;
     if let Some(org) = repo.owner_org_id {
         hooks.extend(
-            crate::backend::db::webhooks::list_webhooks(pool, HookOwner::Organization(org)).await?,
+            codeyard_db_repos::webhooks::list_webhooks(pool, HookOwner::Organization(org)).await?,
         );
     }
     Ok(hooks)

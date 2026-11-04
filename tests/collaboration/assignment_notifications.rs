@@ -38,7 +38,7 @@ async fn setup(pg: bool) -> World {
     let proj = codeyard::backend::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -48,7 +48,7 @@ async fn setup(pg: bool) -> World {
     .unwrap()
     .id;
     for user in [bob_id, carol_id] {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             database.pool(),
             user,
             proj,
@@ -181,7 +181,7 @@ async fn ignoring_and_banned_users_hear_nothing(pg: bool) {
             StatusCode::CREATED,
         )
         .await;
-    codeyard::backend::db::repositories::engagement::set_watch_level(
+    codeyard_db_repos::repositories::engagement::set_watch_level(
         w.database.pool(),
         w.bob_id,
         w.proj,
@@ -275,9 +275,9 @@ async fn assigned_reason_filters_the_list(pg: bool) {
     w.alice
         .form_reply("/alice/proj/issues/1/assignees", &[("username", "bob")])
         .await;
-    codeyard::backend::db::notifications::records::create_notification(
+    codeyard_db_repos::notifications::records::create_notification(
         w.database.pool(),
-        codeyard::backend::db::notifications::NewNotification {
+        codeyard_db_repos::notifications::NewNotification {
             user_id: w.bob_id,
             actor_id: None,
             repo_id: Some(w.proj),

@@ -7,8 +7,8 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 use axum::http::StatusCode;
 
-use codeyard::backend::db::assignees::AssignedItem;
-use codeyard::backend::db::discussions::DiscussionEdit;
+use codeyard_db_repos::assignees::AssignedItem;
+use codeyard_db_repos::discussions::DiscussionEdit;
 
 use codeyard_db_core::models::AccessLevel;
 use codeyard_webui::{app::Page, pages::repos::issues};
@@ -52,7 +52,7 @@ async fn provision(database: &Database, root: &std::path::Path, alice: i64, bob:
     let repo = codeyard::backend::repositories::lifecycle::provision(
         (database.pool(), None),
         root,
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
         "proj",
         None,
         false,
@@ -61,7 +61,7 @@ async fn provision(database: &Database, root: &std::path::Path, alice: i64, bob:
     .await
     .unwrap()
     .id;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         database.pool(),
         bob,
         repo,
@@ -87,25 +87,22 @@ async fn issue_list_contract(pg: bool) {
     let pool = f.pool();
 
     // Four issues, one after another. Bob opens the second one, and the fourth is closed.
-    let alpha =
-        codeyard::backend::db::issues::create_issue(pool, repo, alice_id, "Alpha crash", "")
-            .await
-            .unwrap();
-    tokio::time::sleep(Duration::from_millis(5)).await;
-    codeyard::backend::db::issues::create_issue(pool, repo, bob_id, "Bravo slow", "")
+    let alpha = codeyard_db_repos::issues::create_issue(pool, repo, alice_id, "Alpha crash", "")
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(5)).await;
-    let charlie =
-        codeyard::backend::db::issues::create_issue(pool, repo, alice_id, "Charlie typo", "")
-            .await
-            .unwrap();
+    codeyard_db_repos::issues::create_issue(pool, repo, bob_id, "Bravo slow", "")
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_millis(5)).await;
-    let delta =
-        codeyard::backend::db::issues::create_issue(pool, repo, alice_id, "Delta closed", "")
-            .await
-            .unwrap();
-    codeyard::backend::db::issues::update_issue(
+    let charlie = codeyard_db_repos::issues::create_issue(pool, repo, alice_id, "Charlie typo", "")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    let delta = codeyard_db_repos::issues::create_issue(pool, repo, alice_id, "Delta closed", "")
+        .await
+        .unwrap();
+    codeyard_db_repos::issues::update_issue(
         pool,
         delta.id,
         DiscussionEdit {
@@ -160,7 +157,7 @@ async fn issue_list_contract(pg: bool) {
         .await;
 
     // Bob is assigned to issue 3, and issue 1 is in milestone 1.
-    codeyard::backend::db::assignees::assign_user(
+    codeyard_db_repos::assignees::assign_user(
         pool,
         alice_id,
         repo,
@@ -169,10 +166,10 @@ async fn issue_list_contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::milestones::create_milestone(pool, alice_id, repo, "v1", None, None)
+    codeyard_db_repos::milestones::create_milestone(pool, alice_id, repo, "v1", None, None)
         .await
         .unwrap();
-    codeyard::backend::db::milestones::set_issue_milestone(pool, alice_id, repo, alpha.id, Some(1))
+    codeyard_db_repos::milestones::set_issue_milestone(pool, alice_id, repo, alpha.id, Some(1))
         .await
         .unwrap();
 
@@ -256,16 +253,15 @@ async fn issue_list_contract(pg: bool) {
     }
 
     // A milestone titled `none` is still a milestone: `no:milestone` lists the issues in none.
-    let none = codeyard::backend::db::milestones::create_milestone(
-        pool, alice_id, repo, "none", None, None,
-    )
-    .await
-    .unwrap();
-    let bravo = codeyard::backend::db::issues::get_issue(pool, repo, 2)
+    let none =
+        codeyard_db_repos::milestones::create_milestone(pool, alice_id, repo, "none", None, None)
+            .await
+            .unwrap();
+    let bravo = codeyard_db_repos::issues::get_issue(pool, repo, 2)
         .await
         .unwrap()
         .unwrap();
-    codeyard::backend::db::milestones::set_issue_milestone(
+    codeyard_db_repos::milestones::set_issue_milestone(
         pool,
         alice_id,
         repo,
@@ -278,7 +274,7 @@ async fn issue_list_contract(pg: bool) {
     assert_eq!(listed(&alice, "q=state:all+no:milestone").await, [4, 3]);
     assert_eq!(listed(&alice, "q=milestone:none").await, [2]);
 
-    let large = codeyard::backend::db::milestones::create_milestone(
+    let large = codeyard_db_repos::milestones::create_milestone(
         pool,
         alice_id,
         repo,
@@ -289,7 +285,7 @@ async fn issue_list_contract(pg: bool) {
     .await
     .unwrap();
     for index in 0..101 {
-        let issue = codeyard::backend::db::issues::create_issue(
+        let issue = codeyard_db_repos::issues::create_issue(
             pool,
             repo,
             alice_id,
@@ -298,7 +294,7 @@ async fn issue_list_contract(pg: bool) {
         )
         .await
         .unwrap();
-        codeyard::backend::db::milestones::set_issue_milestone(
+        codeyard_db_repos::milestones::set_issue_milestone(
             pool,
             alice_id,
             repo,
@@ -409,32 +405,30 @@ async fn milestone_sort_contract(pg: bool) {
         ("Charlie", None),
         ("Delta", Some("2026-10-25")),
     ] {
-        codeyard::backend::db::milestones::create_milestone(pool, alice_id, repo, title, None, due)
+        codeyard_db_repos::milestones::create_milestone(pool, alice_id, repo, title, None, due)
             .await
             .unwrap();
     }
     // Alpha: one open and one closed issue, so half done. Bravo: two open, so none done. Delta:
     // three closed, so all done.
     let alpha_open =
-        codeyard::backend::db::issues::create_issue(pool, repo, alice_id, "Alpha open", "")
+        codeyard_db_repos::issues::create_issue(pool, repo, alice_id, "Alpha open", "")
             .await
             .unwrap();
     let alpha_closed =
-        codeyard::backend::db::issues::create_issue(pool, repo, alice_id, "Alpha closed", "")
+        codeyard_db_repos::issues::create_issue(pool, repo, alice_id, "Alpha closed", "")
             .await
             .unwrap();
-    let bravo_one =
-        codeyard::backend::db::issues::create_issue(pool, repo, alice_id, "Bravo one", "")
-            .await
-            .unwrap();
-    let bravo_two =
-        codeyard::backend::db::issues::create_issue(pool, repo, alice_id, "Bravo two", "")
-            .await
-            .unwrap();
+    let bravo_one = codeyard_db_repos::issues::create_issue(pool, repo, alice_id, "Bravo one", "")
+        .await
+        .unwrap();
+    let bravo_two = codeyard_db_repos::issues::create_issue(pool, repo, alice_id, "Bravo two", "")
+        .await
+        .unwrap();
     let mut delta = Vec::new();
     for title in ["Delta one", "Delta two", "Delta three"] {
         delta.push(
-            codeyard::backend::db::issues::create_issue(pool, repo, alice_id, title, "")
+            codeyard_db_repos::issues::create_issue(pool, repo, alice_id, title, "")
                 .await
                 .unwrap(),
         );
@@ -448,7 +442,7 @@ async fn milestone_sort_contract(pg: bool) {
     .into_iter()
     .chain(delta.iter().map(|issue| (issue, 4)))
     {
-        codeyard::backend::db::milestones::set_issue_milestone(
+        codeyard_db_repos::milestones::set_issue_milestone(
             pool,
             alice_id,
             repo,
@@ -460,11 +454,11 @@ async fn milestone_sort_contract(pg: bool) {
     }
     for issue in [&alpha_closed].into_iter().chain(delta.iter()) {
         // Setting the milestone moved the issue's update time.
-        let current = codeyard::backend::db::issues::get_issue_by_id(pool, issue.id)
+        let current = codeyard_db_repos::issues::get_issue_by_id(pool, issue.id)
             .await
             .unwrap()
             .unwrap();
-        codeyard::backend::db::issues::update_issue(
+        codeyard_db_repos::issues::update_issue(
             pool,
             issue.id,
             DiscussionEdit {

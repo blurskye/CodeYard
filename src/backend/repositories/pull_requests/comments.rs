@@ -49,9 +49,9 @@ impl PreparedComment {
         &'a self,
         pull: &'a codeyard_db_core::models::PullRequest,
         author: i64,
-    ) -> crate::backend::db::pull_requests::reviews::NewPullRequestComment<'a> {
+    ) -> codeyard_db_repos::pull_requests::reviews::NewPullRequestComment<'a> {
         let req = &self.request;
-        crate::backend::db::pull_requests::reviews::NewPullRequestComment {
+        codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
             pr_id: pull.id,
             author_id: author,
             body: &req.body,
@@ -89,7 +89,7 @@ async fn thread_root(
             });
         }
         let comment =
-            crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
+            codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(pool, id)
                 .await
                 .map_err(database_error)?
                 .ok_or_else(|| OperationError::Missing {
@@ -123,7 +123,7 @@ pub(crate) async fn saved_comment_link(
     base: &str,
     comment: &codeyard_db_core::models::PullRequestComment,
 ) -> String {
-    use crate::backend::db::pull_requests::reviews::{self, DiscussionItem, DiscussionRef};
+    use codeyard_db_repos::pull_requests::reviews::{self, DiscussionItem, DiscussionRef};
     let page = discussion_page(
         reviews::count_discussion_items_through(
             pool,
@@ -184,7 +184,7 @@ async fn in_pending_review(
         return Ok(false);
     };
     let review =
-        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(pool, review_id)
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(pool, review_id)
             .await
             .map_err(database_error)?;
     Ok(review.is_none_or(|review| review.state == "pending"))
@@ -441,7 +441,7 @@ pub async fn create_pull_request_comment(
 ) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
     let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
 
-    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -460,7 +460,7 @@ pub async fn create_pull_request_comment(
     crate::backend::repositories::pull_requests::require_read(pool, &user, &repository).await?;
 
     let pull_request =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -553,7 +553,7 @@ pub(super) async fn prepare_comment(
     let mut reply_parent = None;
     if let Some(parent_id) = req.in_reply_to_comment_id {
         let parent_comment =
-            crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+            codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(
                 pool, parent_id,
             )
             .await
@@ -586,7 +586,7 @@ pub(super) async fn prepare_comment(
     }
 
     if path.as_ref().is_some_and(|path| {
-        path.len() > crate::backend::db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES
+        path.len() > codeyard_db_repos::pull_requests::reviews::MAX_COMMENT_PATH_BYTES
     }) {
         return Err(OperationError::Invalid {
             code: "validation_error",
@@ -721,7 +721,7 @@ async fn save_comment(
     let pending = req.pending;
     let reply_parent = prepared.reply_parent;
     let input = prepared.input(pull_request, user.id);
-    let (comment, deferred) = crate::backend::db::pull_requests::reviews::insert_comment(
+    let (comment, deferred) = codeyard_db_repos::pull_requests::reviews::insert_comment(
         pool,
         input,
         pending || req.review_id.is_some(),
@@ -809,7 +809,7 @@ pub async fn set_comment_resolved(
     resolved: bool,
 ) -> Result<codeyard_db_core::models::PullRequestComment, OperationError> {
     let user = crate::backend::repositories::pull_requests::actor(pool, actor_id).await?;
-    let repository = crate::backend::db::repositories::records::get_repository(pool, owner, repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -818,7 +818,7 @@ pub async fn set_comment_resolved(
         })?;
     crate::backend::repositories::pull_requests::require_read(pool, &user, &repository).await?;
     let pull_request =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -842,16 +842,15 @@ pub async fn set_comment_resolved(
             message: "Only the pull request author or a collaborator with write access can resolve conversations".to_owned(),
         });
     }
-    let comment = crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
-        pool, comment_id,
-    )
-    .await
-    .map_err(database_error)?
-    .filter(|comment| comment.pull_request_id == pull_request.id)
-    .ok_or_else(|| OperationError::Missing {
-        code: "not_found",
-        message: "Comment not found".to_owned(),
-    })?;
+    let comment =
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment_id)
+            .await
+            .map_err(database_error)?
+            .filter(|comment| comment.pull_request_id == pull_request.id)
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Comment not found".to_owned(),
+            })?;
     if comment.in_reply_to_comment_id.is_some() || comment.path.is_none() {
         return Err(OperationError::Invalid {
             code: "validation_error",
@@ -861,7 +860,7 @@ pub async fn set_comment_resolved(
     }
     // The database checks the resolver's authority in the same transaction as the update. The
     // checks above only give the specific early refusals.
-    crate::backend::db::pull_requests::reviews::set_pull_request_comment_resolved(
+    codeyard_db_repos::pull_requests::reviews::set_pull_request_comment_resolved(
         pool,
         pull_request.id,
         comment.id,
@@ -893,7 +892,7 @@ async fn conversation_comment_on_pull(
     ),
     OperationError,
 > {
-    let repository = crate::backend::db::repositories::records::get_repository(pool, owner, repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -902,23 +901,22 @@ async fn conversation_comment_on_pull(
         })?;
     crate::backend::repositories::pull_requests::require_read(pool, user, &repository).await?;
     let pull_request =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
                 code: "not_found",
                 message: "Pull request not found".to_owned(),
             })?;
-    let comment = crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
-        pool, comment_id,
-    )
-    .await
-    .map_err(database_error)?
-    .filter(|comment| comment.pull_request_id == pull_request.id)
-    .ok_or_else(|| OperationError::Missing {
-        code: "not_found",
-        message: "Comment not found".to_owned(),
-    })?;
+    let comment =
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment_id)
+            .await
+            .map_err(database_error)?
+            .filter(|comment| comment.pull_request_id == pull_request.id)
+            .ok_or_else(|| OperationError::Missing {
+                code: "not_found",
+                message: "Comment not found".to_owned(),
+            })?;
     if in_pending_review(pool, &comment).await? && comment.author_id != user.id {
         return Err(OperationError::Missing {
             code: "not_found",
@@ -971,7 +969,7 @@ pub async fn edit_pull_request_comment(
             message: message.to_owned(),
         });
     }
-    let comment = crate::backend::db::pull_requests::reviews::edit_pull_request_comment(
+    let comment = codeyard_db_repos::pull_requests::reviews::edit_pull_request_comment(
         pool,
         user.id,
         repository.id,
@@ -1053,7 +1051,7 @@ pub async fn delete_pull_request_comment(
     if repository.is_archived {
         return Err(archived_refusal());
     }
-    let removed = crate::backend::db::pull_requests::reviews::delete_pull_request_comment(
+    let removed = codeyard_db_repos::pull_requests::reviews::delete_pull_request_comment(
         pool,
         user.id,
         repository.id,

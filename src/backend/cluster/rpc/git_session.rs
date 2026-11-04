@@ -224,7 +224,7 @@ impl WriteLimits {
     pub(super) async fn load(pool: &codeyard_db_core::DbPool) -> Result<Self> {
         let settings = tokio::time::timeout(
             Duration::from_secs(5),
-            crate::backend::db::cluster::writes::write_settings(pool),
+            codeyard_db_cluster::cluster::writes::write_settings(pool),
         )
         .await??;
         ensure!(settings.write_quorum.is_some(), "write quorum is disabled");
@@ -296,7 +296,7 @@ impl tokio::io::AsyncWrite for LimitedWriter<'_> {
 }
 
 fn write_targets(write: &WriteRecord) -> Result<Vec<String>> {
-    crate::backend::db::cluster::writes::validate_changes(&write.changes)?;
+    codeyard_db_cluster::cluster::writes::validate_changes(&write.changes)?;
     ensure!(
         write
             .changes
@@ -320,7 +320,7 @@ fn write_targets(write: &WriteRecord) -> Result<Vec<String>> {
 }
 
 fn preparation_path(path: &Path, write: &WriteRecord) -> Result<PathBuf> {
-    crate::backend::db::cluster::writes::validate_id(&write.id)?;
+    codeyard_db_cluster::cluster::writes::validate_id(&write.id)?;
     Ok(path.join("codeyard-writes").join(&write.id))
 }
 
@@ -606,13 +606,13 @@ impl NodeContext {
     }
 
     async fn current_write(&self, id: &str) -> Result<WriteRecord> {
-        crate::backend::db::cluster::writes::validate_id(id)?;
+        codeyard_db_cluster::cluster::writes::validate_id(id)?;
         let pool = self.database()?;
-        let write = crate::backend::db::cluster::writes::load_write(pool, id)
+        let write = codeyard_db_cluster::cluster::writes::load_write(pool, id)
             .await?
             .context("write disappeared")?;
         let view =
-            crate::backend::db::cluster::writes::recovery_view(pool, write.repository_id).await?;
+            codeyard_db_cluster::cluster::writes::recovery_view(pool, write.repository_id).await?;
         ensure!(
             view.term == write.term
                 && view.primary_id == write.primary_id
@@ -623,7 +623,7 @@ impl NodeContext {
             "write term changed"
         );
         ensure!(
-            crate::backend::db::cluster::get_node_by_id(pool, self.node_id)
+            codeyard_db_cluster::cluster::get_node_by_id(pool, self.node_id)
                 .await?
                 .is_some_and(|node| node.status == "active"
                     && node.public_key == self.key.public_hex()
@@ -635,14 +635,14 @@ impl NodeContext {
     }
 
     async fn vote_prepared_write(&self, write: &WriteRecord) -> Result<()> {
-        crate::backend::db::cluster::writes::vote_write(
+        codeyard_db_cluster::cluster::writes::vote_write(
             self.database()?,
             &write.id,
             self.node_id,
             write.term,
         )
         .await?;
-        let voted = crate::backend::db::cluster::writes::load_write(self.database()?, &write.id)
+        let voted = codeyard_db_cluster::cluster::writes::load_write(self.database()?, &write.id)
             .await?
             .context("write disappeared")?;
         ensure!(
@@ -725,7 +725,7 @@ impl NodeContext {
         )
         .await?;
         ensure!(
-            crate::backend::db::cluster::writes::mark_write_applied(
+            codeyard_db_cluster::cluster::writes::mark_write_applied(
                 self.database()?,
                 write.repository_id,
                 self.node_id,
@@ -809,7 +809,7 @@ impl RpcHandler {
                 return self.context.vote_prepared_write(&write).await;
             }
             let mut pack = tokio::fs::File::create(directory.join("objects.pack")).await?;
-            let repo = crate::backend::db::repositories::records::get_repository_by_id(
+            let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
                 self.context.database()?,
                 write.repository_id,
             )
@@ -862,7 +862,7 @@ impl RpcHandler {
                     .await;
             }
             ensure!(write.decision == "commit", "write is not committed");
-            let view = crate::backend::db::cluster::writes::recovery_view(
+            let view = codeyard_db_cluster::cluster::writes::recovery_view(
                 self.context.database()?,
                 write.repository_id,
             )
@@ -1052,16 +1052,16 @@ impl RpcHandler {
                 // The copy learns HEAD and every ref now. The pack covers exactly these
                 // refs, so a copy never points a ref at objects it does not have.
                 Operation::WritePack { id } => {
-                    let write = crate::backend::db::cluster::writes::load_write(self.context.database()?, id).await.map_err(RepoError::from)?.ok_or_else(unavailable)?;
+                    let write = codeyard_db_cluster::cluster::writes::load_write(self.context.database()?, id).await.map_err(RepoError::from)?.ok_or_else(unavailable)?;
                     (Value::Null, write_targets(&write).map_err(RepoError::from)?)
                 }
                 Operation::ReplicaPack { .. } => {
                     let (refs, head) = store.replica_listing().await?;
                     let mut targets: Vec<String> = refs.values().cloned().collect();
-                    let retained = crate::backend::db::ci::retained_ci_commits(self.context.database()?, repo_id.ok_or_else(unavailable)?).await.map_err(RepoError::from)?;
+                    let retained = codeyard_db_actions::ci::retained_ci_commits(self.context.database()?, repo_id.ok_or_else(unavailable)?).await.map_err(RepoError::from)?;
                     let present = store.existing_commits(&retained).await?;
                     targets.extend(retained.into_iter().filter(|commit| present.contains(commit)));
-                    targets.extend(crate::backend::db::pull_requests::records::retained_revisions(self.context.database()?, repo_id.ok_or_else(unavailable)?).await.map_err(RepoError::from)?);
+                    targets.extend(codeyard_db_repos::pull_requests::records::retained_revisions(self.context.database()?, repo_id.ok_or_else(unavailable)?).await.map_err(RepoError::from)?);
                     targets.sort();
                     targets.dedup();
                     (serde_json::json!({ "head": head, "refs": refs }), targets)

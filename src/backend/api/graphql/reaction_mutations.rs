@@ -8,8 +8,8 @@ use crate::backend::api::graphql::RequestContext;
 use crate::backend::api::graphql::Result;
 use crate::backend::api::graphql::Value;
 
-use crate::backend::db::reactions::Subject;
-use crate::backend::db::reactions::Target;
+use codeyard_db_repos::reactions::Subject;
+use codeyard_db_repos::reactions::Target;
 use serde_json::json;
 pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext) -> Result<Value> {
     let encoded = text(input, "subjectId")?;

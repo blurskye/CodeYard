@@ -29,7 +29,7 @@ async fn settings_response(
         return response;
     }
     let config =
-        match crate::backend::db::node_config::get_node_configuration(&ctx.state.pool).await {
+        match codeyard_db_cluster::node_config::get_node_configuration(&ctx.state.pool).await {
             Ok(config) => config,
             Err(_) => {
                 return ctx.error(
@@ -38,7 +38,7 @@ async fn settings_response(
                 )
             }
         };
-    let osv = match crate::backend::db::vulnerabilities::settings(&ctx.state.pool).await {
+    let osv = match codeyard_db_security::vulnerabilities::settings(&ctx.state.pool).await {
         Ok(value) => value,
         Err(_) => {
             return ctx.error(
@@ -115,11 +115,11 @@ pub(crate) async fn settings_post(
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .collect::<Vec<_>>();
-        let settings = crate::backend::db::vulnerabilities::Settings {
+        let settings = codeyard_db_security::vulnerabilities::Settings {
             base_url: field(&form, "osv_base_url").into(),
             ecosystems: serde_json::json!(ecosystems).to_string(),
         };
-        return match crate::backend::db::vulnerabilities::save_settings(
+        return match codeyard_db_security::vulnerabilities::save_settings(
             &ctx.state.pool,
             actor,
             &session,
@@ -131,11 +131,11 @@ pub(crate) async fn settings_post(
             Err(error) => {
                 settings_response(
                     &ctx,
-                    match error.downcast_ref::<crate::backend::db::vulnerabilities::Refusal>() {
-                        Some(crate::backend::db::vulnerabilities::Refusal::Invalid) => {
+                    match error.downcast_ref::<codeyard_db_security::vulnerabilities::Refusal>() {
+                        Some(codeyard_db_security::vulnerabilities::Refusal::Invalid) => {
                             StatusCode::UNPROCESSABLE_ENTITY
                         }
-                        Some(crate::backend::db::vulnerabilities::Refusal::Denied) => {
+                        Some(codeyard_db_security::vulnerabilities::Refusal::Denied) => {
                             StatusCode::FORBIDDEN
                         }
                         None => StatusCode::SERVICE_UNAVAILABLE,
@@ -162,7 +162,7 @@ pub(crate) async fn settings_post(
             .await;
         };
         (
-            crate::backend::db::node_config::set_node_mode(&ctx.state.pool, actor, &session, mode)
+            codeyard_db_cluster::node_config::set_node_mode(&ctx.state.pool, actor, &session, mode)
                 .await,
             "signup",
             "Unable to save the sign-up setting.",
@@ -179,7 +179,7 @@ pub(crate) async fn settings_post(
             .await;
         };
         (
-            crate::backend::db::node_config::set_ai_crawlers(
+            codeyard_db_cluster::node_config::set_ai_crawlers(
                 &ctx.state.pool,
                 actor,
                 &session,

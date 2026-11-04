@@ -172,7 +172,7 @@ pub(super) async fn receive_session(
     });
     let (listener, _socket_guard) =
         crate::backend::repositories::git_sessions::private_files::bind(&socket, uid).await?;
-    let repo = crate::backend::db::repositories::records::get_repository_by_id(
+    let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
         &gateway.pool,
         receive.repo_id,
     )
@@ -675,13 +675,13 @@ impl Gateway {
         }
         let supplied =
             crate::backend::repositories::git_sessions::validation::canonical_key(key_type, blob)?;
-        let fingerprint = crate::backend::db::users::ssh_keys::calculate_fingerprint(&supplied)?;
-        let account = crate::backend::db::users::ssh_keys::get_user_by_key_fingerprint(
+        let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&supplied)?;
+        let account = codeyard_db_identity::users::ssh_keys::get_user_by_key_fingerprint(
             &self.pool,
             &fingerprint,
         )
         .await?;
-        let deploy = crate::backend::db::deploy_keys::get_deploy_key_by_fingerprint(
+        let deploy = codeyard_db_identity::deploy_keys::get_deploy_key_by_fingerprint(
             &self.pool,
             &fingerprint,
         )
@@ -690,7 +690,7 @@ impl Gateway {
             return Ok(None);
         }
         if let Some(key) = deploy {
-            let repo = crate::backend::db::repositories::records::get_repository_by_id(
+            let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
                 &self.pool,
                 key.repo_id,
             )
@@ -710,7 +710,7 @@ impl Gateway {
                 )?;
             ensure!(
                 canonical == supplied
-                    && crate::backend::db::users::ssh_keys::calculate_fingerprint(&canonical)?
+                    && codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&canonical)?
                         == key.fingerprint,
                 "stored key mismatch"
             );
@@ -735,7 +735,7 @@ impl Gateway {
         )?;
         ensure!(
             canonical == supplied
-                && crate::backend::db::users::ssh_keys::calculate_fingerprint(&canonical)?
+                && codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&canonical)?
                     == identity.key.fingerprint
                 && identity.key.id > 0,
             "stored key mismatch"
@@ -794,7 +794,7 @@ impl Gateway {
             crate::backend::repositories::git_sessions::validation::parse_command(raw_command)?;
         let git_protocol =
             crate::backend::repositories::git_sessions::validation::protocol(git_protocol)?;
-        let repo = crate::backend::db::repositories::records::get_git_repository(
+        let repo = codeyard_db_repos::repositories::records::get_git_repository(
             &self.pool,
             &command.owner,
             &command.repo,
@@ -828,7 +828,7 @@ impl Gateway {
             ReceiveCredential::SshKey(id) => {
                 let _ = timeout(
                     Duration::from_secs(1),
-                    crate::backend::db::users::ssh_keys::touch_ssh_key(&self.pool, id),
+                    codeyard_db_identity::users::ssh_keys::touch_ssh_key(&self.pool, id),
                 )
                 .await;
             }
@@ -946,7 +946,7 @@ impl Gateway {
         let quorum = if write && self.ci.cluster.is_some() {
             timeout(
                 Duration::from_secs(5),
-                crate::backend::db::cluster::writes::write_settings(&self.pool),
+                codeyard_db_cluster::cluster::writes::write_settings(&self.pool),
             )
             .await??
             .write_quorum

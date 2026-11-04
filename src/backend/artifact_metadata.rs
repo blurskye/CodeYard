@@ -13,7 +13,7 @@ pub async fn run(pool: DbPool, mut stop: watch::Receiver<bool>) {
         let result = tokio::select! {
             biased;
             changed = stop.changed() => {if changed.is_err() || *stop.borrow() {return;} else {continue;}},
-            result = crate::backend::db::artifact_metadata::process_job(&pool,None) => result,
+            result = codeyard_db_repos::artifact_metadata::process_job(&pool,None) => result,
         };
         match result {
             Ok(true) => continue,

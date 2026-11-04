@@ -4,7 +4,7 @@
 use crate::support::database;
 mod fixture;
 
-use codeyard::backend::db::{self, repositories::records::RepositorySettingsRefusal as Refusal};
+use codeyard_db_repos::repositories::records::RepositorySettingsRefusal as Refusal;
 use database::{wait_until_blocked, Database};
 use fixture::Fixture;
 use std::time::Duration;
@@ -30,13 +30,13 @@ async fn mutate(
 ) -> anyhow::Result<()> {
     match mutation {
         Mutation::Update => {
-            db::repositories::records::update_repository(
+            codeyard_db_repos::repositories::records::update_repository(
                 pool,
                 actor,
                 repo,
                 Some("attempt"),
                 false,
-                db::repositories::records::MergeMethodUpdate {
+                codeyard_db_repos::repositories::records::MergeMethodUpdate {
                     merge: None,
                     squash: None,
                     rebase: None,
@@ -45,17 +45,20 @@ async fn mutate(
             .await?
         }
         Mutation::Rename => {
-            db::repositories::records::rename_repository(pool, actor, repo, "attempt").await?;
+            codeyard_db_repos::repositories::records::rename_repository(
+                pool, actor, repo, "attempt",
+            )
+            .await?;
         }
         Mutation::Delete => {
-            db::repositories::records::delete_repository(pool, actor, repo).await?;
+            codeyard_db_repos::repositories::records::delete_repository(pool, actor, repo).await?;
         }
         Mutation::MergeMethods => {
-            db::repositories::records::set_merge_methods(
+            codeyard_db_repos::repositories::records::set_merge_methods(
                 pool,
                 actor,
                 repo,
-                db::repositories::records::MergeMethodUpdate {
+                codeyard_db_repos::repositories::records::MergeMethodUpdate {
                     merge: Some(false),
                     squash: None,
                     rebase: Some(true),
@@ -98,18 +101,19 @@ async fn accepted(
     repo: i64,
     direct_admin: bool,
 ) {
-    let original = db::repositories::records::get_repository_by_id(f.database.pool(), repo)
-        .await
-        .unwrap()
-        .unwrap();
+    let original =
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.database.pool(), repo)
+            .await
+            .unwrap()
+            .unwrap();
     let files = f.files();
-    db::repositories::records::update_repository(
+    codeyard_db_repos::repositories::records::update_repository(
         f.database.pool(),
         actor,
         repo,
         Some("accepted"),
         false,
-        db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None,
@@ -117,20 +121,21 @@ async fn accepted(
     )
     .await
     .unwrap();
-    let updated = db::repositories::records::get_repository_by_id(f.database.pool(), repo)
-        .await
-        .unwrap()
-        .unwrap();
+    let updated =
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.database.pool(), repo)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(updated.description.as_deref(), Some("accepted"));
     assert!(!updated.is_private);
     assert_eq!(updated.disk_path, original.disk_path);
-    db::repositories::records::update_repository(
+    codeyard_db_repos::repositories::records::update_repository(
         f.database.pool(),
         actor,
         repo,
         Some("original"),
         true,
-        db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None,
@@ -139,21 +144,30 @@ async fn accepted(
     .await
     .unwrap();
     let alias = format!("accepted_{repo}");
-    let renamed =
-        db::repositories::records::rename_repository(f.database.pool(), actor, repo, &alias)
-            .await
-            .unwrap();
+    let renamed = codeyard_db_repos::repositories::records::rename_repository(
+        f.database.pool(),
+        actor,
+        repo,
+        &alias,
+    )
+    .await
+    .unwrap();
     assert_eq!(renamed.name, alias);
     assert_eq!(renamed.disk_path, original.disk_path);
-    db::repositories::records::rename_repository(f.database.pool(), actor, repo, &original.name)
-        .await
-        .unwrap();
+    codeyard_db_repos::repositories::records::rename_repository(
+        f.database.pool(),
+        actor,
+        repo,
+        &original.name,
+    )
+    .await
+    .unwrap();
     assert_eq!(f.files(), files, "settings must never rename physical data");
 
     // Fresh deletion for each accepted principal, never fixture resurrection.
     let target = f.repo(owner, org, &format!("delete_{actor}_{repo}")).await;
     if direct_admin {
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.database.pool(),
             actor,
             target,
@@ -162,7 +176,7 @@ async fn accepted(
         .await
         .unwrap();
     }
-    let child = db::issues::create_issue(
+    let child = codeyard_db_repos::issues::create_issue(
         f.database.pool(),
         target,
         owner,
@@ -171,25 +185,30 @@ async fn accepted(
     )
     .await
     .unwrap();
-    let original = db::repositories::records::get_repository_by_id(f.database.pool(), target)
-        .await
-        .unwrap()
-        .unwrap();
+    let original =
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.database.pool(), target)
+            .await
+            .unwrap()
+            .unwrap();
     let files = f.files();
-    let deleted = db::repositories::records::delete_repository(f.database.pool(), actor, target)
-        .await
-        .unwrap();
+    let deleted = codeyard_db_repos::repositories::records::delete_repository(
+        f.database.pool(),
+        actor,
+        target,
+    )
+    .await
+    .unwrap();
     assert_eq!(deleted.disk_path, original.disk_path);
     // The row and everything that hangs off it are really gone.
     assert!(
-        db::repositories::records::get_repository_by_id(f.database.pool(), target)
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.database.pool(), target)
             .await
             .unwrap()
             .is_none()
     );
     assert_eq!(f.snapshot(target).await, b"null");
     assert!(
-        db::issues::get_issue(f.database.pool(), target, child.number)
+        codeyard_db_repos::issues::get_issue(f.database.pool(), target, child.number)
             .await
             .unwrap()
             .is_none()
@@ -206,7 +225,7 @@ async fn accepted(
         .repo(owner, org, &format!("contender_{actor}_{repo}"))
         .await;
     let files = f.files();
-    let renamed = db::repositories::records::rename_repository(
+    let renamed = codeyard_db_repos::repositories::records::rename_repository(
         f.database.pool(),
         owner,
         contender,
@@ -255,7 +274,7 @@ async fn authority_matrix(pg: bool) {
     let personal = f.repo(owner, None, "personal").await;
     let organization = f.repo(owner, Some(org), "organization").await;
     for repo in [personal, organization] {
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.database.pool(),
             collaborator,
             repo,
@@ -263,7 +282,7 @@ async fn authority_matrix(pg: bool) {
         )
         .await
         .unwrap();
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.database.pool(),
             writer,
             repo,
@@ -290,11 +309,15 @@ async fn authority_matrix(pg: bool) {
         );
     }
     // Current authority, not a cached access projection.
-    db::repositories::access::revoke_repo_access(f.database.pool(), collaborator, organization)
-        .await
-        .unwrap();
+    codeyard_db_repos::repositories::access::revoke_repo_access(
+        f.database.pool(),
+        collaborator,
+        organization,
+    )
+    .await
+    .unwrap();
     denied(&f, collaborator, organization).await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.database.pool(),
         collaborator,
         organization,
@@ -335,7 +358,7 @@ async fn authority_matrix(pg: bool) {
             .await;
         denied(&f, collaborator, personal).await;
     }
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.database.pool(),
         collaborator,
         personal,
@@ -402,7 +425,7 @@ async fn authority_matrix(pg: bool) {
                     )
                     .await;
                 if actor == collaborator {
-                    db::repositories::access::grant_repo_access(
+                    codeyard_db_repos::repositories::access::grant_repo_access(
                         f.database.pool(),
                         actor,
                         target,
@@ -421,10 +444,13 @@ async fn authority_matrix(pg: bool) {
                     .await
                     .unwrap();
                 assert!(
-                    db::repositories::records::get_repository_by_id(f.database.pool(), target)
-                        .await
-                        .unwrap()
-                        .is_none()
+                    codeyard_db_repos::repositories::records::get_repository_by_id(
+                        f.database.pool(),
+                        target
+                    )
+                    .await
+                    .unwrap()
+                    .is_none()
                 );
             }
         }
@@ -513,22 +539,29 @@ async fn alias_and_visibility(pg: bool) {
         ];
         for name in invalid {
             refusal(
-                db::repositories::records::rename_repository(f.database.pool(), owner, repo, &name)
-                    .await,
+                codeyard_db_repos::repositories::records::rename_repository(
+                    f.database.pool(),
+                    owner,
+                    repo,
+                    &name,
+                )
+                .await,
                 Refusal::InvalidName,
             );
             assert_eq!(f.snapshot(repo).await, original);
             assert_eq!(f.files(), files);
         }
-        let reserved_name =
-            db::repositories::records::get_repository_by_id(f.database.pool(), reserved)
-                .await
-                .unwrap()
-                .unwrap()
-                .name;
+        let reserved_name = codeyard_db_repos::repositories::records::get_repository_by_id(
+            f.database.pool(),
+            reserved,
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .name;
         let reserved_before = f.snapshot(reserved).await;
         refusal(
-            db::repositories::records::rename_repository(
+            codeyard_db_repos::repositories::records::rename_repository(
                 f.database.pool(),
                 owner,
                 repo,
@@ -547,10 +580,14 @@ async fn alias_and_visibility(pg: bool) {
             "文庫-._9".to_owned(),
             ".hidden".to_owned(),
         ] {
-            let row =
-                db::repositories::records::rename_repository(f.database.pool(), owner, repo, &name)
-                    .await
-                    .unwrap();
+            let row = codeyard_db_repos::repositories::records::rename_repository(
+                f.database.pool(),
+                owner,
+                repo,
+                &name,
+            )
+            .await
+            .unwrap();
             assert_eq!(row.name, name);
             assert_eq!(f.files(), files);
         }
@@ -562,7 +599,7 @@ async fn alias_and_visibility(pg: bool) {
                 &[reserved, repo],
             )
             .await;
-        db::repositories::records::rename_repository(
+        codeyard_db_repos::repositories::records::rename_repository(
             f.database.pool(),
             owner,
             repo,
@@ -570,19 +607,23 @@ async fn alias_and_visibility(pg: bool) {
         )
         .await
         .unwrap();
-        db::repositories::records::delete_repository(f.database.pool(), owner, reserved)
-            .await
-            .unwrap();
+        codeyard_db_repos::repositories::records::delete_repository(
+            f.database.pool(),
+            owner,
+            reserved,
+        )
+        .await
+        .unwrap();
         let before = f.snapshot(repo).await;
         // The merge methods belong to each refused save, so neither may change.
         refusal(
-            db::repositories::records::update_repository(
+            codeyard_db_repos::repositories::records::update_repository(
                 f.database.pool(),
                 owner,
                 repo,
                 Some("must not change"),
                 false,
-                db::repositories::records::MergeMethodUpdate {
+                codeyard_db_repos::repositories::records::MergeMethodUpdate {
                     merge: Some(false),
                     squash: None,
                     rebase: Some(false),
@@ -593,13 +634,13 @@ async fn alias_and_visibility(pg: bool) {
         );
         assert_eq!(f.snapshot(repo).await, before);
         refusal(
-            db::repositories::records::update_repository(
+            codeyard_db_repos::repositories::records::update_repository(
                 f.database.pool(),
                 owner,
                 repo,
                 Some("must not change"),
                 true,
-                db::repositories::records::MergeMethodUpdate {
+                codeyard_db_repos::repositories::records::MergeMethodUpdate {
                     merge: Some(false),
                     squash: Some(false),
                     rebase: Some(false),
@@ -609,13 +650,13 @@ async fn alias_and_visibility(pg: bool) {
             Refusal::NoMergeMethod,
         );
         assert_eq!(f.snapshot(repo).await, before);
-        db::repositories::records::update_repository(
+        codeyard_db_repos::repositories::records::update_repository(
             f.database.pool(),
             owner,
             repo,
             Some("private allowed"),
             true,
-            db::repositories::records::MergeMethodUpdate {
+            codeyard_db_repos::repositories::records::MergeMethodUpdate {
                 merge: None,
                 squash: None,
                 rebase: None,
@@ -636,7 +677,7 @@ async fn alias_and_visibility(pg: bool) {
     let before = f.snapshot(repo).await;
     let foreign_before = f.snapshot(foreign).await;
     let files = f.files();
-    let error = db::repositories::records::rename_repository(
+    let error = codeyard_db_repos::repositories::records::rename_repository(
         f.database.pool(),
         owner,
         repo,
@@ -838,13 +879,13 @@ async fn postgres_fork_settings_and_source_narrowing_do_not_deadlock() {
         .unwrap();
     let pool = f.database.pool().clone();
     let fork_update = tokio::spawn(async move {
-        db::repositories::records::update_repository(
+        codeyard_db_repos::repositories::records::update_repository(
             &pool,
             owner,
             fork,
             Some("fork settings"),
             true,
-            db::repositories::records::MergeMethodUpdate {
+            codeyard_db_repos::repositories::records::MergeMethodUpdate {
                 merge: None,
                 squash: None,
                 rebase: None,
@@ -884,13 +925,13 @@ async fn postgres_failed_settings_save_keeps_merge_methods() {
     let owner = f.actor("merge_rollback_owner").await;
     let repo = f.repo(owner, None, "merge_rollback").await;
     let before = f.snapshot(repo).await;
-    let error = db::repositories::records::update_repository(
+    let error = codeyard_db_repos::repositories::records::update_repository(
         f.database.pool(),
         owner,
         repo,
         Some("bad\0description"),
         true,
-        db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: Some(false),
             rebase: None,

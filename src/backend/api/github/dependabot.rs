@@ -9,9 +9,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::dependabot::OrganizationSecret;
-use crate::backend::db::dependabot::OrganizationSecretInput;
-use crate::backend::db::dependabot::RepositorySelection;
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -20,6 +17,9 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_db_security::dependabot::OrganizationSecret;
+use codeyard_db_security::dependabot::OrganizationSecretInput;
+use codeyard_db_security::dependabot::RepositorySelection;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -98,7 +98,7 @@ async fn list(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (org, actor) = organization(&state, &headers, &name, false).await?;
-    let secrets = crate::backend::db::dependabot::list_organization_secrets(
+    let secrets = codeyard_db_security::dependabot::list_organization_secrets(
         &state.pool,
         actor.database_actor(),
         org,
@@ -130,7 +130,7 @@ pub(super) async fn public_key(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (id, key) = crate::backend::db::dependabot::organization_key(
+    let (id, key) = codeyard_db_security::dependabot::organization_key(
         &state.pool,
         encryptor,
         actor.database_actor(),
@@ -149,7 +149,7 @@ async fn secret(
     Path((org_name, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (org, actor) = organization(&state, &headers, &org_name, false).await?;
-    let secret = crate::backend::db::dependabot::list_organization_secrets(
+    let secret = codeyard_db_security::dependabot::list_organization_secrets(
         &state.pool,
         actor.database_actor(),
         org,
@@ -200,7 +200,7 @@ async fn save(
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
     // The key operation checks live organization authority even for metadata-only updates.
-    let (id, key) = crate::backend::db::dependabot::organization_key(
+    let (id, key) = codeyard_db_security::dependabot::organization_key(
         &state.pool,
         encryptor,
         actor.database_actor(),
@@ -221,7 +221,7 @@ async fn save(
                 .collect::<Result<Vec<_>>>()
         })
         .transpose()?;
-    let created = crate::backend::db::dependabot::save_organization_secret(
+    let created = codeyard_db_security::dependabot::save_organization_secret(
         &state.pool,
         encryptor,
         actor.database_actor(),
@@ -248,7 +248,7 @@ async fn remove(
     Path((org_name, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (org, actor) = organization(&state, &headers, &org_name, true).await?;
-    if !crate::backend::db::dependabot::delete_organization_secret(
+    if !codeyard_db_security::dependabot::delete_organization_secret(
         &state.pool,
         actor.database_actor(),
         org,
@@ -270,7 +270,7 @@ async fn selected(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (org, actor) = organization(&state, &headers, &org_name, false).await?;
-    let repositories = crate::backend::db::dependabot::selected_repositories(
+    let repositories = codeyard_db_security::dependabot::selected_repositories(
         &state.pool,
         actor.database_actor(),
         org,
@@ -310,7 +310,7 @@ async fn set_selected(
         .into_iter()
         .map(RepositoryId::value)
         .collect::<Result<Vec<_>>>()?;
-    crate::backend::db::dependabot::select_repositories(
+    codeyard_db_security::dependabot::select_repositories(
         &state.pool,
         actor.database_actor(),
         org,
@@ -331,7 +331,7 @@ async fn repository_access(
 ) -> Result<Response> {
     let (org, actor) = organization(&state, &headers, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let (level, mut repositories) = crate::backend::db::dependabot::repository_access(
+    let (level, mut repositories) = codeyard_db_security::dependabot::repository_access(
         &state.pool,
         actor.database_actor(),
         org,
@@ -370,7 +370,7 @@ async fn update_repository_access(
 ) -> Result<StatusCode> {
     let (org, actor) = organization(&state, &headers, &name, true).await?;
     let Json(body) = body.map_err(|_| Error::invalid("Invalid repository selection"))?;
-    crate::backend::db::dependabot::update_repository_access(
+    codeyard_db_security::dependabot::update_repository_access(
         &state.pool,
         actor.database_actor(),
         org,
@@ -399,7 +399,7 @@ async fn set_default_level(
     if !matches!(body.default_level.as_str(), "public" | "internal") {
         return Err(Error::validation("Dependabot", "default_level", "invalid"));
     }
-    crate::backend::db::dependabot::set_repository_access_default(
+    codeyard_db_security::dependabot::set_repository_access_default(
         &state.pool,
         actor.database_actor(),
         org,
@@ -416,7 +416,7 @@ async fn add_selected(
     Path((org_name, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (org, actor) = organization(&state, &headers, &org_name, true).await?;
-    crate::backend::db::dependabot::select_repositories(
+    codeyard_db_security::dependabot::select_repositories(
         &state.pool,
         actor.database_actor(),
         org,
@@ -434,7 +434,7 @@ async fn remove_selected(
     Path((org_name, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (org, actor) = organization(&state, &headers, &org_name, true).await?;
-    crate::backend::db::dependabot::select_repositories(
+    codeyard_db_security::dependabot::select_repositories(
         &state.pool,
         actor.database_actor(),
         org,

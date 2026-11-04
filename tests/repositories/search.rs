@@ -11,11 +11,6 @@ use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
 
-use codeyard::backend::db::organizations::NewOrganization;
-use codeyard::backend::db::organizations::OrganizationOutcome;
-use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
-use codeyard::backend::db::repositories::creation::RepositoryTarget;
 use codeyard::backend::repositories::lifecycle::provision;
 use codeyard::backend::repositories::store::repo_store;
 use codeyard::backend::repositories::store::FileWrite;
@@ -23,6 +18,11 @@ use codeyard::backend::repositories::store::RepoStore;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::OrganizationProfile;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use database::Database;
 use std::{path::Path, sync::Arc};
 
@@ -138,7 +138,7 @@ async fn visibility_contract(pg: bool) {
         "vault-token here",
     )
     .await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob,
         secret.id,
@@ -146,7 +146,7 @@ async fn visibility_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let acme = match codeyard::backend::db::organizations::create_organization(
+    let acme = match codeyard_db_orgs::organizations::create_organization(
         f.pool(),
         alice,
         &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -412,7 +412,7 @@ async fn buckets_contract(pg: bool) {
     .await;
     // Issues, pull requests and people, one more than a page of each.
     for number in 1..=35 {
-        codeyard::backend::db::issues::create_issue(
+        codeyard_db_repos::issues::create_issue(
             f.pool(),
             repo_id,
             owner,
@@ -421,9 +421,9 @@ async fn buckets_contract(pg: bool) {
         )
         .await
         .unwrap();
-        codeyard::backend::db::pull_requests::records::create_pull_request(
+        codeyard_db_repos::pull_requests::records::create_pull_request(
             f.pool(),
-            codeyard::backend::db::pull_requests::records::NewPullRequest {
+            codeyard_db_repos::pull_requests::records::NewPullRequest {
                 head_repo_id: None,
                 repo_id,
                 author_id: owner,
@@ -440,7 +440,7 @@ async fn buckets_contract(pg: bool) {
         )
         .await
         .unwrap();
-        codeyard::backend::db::users::accounts::create_user(
+        codeyard_db_identity::users::accounts::create_user(
             f.pool(),
             &format!("bucket_person_{number:02}"),
             None,
@@ -855,7 +855,7 @@ async fn one_file_and_unrelated_tables_contract(pg: bool) {
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
     let commits_before =
-        codeyard::backend::db::users::accounts::list_admin_activity_points(f.pool(), 7)
+        codeyard_db_identity::users::accounts::list_admin_activity_points(f.pool(), 7)
             .await
             .unwrap()
             .last()
@@ -874,7 +874,7 @@ async fn one_file_and_unrelated_tables_contract(pg: bool) {
     .await;
     // Web/store writes record commits without any contributor-cache population.
     let totals =
-        codeyard::backend::db::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
+        codeyard_db_identity::users::accounts::list_admin_account_summaries(f.pool(), 100, 0)
             .await
             .unwrap();
     assert_eq!(
@@ -885,7 +885,7 @@ async fn one_file_and_unrelated_tables_contract(pg: bool) {
             .commits_total,
         1
     );
-    let activity = codeyard::backend::db::users::accounts::list_admin_activity_points(f.pool(), 7)
+    let activity = codeyard_db_identity::users::accounts::list_admin_activity_points(f.pool(), 7)
         .await
         .unwrap();
     // The first commit counts on today's commit chart.
@@ -1033,17 +1033,15 @@ async fn count_cap_contract(pg: bool) {
     }
     let pool = f.pool();
     assert_eq!(
-        codeyard::backend::db::repositories::discovery::count_repositories(pool, None, "capped", 3)
+        codeyard_db_repos::repositories::discovery::count_repositories(pool, None, "capped", 3)
             .await
             .unwrap(),
         3
     );
     assert_eq!(
-        codeyard::backend::db::repositories::discovery::count_repositories(
-            pool, None, "capped", 100
-        )
-        .await
-        .unwrap(),
+        codeyard_db_repos::repositories::discovery::count_repositories(pool, None, "capped", 100)
+            .await
+            .unwrap(),
         5
     );
     f.finish().await;

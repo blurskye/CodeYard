@@ -1,13 +1,13 @@
 //! One webhook request: signed, sent with a timeout and no redirects, retried on server
 //! errors and timeouts, and recorded with what was sent and what came back.
 
-use crate::backend::db::webhooks as hooks;
-use crate::backend::db::webhooks::NewDelivery;
 use crate::backend::webhooks::outbound::Refusal;
 use base64::Engine as _;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::models::WebhookDelivery;
+use codeyard_db_core::queries::webhooks::NewDelivery;
 use codeyard_db_core::DbPool;
+use codeyard_db_repos::webhooks as hooks;
 use codeyard_support::crypto::hmac_sha256;
 use codeyard_support::secrets::SecretEncryptor;
 use hmac::{Hmac, Mac};
@@ -80,7 +80,7 @@ pub async fn send(pool: &DbPool, hook: &Webhook, outgoing: &Outgoing) {
     loop {
         let stored = match (hook.app_id, &payload) {
             (Some(app), Some(payload)) => {
-                crate::backend::db::github_app_hooks::insert_delivery(
+                codeyard_db_identity::github_app_hooks::insert_delivery(
                     pool,
                     app,
                     &record,
@@ -174,7 +174,7 @@ async fn current_hook(
             json_payload(outgoing).and_then(|payload| payload["repository"]["id"].as_i64());
         if let Some(repository) = repository {
             let owned =
-                crate::backend::db::repositories::records::get_repository_by_id(pool, repository)
+                codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository)
                     .await
                     .map_err(|_| "Webhook storage is unavailable")?
                     .is_some_and(|repository| repository.owner_org_id == Some(org));

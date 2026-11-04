@@ -39,7 +39,7 @@ async fn load_audit(
             "Unable to load the audit log.",
         )
     };
-    let (total, entries) = crate::backend::db::audit::page(
+    let (total, entries) = codeyard_db_identity::audit::page(
         pool,
         (user.id, session).into(),
         action,

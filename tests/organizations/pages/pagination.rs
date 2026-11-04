@@ -3,8 +3,8 @@ use super::{
     profile::html,
 };
 use axum::http::StatusCode;
-use codeyard::backend::db::organizations::*;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_orgs::organizations::*;
 
 pub async fn contracts(f: &Fixture) {
     for value in ["garbage", "-1", "9223372036854775808", "", "1.5"] {
@@ -156,7 +156,7 @@ pub async fn contracts(f: &Fixture) {
     let team = f.team("detail_pagination", TeamPrivacy::Visible).await;
     let pool = f.database.pool();
     for index in 0..101 {
-        let actor = codeyard::backend::db::users::accounts::get_user_by_username(
+        let actor = codeyard_db_identity::users::accounts::get_user_by_username(
             pool,
             &format!("paged_member_{index:03}"),
         )

@@ -18,7 +18,7 @@ use std::{
 const UNREACHABLE_FOR: Duration = Duration::from_secs(5);
 
 async fn active_storage(pool: &DbPool, node: i64, key: Option<&str>) -> Result<(), RepoError> {
-    let active = crate::backend::db::cluster::get_node_by_id(pool, node)
+    let active = codeyard_db_cluster::cluster::get_node_by_id(pool, node)
         .await
         .map_err(|_| unavailable())?
         .is_some_and(|node| {
@@ -59,7 +59,7 @@ pub(crate) async fn check_term_directory(
         return Ok(());
     }
     tokio::time::timeout(Duration::from_secs(5), async {
-        if crate::backend::db::cluster::writes::write_settings(pool)
+        if codeyard_db_cluster::cluster::writes::write_settings(pool)
             .await
             .map_err(|_| unavailable())?
             .write_quorum
@@ -67,7 +67,7 @@ pub(crate) async fn check_term_directory(
         {
             return Ok(());
         }
-        let view = crate::backend::db::cluster::writes::recovery_view(pool, repository.id)
+        let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, repository.id)
             .await
             .map_err(|_| unavailable())?;
         let node = node.ok_or_else(unavailable)?;
@@ -200,7 +200,7 @@ impl NodeContext {
         expected_term: Option<i64>,
     ) -> Result<(PathBuf, Option<i64>), RepoError> {
         let pool = self.database()?;
-        let settings = crate::backend::db::cluster::writes::write_settings(pool)
+        let settings = codeyard_db_cluster::cluster::writes::write_settings(pool)
             .await
             .map_err(|_| unavailable())?;
         if settings.write_quorum.is_none() {
@@ -212,7 +212,7 @@ impl NodeContext {
                 None,
             ));
         }
-        let view = crate::backend::db::cluster::writes::recovery_view(pool, repository)
+        let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, repository)
             .await
             .map_err(|_| unavailable())?;
         active_storage(pool, self.node_id, Some(&self.key.public_hex())).await?;

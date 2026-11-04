@@ -49,7 +49,7 @@ async fn create_bypass(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
-    let bypass = crate::backend::db::secret_scanning::bypass(
+    let bypass = codeyard_db_security::secret_scanning::bypass(
         &state.pool,
         actor.user.id,
         repo.id,
@@ -59,8 +59,8 @@ async fn create_bypass(
     .await
     .map_err(|refusal| {
         if matches!(
-            refusal.downcast_ref::<crate::backend::db::secret_scanning::Refusal>(),
-            Some(crate::backend::db::secret_scanning::Refusal::Invalid)
+            refusal.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(),
+            Some(codeyard_db_core::queries::secret_scanning::Refusal::Invalid)
         ) {
             Error::validation("SecretScanningPushProtectionBypass", "reason", "invalid")
         } else {
@@ -73,20 +73,20 @@ async fn create_bypass(
 }
 
 pub(super) fn error(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>() {
-        Some(crate::backend::db::secret_scanning::Refusal::Denied) => {
+    match error.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>() {
+        Some(codeyard_db_core::queries::secret_scanning::Refusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token")
         }
-        Some(crate::backend::db::secret_scanning::Refusal::Missing) => Error::missing(),
-        Some(crate::backend::db::secret_scanning::Refusal::Version) => Error::new(
+        Some(codeyard_db_core::queries::secret_scanning::Refusal::Missing) => Error::missing(),
+        Some(codeyard_db_core::queries::secret_scanning::Refusal::Version) => Error::new(
             StatusCode::PRECONDITION_FAILED,
             "Custom pattern version changed",
         ),
-        Some(crate::backend::db::secret_scanning::Refusal::Conflict) => Error::new(
+        Some(codeyard_db_core::queries::secret_scanning::Refusal::Conflict) => Error::new(
             StatusCode::CONFLICT,
             "Pattern configuration version changed",
         ),
-        Some(crate::backend::db::secret_scanning::Refusal::Invalid) => {
+        Some(codeyard_db_core::queries::secret_scanning::Refusal::Invalid) => {
             Error::validation("SecretScanningAlert", "state", "invalid")
         }
         None => Error::unavailable(error),
@@ -166,8 +166,8 @@ impl Filters {
         }
         Ok(())
     }
-    fn filter(&self, offset: usize, limit: usize) -> crate::backend::db::secret_scanning::Filter {
-        crate::backend::db::secret_scanning::Filter {
+    fn filter(&self, offset: usize, limit: usize) -> codeyard_db_security::secret_scanning::Filter {
+        codeyard_db_security::secret_scanning::Filter {
             state: self.state.clone(),
             secret_type: self.secret_type.clone(),
             exclude_secret_types: self.exclude_secret_types.clone(),
@@ -200,7 +200,7 @@ async fn list_org(
     let org = crate::backend::api::github::orgs::target(&state, &org).await?;
     query.validate()?;
     let (offset, limit) = pagination.window()?;
-    let alerts = crate::backend::db::secret_scanning::org_alerts(
+    let alerts = codeyard_db_security::secret_scanning::org_alerts(
         &state.pool,
         actor.user.id,
         org.id,
@@ -212,7 +212,7 @@ async fn list_org(
     let alerts = alerts.into_iter().take(limit).collect::<Vec<_>>();
     let ids = alerts.iter().map(|alert| alert.repo_id).collect::<Vec<_>>();
     let repositories =
-        crate::backend::db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
+        codeyard_db_repos::repositories::records::get_repositories_by_ids(&state.pool, &ids)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
@@ -259,7 +259,7 @@ async fn list(
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     query.validate()?;
     let (offset, limit) = pagination.window()?;
-    let alerts = crate::backend::db::secret_scanning::alerts(
+    let alerts = codeyard_db_security::secret_scanning::alerts(
         &state.pool,
         actor.user.id,
         repo.id,
@@ -293,11 +293,11 @@ async fn get_alert(
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, actor) = repository(&state, &headers, owner, name, false).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
-    let alert = crate::backend::db::secret_scanning::alerts(
+    let alert = codeyard_db_security::secret_scanning::alerts(
         &state.pool,
         actor.user.id,
         repo.id,
-        &crate::backend::db::secret_scanning::Filter {
+        &codeyard_db_security::secret_scanning::Filter {
             number: Some(number(&params)?),
             limit: 1,
             ..Default::default()
@@ -350,12 +350,12 @@ async fn update(
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, actor) = repository(&state, &headers, owner, name, true).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
-    let alert = crate::backend::db::secret_scanning::update_alert(
+    let alert = codeyard_db_security::secret_scanning::update_alert(
         &state.pool,
         actor.user.id,
         repo.id,
         number(&params)?,
-        &crate::backend::db::secret_scanning::AlertUpdate {
+        &codeyard_db_security::secret_scanning::AlertUpdate {
             state: input.state.as_deref(),
             reason: input.resolution.as_deref(),
             comment: input.resolution_comment.as_deref(),
@@ -405,7 +405,7 @@ async fn locations(
     let (repo, actor) = repository(&state, &headers, owner, name, false).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let (offset, limit) = page.window()?;
-    let locations = crate::backend::db::secret_scanning::locations(
+    let locations = codeyard_db_security::secret_scanning::locations(
         &state.pool,
         actor.user.id,
         repo.id,
@@ -435,9 +435,10 @@ async fn history(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
-    let history = crate::backend::db::secret_scanning::history(&state.pool, actor.user.id, repo.id)
-        .await
-        .map_err(error)?;
+    let history =
+        codeyard_db_security::secret_scanning::history(&state.pool, actor.user.id, repo.id)
+            .await
+            .map_err(error)?;
     let scans = |kind| {
         history.iter().filter(|job| job.scan_type == kind).map(|job| {
             let mut scan=serde_json::json!({"type": "git","status":match job.status.as_str() {"queued"=>"pending","running"=>"active","completed"=>"completed",_=>"failed"},"started_at":job.started_at,"completed_at":job.completed_at});

@@ -4,17 +4,17 @@ use crate::support::native_database as support;
 use chrono::{DateTime, Duration, NaiveDate, SecondsFormat, Utc};
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard::backend::db::discussions::DiscussionEdit;
-use codeyard::backend::db::discussions::ListFilter;
+use codeyard_db_repos::discussions::DiscussionEdit;
+use codeyard_db_repos::discussions::ListFilter;
 
-use codeyard::backend::db::files::AdmissionError;
-use codeyard::backend::db::files::ReserveUpload;
+use codeyard_db_repos::files::AdmissionError;
+use codeyard_db_repos::files::ReserveUpload;
 
-use codeyard::backend::db::users::transitions::AccountAdmission;
-use codeyard::backend::db::users::transitions::BanChange;
-use codeyard::backend::db::users::transitions::SetupClaim;
 use codeyard_db_core::models::FileReason;
 use codeyard_db_core::models::FileVisibility;
+use codeyard_db_identity::users::transitions::AccountAdmission;
+use codeyard_db_identity::users::transitions::BanChange;
+use codeyard_db_identity::users::transitions::SetupClaim;
 use serde_json::{json, Value};
 use sqlx::{postgres::PgPoolOptions, sqlite::SqlitePoolOptions, Connection, PgConnection, Row};
 use std::sync::Arc;
@@ -25,7 +25,7 @@ fn timestamp(value: DateTime<Utc>) -> String {
     value.to_rfc3339_opts(SecondsFormat::Micros, true)
 }
 async fn setup(pool: &codeyard_db_core::DbPool, mode: &str) -> codeyard_db_core::models::User {
-    match codeyard::backend::db::users::transitions::complete_setup(
+    match codeyard_db_identity::users::transitions::complete_setup(
         pool,
         "admin",
         None,
@@ -45,7 +45,7 @@ async fn repository(
     owner: i64,
     name: &str,
 ) -> codeyard_db_core::models::Repository {
-    codeyard::backend::db::repositories::records::create_repository(
+    codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner,
         name,
@@ -77,9 +77,9 @@ async fn new_pr(
     actor: i64,
     head_branch: &str,
 ) -> codeyard_db_core::models::PullRequest {
-    codeyard::backend::db::pull_requests::records::create_pull_request(
+    codeyard_db_repos::pull_requests::records::create_pull_request(
         pool,
-        codeyard::backend::db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             head_repo_id: None,
             repo_id: repo,
             author_id: actor,
@@ -101,7 +101,7 @@ async fn new_pr(
 async fn package_read_during_mutation(pool: &codeyard_db_core::DbPool, package: i64) {
     let count = tokio::time::timeout(
         std::time::Duration::from_secs(2),
-        codeyard::backend::db::packages::version_count(pool, package, None),
+        codeyard_db_repos::packages::version_count(pool, package, None),
     )
     .await
     .expect("package reads must not wait for metadata mutations")
@@ -149,7 +149,7 @@ async fn postgres_package_read_does_not_wait_for_mutation() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn simultaneous_setup_has_one_winner_and_constraint_failure_rolls_back() {
     let fixture = NativeDatabase::new().await;
-    assert!(codeyard::backend::db::users::transitions::complete_setup(
+    assert!(codeyard_db_identity::users::transitions::complete_setup(
         &fixture.pool,
         "bad",
         None,
@@ -160,13 +160,13 @@ async fn simultaneous_setup_has_one_winner_and_constraint_failure_rolls_back() {
     .await
     .is_err());
     assert_eq!(
-        codeyard::backend::db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         0
     );
     assert!(
-        codeyard::backend::db::node_config::get_node_configuration(&fixture.pool)
+        codeyard_db_cluster::node_config::get_node_configuration(&fixture.pool)
             .await
             .unwrap()
             .is_none()
@@ -183,7 +183,7 @@ async fn simultaneous_setup_has_one_winner_and_constraint_failure_rolls_back() {
         let barrier = barrier.clone();
         tasks.spawn(async move {
             barrier.wait().await;
-            codeyard::backend::db::users::transitions::complete_setup(
+            codeyard_db_identity::users::transitions::complete_setup(
                 &pool,
                 &format!("admin_{index}"),
                 None,
@@ -209,13 +209,13 @@ async fn simultaneous_setup_has_one_winner_and_constraint_failure_rolls_back() {
     }
     assert_eq!(completed, 1);
     assert_eq!(
-        codeyard::backend::db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         1
     );
     assert!(
-        codeyard::backend::db::node_config::get_node_configuration(&fixture.pool)
+        codeyard_db_cluster::node_config::get_node_configuration(&fixture.pool)
             .await
             .unwrap()
             .unwrap()
@@ -230,7 +230,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
     let fixture = NativeDatabase::new().await;
     let admin = setup(&fixture.pool, "private").await;
     assert!(matches!(
-        codeyard::backend::db::users::transitions::register_password(
+        codeyard_db_identity::users::transitions::register_password(
             &fixture.pool,
             "requested",
             None,
@@ -242,7 +242,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         AccountAdmission::Requested
     ));
     assert!(matches!(
-        codeyard::backend::db::users::transitions::register_password(
+        codeyard_db_identity::users::transitions::register_password(
             &fixture.pool,
             "REQUESTED",
             None,
@@ -253,7 +253,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         .unwrap(),
         AccountAdmission::Conflict
     ));
-    let request = codeyard::backend::db::users::signup_requests::list_signup_requests(
+    let request = codeyard_db_identity::users::signup_requests::list_signup_requests(
         &fixture.pool,
         "pending",
         100,
@@ -264,12 +264,12 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
     .unwrap()
     .remove(0);
     let (a, b) = tokio::join!(
-        codeyard::backend::db::users::signup_requests::approve_signup_request(
+        codeyard_db_identity::users::signup_requests::approve_signup_request(
             &fixture.pool,
             request.id,
             admin.id
         ),
-        codeyard::backend::db::users::signup_requests::approve_signup_request(
+        codeyard_db_identity::users::signup_requests::approve_signup_request(
             &fixture.pool,
             request.id,
             admin.id
@@ -277,12 +277,12 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
     );
     assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
     let user =
-        codeyard::backend::db::users::accounts::get_user_by_username(&fixture.pool, "requested")
+        codeyard_db_identity::users::accounts::get_user_by_username(&fixture.pool, "requested")
             .await
             .unwrap()
             .unwrap();
     assert!(matches!(
-        codeyard::backend::db::users::transitions::admit_oauth_account(
+        codeyard_db_identity::users::transitions::admit_oauth_account(
             &fixture.pool,
             "github",
             "subject",
@@ -294,7 +294,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         AccountAdmission::ApprovalRequired
     ));
     assert!(
-        codeyard::backend::db::users::transitions::enroll_oauth_identity(
+        codeyard_db_identity::users::transitions::enroll_oauth_identity(
             &fixture.pool,
             admin.id,
             user.id,
@@ -305,7 +305,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         .unwrap()
     );
     assert!(matches!(
-        codeyard::backend::db::users::transitions::admit_oauth_account(
+        codeyard_db_identity::users::transitions::admit_oauth_account(
             &fixture.pool,
             "github",
             "subject",
@@ -317,7 +317,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         AccountAdmission::User(_)
     ));
     let session = token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         &fixture.pool,
         &session,
         user.id,
@@ -328,7 +328,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
     .await
     .unwrap();
     assert!(
-        !codeyard::backend::db::users::transitions::compare_exchange_password(
+        !codeyard_db_identity::users::transitions::compare_exchange_password(
             &fixture.pool,
             user.id,
             "stale",
@@ -342,13 +342,13 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         .is_some()
     );
     assert!(
-        codeyard::backend::db::users::sessions::get_session(&fixture.pool, &session)
+        codeyard_db_identity::users::sessions::get_session(&fixture.pool, &session)
             .await
             .unwrap()
             .is_some()
     );
     assert!(
-        codeyard::backend::db::users::transitions::compare_exchange_password(
+        codeyard_db_identity::users::transitions::compare_exchange_password(
             &fixture.pool,
             user.id,
             "hash",
@@ -362,13 +362,13 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         .is_some()
     );
     assert!(
-        codeyard::backend::db::users::sessions::get_session(&fixture.pool, &session)
+        codeyard_db_identity::users::sessions::get_session(&fixture.pool, &session)
             .await
             .unwrap()
             .is_none()
     );
     assert!(matches!(
-        codeyard::backend::db::users::transitions::change_ban(
+        codeyard_db_identity::users::transitions::change_ban(
             &fixture.pool,
             user.id,
             admin.id,
@@ -379,7 +379,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         BanChange::Denied
     ));
     assert!(matches!(
-        codeyard::backend::db::users::transitions::change_ban(
+        codeyard_db_identity::users::transitions::change_ban(
             &fixture.pool,
             admin.id,
             admin.id,
@@ -390,7 +390,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         BanChange::SelfBan
     ));
     assert!(matches!(
-        codeyard::backend::db::users::transitions::change_ban(
+        codeyard_db_identity::users::transitions::change_ban(
             &fixture.pool,
             admin.id,
             user.id,
@@ -401,7 +401,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         BanChange::Updated(_)
     ));
     assert!(matches!(
-        codeyard::backend::db::users::transitions::admit_oauth_account(
+        codeyard_db_identity::users::transitions::admit_oauth_account(
             &fixture.pool,
             "github",
             "subject",
@@ -413,7 +413,7 @@ async fn private_enrollment_review_bans_and_password_cas_are_atomic() {
         AccountAdmission::Denied
     ));
     assert_eq!(
-        codeyard::backend::db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         2,
@@ -434,7 +434,7 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
             other.clone()
         };
         tasks.spawn(async move {
-            codeyard::backend::db::users::admission::admit_password_attempt(&pool, None, "user:42")
+            codeyard_db_identity::users::admission::admit_password_attempt(&pool, None, "user:42")
                 .await
                 .unwrap()
                 .is_some()
@@ -446,7 +446,7 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     }
     assert_eq!(admitted, 10);
     assert!(
-        !codeyard::backend::db::users::admission::admit_password_attempt(&other, None, "user:42")
+        !codeyard_db_identity::users::admission::admit_password_attempt(&other, None, "user:42")
             .await
             .unwrap()
             .is_some()
@@ -454,7 +454,7 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     // A refusal by the account still spent the client's budget: 29 attempts remain.
     let client = Some("ip:198.51.100.1");
     assert!(
-        !codeyard::backend::db::users::admission::admit_password_attempt(
+        !codeyard_db_identity::users::admission::admit_password_attempt(
             &fixture.pool,
             client,
             "user:42"
@@ -465,7 +465,7 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     );
     for index in 0..29 {
         assert!(
-            codeyard::backend::db::users::admission::admit_password_attempt(
+            codeyard_db_identity::users::admission::admit_password_attempt(
                 &fixture.pool,
                 client,
                 &format!("unknown:{index}")
@@ -476,7 +476,7 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
         );
     }
     assert!(
-        !codeyard::backend::db::users::admission::admit_password_attempt(
+        !codeyard_db_identity::users::admission::admit_password_attempt(
             &other,
             client,
             "unknown:denied"
@@ -497,7 +497,7 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     );
     // Another client address is separate.
     assert!(
-        codeyard::backend::db::users::admission::admit_password_attempt(
+        codeyard_db_identity::users::admission::admit_password_attempt(
             &other,
             Some("ip:198.51.100.2"),
             "unknown:denied"
@@ -509,11 +509,11 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     // A right password gives its attempt back, from the client and the account alike.
     let third = Some("ip:198.51.100.3");
     let receipt =
-        codeyard::backend::db::users::admission::admit_password_attempt(&other, third, "user:7")
+        codeyard_db_identity::users::admission::admit_password_attempt(&other, third, "user:7")
             .await
             .unwrap()
             .unwrap();
-    codeyard::backend::db::users::admission::forgive_password_attempt(&fixture.pool, &receipt)
+    codeyard_db_identity::users::admission::forgive_password_attempt(&fixture.pool, &receipt)
         .await
         .unwrap();
     let spent: i64 = sqlx::query_scalar(
@@ -524,7 +524,7 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     .unwrap();
     assert_eq!(spent, 0);
     assert!(
-        codeyard::backend::db::users::admission::admit_password_attempt(&other, None, "")
+        codeyard_db_identity::users::admission::admit_password_attempt(&other, None, "")
             .await
             .is_err()
     );
@@ -537,7 +537,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
     let mut fixture = NativeDatabase::new().await;
     let user = setup(&fixture.pool, "public").await;
     let old = token();
-    codeyard::backend::db::users::sessions::create_browser_session(
+    codeyard_db_identity::users::sessions::create_browser_session(
         &fixture.pool,
         &old,
         Some("fixture"),
@@ -551,7 +551,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         let pool = fixture.pool.clone();
         let id = old.clone();
         tasks.spawn(async move {
-            codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+            codeyard_db_identity::users::sessions::get_or_create_csrf_token(
                 &pool,
                 &id,
                 None,
@@ -568,7 +568,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         assert_eq!(result.unwrap(), first);
     }
     assert!(
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             &fixture.pool,
             &old,
             Some(user.id),
@@ -580,7 +580,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         .is_none()
     );
     let collision = token();
-    codeyard::backend::db::users::sessions::create_browser_session(
+    codeyard_db_identity::users::sessions::create_browser_session(
         &fixture.pool,
         &collision,
         None,
@@ -590,7 +590,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
     .await
     .unwrap();
     assert!(
-        codeyard::backend::db::users::sessions::rotate_authenticated_session(
+        codeyard_db_identity::users::sessions::rotate_authenticated_session(
             &fixture.pool,
             Some(&old),
             &collision,
@@ -603,7 +603,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         .is_err()
     );
     assert!(
-        codeyard::backend::db::users::sessions::get_browser_session(&fixture.pool, &old)
+        codeyard_db_identity::users::sessions::get_browser_session(&fixture.pool, &old)
             .await
             .unwrap()
             .is_some(),
@@ -611,7 +611,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
     );
     let fresh = token();
     assert!(
-        codeyard::backend::db::users::sessions::rotate_authenticated_session(
+        codeyard_db_identity::users::sessions::rotate_authenticated_session(
             &fixture.pool,
             Some(&old),
             &fresh,
@@ -625,7 +625,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         .is_none()
     );
     assert!(
-        codeyard::backend::db::users::sessions::rotate_authenticated_session(
+        codeyard_db_identity::users::sessions::rotate_authenticated_session(
             &fixture.pool,
             Some(&old),
             &fresh,
@@ -639,12 +639,12 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         .is_some()
     );
     assert!(
-        codeyard::backend::db::users::sessions::get_browser_session(&fixture.pool, &old)
+        codeyard_db_identity::users::sessions::get_browser_session(&fixture.pool, &old)
             .await
             .unwrap()
             .is_none()
     );
-    let csrf = codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+    let csrf = codeyard_db_identity::users::sessions::get_or_create_csrf_token(
         &fixture.pool,
         &fresh,
         Some(user.id),
@@ -656,7 +656,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
     .unwrap();
     let state = token();
     let binding = token();
-    codeyard::backend::db::users::sessions::save_bound_oauth_state(
+    codeyard_db_identity::users::sessions::save_bound_oauth_state(
         &fixture.pool,
         &state,
         "verifier",
@@ -668,7 +668,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
     .await
     .unwrap();
     assert!(
-        codeyard::backend::db::users::sessions::consume_bound_oauth_state(
+        codeyard_db_identity::users::sessions::consume_bound_oauth_state(
             &fixture.pool,
             &state,
             "github",
@@ -680,7 +680,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         .is_none()
     );
     assert_eq!(
-        codeyard::backend::db::users::sessions::get_oauth_state(&fixture.pool, &state)
+        codeyard_db_identity::users::sessions::get_oauth_state(&fixture.pool, &state)
             .await
             .unwrap()
             .unwrap()
@@ -688,14 +688,14 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         "/alice/project/issues/7"
     );
     let (a, b) = tokio::join!(
-        codeyard::backend::db::users::sessions::consume_bound_oauth_state(
+        codeyard_db_identity::users::sessions::consume_bound_oauth_state(
             &fixture.pool,
             &state,
             "github",
             &binding,
             "https://fixture.invalid/callback"
         ),
-        codeyard::backend::db::users::sessions::consume_bound_oauth_state(
+        codeyard_db_identity::users::sessions::consume_bound_oauth_state(
             &fixture.pool,
             &state,
             "github",
@@ -709,7 +709,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
     );
     fixture.reopen().await;
     assert_eq!(
-        codeyard::backend::db::users::sessions::get_browser_session(&fixture.pool, &fresh)
+        codeyard_db_identity::users::sessions::get_browser_session(&fixture.pool, &fresh)
             .await
             .unwrap()
             .unwrap()
@@ -717,7 +717,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         Some(user.id)
     );
     assert_eq!(
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             &fixture.pool,
             &fresh,
             Some(user.id),
@@ -729,13 +729,13 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         Some(csrf)
     );
     assert!(
-        codeyard::backend::db::users::sessions::get_oauth_state(&fixture.pool, &state)
+        codeyard_db_identity::users::sessions::get_oauth_state(&fixture.pool, &state)
             .await
             .unwrap()
             .is_none()
     );
     assert!(
-        codeyard::backend::db::users::transitions::compare_exchange_password(
+        codeyard_db_identity::users::transitions::compare_exchange_password(
             &fixture.pool,
             user.id,
             "fixture-hash",
@@ -749,7 +749,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
         .is_some()
     );
     assert!(
-        codeyard::backend::db::users::sessions::get_browser_session(&fixture.pool, &fresh)
+        codeyard_db_identity::users::sessions::get_browser_session(&fixture.pool, &fresh)
             .await
             .unwrap()
             .is_none()
@@ -759,7 +759,7 @@ async fn sessions_csrf_oauth_consumption_and_rotation_survive_reopen() {
 
 /// The stored CSRF token of a session, creating one when the session has none yet.
 async fn stored_csrf(pool: &codeyard_db_core::DbPool, id: &str, user: Option<i64>) -> String {
-    codeyard::backend::db::users::sessions::get_or_create_csrf_token(pool, id, user, &token(), 7200)
+    codeyard_db_identity::users::sessions::get_or_create_csrf_token(pool, id, user, &token(), 7200)
         .await
         .unwrap()
         .unwrap()
@@ -771,7 +771,7 @@ async fn sqlite_csrf_reads_do_not_wait_for_the_writer() {
     let user = setup(&fixture.pool, "public").await;
     let anonymous = token();
     let member = token();
-    codeyard::backend::db::users::sessions::create_browser_session(
+    codeyard_db_identity::users::sessions::create_browser_session(
         &fixture.pool,
         &anonymous,
         None,
@@ -780,7 +780,7 @@ async fn sqlite_csrf_reads_do_not_wait_for_the_writer() {
     )
     .await
     .unwrap();
-    codeyard::backend::db::users::sessions::rotate_authenticated_session(
+    codeyard_db_identity::users::sessions::rotate_authenticated_session(
         &fixture.pool,
         None,
         &member,
@@ -821,15 +821,15 @@ async fn sqlite_csrf_reads_do_not_wait_for_the_writer() {
     );
 
     // A revoked session has no token, and that refusal does not wait for the writer.
-    codeyard::backend::db::users::sessions::delete_session(&fixture.pool, &anonymous)
+    codeyard_db_identity::users::sessions::delete_session(&fixture.pool, &anonymous)
         .await
         .unwrap();
-    codeyard::backend::db::users::sessions::delete_session(&fixture.pool, &member)
+    codeyard_db_identity::users::sessions::delete_session(&fixture.pool, &member)
         .await
         .unwrap();
     let writer = fixture.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
     assert_eq!(
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             &fixture.pool,
             &anonymous,
             None,
@@ -841,7 +841,7 @@ async fn sqlite_csrf_reads_do_not_wait_for_the_writer() {
         None
     );
     assert_eq!(
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             &fixture.pool,
             &member,
             Some(user.id),
@@ -862,7 +862,7 @@ async fn postgres_csrf_reads_do_not_wait_for_session_row_locks() {
     let user = setup(&fixture.pool, "public").await;
     let anonymous = token();
     let member = token();
-    codeyard::backend::db::users::sessions::create_browser_session(
+    codeyard_db_identity::users::sessions::create_browser_session(
         &fixture.pool,
         &anonymous,
         None,
@@ -871,7 +871,7 @@ async fn postgres_csrf_reads_do_not_wait_for_session_row_locks() {
     )
     .await
     .unwrap();
-    codeyard::backend::db::users::sessions::rotate_authenticated_session(
+    codeyard_db_identity::users::sessions::rotate_authenticated_session(
         &fixture.pool,
         None,
         &member,
@@ -905,7 +905,7 @@ async fn postgres_csrf_reads_do_not_wait_for_session_row_locks() {
     let within = std::time::Duration::from_secs(5);
     let answered = tokio::time::timeout(
         within,
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             &fixture.pool,
             &anonymous,
             None,
@@ -919,7 +919,7 @@ async fn postgres_csrf_reads_do_not_wait_for_session_row_locks() {
     assert_eq!(answered, Some(anonymous_csrf));
     let answered = tokio::time::timeout(
         within,
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             &fixture.pool,
             &member,
             Some(user.id),
@@ -947,14 +947,14 @@ async fn postgres_csrf_reads_do_not_wait_for_session_row_locks() {
         replaced
     );
 
-    codeyard::backend::db::users::sessions::delete_session(&fixture.pool, &anonymous)
+    codeyard_db_identity::users::sessions::delete_session(&fixture.pool, &anonymous)
         .await
         .unwrap();
-    codeyard::backend::db::users::sessions::delete_session(&fixture.pool, &member)
+    codeyard_db_identity::users::sessions::delete_session(&fixture.pool, &member)
         .await
         .unwrap();
     assert_eq!(
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             &fixture.pool,
             &anonymous,
             None,
@@ -966,7 +966,7 @@ async fn postgres_csrf_reads_do_not_wait_for_session_row_locks() {
         None
     );
     assert_eq!(
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             &fixture.pool,
             &member,
             Some(user.id),
@@ -992,7 +992,7 @@ async fn issue_pr_numbers_rollback_and_exact_future_microsecond_revision_cas() {
         let repo = repo.id;
         tasks.spawn(async move {
             if index % 2 == 0 {
-                codeyard::backend::db::issues::create_issue(&pool, repo, actor, "issue", "")
+                codeyard_db_repos::issues::create_issue(&pool, repo, actor, "issue", "")
                     .await
                     .unwrap()
                     .number
@@ -1010,19 +1010,14 @@ async fn issue_pr_numbers_rollback_and_exact_future_microsecond_revision_cas() {
     numbers.sort_unstable();
     assert_eq!(numbers, (1..=20).collect::<Vec<_>>());
     assert!(
-        codeyard::backend::db::issues::create_issue(&fixture.pool, repo.id, -1, "invalid", "")
+        codeyard_db_repos::issues::create_issue(&fixture.pool, repo.id, -1, "invalid", "")
             .await
             .is_err()
     );
-    let issue = codeyard::backend::db::issues::create_issue(
-        &fixture.pool,
-        repo.id,
-        user.id,
-        "before",
-        "body",
-    )
-    .await
-    .unwrap();
+    let issue =
+        codeyard_db_repos::issues::create_issue(&fixture.pool, repo.id, user.id, "before", "body")
+            .await
+            .unwrap();
     assert_eq!(issue.number, 21);
     let previous = DateTime::parse_from_rfc3339("2099-01-02T03:04:05.123456Z")
         .unwrap()
@@ -1035,7 +1030,7 @@ async fn issue_pr_numbers_rollback_and_exact_future_microsecond_revision_cas() {
         .execute(&fixture.raw)
         .await
         .unwrap();
-    let loaded = codeyard::backend::db::issues::get_issue_by_id(&fixture.pool, issue.id)
+    let loaded = codeyard_db_repos::issues::get_issue_by_id(&fixture.pool, issue.id)
         .await
         .unwrap()
         .unwrap();
@@ -1049,8 +1044,8 @@ async fn issue_pr_numbers_rollback_and_exact_future_microsecond_revision_cas() {
         state: Some("closed"),
     };
     let (a, b) = tokio::join!(
-        codeyard::backend::db::issues::update_issue(&fixture.pool, issue.id, edit()),
-        codeyard::backend::db::issues::update_issue(&fixture.pool, issue.id, edit())
+        codeyard_db_repos::issues::update_issue(&fixture.pool, issue.id, edit()),
+        codeyard_db_repos::issues::update_issue(&fixture.pool, issue.id, edit())
     );
     assert_eq!(
         usize::from(a.as_ref().unwrap().is_some()) + usize::from(b.as_ref().unwrap().is_some()),
@@ -1061,24 +1056,24 @@ async fn issue_pr_numbers_rollback_and_exact_future_microsecond_revision_cas() {
     assert_eq!(winner.closed_by_id, Some(user.id));
     let closed = winner.closed_at;
     assert!(
-        codeyard::backend::db::issues::update_issue(&fixture.pool, issue.id, edit())
+        codeyard_db_repos::issues::update_issue(&fixture.pool, issue.id, edit())
             .await
             .unwrap()
             .is_none()
     );
-    codeyard::backend::db::issues::add_issue_comment(
+    codeyard_db_repos::issues::add_issue_comment(
         &fixture.pool,
         issue.repo_id,
         issue.id,
         user.id,
         "comment bumps revision monotonically",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&fixture.pool, user.id).await,
         ),
     )
     .await
     .unwrap();
-    let revised = codeyard::backend::db::issues::get_issue_by_id(&fixture.pool, issue.id)
+    let revised = codeyard_db_repos::issues::get_issue_by_id(&fixture.pool, issue.id)
         .await
         .unwrap()
         .unwrap();
@@ -1088,10 +1083,10 @@ async fn issue_pr_numbers_rollback_and_exact_future_microsecond_revision_cas() {
     );
     assert_eq!(revised.closed_at, closed);
     let stranger =
-        codeyard::backend::db::users::accounts::create_user(&fixture.pool, "stranger", None)
+        codeyard_db_identity::users::accounts::create_user(&fixture.pool, "stranger", None)
             .await
             .unwrap();
-    assert!(codeyard::backend::db::issues::update_issue(
+    assert!(codeyard_db_repos::issues::update_issue(
         &fixture.pool,
         issue.id,
         DiscussionEdit {
@@ -1118,7 +1113,7 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
         let pool = fixture.pool.clone();
         let id = user.id;
         tasks.spawn(async move {
-            codeyard::backend::db::files::reserve_upload(
+            codeyard_db_repos::files::reserve_upload(
                 &pool,
                 upload(id, FileReason::Other, FileVisibility::Owner),
             )
@@ -1149,8 +1144,8 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
 
     // Deleting a reservation or letting it expire does not refund the quota.
     let full = || upload(user.id, FileReason::Other, FileVisibility::Owner);
-    let codeyard::backend::db::files::DeleteFileOutcome::Deleted(removed) =
-        codeyard::backend::db::files::delete_file(&fixture.pool, file.id, user.id)
+    let codeyard_db_repos::files::DeleteFileOutcome::Deleted(removed) =
+        codeyard_db_repos::files::delete_file(&fixture.pool, file.id, user.id)
             .await
             .unwrap()
     else {
@@ -1158,7 +1153,7 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
     };
     assert_eq!(removed.id, file.id);
     assert!(matches!(
-        codeyard::backend::db::files::reserve_upload(&fixture.pool, full()).await,
+        codeyard_db_repos::files::reserve_upload(&fixture.pool, full()).await,
         Err(AdmissionError::Quota)
     ));
     sqlx::query("UPDATE files SET upload_expires_at=?1")
@@ -1167,11 +1162,11 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
         .await
         .unwrap();
     assert!(matches!(
-        codeyard::backend::db::files::reserve_upload(&fixture.pool, full()).await,
+        codeyard_db_repos::files::reserve_upload(&fixture.pool, full()).await,
         Err(AdmissionError::Quota)
     ));
     // Each reason has its own budget.
-    codeyard::backend::db::files::reserve_upload(
+    codeyard_db_repos::files::reserve_upload(
         &fixture.pool,
         upload(user.id, FileReason::Avatar, FileVisibility::Public),
     )
@@ -1183,7 +1178,7 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
         .execute(&fixture.raw)
         .await
         .unwrap();
-    codeyard::backend::db::files::reserve_upload(&fixture.pool, full())
+    codeyard_db_repos::files::reserve_upload(&fixture.pool, full())
         .await
         .unwrap();
 
@@ -1203,7 +1198,7 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
         (
             "larger than any upload",
             ReserveUpload {
-                file_size: codeyard::backend::db::files::MAX_UPLOAD_BYTES + 1,
+                file_size: codeyard_db_repos::files::MAX_UPLOAD_BYTES + 1,
                 ..full()
             },
         ),
@@ -1246,7 +1241,7 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
     for (name, declaration) in refused {
         assert!(
             matches!(
-                codeyard::backend::db::files::reserve_upload(&fixture.pool, declaration).await,
+                codeyard_db_repos::files::reserve_upload(&fixture.pool, declaration).await,
                 Err(AdmissionError::Invalid)
             ),
             "{name}"
@@ -1270,7 +1265,7 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
         .unwrap();
     }
     assert!(matches!(
-        codeyard::backend::db::files::reserve_upload(&fixture.pool, full()).await,
+        codeyard_db_repos::files::reserve_upload(&fixture.pool, full()).await,
         Err(AdmissionError::Database(_))
     ));
     fixture.close().await;
@@ -1280,10 +1275,10 @@ async fn upload_quota_is_integer_atomic_and_charged_per_reservation() {
 async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
     let mut fixture = NativeDatabase::new().await;
     let user = setup(&fixture.pool, "public").await;
-    let other = codeyard::backend::db::users::accounts::create_user(&fixture.pool, "other", None)
+    let other = codeyard_db_identity::users::accounts::create_user(&fixture.pool, "other", None)
         .await
         .unwrap();
-    let file = codeyard::backend::db::files::reserve_upload(
+    let file = codeyard_db_repos::files::reserve_upload(
         &fixture.pool,
         upload(user.id, FileReason::Avatar, FileVisibility::Public),
     )
@@ -1293,20 +1288,20 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
     // A pending upload is not a file yet, and only its owner can activate it.
     for actor in [None, Some(user.id)] {
         assert!(
-            codeyard::backend::db::files::get_downloadable_file(&fixture.pool, file.id, actor)
+            codeyard_db_repos::files::get_downloadable_file(&fixture.pool, file.id, actor)
                 .await
                 .unwrap()
                 .is_none()
         );
     }
     assert!(
-        codeyard::backend::db::files::get_user_file(&fixture.pool, file.id, user.id)
+        codeyard_db_repos::files::get_user_file(&fixture.pool, file.id, user.id)
             .await
             .unwrap()
             .is_none()
     );
     assert!(
-        !codeyard::backend::db::files::activate_upload(&fixture.pool, file.id, other.id)
+        !codeyard_db_repos::files::activate_upload(&fixture.pool, file.id, other.id)
             .await
             .unwrap()
     );
@@ -1314,11 +1309,11 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
     // A failure while activating leaves the upload exactly as it was.
     sqlx::raw_sql("CREATE TRIGGER deny_activation BEFORE UPDATE ON files WHEN NEW.is_active BEGIN SELECT RAISE(ABORT,'fixture activation failure'); END;").execute(&fixture.raw).await.unwrap();
     assert!(
-        codeyard::backend::db::files::activate_upload(&fixture.pool, file.id, user.id)
+        codeyard_db_repos::files::activate_upload(&fixture.pool, file.id, user.id)
             .await
             .is_err()
     );
-    let pending = codeyard::backend::db::files::get_file_by_id(&fixture.pool, file.id)
+    let pending = codeyard_db_repos::files::get_file_by_id(&fixture.pool, file.id)
         .await
         .unwrap()
         .unwrap();
@@ -1343,7 +1338,7 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
         let (id, owner) = (file.id, user.id);
         tasks.spawn(async move {
             barrier.wait().await;
-            codeyard::backend::db::files::activate_upload(&pool, id, owner)
+            codeyard_db_repos::files::activate_upload(&pool, id, owner)
                 .await
                 .unwrap()
         });
@@ -1355,38 +1350,38 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
     assert_eq!(winners, 1);
     second.close().await;
     assert!(
-        !codeyard::backend::db::files::activate_upload(&fixture.pool, file.id, user.id)
+        !codeyard_db_repos::files::activate_upload(&fixture.pool, file.id, user.id)
             .await
             .unwrap()
     );
-    let active = codeyard::backend::db::files::get_file_by_id(&fixture.pool, file.id)
+    let active = codeyard_db_repos::files::get_file_by_id(&fixture.pool, file.id)
         .await
         .unwrap()
         .unwrap();
     assert!(active.is_active && active.confirmed_at.is_some());
     assert!(active.upload_expires_at.is_none());
     assert!(
-        codeyard::backend::db::files::get_downloadable_file(&fixture.pool, file.id, None)
+        codeyard_db_repos::files::get_downloadable_file(&fixture.pool, file.id, None)
             .await
             .unwrap()
             .is_some(),
         "a public avatar is visible to everyone"
     );
     assert!(
-        codeyard::backend::db::files::get_user_file(&fixture.pool, file.id, user.id)
+        codeyard_db_repos::files::get_user_file(&fixture.pool, file.id, user.id)
             .await
             .unwrap()
             .is_some()
     );
     assert!(
-        codeyard::backend::db::files::get_user_file(&fixture.pool, file.id, other.id)
+        codeyard_db_repos::files::get_user_file(&fixture.pool, file.id, other.id)
             .await
             .unwrap()
             .is_none()
     );
 
     // An upload whose window has ended cannot be activated and can be swept.
-    let stale = codeyard::backend::db::files::reserve_upload(
+    let stale = codeyard_db_repos::files::reserve_upload(
         &fixture.pool,
         upload(user.id, FileReason::Other, FileVisibility::Owner),
     )
@@ -1399,11 +1394,11 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
         .await
         .unwrap();
     assert!(
-        !codeyard::backend::db::files::activate_upload(&fixture.pool, stale.id, user.id)
+        !codeyard_db_repos::files::activate_upload(&fixture.pool, stale.id, user.id)
             .await
             .unwrap()
     );
-    let expired = codeyard::backend::db::files::expired_uploads(&fixture.pool, 10)
+    let expired = codeyard_db_repos::files::expired_uploads(&fixture.pool, 10)
         .await
         .unwrap();
     assert_eq!(
@@ -1411,26 +1406,26 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
         [stale.id]
     );
     assert!(
-        codeyard::backend::db::files::delete_expired_upload(&fixture.pool, file.id)
+        codeyard_db_repos::files::delete_expired_upload(&fixture.pool, file.id)
             .await
             .unwrap()
             .is_none(),
         "an active file is never swept"
     );
     assert!(
-        codeyard::backend::db::files::delete_expired_upload(&fixture.pool, stale.id)
+        codeyard_db_repos::files::delete_expired_upload(&fixture.pool, stale.id)
             .await
             .unwrap()
             .is_some()
     );
     assert!(
-        codeyard::backend::db::files::delete_expired_upload(&fixture.pool, stale.id)
+        codeyard_db_repos::files::delete_expired_upload(&fixture.pool, stale.id)
             .await
             .unwrap()
             .is_none()
     );
 
-    codeyard::backend::db::files::record_download(
+    codeyard_db_repos::files::record_download(
         &fixture.pool,
         user.id,
         file.id,
@@ -1448,13 +1443,13 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
     assert_eq!(ip, "2001:db8::4/128");
 
     fixture.reopen().await;
-    let reopened = codeyard::backend::db::files::get_file_by_id(&fixture.pool, file.id)
+    let reopened = codeyard_db_repos::files::get_file_by_id(&fixture.pool, file.id)
         .await
         .unwrap()
         .unwrap();
     assert!(reopened.is_active);
     assert_eq!(reopened.object_key, file.object_key);
-    let stats = codeyard::backend::db::files::get_user_file_stats(&fixture.pool, user.id)
+    let stats = codeyard_db_repos::files::get_user_file_stats(&fixture.pool, user.id)
         .await
         .unwrap()
         .unwrap();
@@ -1467,13 +1462,13 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
 
     // Only the owner can delete, and the record comes back for object cleanup.
     assert!(matches!(
-        codeyard::backend::db::files::delete_file(&fixture.pool, file.id, other.id)
+        codeyard_db_repos::files::delete_file(&fixture.pool, file.id, other.id)
             .await
             .unwrap(),
-        codeyard::backend::db::files::DeleteFileOutcome::NotFound
+        codeyard_db_repos::files::DeleteFileOutcome::NotFound
     ));
-    let codeyard::backend::db::files::DeleteFileOutcome::Deleted(removed) =
-        codeyard::backend::db::files::delete_file(&fixture.pool, file.id, user.id)
+    let codeyard_db_repos::files::DeleteFileOutcome::Deleted(removed) =
+        codeyard_db_repos::files::delete_file(&fixture.pool, file.id, user.id)
             .await
             .unwrap()
     else {
@@ -1481,7 +1476,7 @@ async fn file_activation_is_atomic_happens_once_and_survives_reopen() {
     };
     assert_eq!(removed.object_key, file.object_key);
     assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, file.id)
+        codeyard_db_repos::files::get_file_by_id(&fixture.pool, file.id)
             .await
             .unwrap()
             .is_none()
@@ -1553,7 +1548,7 @@ pub(crate) async fn assert_indexed_plan(
 
 async fn assert_watch_count(pool: &codeyard_db_core::DbPool, repo_id: i64, expected: i32) {
     assert_eq!(
-        codeyard::backend::db::repositories::records::get_repository_by_id(pool, repo_id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)
             .await
             .unwrap()
             .unwrap()
@@ -1564,17 +1559,17 @@ async fn assert_watch_count(pool: &codeyard_db_core::DbPool, repo_id: i64, expec
 
 async fn watch_count_transitions(pool: &codeyard_db_core::DbPool) {
     let owner = setup(pool, "public").await;
-    let ignored = codeyard::backend::db::users::accounts::create_user(pool, "ignored", None)
+    let ignored = codeyard_db_identity::users::accounts::create_user(pool, "ignored", None)
         .await
         .unwrap();
-    let custom = codeyard::backend::db::users::accounts::create_user(pool, "custom", None)
+    let custom = codeyard_db_identity::users::accounts::create_user(pool, "custom", None)
         .await
         .unwrap();
     let repo = repository(pool, owner.id, "watched").await;
     let empty = repository(pool, owner.id, "empty").await;
     // The repository is private, and only readers may watch it.
     for reader in [&ignored, &custom] {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             pool,
             reader.id,
             repo.id,
@@ -1594,32 +1589,30 @@ async fn watch_count_transitions(pool: &codeyard_db_core::DbPool) {
     assert_watch_count(pool, repo.id, 2).await;
     assert_watch_count(pool, empty.id, 0).await;
     assert!(
-        !codeyard::backend::db::repositories::engagement::is_repo_watched(
-            pool, ignored.id, repo.id
-        )
-        .await
-        .unwrap()
+        !codeyard_db_repos::repositories::engagement::is_repo_watched(pool, ignored.id, repo.id)
+            .await
+            .unwrap()
     );
     assert!(
-        codeyard::backend::db::repositories::engagement::is_repo_watched(pool, custom.id, repo.id)
+        codeyard_db_repos::repositories::engagement::is_repo_watched(pool, custom.id, repo.id)
             .await
             .unwrap()
     );
 
     assert!(
-        codeyard::backend::db::repositories::engagement::watch_repo(pool, ignored.id, repo.id)
+        codeyard_db_repos::repositories::engagement::watch_repo(pool, ignored.id, repo.id)
             .await
             .unwrap()
     );
     assert_watch_count(pool, repo.id, 3).await;
     assert!(
-        !codeyard::backend::db::repositories::engagement::watch_repo(pool, ignored.id, repo.id)
+        !codeyard_db_repos::repositories::engagement::watch_repo(pool, ignored.id, repo.id)
             .await
             .unwrap()
     );
     assert_watch_count(pool, repo.id, 3).await;
     assert!(
-        codeyard::backend::db::repositories::engagement::watch_repo(pool, custom.id, repo.id)
+        codeyard_db_repos::repositories::engagement::watch_repo(pool, custom.id, repo.id)
             .await
             .unwrap()
     );
@@ -1634,19 +1627,19 @@ async fn watch_count_transitions(pool: &codeyard_db_core::DbPool) {
     .await;
     assert_watch_count(pool, repo.id, 2).await;
     assert!(
-        codeyard::backend::db::repositories::engagement::unwatch_repo(pool, owner.id, repo.id)
+        codeyard_db_repos::repositories::engagement::unwatch_repo(pool, owner.id, repo.id)
             .await
             .unwrap()
     );
     assert_watch_count(pool, repo.id, 2).await;
     assert!(
-        codeyard::backend::db::repositories::engagement::unwatch_repo(pool, ignored.id, repo.id)
+        codeyard_db_repos::repositories::engagement::unwatch_repo(pool, ignored.id, repo.id)
             .await
             .unwrap()
     );
     assert_watch_count(pool, repo.id, 1).await;
     assert!(
-        codeyard::backend::db::repositories::engagement::unwatch_repo(pool, custom.id, repo.id)
+        codeyard_db_repos::repositories::engagement::unwatch_repo(pool, custom.id, repo.id)
             .await
             .unwrap()
     );
@@ -1661,7 +1654,7 @@ async fn watch_count_transitions(pool: &codeyard_db_core::DbPool) {
     .await;
     assert_watch_count(pool, repo.id, 0).await;
     assert!(
-        codeyard::backend::db::repositories::engagement::unwatch_repo(pool, ignored.id, repo.id)
+        codeyard_db_repos::repositories::engagement::unwatch_repo(pool, ignored.id, repo.id)
             .await
             .unwrap()
     );
@@ -1687,7 +1680,7 @@ async fn watch_count_transitions(pool: &codeyard_db_core::DbPool) {
     assert_watch_count(pool, repo.id, 0).await;
     assert_watch_count(pool, empty.id, 1).await;
     assert!(
-        codeyard::backend::db::repositories::engagement::unwatch_repo(pool, custom.id, empty.id)
+        codeyard_db_repos::repositories::engagement::unwatch_repo(pool, custom.id, empty.id)
             .await
             .unwrap()
     );
@@ -1713,7 +1706,7 @@ async fn postgres_watch_change_and_repository_deletion_do_not_deadlock() {
     let pool = &fixture.pool;
     let owner = setup(pool, "public").await;
     for round in 0..40 {
-        let watcher = codeyard::backend::db::users::accounts::create_user(
+        let watcher = codeyard_db_identity::users::accounts::create_user(
             pool,
             &format!("racer{round}"),
             None,
@@ -1722,7 +1715,7 @@ async fn postgres_watch_change_and_repository_deletion_do_not_deadlock() {
         .unwrap();
         let repo = repository(pool, owner.id, &format!("race{round}")).await;
         // The repository is private, and only readers may watch it.
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             pool,
             watcher.id,
             repo.id,
@@ -1743,10 +1736,8 @@ async fn postgres_watch_change_and_repository_deletion_do_not_deadlock() {
         // change must lock the repository first too, or the two can deadlock.
         let (watched, deleted) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
             tokio::join!(
-                codeyard::backend::db::repositories::engagement::watch_repo(
-                    pool, watcher.id, repo.id
-                ),
-                codeyard::backend::db::repositories::records::delete_repository(
+                codeyard_db_repos::repositories::engagement::watch_repo(pool, watcher.id, repo.id),
+                codeyard_db_repos::repositories::records::delete_repository(
                     pool, owner.id, repo.id
                 ),
             )
@@ -1757,14 +1748,14 @@ async fn postgres_watch_change_and_repository_deletion_do_not_deadlock() {
         if let Err(error) = watched {
             assert!(
                 error
-                    .downcast_ref::<codeyard::backend::db::users::blocks::InteractionBlocked>()
+                    .downcast_ref::<codeyard_db_identity::users::blocks::InteractionBlocked>()
                     .is_some(),
                 "watch change must not fail otherwise: {error:#}"
             );
         }
         deleted.expect("repository deletion must not fail");
         assert!(
-            codeyard::backend::db::repositories::records::get_repository_by_id(pool, repo.id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo.id)
                 .await
                 .unwrap()
                 .is_none()
@@ -1780,44 +1771,45 @@ async fn postgres_ban_and_milestone_write_do_not_deadlock() {
     let pool = &fixture.pool;
     let admin = setup(pool, "public").await;
     for round in 0..40 {
-        let owner = codeyard::backend::db::users::accounts::create_user(
+        let owner = codeyard_db_identity::users::accounts::create_user(
             pool,
             &format!("sole_owner{round}"),
             None,
         )
         .await
         .unwrap();
-        let writer = codeyard::backend::db::users::accounts::create_user(
+        let writer = codeyard_db_identity::users::accounts::create_user(
             pool,
             &format!("writer{round}"),
             None,
         )
         .await
         .unwrap();
-        let organization = codeyard::backend::db::organizations::create_organization(
+        let organization = codeyard_db_orgs::organizations::create_organization(
             pool,
             owner.id,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 &format!("ban_org_{round}"),
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
         .await
         .unwrap();
-        let codeyard::backend::db::organizations::OrganizationOutcome::Applied(organization) =
+        let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(organization) =
             organization
         else {
             panic!("organization was not created");
         };
-        let repo = codeyard::backend::db::repositories::creation::insert_repository(
+        let repo = codeyard_db_repos::repositories::creation::insert_repository(
             pool,
-            codeyard::backend::db::repositories::creation::NewRepository {
-                owner: codeyard::backend::db::repositories::creation::RepositoryCreationOwner {
+            codeyard_db_repos::repositories::creation::NewRepository {
+                owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
                     actor_id: owner.id,
-                    target: codeyard::backend::db::repositories::creation::RepositoryTarget::Organization(
-                        organization.id,
-                    ),
+                    target:
+                        codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                            organization.id,
+                        ),
                 },
                 name: "proj",
                 description: None,
@@ -1830,7 +1822,7 @@ async fn postgres_ban_and_milestone_write_do_not_deadlock() {
         .await
         .unwrap()
         .unwrap();
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             pool,
             writer.id,
             repo.id,
@@ -1840,10 +1832,10 @@ async fn postgres_ban_and_milestone_write_do_not_deadlock() {
         .unwrap();
         let (banned, milestone) = tokio::time::timeout(std::time::Duration::from_secs(30), async {
             tokio::join!(
-                codeyard::backend::db::users::transitions::change_ban(
+                codeyard_db_identity::users::transitions::change_ban(
                     pool, admin.id, owner.id, true
                 ),
-                codeyard::backend::db::milestones::create_milestone(
+                codeyard_db_repos::milestones::create_milestone(
                     pool, writer.id, repo.id, "v1", None, None
                 ),
             )
@@ -1854,8 +1846,8 @@ async fn postgres_ban_and_milestone_write_do_not_deadlock() {
         // The write lands before the ban, or is refused once the ban has committed.
         if let Err(error) = milestone {
             assert_eq!(
-                error.downcast_ref::<codeyard::backend::db::milestones::MilestoneWriteRefusal>(),
-                Some(&codeyard::backend::db::milestones::MilestoneWriteRefusal::Denied),
+                error.downcast_ref::<codeyard_db_repos::milestones::MilestoneWriteRefusal>(),
+                Some(&codeyard_db_repos::milestones::MilestoneWriteRefusal::Denied),
                 "{error:#}"
             );
         }
@@ -1871,26 +1863,25 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
     let owner = setup(pool, "public").await;
     for round in 0..40 {
         let repo = repository(pool, owner.id, &format!("comments{round}")).await;
-        let issue =
-            codeyard::backend::db::issues::create_issue(pool, repo.id, owner.id, "Issue", "")
-                .await
-                .unwrap();
-        let comment = codeyard::backend::db::issues::add_issue_comment(
+        let issue = codeyard_db_repos::issues::create_issue(pool, repo.id, owner.id, "Issue", "")
+            .await
+            .unwrap();
+        let comment = codeyard_db_repos::issues::add_issue_comment(
             pool,
             issue.repo_id,
             issue.id,
             owner.id,
             "first",
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(pool, owner.id).await,
             ),
         )
         .await
         .unwrap();
         let pr = new_pr(pool, repo.id, owner.id, &format!("comments{round}")).await;
-        let pr_comment = codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
+        let pr_comment = codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
             pool,
-            codeyard::backend::db::pull_requests::reviews::NewPullRequestComment {
+            codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
                 pr_id: pr.id,
                 author_id: owner.id,
                 body: "first",
@@ -1908,11 +1899,11 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
         .unwrap();
         let session = crate::support::live_session(pool, owner.id).await;
         let credential =
-            codeyard::backend::db::users::accounts::AccountCredential::Session(&session);
+            codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
         let (edited, deleted_comment, deleted) =
             tokio::time::timeout(std::time::Duration::from_secs(30), async {
                 tokio::join!(
-                    codeyard::backend::db::issues::edit_issue_comment(
+                    codeyard_db_repos::issues::edit_issue_comment(
                         pool,
                         owner.id,
                         repo.id,
@@ -1922,14 +1913,14 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
                         &comment.body,
                         &credential
                     ),
-                    codeyard::backend::db::pull_requests::reviews::delete_pull_request_comment(
+                    codeyard_db_repos::pull_requests::reviews::delete_pull_request_comment(
                         pool,
                         owner.id,
                         repo.id,
                         pr.id,
                         pr_comment.id
                     ),
-                    codeyard::backend::db::repositories::records::delete_repository(
+                    codeyard_db_repos::repositories::records::delete_repository(
                         pool, owner.id, repo.id
                     ),
                 )
@@ -1953,19 +1944,19 @@ async fn accounting_and_explore_indexes(pool: &codeyard_db_core::DbPool) {
          UPDATE repositories SET stars_count=100 WHERE id={};",
         popular.id, newer.id, private.id
     )).await;
-    let expired = codeyard::backend::db::files::reserve_upload(
+    let expired = codeyard_db_repos::files::reserve_upload(
         pool,
         upload(owner.id, FileReason::Other, FileVisibility::Owner),
     )
     .await
     .unwrap();
-    let kept = codeyard::backend::db::files::reserve_upload(
+    let kept = codeyard_db_repos::files::reserve_upload(
         pool,
         upload(owner.id, FileReason::Avatar, FileVisibility::Public),
     )
     .await
     .unwrap();
-    codeyard::backend::db::files::record_download(pool, owner.id, kept.id, Some("avatar"), None)
+    codeyard_db_repos::files::record_download(pool, owner.id, kept.id, Some("avatar"), None)
         .await
         .unwrap();
     execute_sql(
@@ -1995,9 +1986,9 @@ async fn accounting_and_explore_indexes(pool: &codeyard_db_core::DbPool) {
         codeyard_db_core::DbPool::Sqlite(_) => "SELECT * FROM repositories INDEXED BY idx_repositories_public_stars WHERE is_private = false ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT 1",
     };
     assert_indexed_plan(pool, explore_sql, &["idx_repositories_public_stars"]).await;
-    let ranked = codeyard::backend::db::repositories::records::list_public_repositories(
+    let ranked = codeyard_db_repos::repositories::records::list_public_repositories(
         pool,
-        codeyard::backend::db::repositories::records::RepositorySort::Stars,
+        codeyard_db_repos::repositories::records::RepositorySort::Stars,
         1,
     )
     .await
@@ -2007,28 +1998,28 @@ async fn accounting_and_explore_indexes(pool: &codeyard_db_core::DbPool) {
         [popular.id]
     );
     assert!(
-        codeyard::backend::db::files::delete_expired_upload(pool, expired.id)
+        codeyard_db_repos::files::delete_expired_upload(pool, expired.id)
             .await
             .unwrap()
             .is_some()
     );
-    let stats = codeyard::backend::db::files::get_user_file_stats(pool, owner.id)
+    let stats = codeyard_db_repos::files::get_user_file_stats(pool, owner.id)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(stats.uploads_24h, 2, "deletion retains upload charges");
     assert_eq!(stats.downloads_24h, 1, "unrelated downloads are retained");
-    assert!(codeyard::backend::db::files::get_file_by_id(pool, kept.id)
+    assert!(codeyard_db_repos::files::get_file_by_id(pool, kept.id)
         .await
         .unwrap()
         .is_some());
     assert!(matches!(
-        codeyard::backend::db::files::delete_file(pool, kept.id, owner.id)
+        codeyard_db_repos::files::delete_file(pool, kept.id, owner.id)
             .await
             .unwrap(),
-        codeyard::backend::db::files::DeleteFileOutcome::Deleted(_)
+        codeyard_db_repos::files::DeleteFileOutcome::Deleted(_)
     ));
-    let stats = codeyard::backend::db::files::get_user_file_stats(pool, owner.id)
+    let stats = codeyard_db_repos::files::get_user_file_stats(pool, owner.id)
         .await
         .unwrap()
         .unwrap();
@@ -2078,14 +2069,12 @@ async fn search_uses_ordered_scans_and_keeps_private_rows_hidden(pool: &codeyard
         ),
     )
     .await;
-    let visible =
-        codeyard::backend::db::issues::create_issue(pool, public.id, owner.id, "needle", "")
-            .await
-            .unwrap();
-    let hidden =
-        codeyard::backend::db::issues::create_issue(pool, private.id, owner.id, "needle", "")
-            .await
-            .unwrap();
+    let visible = codeyard_db_repos::issues::create_issue(pool, public.id, owner.id, "needle", "")
+        .await
+        .unwrap();
+    let hidden = codeyard_db_repos::issues::create_issue(pool, private.id, owner.id, "needle", "")
+        .await
+        .unwrap();
     execute_sql(
         pool,
         &format!(
@@ -2112,11 +2101,11 @@ async fn search_uses_ordered_scans_and_keeps_private_rows_hidden(pool: &codeyard
     ] {
         assert_indexed_plan(pool, sql, &[index]).await;
     }
-    let repos = codeyard::backend::db::repositories::discovery::search_repositories(
+    let repos = codeyard_db_repos::repositories::discovery::search_repositories(
         pool,
         None,
         "needle",
-        codeyard::backend::db::repositories::records::RepositorySort::Stars,
+        codeyard_db_repos::repositories::records::RepositorySort::Stars,
         0,
         1,
     )
@@ -2126,11 +2115,11 @@ async fn search_uses_ordered_scans_and_keeps_private_rows_hidden(pool: &codeyard
         repos.iter().map(|repo| repo.id).collect::<Vec<_>>(),
         [public.id]
     );
-    let issues = codeyard::backend::db::repositories::discovery::search_issues(
+    let issues = codeyard_db_repos::repositories::discovery::search_issues(
         pool,
         None,
         "needle",
-        codeyard::backend::db::repositories::discovery::ItemSort::Updated,
+        codeyard_db_repos::repositories::discovery::ItemSort::Updated,
         0,
         1,
     )
@@ -2143,21 +2132,21 @@ async fn search_uses_ordered_scans_and_keeps_private_rows_hidden(pool: &codeyard
 }
 
 async fn default_branch_accepts_full_ref_length(pool: &codeyard_db_core::DbPool) {
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "branch-migration", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "branch-migration", None)
         .await
         .unwrap();
     let repo = repository(pool, owner.id, "kept").await;
-    codeyard::backend::db::repositories::records::update_repo_default_branch(
+    codeyard_db_repos::repositories::records::update_repo_default_branch(
         pool,
         repo.id,
         "release/stable",
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::records::update_repo_size(pool, repo.id, 17)
+    codeyard_db_repos::repositories::records::update_repo_size(pool, repo.id, 17)
         .await
         .unwrap();
-    codeyard::backend::db::repositories::engagement::star_repo(pool, owner.id, repo.id)
+    codeyard_db_repos::repositories::engagement::star_repo(pool, owner.id, repo.id)
         .await
         .unwrap();
     let branch = format!(
@@ -2166,15 +2155,13 @@ async fn default_branch_accepts_full_ref_length(pool: &codeyard_db_core::DbPool)
         "b".repeat(124)
     );
     assert_eq!(format!("refs/heads/{branch}").len(), 1024);
-    codeyard::backend::db::repositories::records::update_repo_default_branch(
-        pool, repo.id, &branch,
-    )
-    .await
-    .unwrap();
-    codeyard::backend::db::repositories::records::update_repo_size(pool, repo.id, 88)
+    codeyard_db_repos::repositories::records::update_repo_default_branch(pool, repo.id, &branch)
         .await
         .unwrap();
-    let stored = codeyard::backend::db::repositories::records::get_repository_by_id(pool, repo.id)
+    codeyard_db_repos::repositories::records::update_repo_size(pool, repo.id, 88)
+        .await
+        .unwrap();
+    let stored = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo.id)
         .await
         .unwrap()
         .unwrap();
@@ -2182,7 +2169,7 @@ async fn default_branch_accepts_full_ref_length(pool: &codeyard_db_core::DbPool)
     assert_eq!(stored.size_bytes, 88);
     assert_eq!(stored.stars_count, 1);
     assert!(
-        codeyard::backend::db::repositories::engagement::is_repo_starred(pool, owner.id, repo.id)
+        codeyard_db_repos::repositories::engagement::is_repo_starred(pool, owner.id, repo.id)
             .await
             .unwrap()
     );
@@ -2240,7 +2227,7 @@ async fn native_schema_history_foreign_keys_and_integer_overflow_fail_closed() {
         sqlx::query("INSERT INTO files(id,user_id,filename,original_name,content_type,file_size,sha256_hex,object_key,is_active) VALUES (?1,?2,'big','big','text/plain',?3,?4,?5,1)").bind(id).bind(user.id).bind(i64::MAX).bind("a".repeat(64)).bind(format!("uploads/{id}")).execute(&fixture.raw).await.unwrap();
     }
     assert!(
-        codeyard::backend::db::files::get_user_total_storage(&fixture.pool, user.id)
+        codeyard_db_repos::files::get_user_total_storage(&fixture.pool, user.id)
             .await
             .is_err(),
         "SUM cannot saturate or use REAL accounting"
@@ -2253,7 +2240,7 @@ async fn native_schema_history_foreign_keys_and_integer_overflow_fail_closed() {
         .await
         .is_err());
     assert_eq!(
-        codeyard::backend::db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         1
@@ -2341,7 +2328,7 @@ async fn real_sqlite_writer_contention_waits_and_closed_selected_database_fails(
     let (sent, received) = tokio::sync::oneshot::channel();
     let waiting = tokio::spawn(async move {
         sent.send(()).unwrap();
-        codeyard::backend::db::users::accounts::create_user(&pool, "blocked-writer", None).await
+        codeyard_db_identity::users::accounts::create_user(&pool, "blocked-writer", None).await
     });
     received.await.unwrap();
     tokio::time::sleep(std::time::Duration::from_millis(30)).await;
@@ -2350,7 +2337,7 @@ async fn real_sqlite_writer_contention_waits_and_closed_selected_database_fails(
         "a SQLite write cannot bypass another connection's writer ownership"
     );
     assert_eq!(
-        codeyard::backend::db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         0,
@@ -2360,21 +2347,21 @@ async fn real_sqlite_writer_contention_waits_and_closed_selected_database_fails(
     assert!(waiting.await.unwrap().is_ok());
     other.close().await;
     assert!(
-        codeyard::backend::db::node_config::get_node_configuration(&other)
+        codeyard_db_cluster::node_config::get_node_configuration(&other)
             .await
             .is_err(),
         "unavailable is not uninitialized/setup"
     );
     assert_eq!(
-        codeyard::backend::db::users::accounts::count_users(&fixture.pool)
+        codeyard_db_identity::users::accounts::count_users(&fixture.pool)
             .await
             .unwrap(),
         1
     );
     assert!(
-        codeyard::backend::db::repositories::records::list_public_repositories(
+        codeyard_db_repos::repositories::records::list_public_repositories(
             &fixture.pool,
-            codeyard::backend::db::repositories::records::RepositorySort::Recent,
+            codeyard_db_repos::repositories::records::RepositorySort::Recent,
             -1,
         )
         .await
@@ -2401,7 +2388,7 @@ async fn fresh_concurrent_native_migrations_use_an_independent_atomic_ledger() {
     b.unwrap();
     let user = setup(&first, "public").await;
     assert_eq!(
-        codeyard::backend::db::users::accounts::get_user_by_id(&second, user.id)
+        codeyard_db_identity::users::accounts::get_user_by_id(&second, user.id)
             .await
             .unwrap()
             .unwrap()
@@ -2416,13 +2403,13 @@ async fn fresh_concurrent_native_migrations_use_an_independent_atomic_ledger() {
 async fn repository_provisioning_visibility_floor_and_native_array_decoding_persist() {
     let mut fixture = NativeDatabase::new().await;
     let owner = setup(&fixture.pool, "public").await;
-    let reader = codeyard::backend::db::users::accounts::create_user(&fixture.pool, "reader", None)
+    let reader = codeyard_db_identity::users::accounts::create_user(&fixture.pool, "reader", None)
         .await
         .unwrap();
-    let source = codeyard::backend::db::repositories::insert_repository(
+    let source = codeyard_db_repos::repositories::insert_repository(
         &fixture.pool,
-        codeyard::backend::db::repositories::NewRepository {
-            owner: codeyard::backend::db::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::NewRepository {
+            owner: codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
             name: "source",
             description: Some("immutable storage"),
             is_private: false,
@@ -2434,9 +2421,9 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
     .await
     .unwrap()
     .unwrap();
-    let fork = codeyard::backend::db::repositories::discovery::create_forked_repository(
+    let fork = codeyard_db_repos::repositories::discovery::create_forked_repository(
         &fixture.pool,
-        codeyard::backend::db::repositories::discovery::NewForkedRepository {
+        codeyard_db_repos::repositories::discovery::NewForkedRepository {
             owner_id: reader.id,
             name: "fork",
             description: None,
@@ -2449,9 +2436,9 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
     .await
     .unwrap();
     assert!(!fork.is_private);
-    let descendant = codeyard::backend::db::repositories::discovery::create_forked_repository(
+    let descendant = codeyard_db_repos::repositories::discovery::create_forked_repository(
         &fixture.pool,
-        codeyard::backend::db::repositories::discovery::NewForkedRepository {
+        codeyard_db_repos::repositories::discovery::NewForkedRepository {
             owner_id: owner.id,
             name: "descendant",
             description: None,
@@ -2463,13 +2450,13 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::records::update_repository(
+    codeyard_db_repos::repositories::records::update_repository(
         &fixture.pool,
         owner.id,
         source.id,
         None,
         true,
-        codeyard::backend::db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None,
@@ -2478,37 +2465,32 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
     .await
     .unwrap();
     assert!(
-        codeyard::backend::db::repositories::records::get_repository_by_id(&fixture.pool, fork.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&fixture.pool, fork.id)
             .await
             .unwrap()
             .unwrap()
             .is_private
     );
     assert!(
-        codeyard::backend::db::repositories::repository_visibility_locked(
-            &fixture.pool,
-            descendant.id
-        )
-        .await
-        .unwrap()
+        codeyard_db_repos::repositories::repository_visibility_locked(&fixture.pool, descendant.id)
+            .await
+            .unwrap()
     );
-    assert!(
-        codeyard::backend::db::repositories::records::update_repository(
-            &fixture.pool,
-            owner.id,
-            descendant.id,
-            None,
-            false,
-            codeyard::backend::db::repositories::records::MergeMethodUpdate {
-                merge: None,
-                squash: None,
-                rebase: None
-            }
-        )
-        .await
-        .is_err()
-    );
-    codeyard::backend::db::repositories::records::rename_repository(
+    assert!(codeyard_db_repos::repositories::records::update_repository(
+        &fixture.pool,
+        owner.id,
+        descendant.id,
+        None,
+        false,
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
+            merge: None,
+            squash: None,
+            rebase: None
+        }
+    )
+    .await
+    .is_err());
+    codeyard_db_repos::repositories::records::rename_repository(
         &fixture.pool,
         owner.id,
         source.id,
@@ -2517,19 +2499,16 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::repositories::records::get_repository_by_id(
-            &fixture.pool,
-            source.id
-        )
-        .await
-        .unwrap()
-        .unwrap()
-        .disk_path,
+        codeyard_db_repos::repositories::records::get_repository_by_id(&fixture.pool, source.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .disk_path,
         source.disk_path
     );
-    let rule = codeyard::backend::db::repositories::protection::upsert_branch_protection_rule(
+    let rule = codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         &fixture.pool,
-        codeyard::backend::db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: owner.id,
             repo_id: source.id,
             pattern: "main",
@@ -2551,7 +2530,7 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
         .await
         .unwrap();
     fixture.reopen().await;
-    let rules = codeyard::backend::db::repositories::protection::list_branch_protection_rules(
+    let rules = codeyard_db_repos::repositories::protection::list_branch_protection_rules(
         &fixture.pool,
         source.id,
     )
@@ -2560,13 +2539,13 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
     assert_eq!(rules[0].push_allowances, vec![owner.id, reader.id]);
     assert_eq!(rules[0].required_status_checks, vec!["build"]);
     assert!(
-        codeyard::backend::db::users::accounts::create_user(&fixture.pool, &"x".repeat(256), None)
+        codeyard_db_identity::users::accounts::create_user(&fixture.pool, &"x".repeat(256), None)
             .await
             .is_err(),
         "VARCHAR bounds remain constraints in native SQLite"
     );
     let profile_session = profile_session(&fixture.pool, reader.id).await;
-    codeyard::backend::db::users::accounts::update_user_profile(
+    codeyard_db_identity::users::accounts::update_user_profile(
         &fixture.pool,
         reader.id,
         &profile_session,
@@ -2578,7 +2557,7 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::repositories::discovery::search_users(&fixture.pool, "café", 0, 10)
+        codeyard_db_repos::repositories::discovery::search_users(&fixture.pool, "café", 0, 10)
             .await
             .unwrap()[0]
             .id,
@@ -2586,11 +2565,11 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
         "Unicode search is not SQLite ASCII-only LIKE"
     );
     assert!(
-        codeyard::backend::db::repositories::discovery::search_repositories(
+        codeyard_db_repos::repositories::discovery::search_repositories(
             &fixture.pool,
             None,
             "renamed",
-            codeyard::backend::db::repositories::records::RepositorySort::Stars,
+            codeyard_db_repos::repositories::records::RepositorySort::Stars,
             0,
             10
         )
@@ -2603,11 +2582,11 @@ async fn repository_provisioning_visibility_floor_and_native_array_decoding_pers
 }
 
 async fn repository_search_ids(pool: &codeyard_db_core::DbPool, query: &str) -> Vec<i64> {
-    let mut ids: Vec<i64> = codeyard::backend::db::repositories::discovery::search_repositories(
+    let mut ids: Vec<i64> = codeyard_db_repos::repositories::discovery::search_repositories(
         pool,
         None,
         query,
-        codeyard::backend::db::repositories::records::RepositorySort::Stars,
+        codeyard_db_repos::repositories::records::RepositorySort::Stars,
         0,
         50,
     )
@@ -2622,27 +2601,29 @@ async fn repository_search_ids(pool: &codeyard_db_core::DbPool, query: &str) -> 
 
 async fn check_repository_search_matches_owner_names(pool: &codeyard_db_core::DbPool) {
     let admin = setup(pool, "public").await;
-    let alice = codeyard::backend::db::users::accounts::create_user(pool, "alice", None)
+    let alice = codeyard_db_identity::users::accounts::create_user(pool, "alice", None)
         .await
         .unwrap();
-    let acme = match codeyard::backend::db::organizations::create_organization(
+    let acme = match codeyard_db_orgs::organizations::create_organization(
         pool,
         admin.id,
-        &codeyard::backend::db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::NewOrganization::new(
             "acme",
-            codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        codeyard::backend::db::organizations::OrganizationOutcome::Applied(metadata) => metadata,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata) => {
+            metadata
+        }
         _ => panic!("the owner creates the organization"),
     };
     let create =
         |owner: i64, name: &'static str, private: bool, description: Option<&'static str>| {
-            codeyard::backend::db::repositories::records::create_repository(
+            codeyard_db_repos::repositories::records::create_repository(
                 pool,
                 owner,
                 name,
@@ -2719,7 +2700,7 @@ async fn search_batches_preserve_unicode_order_and_limits_on_both_databases() {
     for pool in [&sqlite.pool, &postgres.pool] {
         let mut expected = Vec::new();
         for index in (0..70).rev() {
-            let user = codeyard::backend::db::users::accounts::create_user(
+            let user = codeyard_db_identity::users::accounts::create_user(
                 pool,
                 &format!("search_{index:02}"),
                 None,
@@ -2728,7 +2709,7 @@ async fn search_batches_preserve_unicode_order_and_limits_on_both_databases() {
             .unwrap();
             if index % 2 == 0 {
                 let profile_session = profile_session(pool, user.id).await;
-                codeyard::backend::db::users::accounts::update_user_profile(
+                codeyard_db_identity::users::accounts::update_user_profile(
                     pool,
                     user.id,
                     &profile_session,
@@ -2744,11 +2725,10 @@ async fn search_batches_preserve_unicode_order_and_limits_on_both_databases() {
         }
         expected.reverse();
         for limit in [0, 1, 33, 80] {
-            let found = codeyard::backend::db::repositories::discovery::search_users(
-                pool, "café", 0, limit,
-            )
-            .await
-            .unwrap();
+            let found =
+                codeyard_db_repos::repositories::discovery::search_users(pool, "café", 0, limit)
+                    .await
+                    .unwrap();
             assert_eq!(
                 found
                     .into_iter()
@@ -2769,7 +2749,7 @@ async fn search_batches_preserve_unicode_order_and_limits_on_both_databases() {
 async fn concurrent_searches_share_the_pool_without_stalling() {
     let fixture = NativeDatabase::new().await;
     for index in 0..100 {
-        codeyard::backend::db::users::accounts::create_user(
+        codeyard_db_identity::users::accounts::create_user(
             &fixture.pool,
             &format!("pool_{index:03}"),
             None,
@@ -2782,7 +2762,7 @@ async fn concurrent_searches_share_the_pool_without_stalling() {
         .map(|_| {
             let pool = fixture.pool.clone();
             tokio::spawn(async move {
-                codeyard::backend::db::repositories::discovery::search_users(&pool, "pool_", 0, 100)
+                codeyard_db_repos::repositories::discovery::search_users(&pool, "pool_", 0, 100)
                     .await
             })
         })
@@ -2800,7 +2780,7 @@ async fn concurrent_searches_share_the_pool_without_stalling() {
 
 async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     let owner = setup(pool, "public").await;
-    let reader = codeyard::backend::db::users::accounts::create_user_with_password(
+    let reader = codeyard_db_identity::users::accounts::create_user_with_password(
         pool,
         "reader",
         Some("reader@fixture.invalid"),
@@ -2809,7 +2789,7 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     .await
     .unwrap();
     let repo = repository(pool, owner.id, "populated").await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         pool,
         reader.id,
         repo.id,
@@ -2817,12 +2797,11 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     )
     .await
     .unwrap();
-    let issue =
-        codeyard::backend::db::issues::create_issue(pool, repo.id, reader.id, "issue", "body")
-            .await
-            .unwrap();
+    let issue = codeyard_db_repos::issues::create_issue(pool, repo.id, reader.id, "issue", "body")
+        .await
+        .unwrap();
     let pr = new_pr(pool, repo.id, owner.id, "feature").await;
-    let closed = codeyard::backend::db::issues::update_issue(
+    let closed = codeyard_db_repos::issues::update_issue(
         pool,
         issue.id,
         DiscussionEdit {
@@ -2837,23 +2816,23 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     .await
     .unwrap()
     .unwrap();
-    codeyard::backend::db::issues::add_issue_comment(
+    codeyard_db_repos::issues::add_issue_comment(
         pool,
         issue.repo_id,
         issue.id,
         reader.id,
         "comment",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, reader.id).await,
         ),
     )
     .await
     .unwrap();
-    codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+    codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         pool,
         pr.id,
         reader.id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, reader.id).await,
         ),
         "approved",
@@ -2862,7 +2841,7 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     )
     .await
     .unwrap();
-    let label = codeyard::backend::db::labels::create_label(
+    let label = codeyard_db_repos::labels::create_label(
         pool,
         owner.id,
         repo.id,
@@ -2872,10 +2851,10 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     )
     .await
     .unwrap();
-    codeyard::backend::db::labels::set_issue_labels(pool, owner.id, repo.id, issue.id, &[label.id])
+    codeyard_db_repos::labels::set_issue_labels(pool, owner.id, repo.id, issue.id, &[label.id])
         .await
         .unwrap();
-    assert!(codeyard::backend::db::labels::set_issue_labels(
+    assert!(codeyard_db_repos::labels::set_issue_labels(
         pool,
         owner.id,
         repo.id,
@@ -2884,9 +2863,9 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     )
     .await
     .is_err());
-    codeyard::backend::db::repository_stats::upsert_repo_languages(
+    codeyard_db_repos::repository_stats::upsert_repo_languages(
         pool,
-        &codeyard::backend::db::repository_stats::language_source(pool, repo.id)
+        &codeyard_db_repos::repository_stats::language_source(pool, repo.id)
             .await
             .unwrap()
             .unwrap(),
@@ -2898,40 +2877,40 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::engagement::star_repo(pool, reader.id, repo.id)
+    codeyard_db_repos::repositories::engagement::star_repo(pool, reader.id, repo.id)
         .await
         .unwrap();
     assert!(
-        !codeyard::backend::db::repositories::engagement::star_repo(pool, reader.id, repo.id)
+        !codeyard_db_repos::repositories::engagement::star_repo(pool, reader.id, repo.id)
             .await
             .unwrap()
     );
-    codeyard::backend::db::repositories::engagement::watch_repo(pool, reader.id, repo.id)
+    codeyard_db_repos::repositories::engagement::watch_repo(pool, reader.id, repo.id)
         .await
         .unwrap();
-    codeyard::backend::db::following::follow_user(
+    codeyard_db_identity::following::follow_user(
         pool,
         reader.id,
         owner.id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, reader.id).await,
         ),
     )
     .await
     .unwrap();
-    assert!(codeyard::backend::db::following::follow_user(
+    assert!(codeyard_db_identity::following::follow_user(
         pool,
         reader.id,
         reader.id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, reader.id).await
         )
     )
     .await
     .is_err());
-    let rule = codeyard::backend::db::repositories::protection::upsert_branch_protection_rule(
+    let rule = codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        codeyard::backend::db::repositories::protection::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert {
             actor_id: owner.id,
             repo_id: repo.id,
             pattern: "main",
@@ -2947,9 +2926,9 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     .await
     .unwrap();
     assert!(
-        codeyard::backend::db::repositories::protection::upsert_commit_status(
+        codeyard_db_repos::repositories::protection::upsert_commit_status(
             pool,
-            codeyard::backend::db::repositories::protection::CommitStatusUpsert {
+            codeyard_db_repos::repositories::protection::CommitStatusUpsert {
                 repo_id: repo.id,
                 sha: &pr.head_sha,
                 context: "gitserv/ci",
@@ -2962,9 +2941,9 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
         .await
         .is_err()
     );
-    codeyard::backend::db::notifications::records::create_notification(
+    codeyard_db_repos::notifications::records::create_notification(
         pool,
-        codeyard::backend::db::notifications::records::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: owner.id,
             actor_id: Some(reader.id),
             repo_id: Some(repo.id),
@@ -2978,49 +2957,49 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     .await
     .unwrap();
     let encryptor = SecretEncryptor::new(&[0x31; 32]);
-    codeyard::backend::db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         pool,
         &encryptor,
         repo.id,
         "TOKEN",
         "fixture-secret",
         Some(owner.id),
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, owner.id).await,
         ),
     )
     .await
     .unwrap();
     let secrets =
-        codeyard::backend::db::secrets::decrypt_repository_secrets(pool, &encryptor, repo.id)
+        codeyard_db_actions::secrets::decrypt_repository_secrets(pool, &encryptor, repo.id)
             .await
             .unwrap();
     assert_eq!(secrets, vec![("TOKEN".into(), "fixture-secret".into())]);
-    let avatar = codeyard::backend::db::files::reserve_upload(
+    let avatar = codeyard_db_repos::files::reserve_upload(
         pool,
         upload(owner.id, FileReason::Avatar, FileVisibility::Public),
     )
     .await
     .unwrap();
     assert!(
-        codeyard::backend::db::files::activate_upload(pool, avatar.id, owner.id)
+        codeyard_db_repos::files::activate_upload(pool, avatar.id, owner.id)
             .await
             .unwrap()
     );
     assert!(matches!(
-        codeyard::backend::db::users::accounts::set_user_avatar(
+        codeyard_db_identity::users::accounts::set_user_avatar(
             pool,
             owner.id,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(pool, owner.id).await
             ),
             Some(avatar.id)
         )
         .await
         .unwrap(),
-        codeyard::backend::db::users::accounts::UserAvatarOutcome::Applied(None)
+        codeyard_db_identity::users::accounts::UserAvatarOutcome::Applied(None)
     ));
-    codeyard::backend::db::files::record_download(
+    codeyard_db_repos::files::record_download(
         pool,
         owner.id,
         avatar.id,
@@ -3029,9 +3008,9 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     )
     .await
     .unwrap();
-    let fork = codeyard::backend::db::repositories::discovery::create_forked_repository(
+    let fork = codeyard_db_repos::repositories::discovery::create_forked_repository(
         pool,
-        codeyard::backend::db::repositories::discovery::NewForkedRepository {
+        codeyard_db_repos::repositories::discovery::NewForkedRepository {
             owner_id: reader.id,
             name: "fork",
             description: None,
@@ -3044,38 +3023,36 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     .await
     .unwrap();
     assert!(fork.is_private);
-    assert!(
-        codeyard::backend::db::repositories::records::update_repository(
-            pool,
-            reader.id,
-            fork.id,
-            None,
-            false,
-            codeyard::backend::db::repositories::records::MergeMethodUpdate {
-                merge: None,
-                squash: None,
-                rebase: None
-            }
-        )
-        .await
-        .is_err()
-    );
-    let repo = codeyard::backend::db::repositories::records::get_repository_by_id(pool, repo.id)
+    assert!(codeyard_db_repos::repositories::records::update_repository(
+        pool,
+        reader.id,
+        fork.id,
+        None,
+        false,
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
+            merge: None,
+            squash: None,
+            rebase: None
+        }
+    )
+    .await
+    .is_err());
+    let repo = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo.id)
         .await
         .unwrap()
         .unwrap();
-    let stats = codeyard::backend::db::files::get_user_file_stats(pool, owner.id)
+    let stats = codeyard_db_repos::files::get_user_file_stats(pool, owner.id)
         .await
         .unwrap()
         .unwrap();
     let summaries =
-        codeyard::backend::db::users::accounts::list_admin_account_summaries(pool, 100, 0)
+        codeyard_db_identity::users::accounts::list_admin_account_summaries(pool, 100, 0)
             .await
             .unwrap();
-    let activity = codeyard::backend::db::users::accounts::list_admin_activity_points(pool, 7)
+    let activity = codeyard_db_identity::users::accounts::list_admin_activity_points(pool, 7)
         .await
         .unwrap();
-    let mut emails: Vec<_> = codeyard::backend::db::users::accounts::commit_authors(
+    let mut emails: Vec<_> = codeyard_db_identity::users::accounts::commit_authors(
         pool,
         &[
             "reader@fixture.invalid".into(),
@@ -3088,10 +3065,9 @@ async fn populated_snapshot(pool: &codeyard_db_core::DbPool) -> Value {
     .map(|author| (author.address, author.user.username))
     .collect();
     emails.sort();
-    let ids =
-        codeyard::backend::db::users::accounts::get_users_by_ids(pool, &[reader.id, i64::MAX])
-            .await
-            .unwrap();
+    let ids = codeyard_db_identity::users::accounts::get_users_by_ids(pool, &[reader.id, i64::MAX])
+        .await
+        .unwrap();
     json!({"issue":[closed.number,pr.number],"closed":[closed.state,closed.title,closed.closed_by_id],"labels":db::labels::get_issue_labels(pool,repo.id,issue.id).await.unwrap().into_iter().map(|l|l.name).collect::<Vec<_>>(),
         "comments":db::issues::list_issue_comments(pool,issue.id,100,0).await.unwrap().len(),"reviews":db::pull_requests::reviews::list_pull_request_reviews(pool,pr.id,100,0).await.unwrap().into_iter().map(|entry|entry.review.state).collect::<Vec<_>>(),
         "languages":db::repository_stats::get_repo_languages(pool,repo.id).await.unwrap().into_iter().map(|l|(l.language,l.bytes,l.percentage)).collect::<Vec<_>>(),
@@ -3113,11 +3089,11 @@ async fn populated_sqlite_and_postgres_named_operations_have_semantic_parity() {
 }
 
 async fn check_ci_admission_refusals(pool: &codeyard_db_core::DbPool) {
-    use codeyard::backend::db::ci::{self, CiAdmissionRefusal, NewCiRun};
+    use codeyard_db_actions::ci::{self, CiAdmissionRefusal, NewCiRun};
 
     let owner = setup(pool, "public").await;
     let repo = repository(pool, owner.id, "ci-refusals").await;
-    let stranger = codeyard::backend::db::users::accounts::create_user(pool, "ci-stranger", None)
+    let stranger = codeyard_db_identity::users::accounts::create_user(pool, "ci-stranger", None)
         .await
         .unwrap();
     let sha = "1111111111111111111111111111111111111111";
@@ -3160,7 +3136,7 @@ async fn check_ci_admission_refusals(pool: &codeyard_db_core::DbPool) {
         .unwrap()
         .is_empty());
     assert!(
-        codeyard::backend::db::repositories::protection::list_commit_statuses(pool, repo.id, sha)
+        codeyard_db_repos::repositories::protection::list_commit_statuses(pool, repo.id, sha)
             .await
             .unwrap()
             .is_empty()
@@ -3223,12 +3199,13 @@ async fn postgres_ci_admission_refusals_are_typed_and_leave_state_unchanged() {
 }
 
 async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
-    use codeyard::backend::db::{
-        issues, labels, organizations,
-        pull_requests::{records, reviews},
-        repositories,
-        users::accounts,
-    };
+    use codeyard_db_identity::users::accounts;
+    use codeyard_db_orgs::organizations;
+    use codeyard_db_repos::issues;
+    use codeyard_db_repos::labels;
+    use codeyard_db_repos::pull_requests::records;
+    use codeyard_db_repos::pull_requests::reviews;
+    use codeyard_db_repos::repositories;
 
     let owner = setup(pool, "public").await;
     let writer = accounts::create_user_with_password(
@@ -3252,7 +3229,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
     .await
     .unwrap();
     let base = repository(pool, owner.id, "projection-base").await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         pool,
         writer.id,
         base.id,
@@ -3383,7 +3360,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         newer.id,
         owner.id,
         "Discussion",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, owner.id).await,
         ),
     )
@@ -3401,7 +3378,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         newer.id,
         owner.id,
         "Second",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, owner.id).await,
         ),
     )
@@ -3413,7 +3390,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         newer.id,
         owner.id,
         "Third",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, owner.id).await,
         ),
     )
@@ -3461,15 +3438,14 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         organizations::OrganizationOutcome::Applied(org) => org,
         other => panic!("organization creation failed: {other:?}"),
     };
-    let org_repo = codeyard::backend::db::repositories::creation::insert_repository(
+    let org_repo = codeyard_db_repos::repositories::creation::insert_repository(
         pool,
-        codeyard::backend::db::repositories::creation::NewRepository {
-            owner: codeyard::backend::db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::NewRepository {
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
                 actor_id: owner.id,
-                target:
-                    codeyard::backend::db::repositories::creation::RepositoryTarget::Organization(
-                        org.id,
-                    ),
+                target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                    org.id,
+                ),
             },
             name: "projection-org",
             description: None,
@@ -3482,10 +3458,10 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
     .await
     .unwrap()
     .unwrap();
-    let head = codeyard::backend::db::repositories::creation::insert_repository(
+    let head = codeyard_db_repos::repositories::creation::insert_repository(
         pool,
-        codeyard::backend::db::repositories::creation::NewRepository {
-            owner: codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+        codeyard_db_repos::repositories::creation::NewRepository {
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
                 writer.id,
             ),
             name: "projection-head",
@@ -3539,7 +3515,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
     let mut repository_ids: Vec<i64> = (1_000_000..1_000_600).collect();
     repository_ids.extend([base.id, head.id, org_repo.id, base.id]);
     let owners =
-        codeyard::backend::db::repositories::records::repository_owner_names(pool, &repository_ids)
+        codeyard_db_repos::repositories::records::repository_owner_names(pool, &repository_ids)
             .await
             .unwrap();
     assert_eq!(owners.len(), 3);
@@ -3547,7 +3523,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
     assert_eq!(owners[&head.id], "writer");
     assert_eq!(owners[&org_repo.id], "display-org");
     assert!(
-        codeyard::backend::db::repositories::records::repository_owner_names(pool, &[])
+        codeyard_db_repos::repositories::records::repository_owner_names(pool, &[])
             .await
             .unwrap()
             .is_empty()
@@ -3639,7 +3615,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "approved",
@@ -3653,7 +3629,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "commented",
@@ -3667,7 +3643,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "commented",
@@ -3686,7 +3662,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "approved",
@@ -3700,7 +3676,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "commented",
@@ -3723,7 +3699,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, writer.id).await,
         ),
         "changes_requested",
@@ -3761,7 +3737,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
     let second = accounts::create_user_with_password(pool, "second-writer", None, "second-hash")
         .await
         .unwrap();
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         pool,
         second.id,
         base.id,
@@ -3773,7 +3749,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         pool,
         pull.id,
         second.id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, second.id).await,
         ),
         "changes_requested",
@@ -3824,7 +3800,7 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
         assert_eq!(review_ids(&page), expected);
     }
 
-    codeyard::backend::db::repositories::records::delete_repository(pool, writer.id, head.id)
+    codeyard_db_repos::repositories::records::delete_repository(pool, writer.id, head.id)
         .await
         .unwrap();
     let pulls = records::list_repo_pull_requests(pool, base.id, &ListFilter::default(), 100)
@@ -3852,7 +3828,7 @@ async fn postgres_list_projections_and_owned_notification_cursor() {
 }
 
 async fn check_notification_cursor(pool: &codeyard_db_core::DbPool) {
-    use codeyard::backend::db::notifications::events::{announce, EventCursor};
+    use codeyard_db_repos::notifications::events::{announce, EventCursor};
     let mut cursor = EventCursor::connect(pool).await.unwrap();
     let payload = format!("projection-test-{}", uuid::Uuid::new_v4());
     announce(pool, &payload).await.unwrap();
@@ -3866,19 +3842,14 @@ async fn sqlite_read_failures_propagate() {
     assert!(!fixture.pool.is_closed());
     let owner = setup(&fixture.pool, "public").await;
     let repo = repository(&fixture.pool, owner.id, "closed-reads").await;
-    let issue = codeyard::backend::db::issues::create_issue(
-        &fixture.pool,
-        repo.id,
-        owner.id,
-        "Issue",
-        "body",
-    )
-    .await
-    .unwrap();
+    let issue =
+        codeyard_db_repos::issues::create_issue(&fixture.pool, repo.id, owner.id, "Issue", "body")
+            .await
+            .unwrap();
 
     fixture.pool.close().await;
     assert!(fixture.pool.is_closed());
-    assert!(codeyard::backend::db::issues::list_repo_issues(
+    assert!(codeyard_db_repos::issues::list_repo_issues(
         &fixture.pool,
         repo.id,
         &ListFilter::default(),
@@ -3887,22 +3858,19 @@ async fn sqlite_read_failures_propagate() {
     .await
     .is_err());
     assert!(
-        codeyard::backend::db::issues::list_issue_comments(&fixture.pool, issue.id, 100, 0)
+        codeyard_db_repos::issues::list_issue_comments(&fixture.pool, issue.id, 100, 0)
             .await
             .is_err()
     );
     assert!(
-        codeyard::backend::db::labels::get_issues_labels(&fixture.pool, repo.id, &[issue.id])
+        codeyard_db_repos::labels::get_issues_labels(&fixture.pool, repo.id, &[issue.id])
             .await
             .is_err()
     );
     assert!(
-        codeyard::backend::db::repositories::records::repository_owner_names(
-            &fixture.pool,
-            &[repo.id]
-        )
-        .await
-        .is_err()
+        codeyard_db_repos::repositories::records::repository_owner_names(&fixture.pool, &[repo.id])
+            .await
+            .is_err()
     );
     fixture.close().await;
 }
@@ -3980,31 +3948,31 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
     pool: &codeyard_db_core::DbPool,
 ) {
     let owner = setup(pool, "public").await;
-    let live = codeyard::backend::db::files::reserve_upload(
+    let live = codeyard_db_repos::files::reserve_upload(
         pool,
         upload(owner.id, FileReason::Other, FileVisibility::Owner),
     )
     .await
     .unwrap();
     assert!(
-        codeyard::backend::db::files::activate_upload(pool, live.id, owner.id)
+        codeyard_db_repos::files::activate_upload(pool, live.id, owner.id)
             .await
             .unwrap()
     );
-    codeyard::backend::db::files::record_download(pool, owner.id, live.id, None, None)
+    codeyard_db_repos::files::record_download(pool, owner.id, live.id, None, None)
         .await
         .unwrap();
-    let deleted = codeyard::backend::db::files::reserve_upload(
+    let deleted = codeyard_db_repos::files::reserve_upload(
         pool,
         upload(owner.id, FileReason::Other, FileVisibility::Owner),
     )
     .await
     .unwrap();
     assert!(matches!(
-        codeyard::backend::db::files::delete_file(pool, deleted.id, owner.id)
+        codeyard_db_repos::files::delete_file(pool, deleted.id, owner.id)
             .await
             .unwrap(),
-        codeyard::backend::db::files::DeleteFileOutcome::Deleted(_)
+        codeyard_db_repos::files::DeleteFileOutcome::Deleted(_)
     ));
 
     let now = Utc::now();
@@ -4048,7 +4016,7 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
             sqlx::query("UPDATE upload_rate_limit SET file_id=NULL WHERE uploaded_at < strftime('%Y-%m-%dT%H:%M:%f000Z','now','-730 days')").execute(raw).await.unwrap();
         }
     }
-    let stats = codeyard::backend::db::files::get_user_file_stats(pool, owner.id)
+    let stats = codeyard_db_repos::files::get_user_file_stats(pool, owner.id)
         .await
         .unwrap()
         .unwrap();
@@ -4062,7 +4030,7 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
         ),
         (1, 10, 3, 30, 2)
     );
-    let report = codeyard::backend::db::users::accounts::list_admin_activity_points(pool, 730)
+    let report = codeyard_db_identity::users::accounts::list_admin_activity_points(pool, 730)
         .await
         .unwrap();
     assert_eq!(report.len(), 730);
@@ -4072,13 +4040,13 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
 
     assert_eq!(transfer_row_counts(pool).await, (505, 504));
     assert_eq!(
-        codeyard::backend::db::files::remove_expired_transfer_rows(pool)
+        codeyard_db_repos::files::remove_expired_transfer_rows(pool)
             .await
             .unwrap(),
         1002
     );
     assert_eq!(
-        codeyard::backend::db::files::remove_expired_transfer_rows(pool)
+        codeyard_db_repos::files::remove_expired_transfer_rows(pool)
             .await
             .unwrap(),
         0
@@ -4086,7 +4054,7 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
     assert_eq!(transfer_row_counts(pool).await, (4, 3));
     assert_eq!(
         json!(
-            codeyard::backend::db::files::get_user_file_stats(pool, owner.id)
+            codeyard_db_repos::files::get_user_file_stats(pool, owner.id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -4095,24 +4063,22 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
     );
     assert_eq!(
         json!(
-            codeyard::backend::db::users::accounts::list_admin_activity_points(pool, 730)
+            codeyard_db_identity::users::accounts::list_admin_activity_points(pool, 730)
                 .await
                 .unwrap()
         ),
         json!(report)
     );
     assert!(
-        codeyard::backend::db::files::get_user_file(pool, live.id, owner.id)
+        codeyard_db_repos::files::get_user_file(pool, live.id, owner.id)
             .await
             .unwrap()
             .is_some()
     );
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(pool, deleted.id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(pool, deleted.id)
+        .await
+        .unwrap()
+        .is_none());
 
     // Independently exhaust the hour and day counts, including the deleted file's charge.
     for (hour, day) in [(2, 4), (3, 3)] {
@@ -4127,7 +4093,7 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
             }
         }
         assert!(matches!(
-            codeyard::backend::db::files::reserve_upload(
+            codeyard_db_repos::files::reserve_upload(
                 pool,
                 upload(owner.id, FileReason::Other, FileVisibility::Owner)
             )
@@ -4148,14 +4114,14 @@ async fn check_expired_transfer_rows_are_bounded_and_preserve_windows(
     )
     .await;
     assert_eq!(
-        codeyard::backend::db::files::remove_expired_transfer_rows(pool)
+        codeyard_db_repos::files::remove_expired_transfer_rows(pool)
             .await
             .unwrap(),
         20_000
     );
     assert_eq!(transfer_row_counts(pool).await, (5, 4));
     assert_eq!(
-        codeyard::backend::db::files::remove_expired_transfer_rows(pool)
+        codeyard_db_repos::files::remove_expired_transfer_rows(pool)
             .await
             .unwrap(),
         2
@@ -4233,7 +4199,7 @@ async fn check_expired_identity_rows_are_removed_in_batches(pool: &codeyard_db_c
     let future = Utc::now() + Duration::days(1);
     let live_anonymous = token();
     let live_session = token();
-    codeyard::backend::db::users::sessions::create_browser_session(
+    codeyard_db_identity::users::sessions::create_browser_session(
         pool,
         &live_anonymous,
         None,
@@ -4242,7 +4208,7 @@ async fn check_expired_identity_rows_are_removed_in_batches(pool: &codeyard_db_c
     )
     .await
     .unwrap();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &live_session,
         admin.id,
@@ -4252,7 +4218,7 @@ async fn check_expired_identity_rows_are_removed_in_batches(pool: &codeyard_db_c
     )
     .await
     .unwrap();
-    codeyard::backend::db::users::sessions::save_oauth_state(
+    codeyard_db_identity::users::sessions::save_oauth_state(
         pool,
         "live-state",
         "verifier",
@@ -4262,31 +4228,31 @@ async fn check_expired_identity_rows_are_removed_in_batches(pool: &codeyard_db_c
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::users::sessions::remove_expired_identity_rows(pool)
+        codeyard_db_identity::users::sessions::remove_expired_identity_rows(pool)
             .await
             .unwrap(),
         3 * 501
     );
     assert_eq!(
-        codeyard::backend::db::users::sessions::remove_expired_identity_rows(pool)
+        codeyard_db_identity::users::sessions::remove_expired_identity_rows(pool)
             .await
             .unwrap(),
         0
     );
     assert!(
-        codeyard::backend::db::users::sessions::get_browser_session(pool, &live_anonymous)
+        codeyard_db_identity::users::sessions::get_browser_session(pool, &live_anonymous)
             .await
             .unwrap()
             .is_some()
     );
     assert!(
-        codeyard::backend::db::users::sessions::get_session(pool, &live_session)
+        codeyard_db_identity::users::sessions::get_session(pool, &live_session)
             .await
             .unwrap()
             .is_some()
     );
     assert!(
-        codeyard::backend::db::users::sessions::get_oauth_state(pool, "live-state")
+        codeyard_db_identity::users::sessions::get_oauth_state(pool, "live-state")
             .await
             .unwrap()
             .is_some()
@@ -4295,7 +4261,7 @@ async fn check_expired_identity_rows_are_removed_in_batches(pool: &codeyard_db_c
 
 async fn profile_session(pool: &codeyard_db_core::DbPool, actor: i64) -> String {
     let session = token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &session,
         actor,
@@ -4309,7 +4275,7 @@ async fn profile_session(pool: &codeyard_db_core::DbPool, actor: i64) -> String 
 }
 
 async fn check_processed_signup_verifiers_are_cleared(pool: &codeyard_db_core::DbPool) {
-    use codeyard::backend::db::users::signup_requests;
+    use codeyard_db_identity::users::signup_requests;
     let admin = setup(pool, "private").await;
     signup_requests::create_signup_request(pool, "applicant-pending", None, "hash-pending")
         .await
@@ -4329,13 +4295,13 @@ async fn check_processed_signup_verifiers_are_cleared(pool: &codeyard_db_core::D
         .await
         .unwrap();
     assert_eq!(
-        codeyard::backend::db::users::sessions::remove_expired_identity_rows(pool)
+        codeyard_db_identity::users::sessions::remove_expired_identity_rows(pool)
             .await
             .unwrap(),
         2
     );
     assert_eq!(
-        codeyard::backend::db::users::sessions::remove_expired_identity_rows(pool)
+        codeyard_db_identity::users::sessions::remove_expired_identity_rows(pool)
             .await
             .unwrap(),
         0
@@ -4371,7 +4337,7 @@ async fn check_processed_signup_verifiers_are_cleared(pool: &codeyard_db_core::D
     }
     // The created account keeps its own verifier after the signup copy is cleared.
     let user =
-        codeyard::backend::db::users::accounts::get_user_by_username(pool, "applicant-approved")
+        codeyard_db_identity::users::accounts::get_user_by_username(pool, "applicant-approved")
             .await
             .unwrap()
             .unwrap();
@@ -4385,7 +4351,7 @@ async fn check_anonymous_sessions_keep_the_newest_rows(pool: &codeyard_db_core::
     let mut anonymous = Vec::new();
     for hours in 0..5 {
         let id = token();
-        codeyard::backend::db::users::sessions::create_browser_session(
+        codeyard_db_identity::users::sessions::create_browser_session(
             pool,
             &id,
             None,
@@ -4397,7 +4363,7 @@ async fn check_anonymous_sessions_keep_the_newest_rows(pool: &codeyard_db_core::
         anonymous.push(id);
     }
     let authenticated = token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &authenticated,
         admin.id,
@@ -4408,14 +4374,14 @@ async fn check_anonymous_sessions_keep_the_newest_rows(pool: &codeyard_db_core::
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::users::sessions::keep_newest_anonymous_sessions(pool, 3)
+        codeyard_db_identity::users::sessions::keep_newest_anonymous_sessions(pool, 3)
             .await
             .unwrap(),
         2
     );
     for id in &anonymous[..2] {
         assert!(
-            codeyard::backend::db::users::sessions::get_browser_session(pool, id)
+            codeyard_db_identity::users::sessions::get_browser_session(pool, id)
                 .await
                 .unwrap()
                 .is_none()
@@ -4423,27 +4389,27 @@ async fn check_anonymous_sessions_keep_the_newest_rows(pool: &codeyard_db_core::
     }
     for id in &anonymous[2..] {
         assert!(
-            codeyard::backend::db::users::sessions::get_browser_session(pool, id)
+            codeyard_db_identity::users::sessions::get_browser_session(pool, id)
                 .await
                 .unwrap()
                 .is_some()
         );
     }
     assert!(
-        codeyard::backend::db::users::sessions::get_session(pool, &authenticated)
+        codeyard_db_identity::users::sessions::get_session(pool, &authenticated)
             .await
             .unwrap()
             .is_some()
     );
     // Rows under the cap are never removed, so repeating the pass changes nothing.
     assert_eq!(
-        codeyard::backend::db::users::sessions::keep_newest_anonymous_sessions(pool, 3)
+        codeyard_db_identity::users::sessions::keep_newest_anonymous_sessions(pool, 3)
             .await
             .unwrap(),
         0
     );
     assert_eq!(
-        codeyard::backend::db::users::sessions::keep_newest_anonymous_sessions(pool, 10)
+        codeyard_db_identity::users::sessions::keep_newest_anonymous_sessions(pool, 10)
             .await
             .unwrap(),
         0
@@ -4471,7 +4437,7 @@ async fn check_concurrent_anonymous_session_sweeps_keep_the_newest_rows(
     let mut ids = Vec::new();
     for offset in 0..CAP + 510 {
         let id = token();
-        codeyard::backend::db::users::sessions::create_browser_session(
+        codeyard_db_identity::users::sessions::create_browser_session(
             pool,
             &id,
             None,
@@ -4484,8 +4450,8 @@ async fn check_concurrent_anonymous_session_sweeps_keep_the_newest_rows(
     }
     let before = anonymous_session_ids_newest_first(pool).await.len() as i64;
     let (first, second) = tokio::join!(
-        codeyard::backend::db::users::sessions::keep_newest_anonymous_sessions(pool, CAP),
-        codeyard::backend::db::users::sessions::keep_newest_anonymous_sessions(pool, CAP),
+        codeyard_db_identity::users::sessions::keep_newest_anonymous_sessions(pool, CAP),
+        codeyard_db_identity::users::sessions::keep_newest_anonymous_sessions(pool, CAP),
     );
     // Together the sweeps remove exactly the surplus, and the newest rows remain.
     assert_eq!((first.unwrap() + second.unwrap()) as i64, before - CAP);
@@ -4545,7 +4511,7 @@ async fn check_sessions_arriving_during_a_sweep_survive(pool: &codeyard_db_core:
     let mut ids = Vec::new();
     for offset in 0..CAP + 1_010 {
         let id = token();
-        codeyard::backend::db::users::sessions::create_browser_session(
+        codeyard_db_identity::users::sessions::create_browser_session(
             pool,
             &id,
             None,
@@ -4559,7 +4525,7 @@ async fn check_sessions_arriving_during_a_sweep_survive(pool: &codeyard_db_core:
     let before = anonymous_session_count(pool).await;
     let arrival = token();
     let arrival_expiry = base + Duration::days(1);
-    let sweep = codeyard::backend::db::users::sessions::keep_newest_anonymous_sessions(pool, CAP);
+    let sweep = codeyard_db_identity::users::sessions::keep_newest_anonymous_sessions(pool, CAP);
     let arrive = async {
         // Insert only after the first batch has committed, so the boundary was read before
         // the arrival existed.
@@ -4569,7 +4535,7 @@ async fn check_sessions_arriving_during_a_sweep_survive(pool: &codeyard_db_core:
             }
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
-        codeyard::backend::db::users::sessions::create_browser_session(
+        codeyard_db_identity::users::sessions::create_browser_session(
             pool,
             &arrival,
             None,
@@ -4687,7 +4653,7 @@ async fn postgres_identity_cleanup_uses_expiry_index_bounds() {
             );
         }
         assert_eq!(
-            codeyard::backend::db::users::sessions::remove_expired_identity_rows(&fixture.pool)
+            codeyard_db_identity::users::sessions::remove_expired_identity_rows(&fixture.pool)
                 .await
                 .unwrap(),
             if expired { 3 } else { 0 }
@@ -4717,13 +4683,13 @@ async fn postgres_processed_signup_verifiers_are_cleared() {
 async fn postgres_acknowledgement_waits_for_account_transition() {
     let fixture = PostgresDatabase::new().await;
     let owner =
-        codeyard::backend::db::users::accounts::create_user(&fixture.pool, "ack_owner", None)
+        codeyard_db_identity::users::accounts::create_user(&fixture.pool, "ack_owner", None)
             .await
             .unwrap();
     let recipient = owner.id;
-    codeyard::backend::db::notifications::records::create_notification(
+    codeyard_db_repos::notifications::records::create_notification(
         &fixture.pool,
-        codeyard::backend::db::notifications::records::NewNotification {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: recipient,
             actor_id: None,
             repo_id: None,
@@ -4753,10 +4719,8 @@ async fn postgres_acknowledgement_waits_for_account_transition() {
     let acknowledged = tokio::spawn({
         let pool = fixture.pool.clone();
         async move {
-            codeyard::backend::db::notifications::records::mark_all_notifications_read(
-                &pool, recipient,
-            )
-            .await
+            codeyard_db_repos::notifications::records::mark_all_notifications_read(&pool, recipient)
+                .await
         }
     });
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -4790,12 +4754,12 @@ async fn profile_after_update(
     pool: &codeyard_db_core::DbPool,
     actor: i64,
     organization: i64,
-    profile: codeyard::backend::db::organizations::OrganizationProfile,
+    profile: codeyard_db_orgs::organizations::OrganizationProfile,
 ) -> (Option<String>, Option<String>) {
-    match codeyard::backend::db::organizations::update_organization_profile(
+    match codeyard_db_orgs::organizations::update_organization_profile(
         pool,
         actor,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, actor).await,
         ),
         organization,
@@ -4804,7 +4768,7 @@ async fn profile_after_update(
     .await
     .unwrap()
     {
-        codeyard::backend::db::organizations::OrganizationOutcome::Applied(metadata) => {
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata) => {
             (metadata.display_name, metadata.description)
         }
         _ => panic!("the owner updates the profile"),
@@ -4815,15 +4779,15 @@ async fn profile_after_update(
 /// runs. A description-only update must not restore a display name that another update
 /// changed after the request read the organization.
 async fn check_partial_profile_updates_keep_omitted_fields(pool: &codeyard_db_core::DbPool) {
-    use codeyard::backend::db::organizations::OrganizationProfile;
+    use codeyard_db_orgs::organizations::OrganizationProfile;
 
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "profile_owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "profile_owner", None)
         .await
         .unwrap();
-    let organization = match codeyard::backend::db::organizations::create_organization(
+    let organization = match codeyard_db_orgs::organizations::create_organization(
         pool,
         owner.id,
-        &codeyard::backend::db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::NewOrganization::new(
             "profile-org",
             OrganizationProfile::new(Some("Old name"), Some("Old description")).unwrap(),
         )
@@ -4832,7 +4796,9 @@ async fn check_partial_profile_updates_keep_omitted_fields(pool: &codeyard_db_co
     .await
     .unwrap()
     {
-        codeyard::backend::db::organizations::OrganizationOutcome::Applied(metadata) => metadata,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata) => {
+            metadata
+        }
         _ => panic!("the owner creates the organization"),
     };
 
@@ -4939,7 +4905,7 @@ async fn set_created_at(
 async fn check_storage_growth_counts_only_bytes_added_in_the_window(
     pool: &codeyard_db_core::DbPool,
 ) {
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "storage-owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "storage-owner", None)
         .await
         .unwrap();
     let repo = repository(pool, owner.id, "growth").await;
@@ -4948,7 +4914,7 @@ async fn check_storage_growth_counts_only_bytes_added_in_the_window(
     // The latest snapshot before the window is the baseline for the first day in it.
     record_storage_snapshot(pool, repo.id, GIB, now - Duration::days(10)).await;
     record_storage_snapshot(pool, repo.id, GIB + MIB, now).await;
-    let points = codeyard::backend::db::users::accounts::list_admin_activity_points(pool, 7)
+    let points = codeyard_db_identity::users::accounts::list_admin_activity_points(pool, 7)
         .await
         .unwrap();
     assert_eq!(points.len(), 7);
@@ -4965,7 +4931,7 @@ async fn check_storage_growth_counts_only_bytes_added_in_the_window(
 }
 
 async fn check_activity_window_starts_at_midnight_utc(pool: &codeyard_db_core::DbPool) {
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "activity-owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "activity-owner", None)
         .await
         .unwrap();
     let repo = repository(pool, owner.id, "activity").await;
@@ -4978,18 +4944,17 @@ async fn check_activity_window_starts_at_midnight_utc(pool: &codeyard_db_core::D
     let midnight = at(first_day, 0, 0, 0);
     let last_second = at(first_day, 23, 59, 59);
     for created_at in [before, midnight, last_second] {
-        let issue = codeyard::backend::db::issues::create_issue(
-            pool, repo.id, owner.id, "boundary", "body",
-        )
-        .await
-        .unwrap();
+        let issue =
+            codeyard_db_repos::issues::create_issue(pool, repo.id, owner.id, "boundary", "body")
+                .await
+                .unwrap();
         set_created_at(pool, "issues", issue.id, created_at).await;
     }
     record_storage_snapshot(pool, repo.id, GIB, before).await;
     record_storage_snapshot(pool, repo.id, GIB + MIB, midnight).await;
     record_storage_snapshot(pool, repo.id, GIB + 3 * MIB, last_second).await;
 
-    let points = codeyard::backend::db::users::accounts::list_admin_activity_points(pool, 7)
+    let points = codeyard_db_identity::users::accounts::list_admin_activity_points(pool, 7)
         .await
         .unwrap();
     assert_eq!(points.len(), 7);
@@ -5020,7 +4985,7 @@ async fn postgres_storage_growth_counts_only_bytes_added_in_the_window() {
 }
 
 async fn check_activity_baselines_use_per_repository_lookups(pool: &codeyard_db_core::DbPool) {
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "history-owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "history-owner", None)
         .await
         .unwrap();
     let active = repository(pool, owner.id, "active").await;
@@ -5047,7 +5012,7 @@ async fn check_activity_baselines_use_per_repository_lookups(pool: &codeyard_db_
     record_storage_snapshot(pool, active.id, GIB, midnight + Duration::seconds(1)).await;
     record_storage_snapshot(pool, active.id, GIB + MIB, midnight + Duration::seconds(1)).await;
     record_storage_snapshot(pool, fresh.id, 4 * MIB, midnight).await;
-    let points = codeyard::backend::db::users::accounts::list_admin_activity_points(pool, 7)
+    let points = codeyard_db_identity::users::accounts::list_admin_activity_points(pool, 7)
         .await
         .unwrap();
     assert_eq!(points.len(), 7);
@@ -5177,15 +5142,15 @@ async fn postgres_activity_window_starts_at_midnight_utc() {
 
 /// Reopening clears `closed_at`, but the closure stays in the activity charts.
 async fn check_reopening_keeps_the_closure_in_activity(pool: &codeyard_db_core::DbPool) {
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "closure-owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "closure-owner", None)
         .await
         .unwrap();
     let repo = repository(pool, owner.id, "closures").await;
     let issue =
-        codeyard::backend::db::issues::create_issue(pool, repo.id, owner.id, "closed once", "body")
+        codeyard_db_repos::issues::create_issue(pool, repo.id, owner.id, "closed once", "body")
             .await
             .unwrap();
-    let closed = codeyard::backend::db::issues::update_issue(
+    let closed = codeyard_db_repos::issues::update_issue(
         pool,
         issue.id,
         DiscussionEdit {
@@ -5200,7 +5165,7 @@ async fn check_reopening_keeps_the_closure_in_activity(pool: &codeyard_db_core::
     .await
     .unwrap()
     .unwrap();
-    let reopened = codeyard::backend::db::issues::update_issue(
+    let reopened = codeyard_db_repos::issues::update_issue(
         pool,
         issue.id,
         DiscussionEdit {
@@ -5216,17 +5181,16 @@ async fn check_reopening_keeps_the_closure_in_activity(pool: &codeyard_db_core::
     .unwrap()
     .unwrap();
     assert!(reopened.closed_at.is_none());
-    let admin = codeyard::backend::db::users::accounts::list_admin_activity_points(pool, 7)
+    let admin = codeyard_db_identity::users::accounts::list_admin_activity_points(pool, 7)
         .await
         .unwrap();
     assert_eq!(
         admin.iter().map(|point| point.issues_closed).sum::<i64>(),
         1
     );
-    let points =
-        codeyard::backend::db::repository_stats::list_repo_activity_points(pool, repo.id, 7)
-            .await
-            .unwrap();
+    let points = codeyard_db_repos::repository_stats::list_repo_activity_points(pool, repo.id, 7)
+        .await
+        .unwrap();
     assert_eq!(
         points.iter().map(|point| point.issues_closed).sum::<i64>(),
         1
@@ -5247,7 +5211,7 @@ async fn postgres_reopening_keeps_the_closure_in_activity() {
     fixture.pool.close().await;
 }
 
-fn issue_titles(entries: Vec<codeyard::backend::db::issues::IssueListEntry>) -> Vec<String> {
+fn issue_titles(entries: Vec<codeyard_db_repos::issues::IssueListEntry>) -> Vec<String> {
     let mut titles = entries
         .into_iter()
         .map(|entry| entry.issue.title)
@@ -5257,7 +5221,7 @@ fn issue_titles(entries: Vec<codeyard::backend::db::issues::IssueListEntry>) -> 
 }
 
 fn pull_request_titles(
-    entries: Vec<codeyard::backend::db::pull_requests::records::PullRequestListEntry>,
+    entries: Vec<codeyard_db_repos::pull_requests::records::PullRequestListEntry>,
 ) -> Vec<String> {
     let mut titles = entries
         .into_iter()
@@ -5270,11 +5234,10 @@ fn pull_request_titles(
 /// Counts and search are one rule per database, so both kinds share one fixture: the state
 /// tabs and the search must agree with the list they label.
 async fn check_issue_and_pull_request_counts_and_search(pool: &codeyard_db_core::DbPool) {
-    use codeyard::backend::db::{
-        discussions::StateCounts,
-        issues,
-        pull_requests::records::{self, NewPullRequest},
-    };
+    use codeyard_db_repos::discussions::StateCounts;
+    use codeyard_db_repos::issues;
+    use codeyard_db_repos::pull_requests::records;
+    use codeyard_db_repos::pull_requests::records::NewPullRequest;
 
     let owner = setup(pool, "public").await;
     let repo = repository(pool, owner.id, "searchable").await;
@@ -5525,14 +5488,14 @@ async fn primary_emails_differing_only_in_case_conflict_on_both_engines() {
     let postgres = PostgresDatabase::new().await;
     let sqlite = NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {
-        codeyard::backend::db::users::accounts::create_user(
+        codeyard_db_identity::users::accounts::create_user(
             pool,
             "first_owner",
             Some("Owner@Example.test"),
         )
         .await
         .unwrap();
-        let error = codeyard::backend::db::users::accounts::create_user(
+        let error = codeyard_db_identity::users::accounts::create_user(
             pool,
             "second_owner",
             Some("owner@example.test"),
@@ -5553,9 +5516,7 @@ async fn primary_emails_differing_only_in_case_conflict_on_both_engines() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn the_merge_policy_check_holds_nothing_and_refuses_a_moved_policy_on_both_engines() {
-    use codeyard::backend::db::pull_requests::merge_policy::{
-        AutoMergeIdentity, Changed, Snapshot,
-    };
+    use codeyard_db_repos::pull_requests::merge_policy::{AutoMergeIdentity, Changed, Snapshot};
     let postgres = PostgresDatabase::new().await;
     let sqlite = NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {
@@ -5563,12 +5524,12 @@ async fn the_merge_policy_check_holds_nothing_and_refuses_a_moved_policy_on_both
         let repo = repository(pool, owner.id, "policy").await;
         let pull = new_pr(pool, repo.id, owner.id, "feature").await;
         let expected = Snapshot {
-            revision: codeyard::backend::db::pull_requests::merge_policy::revision(pool, repo.id)
+            revision: codeyard_db_repos::pull_requests::merge_policy::revision(pool, repo.id)
                 .await
                 .unwrap(),
             auto_merge: None,
         };
-        codeyard::backend::db::pull_requests::merge_policy::check(pool, repo.id, &expected)
+        codeyard_db_repos::pull_requests::merge_policy::check(pool, repo.id, &expected)
             .await
             .unwrap();
         // Nothing stays open after the check, so a policy write made while the branch moves
@@ -5585,13 +5546,12 @@ async fn the_merge_policy_check_holds_nothing_and_refuses_a_moved_policy_on_both
         )
         .await
         .expect("a policy write waited for the merge check");
-        let error =
-            codeyard::backend::db::pull_requests::merge_policy::check(pool, repo.id, &expected)
-                .await
-                .unwrap_err();
+        let error = codeyard_db_repos::pull_requests::merge_policy::check(pool, repo.id, &expected)
+            .await
+            .unwrap_err();
         assert!(error.is::<Changed>(), "{error:#}");
         let current = Snapshot {
-            revision: codeyard::backend::db::pull_requests::merge_policy::revision(pool, repo.id)
+            revision: codeyard_db_repos::pull_requests::merge_policy::revision(pool, repo.id)
                 .await
                 .unwrap(),
             auto_merge: Some(AutoMergeIdentity {
@@ -5599,10 +5559,9 @@ async fn the_merge_policy_check_holds_nothing_and_refuses_a_moved_policy_on_both
                 generation: "withdrawn".into(),
             }),
         };
-        let error =
-            codeyard::backend::db::pull_requests::merge_policy::check(pool, repo.id, &current)
-                .await
-                .unwrap_err();
+        let error = codeyard_db_repos::pull_requests::merge_policy::check(pool, repo.id, &current)
+            .await
+            .unwrap_err();
         assert!(
             error.is::<Changed>(),
             "auto-merge consent without a record: {error:#}"
@@ -5616,19 +5575,19 @@ async fn the_merge_policy_check_holds_nothing_and_refuses_a_moved_policy_on_both
 async fn postgres_package_collection_lock_is_per_installation() {
     let first = PostgresDatabase::new().await;
     let second = PostgresDatabase::new().await;
-    let held = codeyard::backend::db::packages::collector_lock(&first.pool)
+    let held = codeyard_db_repos::packages::collector_lock(&first.pool)
         .await
         .unwrap();
     assert!(held.is_some());
     assert!(
-        codeyard::backend::db::packages::collector_lock(&first.pool)
+        codeyard_db_repos::packages::collector_lock(&first.pool)
             .await
             .unwrap()
             .is_none(),
         "one collector per installation"
     );
     assert!(
-        codeyard::backend::db::packages::collector_lock(&second.pool)
+        codeyard_db_repos::packages::collector_lock(&second.pool)
             .await
             .unwrap()
             .is_some(),
@@ -5646,10 +5605,9 @@ async fn postgres_merge_policy_writes_take_the_epoch_row_only_at_commit() {
     let repo = repository(&fixture.pool, owner.id, "epoch").await;
     let first = new_pr(&fixture.pool, repo.id, owner.id, "first").await;
     let second = new_pr(&fixture.pool, repo.id, owner.id, "second").await;
-    let before =
-        codeyard::backend::db::pull_requests::merge_policy::revision(&fixture.pool, repo.id)
-            .await
-            .unwrap();
+    let before = codeyard_db_repos::pull_requests::merge_policy::revision(&fixture.pool, repo.id)
+        .await
+        .unwrap();
     // A transaction that changed one pull request and is still open does not hold the
     // repository's epoch row, so a write to another pull request there does not wait for it.
     let mut connection = PgConnection::connect(&fixture.connection_url())
@@ -5674,10 +5632,9 @@ async fn postgres_merge_policy_writes_take_the_epoch_row_only_at_commit() {
     .await
     .expect("a policy write waited for another transaction's epoch row");
     open.commit().await.unwrap();
-    let after =
-        codeyard::backend::db::pull_requests::merge_policy::revision(&fixture.pool, repo.id)
-            .await
-            .unwrap();
+    let after = codeyard_db_repos::pull_requests::merge_policy::revision(&fixture.pool, repo.id)
+        .await
+        .unwrap();
     assert_eq!(after, before + 2);
     fixture.pool.close().await;
 }
@@ -5756,7 +5713,7 @@ async fn only_columns_that_can_decide_a_merge_move_the_merge_policy_on_both_engi
             };
             for column in &columns {
                 let before =
-                    codeyard::backend::db::pull_requests::merge_policy::revision(pool, repo.id)
+                    codeyard_db_repos::pull_requests::merge_policy::revision(pool, repo.id)
                         .await
                         .unwrap();
                 execute_sql(
@@ -5767,10 +5724,9 @@ async fn only_columns_that_can_decide_a_merge_move_the_merge_policy_on_both_engi
                     ),
                 )
                 .await;
-                let after =
-                    codeyard::backend::db::pull_requests::merge_policy::revision(pool, repo.id)
-                        .await
-                        .unwrap();
+                let after = codeyard_db_repos::pull_requests::merge_policy::revision(pool, repo.id)
+                    .await
+                    .unwrap();
                 assert_eq!(
                     after != before,
                     !ignored.contains(&column.as_str()),

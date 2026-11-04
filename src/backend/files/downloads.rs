@@ -56,14 +56,14 @@ pub enum DownloadError {
 pub async fn download_for_user(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: impl Into<crate::backend::db::files::FileAuthority>,
+    actor: impl Into<codeyard_db_repos::files::FileAuthority>,
     file_id: Uuid,
 ) -> Result<SignedDownload, DownloadError> {
     let actor = actor.into();
     let actor_id = actor.user_id.ok_or(DownloadError::NotFound)?;
     let file = authorize(pool, actor, file_id).await?;
     let (url, capability) = capability(store, &file).await?;
-    crate::backend::db::files::record_download(
+    codeyard_db_repos::files::record_download(
         pool,
         actor_id,
         file.id,
@@ -79,7 +79,7 @@ pub async fn download_for_user(
 pub async fn download_asset(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: impl Into<crate::backend::db::files::FileAuthority>,
+    actor: impl Into<codeyard_db_repos::files::FileAuthority>,
     file_id: Uuid,
 ) -> Result<SignedDownload, DownloadError> {
     let file = authorize(pool, actor.into(), file_id).await?;
@@ -89,10 +89,10 @@ pub async fn download_asset(
 
 async fn authorize(
     pool: &DbPool,
-    actor: crate::backend::db::files::FileAuthority,
+    actor: codeyard_db_repos::files::FileAuthority,
     file_id: Uuid,
 ) -> Result<File, DownloadError> {
-    crate::backend::db::files::get_downloadable_file(pool, file_id, actor)
+    codeyard_db_repos::files::get_downloadable_file(pool, file_id, actor)
         .await
         .map_err(|_| DownloadError::MetadataUnavailable)?
         .ok_or(DownloadError::NotFound)
@@ -129,7 +129,7 @@ async fn capability(
 pub async fn open_asset_download(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: impl Into<crate::backend::db::files::FileAuthority>,
+    actor: impl Into<codeyard_db_repos::files::FileAuthority>,
     file_id: Uuid,
 ) -> Result<AssetDownload, DownloadError> {
     let file = authorize(pool, actor.into(), file_id).await?;

@@ -90,16 +90,16 @@ async fn repository_cli_requires_web_or_ssh_identity_before_inserting() {
     use crate::support::native_database::PostgresDatabase;
 
     let database = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    let user = codeyard::backend::db::users::accounts::create_user(&database.pool, "owner", None)
+    let user = codeyard_db_identity::users::accounts::create_user(&database.pool, "owner", None)
         .await
         .unwrap();
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join(".env"), "").unwrap();
     let key = NodeKey::generate();
-    let node = codeyard::backend::db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         &database.pool,
         &key.public_hex(),
         "operator",
@@ -146,7 +146,7 @@ async fn repository_cli_requires_web_or_ssh_identity_before_inserting() {
             assert!(error.contains("storage node unavailable"), "{error}");
         }
         assert!(
-            codeyard::backend::db::repositories::records::list_user_repositories(
+            codeyard_db_repos::repositories::records::list_user_repositories(
                 &database.pool,
                 user.id
             )
@@ -156,7 +156,7 @@ async fn repository_cli_requires_web_or_ssh_identity_before_inserting() {
         );
     }
     let stored =
-        codeyard::backend::db::cluster::get_node_by_public_key(&database.pool, &key.public_hex())
+        codeyard_db_cluster::cluster::get_node_by_public_key(&database.pool, &key.public_hex())
             .await
             .unwrap()
             .unwrap();

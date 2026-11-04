@@ -90,12 +90,8 @@ async fn create_value(
         None => (head_owner, name.as_str()),
     };
     let head = if input.head_repo.is_some() {
-        crate::backend::db::repositories::records::get_repository(
-            &state.pool,
-            head_owner,
-            head_name,
-        )
-        .await
+        codeyard_db_repos::repositories::records::get_repository(&state.pool, head_owner, head_name)
+            .await
     } else {
         crate::backend::repositories::pull_requests::branches::owner_head_repository(
             &state.pool,
@@ -136,7 +132,7 @@ async fn create_value(
             base_branch: input.base,
             is_draft: input.draft.unwrap_or(false),
             maintainer_can_modify: Some(input.maintainer_can_modify.unwrap_or_else(|| {
-                crate::backend::db::pull_requests::records::can_grant_maintainer_edit(
+                codeyard_db_repos::pull_requests::records::can_grant_maintainer_edit(
                     actor.id, repo.id, &head,
                 )
             })),

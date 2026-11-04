@@ -1,0 +1,379 @@
+use anyhow::Result;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
+use serde::Deserialize;
+use serde::Serialize;
+use serde_json::json;
+use serde_json::Value;
+use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+
+pub mod pages;
+
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+pub enum Refusal {
+    #[error("Artifact metadata write denied")]
+    Denied,
+    #[error("Artifact or repository not found")]
+    Missing,
+    #[error("Invalid artifact metadata")]
+    Invalid,
+    #[error("A deployment job is already in progress for this cluster")]
+    Busy,
+    #[error("Artifact inventory is too large for one response")]
+    TooLarge,
+}
+
+fn text(value: &str, min: usize, max: usize) -> Result<()> {
+    anyhow::ensure!(
+        (min..=max).contains(&value.chars().count()) && !value.chars().any(char::is_control),
+        Refusal::Invalid
+    );
+    Ok(())
+}
+fn yes() -> bool {
+    true
+}
+fn deployed() -> String {
+    "deployed".into()
+}
+fn active() -> String {
+    "active".into()
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Artifact {
+    pub name: String,
+    pub digest: String,
+    pub version: Option<String>,
+    pub github_repository: Option<String>,
+}
+impl Artifact {
+    pub fn validate(&self) -> Result<()> {
+        text(&self.name, 1, 256)?;
+        anyhow::ensure!(
+            self.digest.starts_with("sha256:")
+                && codeyard_db_core::queries::attestations::valid_digest(&self.digest),
+            Refusal::Invalid
+        );
+        if let Some(version) = &self.version {
+            text(version, 0, 100)?;
+        }
+        if let Some(repo) = &self.github_repository {
+            text(repo, 1, 100)?;
+            anyhow::ensure!(
+                repo.bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c)),
+                Refusal::Invalid
+            );
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Deployment {
+    #[serde(flatten)]
+    pub artifact: Artifact,
+    #[serde(default = "deployed")]
+    pub status: String,
+    pub deployment_name: String,
+    #[serde(default)]
+    pub tags: BTreeMap<String, String>,
+    #[serde(default)]
+    pub runtime_risks: Vec<String>,
+}
+impl Deployment {
+    pub fn validate(&self) -> Result<()> {
+        self.artifact.validate()?;
+        text(&self.deployment_name, 1, 256)?;
+        anyhow::ensure!(self.tags.len() <= 128, Refusal::Invalid);
+        for (key, value) in &self.tags {
+            text(key, 1, 256)?;
+            text(value, 0, 1024)?;
+        }
+        anyhow::ensure!(
+            matches!(self.status.as_str(), "deployed" | "decommissioned"),
+            Refusal::Invalid
+        );
+        let risks: BTreeSet<_> = self.runtime_risks.iter().collect();
+        anyhow::ensure!(
+            risks.len() == self.runtime_risks.len()
+                && risks.len() <= 4
+                && risks.iter().all(|risk| matches!(
+                    risk.as_str(),
+                    "critical-resource"
+                        | "internet-exposed"
+                        | "lateral-movement"
+                        | "sensitive-data"
+                )),
+            Refusal::Invalid
+        );
+        Ok(())
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct Environment {
+    pub logical_environment: String,
+    #[serde(default)]
+    pub physical_environment: String,
+}
+impl Environment {
+    pub fn validate(&self) -> Result<()> {
+        text(&self.logical_environment, 1, 128)?;
+        text(&self.physical_environment, 0, 128)
+    }
+}
+
+#[derive(Deserialize)]
+pub struct DeploymentInput {
+    #[serde(flatten)]
+    pub deployment: Deployment,
+    #[serde(flatten)]
+    pub environment: Environment,
+    #[serde(default)]
+    pub cluster: String,
+    #[serde(default = "yes")]
+    pub return_records: bool,
+}
+impl DeploymentInput {
+    pub fn validate(&self) -> Result<()> {
+        self.deployment.validate()?;
+        self.environment.validate()?;
+        text(&self.cluster, 0, 128)?;
+        anyhow::ensure!(self.deployment.tags.len() <= 5, Refusal::Invalid);
+        if let Some(version) = &self.deployment.artifact.version {
+            text(version, 1, 100)?;
+        }
+        Ok(())
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ClusterInput {
+    #[serde(flatten)]
+    pub environment: Environment,
+    pub deployments: Vec<Deployment>,
+    #[serde(default)]
+    pub partial_success: bool,
+    #[serde(default = "yes")]
+    pub return_records: bool,
+}
+impl ClusterInput {
+    pub fn validate(&self, cluster: &str, maximum: usize) -> Result<()> {
+        self.environment.validate()?;
+        text(cluster, 1, 128)?;
+        anyhow::ensure!(
+            cluster
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"._-".contains(&c))
+                && self.deployments.len() <= maximum,
+            Refusal::Invalid
+        );
+        let mut names = BTreeSet::new();
+        for deployment in &self.deployments {
+            deployment.validate()?;
+            anyhow::ensure!(names.insert(&deployment.deployment_name), Refusal::Invalid);
+        }
+        Ok(())
+    }
+}
+
+#[derive(Deserialize)]
+pub struct StorageInput {
+    #[serde(flatten)]
+    pub artifact: Artifact,
+    pub artifact_url: Option<String>,
+    pub path: Option<String>,
+    pub registry_url: String,
+    pub repository: Option<String>,
+    #[serde(default = "active")]
+    pub status: String,
+    #[serde(default = "yes")]
+    pub return_records: bool,
+}
+impl StorageInput {
+    pub fn identity(&self, repo: i64) -> String {
+        use sha2::{Digest, Sha256};
+        let value = json!([
+            repo,
+            self.artifact.digest,
+            self.registry_url,
+            self.repository.as_deref().unwrap_or(""),
+            self.path
+                .as_deref()
+                .or(self.artifact_url.as_deref())
+                .unwrap_or("")
+        ]);
+        hex::encode(Sha256::digest(value.to_string().as_bytes()))
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        self.artifact.validate()?;
+        if let Some(version) = &self.artifact.version {
+            text(version, 1, 100)?;
+        }
+        fn https(value: &str, maximum: usize) -> Result<()> {
+            text(value, 1, maximum)?;
+            let url = url::Url::parse(value).map_err(|_| Refusal::Invalid)?;
+            anyhow::ensure!(
+                url.scheme() == "https"
+                    && url.host_str().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none(),
+                Refusal::Invalid
+            );
+            Ok(())
+        }
+        https(&self.registry_url, 256)?;
+        if let Some(url) = &self.artifact_url {
+            https(url, 152)?;
+        }
+        if let Some(path) = &self.path {
+            text(path, 0, 512)?;
+        }
+        if let Some(repository) = &self.repository {
+            text(repository, 0, 128)?;
+        }
+        anyhow::ensure!(
+            matches!(self.status.as_str(), "active" | "eol" | "deleted"),
+            Refusal::Invalid
+        );
+        Ok(())
+    }
+}
+
+pub(crate) const JOB_HISTORY_LIMIT: i64 = 100;
+pub(crate) const JOB_HISTORY_SECONDS: i64 = 7 * 24 * 60 * 60;
+pub(crate) const JOB_GC_BATCH: i64 = 100;
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct JobInput {
+    pub input: ClusterInput,
+}
+
+#[derive(Clone, Copy)]
+pub struct Actor {
+    pub user: i64,
+    pub token: i64,
+    /// A job token never borrows its bot account's grants on other repositories.
+    pub repo: Option<i64>,
+}
+
+/// An artifact target lookup: organization, digest, named repository and result limit.
+pub(crate) type TargetKey = (i64, String, Option<String>, usize);
+/// The repositories an artifact target resolves to, or why it was refused.
+pub(crate) type TargetVerdict = std::result::Result<Vec<(i64, Option<i64>)>, Refusal>;
+
+/// These verdicts are valid only in the transaction that retains their authority locks.
+pub(crate) struct Admission {
+    pub actor: Actor,
+    pub repositories: BTreeMap<(i64, i64), std::result::Result<(), Refusal>>,
+    pub targets: BTreeMap<TargetKey, TargetVerdict>,
+}
+impl Admission {
+    pub fn new(actor: Actor) -> Self {
+        Self {
+            actor,
+            repositories: BTreeMap::new(),
+            targets: BTreeMap::new(),
+        }
+    }
+}
+
+/// Database failures are not stable authorization verdicts.
+pub(crate) fn cacheable<T: Clone>(result: &Result<T>) -> Option<std::result::Result<T, Refusal>> {
+    match result {
+        Ok(value) => Some(Ok(value.clone())),
+        Err(error) => error.downcast_ref::<Refusal>().copied().map(Err),
+    }
+}
+
+pub(crate) fn target_candidates_sql(pg: bool, access: &str) -> String {
+    let sql = format!("SELECT a.repo_id,MAX(a.id) FROM artifact_attestations a JOIN attestation_subjects s ON s.attestation_id=a.id JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$3 WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND s.digest=$2 AND a.predicate_type IN ('https://slsa.dev/provenance/v1','https://slsa.dev/provenance/v0.2') AND (CAST($4 AS BIGINT) IS NULL OR r.id=$4) AND NOT r.is_archived AND ({access})>=3 GROUP BY a.repo_id ORDER BY MAX(a.id) DESC,a.repo_id LIMIT $5");
+    if pg {
+        sql
+    } else {
+        sql.replace('$', "?")
+    }
+}
+
+#[derive(sqlx::FromRow)]
+pub struct Record {
+    pub id: i64,
+    pub repo_id: i64,
+    pub kind: String,
+    pub digest: String,
+    pub name: String,
+    pub version: Option<String>,
+    pub document: String,
+    pub attestation_id: Option<i64>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+impl Record {
+    pub fn document(&self) -> Result<Value> {
+        let mut value: Value = serde_json::from_str(&self.document)?;
+        value["id"] = json!(self.id);
+        value["digest"] = json!(self.digest);
+        value["created_at"] = json!(self.created_at);
+        value["updated_at"] = json!(self.updated_at);
+        if self.kind == "storage" {
+            value["name"] = json!(self.name);
+            if let Some(version) = &self.version {
+                value["version"] = json!(version);
+            }
+        } else {
+            value["attestation_id"] = json!(self.attestation_id);
+        }
+        Ok(value)
+    }
+}
+
+pub(crate) fn append_record(rows: &mut Vec<Record>, row: Record, bytes: &mut usize) -> Result<()> {
+    *bytes +=
+        row.document.len() + row.name.len() + row.version.as_ref().map_or(0, String::len) + 512;
+    anyhow::ensure!(
+        *bytes <= 16 * 1024 * 1024 && rows.len() < 10_000,
+        Refusal::TooLarge
+    );
+    rows.push(row);
+    Ok(())
+}
+
+#[derive(Default)]
+pub struct Mutation {
+    pub records: Vec<Record>,
+    pub errors: Vec<Value>,
+}
+
+#[derive(sqlx::FromRow)]
+pub struct Job {
+    pub id: i64,
+    pub org_id: i64,
+    pub cluster: String,
+    pub actor_id: i64,
+    pub token_id: i64,
+    pub scoped_repo: Option<i64>,
+    pub input: String,
+    pub status: String,
+    pub started_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub total_count: Option<i64>,
+    pub errors: String,
+}
+
+native_operation!(crate::postgres::artifact_metadata::deployment, crate::sqlite::artifact_metadata::deployment,
+    fn deployment(pool: &DbPool, actor: Actor, org: i64, input: &DeploymentInput) -> Result<Mutation>);
+native_operation!(crate::postgres::artifact_metadata::storage, crate::sqlite::artifact_metadata::storage,
+    fn storage(pool: &DbPool, actor: Actor, org: i64, input: &StorageInput) -> Result<Mutation>);
+native_operation!(crate::postgres::artifact_metadata::cluster, crate::sqlite::artifact_metadata::cluster,
+    fn cluster(pool: &DbPool, actor: Actor, org: i64, cluster: &str, input: &ClusterInput) -> Result<Mutation>);
+native_operation!(crate::postgres::artifact_metadata::list, crate::sqlite::artifact_metadata::list,
+    fn list(pool: &DbPool, actor: Actor, org: i64, digest: &str, kind: &str) -> Result<Vec<Record>>);
+native_operation!(crate::postgres::artifact_metadata::enqueue, crate::sqlite::artifact_metadata::enqueue,
+    fn enqueue(pool: &DbPool, actor: Actor, org: i64, cluster: &str, input: &ClusterInput) -> Result<(i64,Vec<Value>)>);
+native_operation!(crate::postgres::artifact_metadata::job, crate::sqlite::artifact_metadata::job,
+    fn job(pool: &DbPool, actor: Actor, org: i64, cluster: &str, id: i64) -> Result<Option<Job>>);
+native_operation!(crate::postgres::artifact_metadata::process_job, crate::sqlite::artifact_metadata::process_job,
+    fn process_job(pool: &DbPool, id: Option<i64>) -> Result<bool>);

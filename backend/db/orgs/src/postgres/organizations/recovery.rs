@@ -1,0 +1,89 @@
+use crate::organizations::profiles::OrganizationMetadata;
+use crate::organizations::OrganizationPage;
+use crate::postgres::organizations::authority::metadata;
+use crate::postgres::organizations::authority::site_administrator;
+use anyhow::Result;
+use codeyard_db_core::models::OrgMembership;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_core::queries::postgres::organizations::authority::active;
+use codeyard_db_core::queries::postgres::organizations::authority::begin;
+use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
+use codeyard_db_core::queries::postgres::organizations::authority::membership_role;
+use codeyard_db_core::queries::postgres::organizations::authority::remaining_active_owner;
+use sqlx::PgPool;
+use OrganizationOutcome::Applied;
+use OrganizationOutcome::Conflict;
+use OrganizationOutcome::Denied;
+use OrganizationOutcome::Missing;
+
+pub async fn recover_suspended_organization_owner(
+    pool: &PgPool,
+    actor: impl Into<codeyard_db_identity::users::transitions::AdministratorActor>,
+    org: i64,
+    target: i64,
+) -> Result<OrganizationOutcome<OrgMembership>> {
+    let actor = actor.into();
+    let mut tx = begin(pool).await?;
+    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[actor.user_id, target],
+    )
+    .await?;
+    if sqlx::query_scalar::<_, i64>("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
+        .bind(org)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_none()
+    {
+        return Ok(Missing);
+    }
+    // Lock the users in id order so concurrent recoveries cannot deadlock.
+    let users: Vec<(i64, bool, bool)> = sqlx::query_as("SELECT id,is_admin,NOT is_banned AND NOT must_change_password FROM users WHERE id=ANY($1) ORDER BY id FOR SHARE")
+        .bind(vec![actor.user_id, target]).fetch_all(&mut *tx).await?;
+    if !codeyard_db_identity::postgres::users::transitions::active_admin_session(&mut tx, &actor)
+        .await?
+    {
+        return Ok(Denied);
+    }
+    if remaining_active_owner(&mut tx, org, -1).await? {
+        return Ok(Conflict);
+    }
+    if !users.iter().any(|&(id, _, active)| id == target && active) {
+        return Ok(Denied);
+    }
+    let Some(old) = membership_role(&mut tx, org, target).await? else {
+        return Ok(Denied);
+    };
+    if !matches!(old.as_str(), "admin" | "member") {
+        return Ok(Denied);
+    }
+    let member: OrgMembership = sqlx::query_as(
+        "UPDATE org_memberships SET role='owner' WHERE org_id=$1 AND user_id=$2 RETURNING *",
+    )
+    .bind(org)
+    .bind(target)
+    .fetch_one(&mut *tx)
+    .await?;
+    let audit = serde_json::json!({"reason":"no_usable_owner","previous_role":old,"replacement_user_id":target});
+    sqlx::query("INSERT INTO audit_log(org_id,actor_id,action,target_type,target_id,metadata) VALUES($1,$2,'org.governance.recover_owner','org_membership',$3,$4)")
+        .bind(org).bind(actor.user_id).bind(member.id).bind(audit).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Applied(member))
+}
+
+pub async fn list_ownerless_organizations(
+    pool: &PgPool,
+    actor: i64,
+    page: OrganizationPage,
+) -> Result<OrganizationOutcome<Vec<OrganizationMetadata>>> {
+    let mut tx = begin_read(pool).await?;
+    if !site_administrator(&mut tx, actor).await? {
+        return Ok(Denied);
+    }
+    let rows = sqlx::query_as("SELECT o.id,o.name,NULL::TEXT AS display_name,NULL::TEXT AS description,FALSE AS is_verified,TRUE AS governance_suspended,NULL::UUID AS avatar_file_id FROM organizations o WHERE NOT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AND o.id>$1 ORDER BY o.id LIMIT $2")
+        .bind(page.after).bind(page.limit)
+        .fetch_all(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Applied(rows))
+}

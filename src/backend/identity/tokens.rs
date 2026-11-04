@@ -47,7 +47,7 @@ pub(crate) fn installation_token() -> String {
 /// A feed credential has only read-only event access and remains bound to this API token's
 /// lifetime. Deleting the API token cascades to the feed credential; expiry is checked on reads.
 pub async fn activity_feed_token(pool: &DbPool, token_id: i64) -> Result<String, TokenError> {
-    crate::backend::db::users::tokens::token_user(pool, token_id, false)
+    codeyard_db_identity::users::tokens::token_user(pool, token_id, false)
         .await
         .map_err(|_| TokenError::Unavailable)?
         .ok_or(TokenError::Denied)?;
@@ -59,7 +59,7 @@ pub async fn activity_feed_token(pool: &DbPool, token_id: i64) -> Result<String,
     {
         return Err(TokenError::Denied);
     }
-    crate::backend::db::events::activity_feed_token(
+    codeyard_db_repos::events::activity_feed_token(
         pool,
         token_id,
         &format!("feed_{}", codeyard_support::crypto::random_hex()),
@@ -75,11 +75,11 @@ pub async fn activity_feed_user(
     if value.len() != 69 || !value.starts_with("feed_") {
         return Err(TokenError::Denied);
     }
-    let id = crate::backend::db::events::activity_feed_token_id(pool, value)
+    let id = codeyard_db_repos::events::activity_feed_token_id(pool, value)
         .await
         .map_err(|_| TokenError::Unavailable)?
         .ok_or(TokenError::Denied)?;
-    let user = crate::backend::db::users::tokens::token_user(pool, id, false)
+    let user = codeyard_db_identity::users::tokens::token_user(pool, id, false)
         .await
         .map_err(|_| TokenError::Unavailable)?
         .ok_or(TokenError::Denied)?;
@@ -102,10 +102,10 @@ pub(crate) async fn repository_scope(
     permission: &str,
     write: bool,
 ) -> anyhow::Result<bool> {
-    if !crate::backend::db::users::tokens::token_user(pool, token, write)
+    if !codeyard_db_identity::users::tokens::token_user(pool, token, write)
         .await?
         .is_some_and(|user| user.id == actor)
-        || crate::backend::db::fine_grained_tokens::classic_refused_repository(pool, token, repo)
+        || codeyard_db_identity::fine_grained_tokens::classic_refused_repository(pool, token, repo)
             .await?
     {
         return Ok(false);
@@ -113,7 +113,7 @@ pub(crate) async fn repository_scope(
     if let Some(authority) = crate::backend::identity::github_apps::authority(pool, token).await? {
         return authority.allows(pool, actor, repo, permission, write).await;
     }
-    if let Some(job) = crate::backend::db::ci_tokens::get(pool, token).await? {
+    if let Some(job) = codeyard_db_actions::ci_tokens::get(pool, token).await? {
         return Ok(job.repo_id == repo
             && codeyard_model::github_apps::allows(
                 &serde_json::from_str(&job.permissions)?,
@@ -121,7 +121,7 @@ pub(crate) async fn repository_scope(
                 write,
             ));
     }
-    if let Some(oauth) = crate::backend::db::oauth_apps::token(pool, token).await? {
+    if let Some(oauth) = codeyard_db_identity::oauth_apps::token(pool, token).await? {
         if crate::backend::identity::oauth_apps::client(pool, &oauth.client_id)
             .await?
             .is_none()
@@ -130,7 +130,7 @@ pub(crate) async fn repository_scope(
         }
         return Ok(codeyard_model::oauth_apps::has_scope(&oauth.scopes, "repo")
             || (!write
-                && crate::backend::db::repositories::records::get_repository_by_id(pool, repo)
+                && codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo)
                     .await?
                     .is_some_and(|repo| !repo.is_private)));
     }
@@ -148,7 +148,7 @@ pub fn valid_name(name: &str) -> Option<&str> {
 pub fn validate(input: &TokenInput<'_>, now: DateTime<Utc>) -> Result<(), TokenError> {
     if valid_name(input.name).is_none()
         || !matches!(input.scope, "read" | "write")
-        || !crate::backend::db::users::tokens::supported_expiry(input.expires_at)
+        || !codeyard_db_core::queries::users::tokens::supported_expiry(input.expires_at)
         || input.expires_at.is_some_and(|expiry| expiry <= now)
     {
         return Err(TokenError::Invalid);
@@ -167,7 +167,7 @@ pub async fn create(
     validate(&input, Utc::now())?;
     let session_id = session_id.ok_or(TokenError::Denied)?;
     let value = format!("{PAT_PREFIX}{}", codeyard_support::crypto::random_hex());
-    let token = crate::backend::db::users::tokens::create_token(
+    let token = codeyard_db_identity::users::tokens::create_token(
         pool,
         actor,
         session_id,
@@ -189,7 +189,7 @@ pub async fn delete(
     id: i64,
 ) -> Result<(), TokenError> {
     let session_id = session_id.ok_or(TokenError::Denied)?;
-    if crate::backend::db::users::tokens::delete_token(pool, actor, session_id, id)
+    if codeyard_db_identity::users::tokens::delete_token(pool, actor, session_id, id)
         .await
         .map_err(|_| TokenError::Unavailable)?
     {

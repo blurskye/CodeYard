@@ -133,7 +133,7 @@ async fn pull_text(
         Ok(repository) => repository,
         Err(error) => return error.into_response(),
     };
-    let pull = match crate::backend::db::pull_requests::records::get_pull_request(
+    let pull = match codeyard_db_repos::pull_requests::records::get_pull_request(
         &state.pool,
         repository.id,
         number,

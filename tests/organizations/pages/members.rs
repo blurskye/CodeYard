@@ -1,7 +1,7 @@
 use super::fixture::{applied, Fixture, INDEX};
 use axum::http::StatusCode;
-use codeyard::backend::db::organizations::*;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_orgs::organizations::*;
 
 fn row_fields(source: &str, href: &str, action: &str) -> Vec<(String, String)> {
     let row = source

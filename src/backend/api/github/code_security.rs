@@ -43,16 +43,16 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 fn failure(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<crate::backend::db::code_security::Refusal>() {
-        Some(crate::backend::db::code_security::Refusal::Missing) => Error::missing(),
-        Some(crate::backend::db::code_security::Refusal::Denied) => Error::new(
+    match error.downcast_ref::<codeyard_db_core::queries::code_security::Refusal>() {
+        Some(codeyard_db_core::queries::code_security::Refusal::Missing) => Error::missing(),
+        Some(codeyard_db_core::queries::code_security::Refusal::Denied) => Error::new(
             StatusCode::FORBIDDEN,
             "Must have organization security access",
         ),
-        Some(crate::backend::db::code_security::Refusal::Duplicate) => {
+        Some(codeyard_db_core::queries::code_security::Refusal::Duplicate) => {
             Error::invalid_simple("A security configuration with this name already exists")
         }
-        Some(crate::backend::db::code_security::Refusal::Invalid) => Error::invalid_simple(
+        Some(codeyard_db_core::queries::code_security::Refusal::Invalid) => Error::invalid_simple(
             "Invalid security configuration; CodeQL default setup cannot be enabled on Codeyard",
         ),
         None => Error::unavailable(error),
@@ -73,7 +73,10 @@ async fn scope(
     let org = crate::backend::api::github::orgs::target(state, org).await?;
     Ok((auth, org.id))
 }
-fn document(row: &crate::backend::db::code_security::Configuration, org: &str) -> Result<Value> {
+fn document(
+    row: &codeyard_db_core::queries::code_security::Configuration,
+    org: &str,
+) -> Result<Value> {
     let mut value: Value = serde_json::from_str(&row.settings).map_err(Error::unavailable)?;
     value["id"] = json!(row.id);
     value["target_type"] = json!("organization");
@@ -114,7 +117,7 @@ async fn list(
 ) -> Result<Response> {
     let (actor, id) = scope(&state, &headers, &org, false).await?;
     let (after, before, limit) = query.window()?;
-    let rows = crate::backend::db::code_security::list_window(
+    let rows = codeyard_db_security::code_security::list_window(
         &state.pool,
         actor.user.id,
         id,
@@ -132,7 +135,7 @@ async fn get_configuration(
     Path((org, id)): Path<(String, i64)>,
 ) -> Result<Json<Value>> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
-    let row = crate::backend::db::code_security::list(&state.pool, actor.user.id, owner)
+    let row = codeyard_db_security::code_security::list(&state.pool, actor.user.id, owner)
         .await
         .map_err(failure)?
         .into_iter()
@@ -154,7 +157,7 @@ async fn save(
         .transpose()?;
     let Json(input) =
         input.map_err(|_| Error::invalid_simple("Invalid security configuration request"))?;
-    let row = crate::backend::db::code_security::save(
+    let row = codeyard_db_security::code_security::save(
         &state.pool,
         actor.database_actor(),
         owner,
@@ -179,7 +182,7 @@ async fn remove(
     Path((org, id)): Path<(String, i64)>,
 ) -> Result<StatusCode> {
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
-    crate::backend::db::code_security::delete(&state.pool, actor.database_actor(), owner, id)
+    codeyard_db_security::code_security::delete(&state.pool, actor.database_actor(), owner, id)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)
@@ -200,7 +203,7 @@ async fn attach(
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
     let Json(input) =
         input.map_err(|_| Error::invalid_simple("Invalid security configuration attachment"))?;
-    crate::backend::db::code_security::attach(
+    codeyard_db_security::code_security::attach(
         &state.pool,
         actor.database_actor(),
         owner,
@@ -224,7 +227,7 @@ async fn detach(
     Json(input): Json<Selected>,
 ) -> Result<StatusCode> {
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
-    crate::backend::db::code_security::attach(
+    codeyard_db_security::code_security::attach(
         &state.pool,
         actor.database_actor(),
         owner,
@@ -250,7 +253,7 @@ async fn set_default(
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
     let Json(input) =
         input.map_err(|_| Error::invalid_simple("Invalid security configuration default"))?;
-    let row = crate::backend::db::code_security::set_default(
+    let row = codeyard_db_security::code_security::set_default(
         &state.pool,
         actor.database_actor(),
         owner,
@@ -269,7 +272,7 @@ async fn defaults(
     Path(org): Path<String>,
 ) -> Result<Json<Value>> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
-    let rows = crate::backend::db::code_security::list(&state.pool, actor.user.id, owner)
+    let rows = codeyard_db_security::code_security::list(&state.pool, actor.user.id, owner)
         .await
         .map_err(failure)?;
     let values=rows.iter().filter(|row|row.default_for_new_repos!="none").map(|row|Ok(json!({"default_for_new_repos":row.default_for_new_repos,"configuration":document(row,&org)?}))).collect::<Result<Vec<_>>>()?;
@@ -284,7 +287,7 @@ async fn repositories(
 ) -> Result<Response> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
     let (after, before, limit) = query.window()?;
-    let rows = crate::backend::db::code_security::repositories(
+    let rows = codeyard_db_security::code_security::repositories(
         &state.pool,
         actor.user.id,
         owner,
@@ -319,7 +322,7 @@ async fn repository_configuration(
             "Repository administration required",
         ));
     }
-    let row = crate::backend::db::code_security::repository_configuration(&state.pool, repo.id)
+    let row = codeyard_db_security::code_security::repository_configuration(&state.pool, repo.id)
         .await
         .map_err(failure)?;
     Ok(match row {

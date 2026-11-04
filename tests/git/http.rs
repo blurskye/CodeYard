@@ -80,11 +80,11 @@ async fn read_only_tokens_hide_private_repositories(
     base: &str,
     owner_token: &str,
 ) {
-    let outsider = codeyard::backend::db::users::accounts::create_user(pool, "http_outsider", None)
+    let outsider = codeyard_db_identity::users::accounts::create_user(pool, "http_outsider", None)
         .await
         .unwrap();
     let session = native::token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &session,
         outsider.id,
@@ -95,7 +95,7 @@ async fn read_only_tokens_hide_private_repositories(
     .await
     .unwrap();
     let value = native::token();
-    codeyard::backend::db::users::tokens::create_token(
+    codeyard_db_identity::users::tokens::create_token(
         pool,
         outsider.id,
         &session,
@@ -149,7 +149,7 @@ async fn read_only_tokens_hide_private_repositories(
     )
     .await;
     let write_value = native::token();
-    codeyard::backend::db::users::tokens::create_token(
+    codeyard_db_identity::users::tokens::create_token(
         pool,
         outsider.id,
         &session,
@@ -365,7 +365,7 @@ async fn update(pool: &DbPool, sql: &str, id: i64) {
 async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "fetch_owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "fetch_owner", None)
         .await
         .unwrap();
     for case in [
@@ -385,7 +385,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
         let repo = codeyard::backend::repositories::lifecycle::provision(
             (pool, None),
             &root.join("repos"),
-            codeyard::backend::db::repositories::RepositoryCreationOwner::personal(owner.id),
+            codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
             case,
             None,
             !anonymous,
@@ -409,14 +409,14 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
             )
             .unwrap()
         };
-        let reader = codeyard::backend::db::users::accounts::create_user(
+        let reader = codeyard_db_identity::users::accounts::create_user(
             pool,
             &format!("fetch_{case}"),
             None,
         )
         .await
         .unwrap();
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             pool,
             reader.id,
             repo.id,
@@ -425,7 +425,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
         .await
         .unwrap();
         let session = native::token();
-        codeyard::backend::db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             pool,
             &session,
             reader.id,
@@ -436,7 +436,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
         .await
         .unwrap();
         let value = native::token();
-        let token = codeyard::backend::db::users::tokens::create_token(
+        let token = codeyard_db_identity::users::tokens::create_token(
             pool,
             reader.id,
             &session,
@@ -489,7 +489,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
         let expected = match case {
             "deleted_token" => {
                 // A signed-out browser cannot revoke the token.
-                assert!(!codeyard::backend::db::users::tokens::delete_token(
+                assert!(!codeyard_db_identity::users::tokens::delete_token(
                     pool,
                     reader.id,
                     &native::token(),
@@ -497,7 +497,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
                 )
                 .await
                 .unwrap());
-                assert!(codeyard::backend::db::users::tokens::delete_token(
+                assert!(codeyard_db_identity::users::tokens::delete_token(
                     pool, reader.id, &session, token.id
                 )
                 .await
@@ -527,7 +527,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
                 401
             }
             "access_revoked" | "replacement" => {
-                codeyard::backend::db::repositories::access::revoke_repo_access(
+                codeyard_db_repos::repositories::access::revoke_repo_access(
                     pool, reader.id, repo.id,
                 )
                 .await
@@ -542,7 +542,7 @@ async fn buffered_fetch_revalidates(pool: &DbPool, server: &Server, root: &Path)
                     let replacement = codeyard::backend::repositories::lifecycle::provision(
                         (pool, None),
                         &root.join("repos"),
-                        codeyard::backend::db::repositories::RepositoryCreationOwner::personal(
+                        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(
                             owner.id,
                         ),
                         case,
@@ -738,13 +738,13 @@ async fn exercise(pool: &DbPool, url: &str) {
         }
     }
     let root = tempfile::tempdir().unwrap();
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "http_owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "http_owner", None)
         .await
         .unwrap();
     let public = codeyard::backend::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard::backend::db::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
         "open",
         None,
         false,
@@ -755,7 +755,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     let private = codeyard::backend::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard::backend::db::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
         "closed",
         None,
         true,
@@ -764,7 +764,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     .await
     .unwrap();
     let session = native::token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &session,
         owner.id,
@@ -777,7 +777,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     let cookie = format!("session_id={session}");
     let csrf = native::token();
     assert_eq!(
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             pool,
             &session,
             Some(owner.id),
@@ -813,13 +813,13 @@ async fn exercise(pool: &DbPool, url: &str) {
     let write_value = write["value"].as_str().unwrap();
     read_only_tokens_hide_private_repositories(pool, &client, &server.base, read_value).await;
     assert!(
-        codeyard::backend::db::users::tokens::find_token(pool, read_value)
+        codeyard_db_identity::users::tokens::find_token(pool, read_value)
             .await
             .unwrap()
             .is_none()
     );
     assert!(
-        codeyard::backend::db::users::tokens::find_token(pool, &hash(read_value))
+        codeyard_db_identity::users::tokens::find_token(pool, &hash(read_value))
             .await
             .unwrap()
             .is_some()
@@ -991,7 +991,7 @@ async fn exercise(pool: &DbPool, url: &str) {
         let repository = codeyard::backend::repositories::lifecycle::provision(
             (pool, None),
             &root.path().join("repos"),
-            codeyard::backend::db::repositories::RepositoryCreationOwner::personal(owner.id),
+            codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
             name,
             None,
             false,
@@ -1037,7 +1037,7 @@ async fn exercise(pool: &DbPool, url: &str) {
         );
         assert_eq!(String::from_utf8(head.stdout).unwrap().trim(), branch);
         let stored =
-            codeyard::backend::db::repositories::records::get_repository_by_id(pool, repository.id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository.id)
                 .await
                 .unwrap()
                 .unwrap();
@@ -1064,7 +1064,7 @@ async fn exercise(pool: &DbPool, url: &str) {
             Some(write_value),
         ));
         let updated =
-            codeyard::backend::db::repositories::records::get_repository_by_id(pool, repository.id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository.id)
                 .await
                 .unwrap()
                 .unwrap();
@@ -1082,7 +1082,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     let packed = codeyard::backend::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard::backend::db::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
         "packed",
         None,
         false,
@@ -1101,7 +1101,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     let many_refs = codeyard::backend::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard::backend::db::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
         "many-refs",
         None,
         false,
@@ -1196,7 +1196,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     );
 
     assert!(
-        codeyard::backend::db::repositories::records::get_repository_by_id(pool, public.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, public.id)
             .await
             .unwrap()
             .unwrap()
@@ -1208,7 +1208,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     assert!(codeyard::backend::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard::backend::db::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
         "open.git",
         None,
         false,
@@ -1345,9 +1345,9 @@ async fn exercise(pool: &DbPool, url: &str) {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    codeyard::backend::db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        codeyard::backend::db::repositories::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::BranchProtectionRuleUpsert {
             actor_id: owner.id,
             repo_id: public.id,
             pattern: "release/*",
@@ -1463,9 +1463,9 @@ async fn exercise(pool: &DbPool, url: &str) {
             .unwrap();
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     }
-    codeyard::backend::db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         pool,
-        codeyard::backend::db::repositories::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::BranchProtectionRuleUpsert {
             actor_id: owner.id,
             repo_id: private.id,
             pattern: "main",
@@ -1518,7 +1518,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     )
     .await;
     let expired = native::token();
-    codeyard::backend::db::users::tokens::create_token(
+    codeyard_db_identity::users::tokens::create_token(
         pool,
         owner.id,
         &session,
@@ -1555,7 +1555,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     // connection, and the next request on this client can stall behind it.
     deleted.text().await.unwrap();
     refused(&client, &refs, Some(read_value)).await;
-    codeyard::backend::db::users::accounts::update_user_password(
+    codeyard_db_identity::users::accounts::update_user_password(
         pool,
         owner.id,
         "unused-hash",
@@ -1564,7 +1564,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     .await
     .unwrap();
     refused(&client, &refs, Some(write_value)).await;
-    assert!(codeyard::backend::db::users::tokens::create_token(
+    assert!(codeyard_db_identity::users::tokens::create_token(
         pool,
         owner.id,
         &session,
@@ -1576,11 +1576,11 @@ async fn exercise(pool: &DbPool, url: &str) {
     .await
     .unwrap()
     .is_none());
-    let banned = codeyard::backend::db::users::accounts::create_user(pool, "banned", None)
+    let banned = codeyard_db_identity::users::accounts::create_user(pool, "banned", None)
         .await
         .unwrap();
     let banned_session = native::token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &banned_session,
         banned.id,
@@ -1591,7 +1591,7 @@ async fn exercise(pool: &DbPool, url: &str) {
     .await
     .unwrap();
     let banned_value = native::token();
-    codeyard::backend::db::users::tokens::create_token(
+    codeyard_db_identity::users::tokens::create_token(
         pool,
         banned.id,
         &banned_session,
@@ -1692,13 +1692,13 @@ async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str)
         }
     }
     let root = tempfile::tempdir().unwrap();
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "slot_owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "slot_owner", None)
         .await
         .unwrap();
     let repo = codeyard::backend::repositories::lifecycle::provision(
         (pool, None),
         &root.path().join("repos"),
-        codeyard::backend::db::repositories::RepositoryCreationOwner::personal(owner.id),
+        codeyard_db_repos::repositories::RepositoryCreationOwner::personal(owner.id),
         "open",
         None,
         false,
@@ -1707,7 +1707,7 @@ async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str)
     .await
     .unwrap();
     let session = native::token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &session,
         owner.id,
@@ -1718,7 +1718,7 @@ async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str)
     .await
     .unwrap();
     let value = native::token();
-    codeyard::backend::db::users::tokens::create_token(
+    codeyard_db_identity::users::tokens::create_token(
         pool,
         owner.id,
         &session,
@@ -1753,7 +1753,7 @@ async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str)
     // The server records the token's first use while it authenticates the push, just before the
     // first access check; the push then queues behind the holder. Archive only after that.
     tokio::time::timeout(std::time::Duration::from_secs(120), async {
-        while codeyard::backend::db::users::tokens::find_token(pool, &hash(&value))
+        while codeyard_db_identity::users::tokens::find_token(pool, &hash(&value))
             .await
             .unwrap()
             .unwrap()
@@ -1766,7 +1766,7 @@ async fn push_rechecks_access_after_waiting_for_a_slot(pool: &DbPool, url: &str)
     .await
     .expect("the push never reached the server");
     assert!(!push.is_finished(), "the push must wait for the held slot");
-    codeyard::backend::db::repositories::records::set_repository_archived(
+    codeyard_db_repos::repositories::records::set_repository_archived(
         pool,
         repo.owner_id(),
         repo.id,

@@ -192,7 +192,7 @@ async fn remove(
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let review =
-        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .filter(|r| r.pull_request_id == pull.id && r.author_id == actor.id)
@@ -200,7 +200,7 @@ async fn remove(
     if review.state != "pending" {
         return Err(Error::invalid_simple("Only pending reviews may be deleted"));
     }
-    let deleted = crate::backend::db::pull_requests::reviews::delete_pending_review_by_id(
+    let deleted = codeyard_db_repos::pull_requests::reviews::delete_pending_review_by_id(
         &state.pool,
         pull.id,
         actor.id,
@@ -230,7 +230,7 @@ async fn submit(
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
     let input: Submit = serde_json::from_slice(&body).map_err(json_parse_error)?;
     let draft =
-        crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
+        codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .filter(|r| r.pull_request_id == pull.id && r.author_id == actor.id)
@@ -293,10 +293,11 @@ async fn change_reviewers(
         return Err(Error::invalid("At most 100 reviewers per request"));
     }
     for username in &names {
-        let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(|| Error::invalid("Reviewer not found"))?;
+        let user =
+            codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(|| Error::invalid("Reviewer not found"))?;
         if !remove
             && (user.id == pull.author_id
                 || !crate::backend::repositories::access::can_write(&state.pool, &user, &repo)
@@ -308,7 +309,7 @@ async fn change_reviewers(
             ));
         }
     }
-    let eligible = crate::backend::db::pull_requests::team_reviewers::list(
+    let eligible = codeyard_db_repos::pull_requests::team_reviewers::list(
         &state.pool,
         repo.id,
         None,
@@ -335,18 +336,18 @@ async fn change_reviewers(
         &pull,
         &teams,
         if remove {
-            crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Remove
+            codeyard_db_repos::pull_requests::team_reviewers::ReviewTeamAction::Remove
         } else if rerequest {
-            crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Rerequest
+            codeyard_db_repos::pull_requests::team_reviewers::ReviewTeamAction::Rerequest
         } else {
-            crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Request
+            codeyard_db_repos::pull_requests::team_reviewers::ReviewTeamAction::Request
         },
     )
     .await
     .map_err(crate::backend::api::github::pulls::mutations::operation_error)?;
     for username in names {
         if remove || rerequest {
-            let existing = crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+            let existing = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
                 &state.pool,
                 pull.id,
             )

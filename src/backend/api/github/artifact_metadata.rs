@@ -4,12 +4,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::artifact_metadata::Actor;
-use crate::backend::db::artifact_metadata::ClusterInput;
-use crate::backend::db::artifact_metadata::DeploymentInput;
-use crate::backend::db::artifact_metadata::Mutation;
-use crate::backend::db::artifact_metadata::Refusal;
-use crate::backend::db::artifact_metadata::StorageInput;
 use axum::{
     extract::{OriginalUri, Path, Request, State},
     http::{HeaderMap, StatusCode},
@@ -17,6 +11,12 @@ use axum::{
     routing::{get, post, MethodRouter},
     Json,
 };
+use codeyard_db_repos::artifact_metadata::Actor;
+use codeyard_db_repos::artifact_metadata::ClusterInput;
+use codeyard_db_repos::artifact_metadata::DeploymentInput;
+use codeyard_db_repos::artifact_metadata::Mutation;
+use codeyard_db_repos::artifact_metadata::Refusal;
+use codeyard_db_repos::artifact_metadata::StorageInput;
 use serde::de::DeserializeOwned;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -55,8 +55,8 @@ async fn actor(
         auth.require_write()?;
     }
     let org = crate::backend::api::github::orgs::target(state, &params["org"]).await?;
-    let repo = if auth.user.username == crate::backend::db::ci_tokens::BOT {
-        let job = crate::backend::db::ci_tokens::get(&state.pool, auth.token.id)
+    let repo = if auth.user.username == codeyard_db_core::queries::ci_tokens::BOT {
+        let job = codeyard_db_actions::ci_tokens::get(&state.pool, auth.token.id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(crate::backend::api::github::auth::required)?;
@@ -68,7 +68,7 @@ async fn actor(
                 "Resource not accessible by token",
             ));
         }
-        let repo = crate::backend::db::repositories::records::get_repository_by_id(
+        let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
             &state.pool,
             job.repo_id,
         )
@@ -144,7 +144,7 @@ async fn deployment(
     }
     let input: DeploymentInput = serde_json::from_value(input)
         .map_err(|_| Error::validation("ArtifactMetadata", "record", "invalid"))?;
-    let rows = crate::backend::db::artifact_metadata::deployment(&state.pool, actor, org, &input)
+    let rows = codeyard_db_repos::artifact_metadata::deployment(&state.pool, actor, org, &input)
         .await
         .map_err(failure)?;
     mutation(rows, "deployment", input.return_records, false)
@@ -158,7 +158,7 @@ async fn storage(
 ) -> Result<Response> {
     let (actor, org) = actor(&state, &headers, &params, true).await?;
     let input: StorageInput = body(request).await?;
-    let rows = crate::backend::db::artifact_metadata::storage(&state.pool, actor, org, &input)
+    let rows = codeyard_db_repos::artifact_metadata::storage(&state.pool, actor, org, &input)
         .await
         .map_err(failure)?;
     mutation(rows, "storage", input.return_records, false)
@@ -172,7 +172,7 @@ async fn cluster(
 ) -> Result<Response> {
     let (actor, org) = actor(&state, &headers, &params, true).await?;
     let input: ClusterInput = body(request).await?;
-    let rows = crate::backend::db::artifact_metadata::cluster(
+    let rows = codeyard_db_repos::artifact_metadata::cluster(
         &state.pool,
         actor,
         org,
@@ -197,7 +197,7 @@ async fn enqueue(
 ) -> Result<Response> {
     let (actor, org) = actor(&state, &headers, &params, true).await?;
     let input: ClusterInput = body(request).await?;
-    let (id, errors) = crate::backend::db::artifact_metadata::enqueue(
+    let (id, errors) = codeyard_db_repos::artifact_metadata::enqueue(
         &state.pool,
         actor,
         org,
@@ -225,7 +225,7 @@ async fn job(
         .filter(|id| *id > 0)
         .ok_or_else(Error::missing)?;
     let job =
-        crate::backend::db::artifact_metadata::job(&state.pool, actor, org, &params["cluster"], id)
+        codeyard_db_repos::artifact_metadata::job(&state.pool, actor, org, &params["cluster"], id)
             .await
             .map_err(failure)?
             .ok_or_else(Error::missing)?;
@@ -250,7 +250,9 @@ async fn list(
 ) -> Result<Response> {
     let (actor, org) = actor(&state, &headers, &params, false).await?;
     let digest = &params["subject_digest"];
-    if !digest.starts_with("sha256:") || !crate::backend::db::attestations::valid_digest(digest) {
+    if !digest.starts_with("sha256:")
+        || !codeyard_db_core::queries::attestations::valid_digest(digest)
+    {
         return Err(Error::validation(
             "ArtifactMetadata",
             "subject_digest",
@@ -262,7 +264,7 @@ async fn list(
     } else {
         "deployment"
     };
-    let rows = crate::backend::db::artifact_metadata::list(&state.pool, actor, org, digest, kind)
+    let rows = codeyard_db_repos::artifact_metadata::list(&state.pool, actor, org, digest, kind)
         .await
         .map_err(failure)?;
     mutation(

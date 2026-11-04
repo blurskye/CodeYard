@@ -64,7 +64,7 @@ pub async fn run(f: &Fixture) {
         let code = rejected.as_database_error().and_then(|error| error.code());
         assert!(matches!(code.as_deref(), Some("23514" | "275")));
         assert_eq!(
-            codeyard::backend::db::repositories::records::repository_owner_name(
+            codeyard_db_repos::repositories::records::repository_owner_name(
                 f.database.pool(),
                 repo
             )
@@ -75,7 +75,7 @@ pub async fn run(f: &Fixture) {
         );
         f.database.corrupt_shape(repo, kind, user, org).await;
         assert_eq!(
-            codeyard::backend::db::repositories::records::repository_owner_name(
+            codeyard_db_repos::repositories::records::repository_owner_name(
                 f.database.pool(),
                 repo
             )
@@ -107,7 +107,7 @@ pub async fn run(f: &Fixture) {
         let code = rejected.as_database_error().and_then(|error| error.code());
         assert!(matches!(code.as_deref(), Some("23503" | "787")));
         assert_eq!(
-            codeyard::backend::db::repositories::records::repository_owner_name(
+            codeyard_db_repos::repositories::records::repository_owner_name(
                 f.database.pool(),
                 repo
             )
@@ -131,11 +131,11 @@ pub async fn run(f: &Fixture) {
         .await;
     // The repository matches again through its owner's name, which contains "discovery".
     assert_eq!(
-        codeyard::backend::db::repositories::discovery::search_repositories(
+        codeyard_db_repos::repositories::discovery::search_repositories(
             f.database.pool(),
             None,
             "discovery",
-            codeyard::backend::db::repositories::records::RepositorySort::Stars,
+            codeyard_db_repos::repositories::records::RepositorySort::Stars,
             0,
             50
         )

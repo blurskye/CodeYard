@@ -80,7 +80,7 @@ pub async fn create_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -107,7 +107,7 @@ pub async fn delete_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             actor.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -165,7 +165,7 @@ async fn fill_open_pulls(
     loaded: &Loaded,
     branches: &mut [view::branches::RefRow],
 ) -> Result<(), Response> {
-    let pulls = crate::backend::db::pull_requests::records::list_open_pull_requests_from_branches(
+    let pulls = codeyard_db_repos::pull_requests::records::list_open_pull_requests_from_branches(
         &ctx.state.pool,
         loaded.repository.id,
         None,

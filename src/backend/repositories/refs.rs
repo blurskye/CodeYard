@@ -30,7 +30,7 @@ pub enum RefError {
 
 async fn writable(
     pool: &codeyard_db_core::DbPool,
-    actor: &crate::backend::db::credentials::Actor,
+    actor: &codeyard_db_core::queries::credentials::Actor,
     repo_id: i64,
 ) -> Result<
     (
@@ -95,7 +95,7 @@ pub async fn create_branch(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     branch: &str,
@@ -155,7 +155,7 @@ pub async fn update_reference(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     reference: &str,
@@ -209,7 +209,7 @@ pub async fn update_reference(
 pub async fn set_default_branch(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repository: &codeyard_db_core::models::Repository,
     branch: &str,
 ) -> Result<(), RefError> {
@@ -226,7 +226,7 @@ pub async fn delete_branch(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
     branch: &str,
 ) -> Result<(), RefError> {
@@ -279,7 +279,7 @@ pub async fn create_tag(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     owner: &str,
     repo_id: i64,
     tag: &str,
@@ -329,7 +329,7 @@ pub async fn create_tag(
 pub async fn delete_tag(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
     tag: &str,
 ) -> Result<(), RefError> {

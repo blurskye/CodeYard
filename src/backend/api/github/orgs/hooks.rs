@@ -9,9 +9,9 @@ use crate::backend::api::github::webhooks::delivery_page;
 use crate::backend::api::github::webhooks::Deliveries;
 use codeyard_model::urls::api_url;
 
-use crate::backend::db::webhooks::DeliveryWindow;
-use crate::backend::db::webhooks::HookOwner;
-use crate::backend::db::webhooks::HookSettings;
+use codeyard_db_repos::webhooks::DeliveryWindow;
+use codeyard_db_repos::webhooks::HookOwner;
+use codeyard_db_repos::webhooks::HookSettings;
 
 use crate::backend::webhooks::settings::HookError;
 use crate::backend::webhooks::settings::HookForm;
@@ -76,7 +76,7 @@ async fn snapshot(
     delivery: Option<i64>,
     history: Option<DeliveryWindow>,
 ) -> Result<HookSettings> {
-    let settings = crate::backend::db::webhooks::read_settings(
+    let settings = codeyard_db_repos::webhooks::read_settings(
         &state.pool,
         HookOwner::Organization(org),
         actor.user.id,
@@ -112,7 +112,7 @@ async fn list(
 ) -> Result<Response> {
     let (org, actor) = actor(&state, &headers, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::webhooks::list_managed_webhooks(
+    let rows = codeyard_db_repos::webhooks::list_managed_webhooks(
         &state.pool,
         HookOwner::Organization(org.id),
         actor.user.id,

@@ -26,7 +26,7 @@ pub fn oidc_url() -> String {
     )
 }
 
-pub fn results_url(settings: &crate::backend::db::actions::ActionsSettings) -> String {
+pub fn results_url(settings: &codeyard_db_actions::actions::ActionsSettings) -> String {
     settings
         .results_url
         .clone()
@@ -38,7 +38,7 @@ pub fn results_url(settings: &crate::backend::db::actions::ActionsSettings) -> S
 pub async fn issue(
     pool: &DbPool,
     run: &codeyard_db_core::models::CiRun,
-    settings: &crate::backend::db::actions::ActionsSettings,
+    settings: &codeyard_db_actions::actions::ActionsSettings,
 ) -> Result<RuntimeCredentials> {
     let backend = run.run_id.to_string();
     // The artifact toolkit decodes this claim locally. Authentication is the hash of the
@@ -49,7 +49,7 @@ pub async fn issue(
         "jti": secret()
     }))?);
     let token = format!("{header}.{payload}.{}", secret());
-    crate::backend::db::action_objects::issue_token(
+    codeyard_db_actions::action_objects::issue_token(
         pool,
         run.id,
         run.worker.as_deref().unwrap_or(""),

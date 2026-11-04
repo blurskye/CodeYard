@@ -6,8 +6,8 @@ use crate::backend::api::github::orgs::Error;
 use crate::backend::api::github::orgs::Result;
 use codeyard_model::http_config::link_origin;
 
-use crate::backend::db::organizations::settings::Changes;
-use crate::backend::db::organizations::settings::Settings;
+use codeyard_db_orgs::organizations::settings::Changes;
+use codeyard_db_orgs::organizations::settings::Settings;
 
 use axum::{
     extract::{Path, State},
@@ -35,7 +35,7 @@ async fn update(
     let org = target(&state, &name).await?;
     let input=Changes::parse(&input).map_err(|error|Error(StatusCode::UNPROCESSABLE_ENTITY,"Validation Failed".into(),Some(json!([{"resource":"Organization","field":error.field,"code":"invalid","message":error.message}]))))?;
     let updated = outcome(
-        crate::backend::db::organizations::settings::change(
+        codeyard_db_orgs::organizations::settings::change(
             &state.pool,
             actor.database_actor(),
             org.id,
@@ -64,7 +64,7 @@ pub(super) async fn document(
     value["type"] = json!("Organization");
     value["is_verified"] = json!(org.is_verified);
     value["public_repos"] = json!(
-        crate::backend::db::organizations::discovery::organization_public_repositories(
+        codeyard_db_orgs::organizations::discovery::organization_public_repositories(
             &state.pool,
             org.id
         )

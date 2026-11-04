@@ -32,7 +32,7 @@ pub async fn trigger_ci(
             user.id,
             request,
             crate::backend::api::http::session::extract_session_id(&headers)
-                .map(crate::backend::db::ci::CiCredential::Session),
+                .map(codeyard_db_core::queries::ci::CiCredential::Session),
         )
         .await
         .map_err(crate::backend::api::ci::admission_error)?;
@@ -340,7 +340,7 @@ async fn dispatch(
             actor_id,
             request,
             crate::backend::api::http::session::extract_session_id(&ctx.headers)
-                .map(crate::backend::db::ci::CiCredential::Session),
+                .map(codeyard_db_core::queries::ci::CiCredential::Session),
         )
         .await
         .map_err(crate::backend::api::ci::admission_error)
@@ -418,17 +418,17 @@ mod tests {
             .unwrap();
         let pool = codeyard_db_core::DbPool::from(native.clone());
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        crate::backend::db::node_config::upsert_node_configuration(&pool, "public", true)
+        codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
             .await
             .unwrap();
-        let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
         let original = crate::backend::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
-            crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             "project",
             None,
             false,
@@ -439,7 +439,7 @@ mod tests {
         let private = crate::backend::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
-            crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             "private",
             None,
             true,
@@ -474,11 +474,11 @@ mod tests {
         );
         // Only a signed-in reader is shown a refused run's workflows; bob may read the public one.
         // The page reads him from a live session, as metadata is checked against the cookie.
-        let bob = crate::backend::db::users::accounts::create_user(&pool, "bob", None)
+        let bob = codeyard_db_identity::users::accounts::create_user(&pool, "bob", None)
             .await
             .unwrap();
         let session = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-        crate::backend::db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             &pool,
             &session,
             bob.id,

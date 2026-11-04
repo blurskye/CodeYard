@@ -296,7 +296,7 @@ pub async fn load(
         || (profile.pull_request_template.is_none() && profile.pull_request_templates.is_none());
     if repo.name != ".github" && needs_defaults {
         if let Some(default) =
-            crate::backend::db::repositories::records::get_repository(pool, owner, ".github")
+            codeyard_db_repos::repositories::records::get_repository(pool, owner, ".github")
                 .await
                 .map_err(RepoError::from)?
         {

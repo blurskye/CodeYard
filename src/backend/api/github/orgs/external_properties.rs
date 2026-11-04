@@ -5,14 +5,14 @@ use crate::backend::api::github::orgs::target;
 use crate::backend::api::github::orgs::AppState;
 use crate::backend::api::github::orgs::Error;
 use crate::backend::api::github::orgs::Result;
-use crate::backend::db::organizations::external_properties as data;
-use crate::backend::db::organizations::external_properties::RepositoryValue;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     routing::{delete, get, patch, post, MethodRouter},
     Json,
 };
+use codeyard_db_orgs::organizations::external_properties as data;
+use codeyard_db_orgs::organizations::external_properties::RepositoryValue;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;

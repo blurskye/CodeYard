@@ -74,10 +74,10 @@ pub async fn list_pull_requests(
         query.page,
         Some(query.per_page.unwrap_or(100)),
     )?;
-    let prs = crate::backend::db::pull_requests::records::list_repo_pull_requests(
+    let prs = codeyard_db_repos::pull_requests::records::list_repo_pull_requests(
         &state.pool,
         repository.id,
-        &crate::backend::db::discussions::ListFilter {
+        &codeyard_db_repos::discussions::ListFilter {
             state: pr_state,
             include_merged: true,
             offset: offset as i64,

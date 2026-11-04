@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 async fn stale_comment_and_milestone_forms(pg: bool) {
     let (mut database, root, alice, bob) = setup(pg).await;
     let pool = database.pool();
-    let repo = codeyard::backend::db::repositories::records::get_repository(pool, "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
@@ -74,7 +74,7 @@ async fn stale_comment_and_milestone_forms(pg: bool) {
     assert_eq!(stale.status, StatusCode::CONFLICT, "{}", stale.text());
     assert!(stale.text().contains("Stale private draft"));
     assert_eq!(
-        codeyard::backend::db::issues::get_issue_comment(pool, comment["id"].as_i64().unwrap())
+        codeyard_db_repos::issues::get_issue_comment(pool, comment["id"].as_i64().unwrap())
             .await
             .unwrap()
             .unwrap()
@@ -97,7 +97,7 @@ async fn stale_comment_and_milestone_forms(pg: bool) {
     let replacement = codeyard::backend::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
             repo.owner_user_id.unwrap(),
         ),
         "proj",
@@ -128,7 +128,7 @@ async fn stale_comment_and_milestone_forms(pg: bool) {
     assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.text());
     assert!(refused.text().contains("Confidential comment"));
     assert_eq!(hidden_value(&refused.text(), "issue_id"), original_issue);
-    let comments = codeyard::backend::db::issues::list_issue_comments(
+    let comments = codeyard_db_repos::issues::list_issue_comments(
         pool,
         replacement_issue["id"].as_i64().unwrap(),
         100,
@@ -164,7 +164,7 @@ async fn stale_comment_and_milestone_forms(pg: bool) {
         .expect("milestone form")..];
     assert_eq!(hidden_value(draft_form, "repository_id"), original_repo);
     assert!(
-        codeyard::backend::db::milestones::list_milestone_choices(pool, replacement.id)
+        codeyard_db_repos::milestones::list_milestone_choices(pool, replacement.id)
             .await
             .unwrap()
             .is_empty()
@@ -184,15 +184,15 @@ async fn postgres_stale_comment_and_milestone_forms() {
 async fn stale_issue_forms(pg: bool) {
     let (mut database, root, alice, bob) = setup(pg).await;
     let pool = database.pool();
-    let repo = codeyard::backend::db::repositories::records::get_repository(pool, "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
-    let reader = codeyard::backend::db::users::accounts::get_user_by_username(pool, "bob")
+    let reader = codeyard_db_identity::users::accounts::get_user_by_username(pool, "bob")
         .await
         .unwrap()
         .unwrap();
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         pool,
         reader.id,
         repo.id,
@@ -217,7 +217,7 @@ async fn stale_issue_forms(pg: bool) {
     let replacement = codeyard::backend::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
             repo.owner_user_id.unwrap(),
         ),
         "proj",
@@ -267,7 +267,7 @@ async fn stale_issue_forms(pg: bool) {
         "{}",
         confirmed_preview.text()
     );
-    assert!(codeyard::backend::db::issues::list_repo_issues(
+    assert!(codeyard_db_repos::issues::list_repo_issues(
         pool,
         replacement.id,
         &Default::default(),
@@ -327,7 +327,7 @@ async fn stale_issue_forms(pg: bool) {
         assert!(reply.text().contains("template changed or was removed"));
         assert!(reply.text().contains("private version"));
         assert!(reply.text().contains("carefully written steps"));
-        assert!(codeyard::backend::db::issues::list_repo_issues(
+        assert!(codeyard_db_repos::issues::list_repo_issues(
             pool,
             replacement.id,
             &Default::default(),
@@ -354,7 +354,7 @@ async fn stale_issue_forms(pg: bool) {
         "{}",
         confirmed.text()
     );
-    let saved = codeyard::backend::db::issues::get_issue(pool, replacement.id, 1)
+    let saved = codeyard_db_repos::issues::get_issue(pool, replacement.id, 1)
         .await
         .unwrap()
         .unwrap();
@@ -519,28 +519,25 @@ async fn later_page_edit_and_deleted_notifications(pg: bool) {
         )
         .await;
     let author =
-        codeyard::backend::db::users::accounts::get_user_by_username(database.pool(), "bob")
+        codeyard_db_identity::users::accounts::get_user_by_username(database.pool(), "bob")
             .await
             .unwrap()
             .unwrap();
-    let repository = codeyard::backend::db::repositories::records::get_repository(
-        database.pool(),
-        "alice",
-        "proj",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let repository =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     let mut last = None;
     for _ in 0..31 {
         last = Some(
-            codeyard::backend::db::issues::add_issue_comment(
+            codeyard_db_repos::issues::add_issue_comment(
                 database.pool(),
                 repository.id,
                 issue["id"].as_i64().unwrap(),
                 author.id,
                 "Existing comment",
-                &codeyard::backend::db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(database.pool(), author.id).await,
                 ),
             )
@@ -588,18 +585,15 @@ async fn later_page_edit_and_deleted_notifications(pg: bool) {
         )
         .await;
     assert_eq!(removed.status, StatusCode::SEE_OTHER);
-    let repo = codeyard::backend::db::repositories::records::get_repository(
-        database.pool(),
-        "alice",
-        "proj",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     for kind in ["issue_comment", "mention"] {
-        let delayed = codeyard::backend::db::notifications::records::create_notification(
+        let delayed = codeyard_db_repos::notifications::records::create_notification(
             database.pool(),
-            codeyard::backend::db::notifications::records::NewNotification {
+            codeyard_db_core::queries::notifications::records::NewNotification {
                 user_id: repo.owner_user_id.unwrap(),
                 actor_id: Some(author.id),
                 repo_id: Some(repo.id),

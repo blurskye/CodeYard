@@ -46,7 +46,7 @@ pub async fn emit_status(
         .unwrap_or_default();
     let author = accounts.get(&commit.author_email).map(Person::of);
     let committer = accounts.get(&commit.committer_email).map(Person::of);
-    let comments = crate::backend::db::repositories::commit_comments::comment_counts(
+    let comments = codeyard_db_repos::repositories::commit_comments::comment_counts(
         pool,
         repo.id,
         std::slice::from_ref(&commit.sha),

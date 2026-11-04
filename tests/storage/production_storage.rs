@@ -31,8 +31,8 @@ use axum::{
 };
 use base64::Engine;
 
-use codeyard::backend::db::files::AdmissionError;
-use codeyard::backend::db::files::ReserveUpload;
+use codeyard_db_repos::files::AdmissionError;
+use codeyard_db_repos::files::ReserveUpload;
 
 use codeyard::backend::files::ConfirmationError;
 use codeyard::backend::files::DeleteError;
@@ -100,7 +100,7 @@ fn digest(data: &[u8]) -> String {
 /// Records a pending 7-byte "fixture.txt" upload, as `reserve_and_sign_upload`
 /// does before it signs anything.
 async fn reserve(db: &Database, bytes: i64) -> Result<File, AdmissionError> {
-    codeyard::backend::db::files::reserve_upload(
+    codeyard_db_repos::files::reserve_upload(
         &db.pool,
         ReserveUpload {
             user_id: db.user,
@@ -116,7 +116,7 @@ async fn reserve(db: &Database, bytes: i64) -> Result<File, AdmissionError> {
 }
 
 async fn reserve_avatar(db: &Database, visibility: FileVisibility) -> File {
-    codeyard::backend::db::files::reserve_upload(
+    codeyard_db_repos::files::reserve_upload(
         &db.pool,
         ReserveUpload {
             user_id: db.user,
@@ -134,7 +134,7 @@ async fn reserve_avatar(db: &Database, visibility: FileVisibility) -> File {
 
 async fn activate(db: &Database, id: Uuid) {
     assert!(
-        codeyard::backend::db::files::activate_upload(&db.pool, id, db.user)
+        codeyard_db_repos::files::activate_upload(&db.pool, id, db.user)
             .await
             .unwrap()
     );
@@ -487,7 +487,7 @@ async fn s3_reservations_sign_the_declared_object_and_charge_the_quota() {
         codeyard::backend::files::reserve_and_sign_upload(&db.pool, &store, db.user, declaration())
             .await
             .unwrap();
-    let file = codeyard::backend::db::files::get_file_by_id(&db.pool, reservation.file_id)
+    let file = codeyard_db_repos::files::get_file_by_id(&db.pool, reservation.file_id)
         .await
         .unwrap()
         .unwrap();
@@ -587,7 +587,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
 
     // Only download_for_user counts as a download.
     let downloads = || async {
-        codeyard::backend::db::files::get_user_file_stats(&db.pool, db.user)
+        codeyard_db_repos::files::get_user_file_stats(&db.pool, db.user)
             .await
             .unwrap()
             .unwrap()
@@ -687,7 +687,7 @@ async fn s3_confirmation_needs_the_object_to_match_the_declaration() {
     let id = reservation.file_id;
     let key = reservation.object_key.as_str();
     let pending = || async {
-        !codeyard::backend::db::files::get_file_by_id(&db.pool, id)
+        !codeyard_db_repos::files::get_file_by_id(&db.pool, id)
             .await
             .unwrap()
             .unwrap()
@@ -755,7 +755,7 @@ async fn s3_confirmation_needs_the_object_to_match_the_declaration() {
         ConfirmationError::NotPending
     );
     assert!(
-        codeyard::backend::db::files::get_downloadable_file(&db.pool, id, None)
+        codeyard_db_repos::files::get_downloadable_file(&db.pool, id, None)
             .await
             .unwrap()
             .is_some()
@@ -793,7 +793,7 @@ async fn s3_stores_bytes_the_server_holds_and_leaves_nothing_behind_on_failure()
     )
     .await
     .unwrap();
-    let file = codeyard::backend::db::files::get_file_by_id(&db.pool, id)
+    let file = codeyard_db_repos::files::get_file_by_id(&db.pool, id)
         .await
         .unwrap()
         .unwrap();
@@ -896,7 +896,7 @@ async fn s3_failed_direct_upload_persists_cleanup_without_retaining_metadata() {
         .unwrap();
     assert!(s3.object(&object_key).is_none());
     assert!(
-        codeyard::backend::db::files::due_object_deletions(&db.pool, 100)
+        codeyard_db_repos::files::due_object_deletions(&db.pool, 100)
             .await
             .unwrap()
             .is_empty()
@@ -922,7 +922,7 @@ async fn s3_confirmation_distinguishes_an_unavailable_store_from_missing_bytes()
         ConfirmationError::StorageUnavailable
     );
     assert!(
-        !codeyard::backend::db::files::get_file_by_id(&db.pool, file.id)
+        !codeyard_db_repos::files::get_file_by_id(&db.pool, file.id)
             .await
             .unwrap()
             .unwrap()
@@ -958,12 +958,10 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
     codeyard::backend::files::delete_owned_file(&db.pool, &s3.store, db.user, file.id)
         .await
         .unwrap();
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&db.pool, file.id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&db.pool, file.id)
+        .await
+        .unwrap()
+        .is_none());
     assert!(s3.deleted().is_empty());
     sqlx::query("UPDATE pending_object_deletions SET delete_after=NOW()-INTERVAL '1 second'")
         .execute(&db.raw)
@@ -998,12 +996,10 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
             .unwrap(),
         1
     );
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&db.pool, stale.id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&db.pool, stale.id)
+        .await
+        .unwrap()
+        .is_none());
     s3.refuse_deletes(false);
     assert_eq!(
         codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
@@ -1011,12 +1007,10 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
             .unwrap(),
         0
     );
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&db.pool, stale.id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&db.pool, stale.id)
+        .await
+        .unwrap()
+        .is_none());
     assert_eq!(s3.deleted().last(), Some(&s3.path(&stale.object_key)));
     assert_eq!(
         codeyard::backend::files::remove_expired_uploads(&db.pool, &s3.store)
@@ -1046,7 +1040,7 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
         assert_eq!(s3.deleted().contains(&s3.path(&pending.object_key)), late);
     }
     assert!(
-        codeyard::backend::db::files::get_file_by_id(&db.pool, pending.id)
+        codeyard_db_repos::files::get_file_by_id(&db.pool, pending.id)
             .await
             .unwrap()
             .is_none()
@@ -1145,17 +1139,17 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
     let new = reserve_avatar(&db, FileVisibility::Public).await;
     activate(&db, new.id).await;
     assert_eq!(
-        codeyard::backend::db::users::accounts::set_user_avatar(
+        codeyard_db_identity::users::accounts::set_user_avatar(
             &db.pool,
             db.user,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&db.pool, db.user).await
             ),
             Some(old.id)
         )
         .await
         .unwrap(),
-        codeyard::backend::db::users::accounts::UserAvatarOutcome::Applied(None)
+        codeyard_db_identity::users::accounts::UserAvatarOutcome::Applied(None)
     );
 
     // If the replaced picture cannot be removed, the change is refused as a whole.
@@ -1167,10 +1161,10 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         .execute(&db.raw)
         .await
         .unwrap();
-    assert!(codeyard::backend::db::users::accounts::set_user_avatar(
+    assert!(codeyard_db_identity::users::accounts::set_user_avatar(
         &db.pool,
         db.user,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&db.pool, db.user).await
         ),
         Some(new.id)
@@ -1191,24 +1185,22 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
 
     // Otherwise the old row goes with the change, and its bytes are queued.
     assert_eq!(
-        codeyard::backend::db::users::accounts::set_user_avatar(
+        codeyard_db_identity::users::accounts::set_user_avatar(
             &db.pool,
             db.user,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&db.pool, db.user).await
             ),
             Some(new.id)
         )
         .await
         .unwrap(),
-        codeyard::backend::db::users::accounts::UserAvatarOutcome::Applied(Some(old.id))
+        codeyard_db_identity::users::accounts::UserAvatarOutcome::Applied(Some(old.id))
     );
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&db.pool, old.id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&db.pool, old.id)
+        .await
+        .unwrap()
+        .is_none());
     let queued: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM pending_object_deletions WHERE object_key = $1")
             .bind(format!("uploads/{}", old.id))
@@ -1226,14 +1218,14 @@ async fn pg_a_banned_account_keeps_its_picture() {
     let new = reserve_avatar(&db, FileVisibility::Public).await;
     activate(&db, new.id).await;
     // The request was authenticated before the ban, so it still holds the account as it was.
-    let user = codeyard::backend::db::users::accounts::get_user_by_id(&db.pool, db.user)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(&db.pool, db.user)
         .await
         .unwrap()
         .unwrap();
     codeyard::backend::identity::avatars::set_user_avatar(
         &db.pool,
         &user,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&db.pool, user.id).await,
         ),
         old.id,
@@ -1249,7 +1241,7 @@ async fn pg_a_banned_account_keeps_its_picture() {
     let changed = codeyard::backend::identity::avatars::set_user_avatar(
         &db.pool,
         &user,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&db.pool, user.id).await,
         ),
         new.id,
@@ -1259,7 +1251,7 @@ async fn pg_a_banned_account_keeps_its_picture() {
     let cleared = codeyard::backend::identity::avatars::remove_user_avatar(
         &db.pool,
         &user,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&db.pool, user.id).await,
         ),
     )
@@ -1272,12 +1264,10 @@ async fn pg_a_banned_account_keeps_its_picture() {
             .await
             .unwrap();
     assert_eq!(pointer, Some(old.id));
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&db.pool, old.id)
-            .await
-            .unwrap()
-            .is_some()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&db.pool, old.id)
+        .await
+        .unwrap()
+        .is_some());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1324,7 +1314,7 @@ async fn pg_confirmation_waits_for_the_bytes_and_then_succeeds_once() {
         .await
         .unwrap();
     assert!(
-        codeyard::backend::db::files::get_file_by_id(&db.pool, reservation.file_id)
+        codeyard_db_repos::files::get_file_by_id(&db.pool, reservation.file_id)
             .await
             .unwrap()
             .unwrap()
@@ -1343,12 +1333,12 @@ async fn stock_pg_empty_nonempty_and_proposed_amount_aggregates() {
     let db = database().await;
     limits(&db, 10, 2).await;
     assert_eq!(
-        codeyard::backend::db::files::get_user_total_storage(&db.pool, db.user)
+        codeyard_db_repos::files::get_user_total_storage(&db.pool, db.user)
             .await
             .unwrap(),
         0
     );
-    let empty = codeyard::backend::db::files::get_user_file_stats(&db.pool, db.user)
+    let empty = codeyard_db_repos::files::get_user_file_stats(&db.pool, db.user)
         .await
         .unwrap()
         .unwrap();
@@ -1357,13 +1347,13 @@ async fn stock_pg_empty_nonempty_and_proposed_amount_aggregates() {
         (0, 0, 0)
     );
     assert!(
-        codeyard::backend::db::files::get_user_file_stats(&db.pool, i64::MAX)
+        codeyard_db_repos::files::get_user_file_stats(&db.pool, i64::MAX)
             .await
             .unwrap()
             .is_none()
     );
     let first = reserve(&db, 4).await.unwrap(); // empty NUMERIC aggregate
-    let stats = codeyard::backend::db::files::get_user_file_stats(&db.pool, db.user)
+    let stats = codeyard_db_repos::files::get_user_file_stats(&db.pool, db.user)
         .await
         .unwrap()
         .unwrap();
@@ -1373,7 +1363,7 @@ async fn stock_pg_empty_nonempty_and_proposed_amount_aggregates() {
     assert_ne!(first.id, second.id);
     assert!(matches!(reserve(&db, 1).await, Err(AdmissionError::Quota)));
     assert_eq!(
-        codeyard::backend::db::files::get_user_file_stats(&db.pool, db.user)
+        codeyard_db_repos::files::get_user_file_stats(&db.pool, db.user)
             .await
             .unwrap()
             .unwrap()
@@ -1390,7 +1380,7 @@ async fn positive_bounded_size_missing_policy_and_numeric_overflow_fail_closed()
         i64::MIN,
         -1,
         0,
-        codeyard::backend::db::files::MAX_UPLOAD_BYTES + 1,
+        codeyard_db_repos::files::MAX_UPLOAD_BYTES + 1,
         i64::MAX,
     ] {
         assert!(matches!(
@@ -1398,7 +1388,7 @@ async fn positive_bounded_size_missing_policy_and_numeric_overflow_fail_closed()
             Err(AdmissionError::Invalid)
         ));
     }
-    reserve(&db, codeyard::backend::db::files::MAX_UPLOAD_BYTES)
+    reserve(&db, codeyard_db_repos::files::MAX_UPLOAD_BYTES)
         .await
         .unwrap();
     for _ in 0..2 {
@@ -1447,7 +1437,7 @@ async fn concurrent_reservations_share_count_and_bytes_across_connections() {
         }
     }
     assert_eq!(winners, 5);
-    let stats = codeyard::backend::db::files::get_user_file_stats(&db.pool, db.user)
+    let stats = codeyard_db_repos::files::get_user_file_stats(&db.pool, db.user)
         .await
         .unwrap()
         .unwrap();
@@ -1473,12 +1463,10 @@ async fn expiry_and_deletion_do_not_refund_the_quota_but_the_window_does() {
             .unwrap(),
         1
     );
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&db.pool, item.id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&db.pool, item.id)
+        .await
+        .unwrap()
+        .is_none());
     assert!(matches!(reserve(&db, 1).await, Err(AdmissionError::Quota)));
 
     // Deleting a reservation by hand is no different.
@@ -1488,10 +1476,10 @@ async fn expiry_and_deletion_do_not_refund_the_quota_but_the_window_does() {
         .unwrap();
     let next = reserve(&db, 4).await.unwrap();
     assert!(matches!(
-        codeyard::backend::db::files::delete_file(&db.pool, next.id, db.user)
+        codeyard_db_repos::files::delete_file(&db.pool, next.id, db.user)
             .await
             .unwrap(),
-        codeyard::backend::db::files::DeleteFileOutcome::Deleted(_)
+        codeyard_db_repos::files::DeleteFileOutcome::Deleted(_)
     ));
     assert!(matches!(reserve(&db, 1).await, Err(AdmissionError::Quota)));
 
@@ -1508,7 +1496,7 @@ async fn concurrent_activation_owner_and_pending_checks_are_exactly_once() {
     let db = Arc::new(database().await);
     let item = reserve(&db, 7).await.unwrap();
     assert!(
-        !codeyard::backend::db::files::activate_upload(&db.pool, item.id, db.user + 1)
+        !codeyard_db_repos::files::activate_upload(&db.pool, item.id, db.user + 1)
             .await
             .unwrap(),
         "only the owner can activate an upload"
@@ -1521,7 +1509,7 @@ async fn concurrent_activation_owner_and_pending_checks_are_exactly_once() {
         let id = item.id;
         tasks.push(tokio::spawn(async move {
             barrier.wait().await;
-            codeyard::backend::db::files::activate_upload(&db.pool, id, db.user)
+            codeyard_db_repos::files::activate_upload(&db.pool, id, db.user)
                 .await
                 .unwrap()
         }));
@@ -1533,20 +1521,20 @@ async fn concurrent_activation_owner_and_pending_checks_are_exactly_once() {
         }
     }
     assert_eq!(winners, 1);
-    let active = codeyard::backend::db::files::get_file_by_id(&db.pool, item.id)
+    let active = codeyard_db_repos::files::get_file_by_id(&db.pool, item.id)
         .await
         .unwrap()
         .unwrap();
     assert!(active.is_active && active.confirmed_at.is_some());
     assert!(active.upload_expires_at.is_none());
     assert_eq!(
-        codeyard::backend::db::files::get_user_total_storage(&db.pool, db.user)
+        codeyard_db_repos::files::get_user_total_storage(&db.pool, db.user)
             .await
             .unwrap(),
         7
     );
     assert_eq!(
-        codeyard::backend::db::files::get_user_file_stats(&db.pool, db.user)
+        codeyard_db_repos::files::get_user_file_stats(&db.pool, db.user)
             .await
             .unwrap()
             .unwrap()
@@ -1567,11 +1555,11 @@ async fn expiry_deletion_and_activation_only_apply_to_the_right_files() {
 
     // An expired reservation cannot be activated and is the only file listed.
     assert!(
-        !codeyard::backend::db::files::activate_upload(&db.pool, stale.id, db.user)
+        !codeyard_db_repos::files::activate_upload(&db.pool, stale.id, db.user)
             .await
             .unwrap()
     );
-    let expired = codeyard::backend::db::files::expired_uploads(&db.pool, 10)
+    let expired = codeyard_db_repos::files::expired_uploads(&db.pool, 10)
         .await
         .unwrap();
     assert_eq!(
@@ -1581,20 +1569,20 @@ async fn expiry_deletion_and_activation_only_apply_to_the_right_files() {
     // Active and live files are never treated as expired.
     for id in [active.id, live.id] {
         assert!(
-            codeyard::backend::db::files::delete_expired_upload(&db.pool, id)
+            codeyard_db_repos::files::delete_expired_upload(&db.pool, id)
                 .await
                 .unwrap()
                 .is_none()
         );
     }
     assert!(
-        codeyard::backend::db::files::delete_expired_upload(&db.pool, stale.id)
+        codeyard_db_repos::files::delete_expired_upload(&db.pool, stale.id)
             .await
             .unwrap()
             .is_some()
     );
     assert!(
-        codeyard::backend::db::files::delete_expired_upload(&db.pool, stale.id)
+        codeyard_db_repos::files::delete_expired_upload(&db.pool, stale.id)
             .await
             .unwrap()
             .is_none()
@@ -1602,13 +1590,13 @@ async fn expiry_deletion_and_activation_only_apply_to_the_right_files() {
 
     // Deleting a file needs its owner, and returns the record for cleanup.
     assert!(matches!(
-        codeyard::backend::db::files::delete_file(&db.pool, active.id, db.user + 1)
+        codeyard_db_repos::files::delete_file(&db.pool, active.id, db.user + 1)
             .await
             .unwrap(),
-        codeyard::backend::db::files::DeleteFileOutcome::NotFound
+        codeyard_db_repos::files::DeleteFileOutcome::NotFound
     ));
-    let codeyard::backend::db::files::DeleteFileOutcome::Deleted(removed) =
-        codeyard::backend::db::files::delete_file(&db.pool, active.id, db.user)
+    let codeyard_db_repos::files::DeleteFileOutcome::Deleted(removed) =
+        codeyard_db_repos::files::delete_file(&db.pool, active.id, db.user)
             .await
             .unwrap()
     else {
@@ -1616,13 +1604,13 @@ async fn expiry_deletion_and_activation_only_apply_to_the_right_files() {
     };
     assert_eq!(removed.object_key, active.object_key);
     assert!(matches!(
-        codeyard::backend::db::files::delete_file(&db.pool, active.id, db.user)
+        codeyard_db_repos::files::delete_file(&db.pool, active.id, db.user)
             .await
             .unwrap(),
-        codeyard::backend::db::files::DeleteFileOutcome::NotFound
+        codeyard_db_repos::files::DeleteFileOutcome::NotFound
     ));
     assert!(
-        codeyard::backend::db::files::get_user_file(&db.pool, live.id, db.user)
+        codeyard_db_repos::files::get_user_file(&db.pool, live.id, db.user)
             .await
             .unwrap()
             .is_none(),
@@ -1635,19 +1623,19 @@ async fn downloads_are_owner_only_unless_the_file_is_a_public_avatar() {
     let db = database().await;
     let id = insert_active_file(&db, "other", "image/png", 8).await;
     assert!(
-        codeyard::backend::db::files::get_downloadable_file(&db.pool, id, None)
+        codeyard_db_repos::files::get_downloadable_file(&db.pool, id, None)
             .await
             .unwrap()
             .is_none()
     );
     assert!(
-        codeyard::backend::db::files::get_downloadable_file(&db.pool, id, Some(db.user + 1))
+        codeyard_db_repos::files::get_downloadable_file(&db.pool, id, Some(db.user + 1))
             .await
             .unwrap()
             .is_none()
     );
     assert!(
-        codeyard::backend::db::files::get_downloadable_file(&db.pool, id, Some(db.user))
+        codeyard_db_repos::files::get_downloadable_file(&db.pool, id, Some(db.user))
             .await
             .unwrap()
             .is_some()
@@ -1660,7 +1648,7 @@ async fn downloads_are_owner_only_unless_the_file_is_a_public_avatar() {
         .await
         .unwrap();
     assert!(
-        codeyard::backend::db::files::get_downloadable_file(&db.pool, id, None)
+        codeyard_db_repos::files::get_downloadable_file(&db.pool, id, None)
             .await
             .unwrap()
             .is_none()
@@ -1673,7 +1661,7 @@ async fn downloads_are_owner_only_unless_the_file_is_a_public_avatar() {
         .await
         .unwrap();
     assert!(
-        codeyard::backend::db::files::get_downloadable_file(&db.pool, id, None)
+        codeyard_db_repos::files::get_downloadable_file(&db.pool, id, None)
             .await
             .unwrap()
             .is_some()
@@ -1682,7 +1670,7 @@ async fn downloads_are_owner_only_unless_the_file_is_a_public_avatar() {
     // Organization avatars work the same way.
     let org_avatar = insert_active_file(&db, "org_avatar", "image/png", 8).await;
     assert!(
-        codeyard::backend::db::files::get_downloadable_file(&db.pool, org_avatar, None)
+        codeyard_db_repos::files::get_downloadable_file(&db.pool, org_avatar, None)
             .await
             .unwrap()
             .is_none()
@@ -1693,14 +1681,14 @@ async fn downloads_are_owner_only_unless_the_file_is_a_public_avatar() {
         .await
         .unwrap();
     assert!(
-        codeyard::backend::db::files::get_downloadable_file(&db.pool, org_avatar, None)
+        codeyard_db_repos::files::get_downloadable_file(&db.pool, org_avatar, None)
             .await
             .unwrap()
             .is_some()
     );
 
     // Declaring an upload public is only possible for avatars.
-    let invalid = codeyard::backend::db::files::reserve_upload(
+    let invalid = codeyard_db_repos::files::reserve_upload(
         &db.pool,
         ReserveUpload {
             user_id: db.user,
@@ -1716,7 +1704,7 @@ async fn downloads_are_owner_only_unless_the_file_is_a_public_avatar() {
     assert!(matches!(invalid, Err(AdmissionError::Invalid)));
     let public = reserve_avatar(&db, FileVisibility::Public).await;
     assert!(
-        codeyard::backend::db::files::get_downloadable_file(&db.pool, public.id, None)
+        codeyard_db_repos::files::get_downloadable_file(&db.pool, public.id, None)
             .await
             .unwrap()
             .is_none(),
@@ -1724,7 +1712,7 @@ async fn downloads_are_owner_only_unless_the_file_is_a_public_avatar() {
     );
     activate(&db, public.id).await;
     assert!(
-        codeyard::backend::db::files::get_downloadable_file(&db.pool, public.id, None)
+        codeyard_db_repos::files::get_downloadable_file(&db.pool, public.id, None)
             .await
             .unwrap()
             .is_some()
@@ -1735,7 +1723,7 @@ async fn downloads_are_owner_only_unless_the_file_is_a_public_avatar() {
         insert_active_file(&db, "other", "text/plain", i64::MAX).await;
     }
     assert!(
-        codeyard::backend::db::files::get_user_total_storage(&db.pool, db.user)
+        codeyard_db_repos::files::get_user_total_storage(&db.pool, db.user)
             .await
             .is_err()
     );
@@ -2020,7 +2008,7 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
     codeyard::backend::files::delete_owned_file(&db.pool, &object.store, db.user, id)
         .await
         .unwrap();
-    assert!(codeyard::backend::db::files::get_file_by_id(&db.pool, id)
+    assert!(codeyard_db_repos::files::get_file_by_id(&db.pool, id)
         .await
         .unwrap()
         .is_none());
@@ -2087,7 +2075,7 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
         "the released signed PUT remains usable after pending metadata deletion"
     );
     assert!(
-        codeyard::backend::db::files::get_file_by_id(&db.pool, pending.file_id)
+        codeyard_db_repos::files::get_file_by_id(&db.pool, pending.file_id)
             .await
             .unwrap()
             .is_none()
@@ -2238,7 +2226,7 @@ async fn actual_wrong_size_type_checksum_and_changed_headers_are_refused() {
         ConfirmationError::VerificationFailed
     );
     assert!(
-        !codeyard::backend::db::files::get_file_by_id(&db.pool, not_an_image.file_id)
+        !codeyard_db_repos::files::get_file_by_id(&db.pool, not_an_image.file_id)
             .await
             .unwrap()
             .unwrap()
@@ -2289,14 +2277,12 @@ async fn actual_equal_endpoints_and_public_avatar_still_work() {
     codeyard::backend::files::confirm_upload(&db.pool, &store, db.user, reservation.file_id)
         .await
         .unwrap();
-    assert!(codeyard::backend::db::files::get_downloadable_file(
-        &db.pool,
-        reservation.file_id,
-        None
-    )
-    .await
-    .unwrap()
-    .is_some());
+    assert!(
+        codeyard_db_repos::files::get_downloadable_file(&db.pool, reservation.file_id, None)
+            .await
+            .unwrap()
+            .is_some()
+    );
     let shown =
         codeyard::backend::files::download_asset(&db.pool, &store, None, reservation.file_id)
             .await

@@ -3,7 +3,7 @@ use super::{
     OrganizationProfile, TokenInput,
 };
 use axum::http::StatusCode;
-use codeyard::backend::db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
+use codeyard_db_repos::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
 use serde_json::{json, Value};
 
 const BASE: &str = "/api/v3/orgs/acme/dependabot/repository-access";

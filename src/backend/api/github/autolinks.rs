@@ -4,8 +4,8 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::repositories::autolinks::NewAutolink;
-use crate::backend::db::repositories::autolinks::Refusal;
+use codeyard_db_repos::repositories::autolinks::NewAutolink;
+use codeyard_db_repos::repositories::autolinks::Refusal;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -51,7 +51,7 @@ async fn create(
         input.is_alphanumeric,
     )
     .map_err(|error| Error::invalid(error.to_string()))?;
-    let row = crate::backend::db::repositories::autolinks::create(
+    let row = codeyard_db_repos::repositories::autolinks::create(
         &state.pool,
         actor.database_actor(),
         repo.id,
@@ -77,7 +77,7 @@ async fn list(
         .ok_or_else(crate::backend::api::github::auth::required)?
         .user;
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::repositories::autolinks::list(
+    let rows = codeyard_db_repos::repositories::autolinks::list(
         &state.pool,
         actor.id,
         repo.id,
@@ -105,7 +105,7 @@ async fn get_one(
         .ok_or_else(crate::backend::api::github::auth::required)?
         .user;
     Ok(Json(crate::backend::webhooks::payloads::autolink(
-        &crate::backend::db::repositories::autolinks::get(&state.pool, actor.id, repo.id, id)
+        &codeyard_db_repos::repositories::autolinks::get(&state.pool, actor.id, repo.id, id)
             .await
             .map_err(failure)?,
     )))
@@ -117,7 +117,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
-    crate::backend::db::repositories::autolinks::remove(
+    codeyard_db_repos::repositories::autolinks::remove(
         &state.pool,
         actor.database_actor(),
         repo.id,

@@ -2,10 +2,10 @@
 use super::action_secrets::{pat, request};
 use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
 
-use codeyard::backend::db::deployment_protection::Refusal;
-use codeyard::backend::db::deployment_protection::Review;
-use codeyard::backend::db::github_apps::App;
 use codeyard::backend::identity::tokens::token_hash;
+use codeyard_db_actions::deployment_protection::Refusal;
+use codeyard_db_actions::deployment_protection::Review;
+use codeyard_db_identity::github_apps::App;
 
 use codeyard_db_core::models::CiRun;
 use serde_json::{json, Value};
@@ -18,7 +18,7 @@ async fn app(
     slug: &str,
     repos: &[i64],
 ) -> (App, i64, i64) {
-    let app = codeyard::backend::db::github_apps::register(
+    let app = codeyard_db_identity::github_apps::register(
         f.pool(),
         actor,
         session,
@@ -43,7 +43,7 @@ async fn app(
     .await
     .unwrap()
     .unwrap();
-    let installation = codeyard::backend::db::github_apps::install(
+    let installation = codeyard_db_identity::github_apps::install(
         f.pool(),
         actor,
         session,
@@ -55,10 +55,10 @@ async fn app(
     .await
     .unwrap()
     .unwrap();
-    codeyard::backend::db::github_app_hooks::save(
+    codeyard_db_identity::github_app_hooks::save(
         f.pool(),
         app.id,
-        &codeyard::backend::db::webhooks::WebhookPatch {
+        &codeyard_db_core::queries::webhooks::WebhookPatch {
             payload_url: Some("http://127.0.0.1:1/blocked".into()),
             content_type: Some("application/json".into()),
             events: Some("deployment_protection_rule".into()),
@@ -71,7 +71,7 @@ async fn app(
     )
     .await
     .unwrap();
-    let token = codeyard::backend::db::github_apps::issue(
+    let token = codeyard_db_identity::github_apps::issue(
         f.pool(),
         app.id,
         installation.id,
@@ -91,7 +91,7 @@ async fn app(
 async fn enqueue(f: &Database, repo: i64, actor: i64, attempt: Option<&CiRun>) -> CiRun {
     let sha = "a".repeat(40);
     let blobs = json!({".github/workflows/deploy.yml":sha});
-    let input = codeyard::backend::db::ci::NewCiRun {
+    let input = codeyard_db_actions::ci::NewCiRun {
         repo_id: repo,
         triggered_by_id: actor,
         pipeline: "cd",
@@ -106,34 +106,34 @@ async fn enqueue(f: &Database, repo: i64, actor: i64, attempt: Option<&CiRun>) -
         manual: true,
     };
     if let Some(source) = attempt {
-        codeyard::backend::db::ci::enqueue_ci_run_attempt(
+        codeyard_db_actions::ci::enqueue_ci_run_attempt(
             f.pool(),
             input,
             &[actor],
-            codeyard::backend::db::ci::NewCiAttempt {
+            codeyard_db_actions::ci::NewCiAttempt {
                 source: source.id,
                 source_uuid: source.run_id,
                 credential: None,
                 allow_active: false,
-                selection: codeyard::backend::db::ci::CiReplaySelection::All,
+                selection: codeyard_db_actions::ci::CiReplaySelection::All,
                 definition: None,
                 debug: false,
             },
-            &codeyard::backend::db::runners::Scheduling::default(),
+            &codeyard_db_actions::runners::Scheduling::default(),
             None,
         )
         .await
         .unwrap()
         .0
     } else {
-        codeyard::backend::db::ci::enqueue_ci_run(f.pool(), input, &[actor])
+        codeyard_db_actions::ci::enqueue_ci_run(f.pool(), input, &[actor])
             .await
             .unwrap()
     }
 }
 
 async fn decide(f: &Database, token: i64, run: &CiRun, state: Option<&str>) -> anyhow::Result<()> {
-    codeyard::backend::db::deployment_protection::review(
+    codeyard_db_actions::deployment_protection::review(
         f.pool(),
         token,
         run.repo_id,
@@ -161,7 +161,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
-    let repo = codeyard::backend::db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         alice,
         "project",
@@ -171,7 +171,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let other = codeyard::backend::db::repositories::records::create_repository(
+    let other = codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         alice,
         "other",
@@ -181,7 +181,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let env = codeyard::backend::db::environments::upsert(
+    let env = codeyard_db_actions::environments::upsert(
         f.pool(),
         alice,
         repo.id,
@@ -190,7 +190,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let foreign_env = codeyard::backend::db::environments::upsert(
+    let foreign_env = codeyard_db_actions::environments::upsert(
         f.pool(),
         alice,
         other.id,
@@ -254,7 +254,7 @@ async fn contract(pg: bool) {
         422,
     )
     .await;
-    assert!(codeyard::backend::db::deployment_protection::create(
+    assert!(codeyard_db_actions::deployment_protection::create(
         f.pool(),
         bob,
         repo.id,
@@ -263,7 +263,7 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    assert!(codeyard::backend::db::deployment_protection::create(
+    assert!(codeyard_db_actions::deployment_protection::create(
         f.pool(),
         alice,
         repo.id,
@@ -274,12 +274,12 @@ async fn contract(pg: bool) {
     .is_err());
     let before = enqueue(&f, repo.id, alice, None).await;
     assert!(
-        codeyard::backend::db::deployment_protection::gates(f.pool(), before.id)
+        codeyard_db_actions::deployment_protection::gates(f.pool(), before.id)
             .await
             .unwrap()
             .is_empty()
     );
-    codeyard::backend::db::ci::request_ci_cancellation(f.pool(), before.run_id, alice)
+    codeyard_db_actions::ci::request_ci_cancellation(f.pool(), before.run_id, alice)
         .await
         .unwrap();
     let (_, rule) = request(
@@ -327,13 +327,13 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(listed["total_count"], 1);
     let run = enqueue(&f, repo.id, alice, None).await;
-    let gates = codeyard::backend::db::deployment_protection::gates(f.pool(), run.id)
+    let gates = codeyard_db_actions::deployment_protection::gates(f.pool(), run.id)
         .await
         .unwrap();
     assert_eq!(gates.len(), 1);
     assert_eq!(gates[0].app_id, provider.id);
     assert_eq!(gates[0].state, "pending");
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -351,7 +351,7 @@ async fn contract(pg: bool) {
     let delivery_id = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let deliveries =
-                codeyard::backend::db::github_app_hooks::deliveries(f.pool(), provider.id)
+                codeyard_db_identity::github_app_hooks::deliveries(f.pool(), provider.id)
                     .await
                     .unwrap();
             if let Some(delivery) = deliveries.first() {
@@ -363,7 +363,7 @@ async fn contract(pg: bool) {
     .await
     .expect("gate webhook recorded");
     let delivery =
-        codeyard::backend::db::github_app_hooks::delivery(f.pool(), provider.id, delivery_id)
+        codeyard_db_identity::github_app_hooks::delivery(f.pool(), provider.id, delivery_id)
             .await
             .unwrap()
             .unwrap();
@@ -386,14 +386,14 @@ async fn contract(pg: bool) {
         )));
     assert!(!delivery.recorded.request_body.contains("disk_path"));
     assert!(
-        codeyard::backend::db::github_app_hooks::deliveries(f.pool(), second.id)
+        codeyard_db_identity::github_app_hooks::deliveries(f.pool(), second.id)
             .await
             .unwrap()
             .is_empty()
     );
 
     let owner_token =
-        codeyard::backend::db::users::tokens::find_token(f.pool(), &token_hash(&writer))
+        codeyard_db_identity::users::tokens::find_token(f.pool(), &token_hash(&writer))
             .await
             .unwrap()
             .unwrap();
@@ -408,7 +408,7 @@ async fn contract(pg: bool) {
     refused(decide(&f, token, &run, Some("success")).await, |error| {
         matches!(error, Refusal::Invalid)
     });
-    codeyard::backend::db::github_apps::change_installation(
+    codeyard_db_identity::github_apps::change_installation(
         f.pool(),
         provider.id,
         installation,
@@ -420,13 +420,13 @@ async fn contract(pg: bool) {
         matches!(error, Refusal::Denied)
     });
     assert!(
-        codeyard::backend::db::deployment_protection::integrations(f.pool(), repo.id)
+        codeyard_db_actions::deployment_protection::integrations(f.pool(), repo.id)
             .await
             .unwrap()
             .iter()
             .all(|app| app.id != provider.id)
     );
-    codeyard::backend::db::github_apps::change_installation(
+    codeyard_db_identity::github_apps::change_installation(
         f.pool(),
         provider.id,
         installation,
@@ -435,7 +435,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     // Suspension revokes old credentials, so issue another installation token.
-    let token = codeyard::backend::db::github_apps::issue(
+    let token = codeyard_db_identity::github_apps::issue(
         f.pool(),
         provider.id,
         installation,
@@ -451,7 +451,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .id;
     decide(&f, token, &run, None).await.unwrap();
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -467,7 +467,7 @@ async fn contract(pg: bool) {
         matches!(error, Refusal::Conflict)
     });
     assert_eq!(
-        codeyard::backend::db::ci::claim_ci_run(
+        codeyard_db_actions::ci::claim_ci_run(
             f.pool(),
             "worker",
             "local",
@@ -480,20 +480,20 @@ async fn contract(pg: bool) {
         .id,
         run.id
     );
-    codeyard::backend::db::ci::finish_ci_run(f.pool(), run.id, "worker", "success", None)
+    codeyard_db_actions::ci::finish_ci_run(f.pool(), run.id, "worker", "success", None)
         .await
         .unwrap()
         .unwrap();
     let retry = enqueue(&f, repo.id, alice, Some(&run)).await;
     assert_eq!(retry.workflow_run_id, run.workflow_run_id);
     assert_eq!(
-        codeyard::backend::db::deployment_protection::gates(f.pool(), retry.id)
+        codeyard_db_actions::deployment_protection::gates(f.pool(), retry.id)
             .await
             .unwrap()[0]
             .state,
         "pending"
     );
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -504,7 +504,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .is_none());
     decide(&f, token, &retry, Some("rejected")).await.unwrap();
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -515,7 +515,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .is_none());
     assert_eq!(
-        codeyard::backend::db::ci::get_ci_run_by_id(f.pool(), repo.id, retry.id)
+        codeyard_db_actions::ci::get_ci_run_by_id(f.pool(), repo.id, retry.id)
             .await
             .unwrap()
             .unwrap()
@@ -523,7 +523,7 @@ async fn contract(pg: bool) {
         "failed"
     );
     assert_eq!(
-        codeyard::backend::db::ci::get_ci_deployment_by_run_id(f.pool(), retry.id)
+        codeyard_db_actions::ci::get_ci_deployment_by_run_id(f.pool(), retry.id)
             .await
             .unwrap()
             .unwrap()
@@ -563,14 +563,14 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        codeyard::backend::db::deployment_protection::gates(f.pool(), waiting.id)
+        codeyard_db_actions::deployment_protection::gates(f.pool(), waiting.id)
             .await
             .unwrap()[0]
             .state,
         "disabled"
     );
     assert_eq!(
-        codeyard::backend::db::ci::claim_ci_run(
+        codeyard_db_actions::ci::claim_ci_run(
             f.pool(),
             "worker",
             "local",
@@ -583,10 +583,10 @@ async fn contract(pg: bool) {
         .id,
         waiting.id
     );
-    codeyard::backend::db::ci::finish_ci_run(f.pool(), waiting.id, "worker", "success", None)
+    codeyard_db_actions::ci::finish_ci_run(f.pool(), waiting.id, "worker", "success", None)
         .await
         .unwrap();
-    codeyard::backend::db::deployment_protection::create(
+    codeyard_db_actions::deployment_protection::create(
         f.pool(),
         alice,
         repo.id,
@@ -596,7 +596,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let unavailable = enqueue(&f, repo.id, alice, None).await;
-    codeyard::backend::db::github_apps::change_repository(
+    codeyard_db_identity::github_apps::change_repository(
         f.pool(),
         alice,
         installation,
@@ -609,7 +609,7 @@ async fn contract(pg: bool) {
         decide(&f, token, &unavailable, Some("approved")).await,
         |error| matches!(error, Refusal::Denied),
     );
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",
@@ -619,10 +619,10 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .is_none());
-    codeyard::backend::db::environments::delete(f.pool(), alice, repo.id, "production")
+    codeyard_db_actions::environments::delete(f.pool(), alice, repo.id, "production")
         .await
         .unwrap();
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         f.pool(),
         "worker",
         "local",

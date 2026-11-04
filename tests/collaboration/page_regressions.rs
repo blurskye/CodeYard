@@ -8,27 +8,23 @@ use serde_json::Value;
 
 async fn milestone_models(pg: bool) {
     let (mut database, _root, alice, _) = setup(pg).await;
-    let repo = codeyard::backend::db::repositories::records::get_repository(
-        database.pool(),
-        "alice",
-        "proj",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     let description = if pg {
         "repeat('x', 65536)"
     } else {
         "replace(hex(zeroblob(32768)), '0', 'x')"
     };
     database.execute(&format!("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<1002) INSERT INTO milestones(repo_id, number, title, description) SELECT {}, x, 'M' || CAST(x AS TEXT), CASE WHEN x<=260 THEN {description} ELSE NULL END FROM n", repo.id), &[]).await;
-    let choices =
-        codeyard::backend::db::milestones::list_milestone_choices(database.pool(), repo.id)
-            .await
-            .unwrap();
+    let choices = codeyard_db_repos::milestones::list_milestone_choices(database.pool(), repo.id)
+        .await
+        .unwrap();
     assert_eq!(choices.len(), 1000);
     assert!(choices.iter().all(|choice| choice.description.is_none()));
-    let issue = codeyard::backend::db::issues::create_issue(
+    let issue = codeyard_db_repos::issues::create_issue(
         database.pool(),
         repo.id,
         repo.owner_user_id.unwrap(),
@@ -37,7 +33,7 @@ async fn milestone_models(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::milestones::set_issue_milestone(
+    codeyard_db_repos::milestones::set_issue_milestone(
         database.pool(),
         repo.owner_user_id.unwrap(),
         repo.id,
@@ -157,14 +153,11 @@ async fn templates_offline(pg: bool) {
         .page("/alice/proj/issues/new?template=.github%2FISSUE_TEMPLATE%2Fform.yml")
         .await;
     let revision = hidden_value(&html, "template_revision");
-    let repo = codeyard::backend::db::repositories::records::get_repository(
-        database.pool(),
-        "alice",
-        "proj",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     let id = repo.id.to_string();
     std::fs::rename(&repo.disk_path, root.path().join("offline.git")).unwrap();
     let (status, html) = bob.page("/alice/proj/issues/new").await;
@@ -217,14 +210,11 @@ async fn templates_offline(pg: bool) {
 
 async fn label_submissions(pg: bool) {
     let (mut database, _root, alice, _) = setup(pg).await;
-    let repo = codeyard::backend::db::repositories::records::get_repository(
-        database.pool(),
-        "alice",
-        "proj",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     let actor = repo.owner_user_id.unwrap();
     let mut ids = Vec::new();
     for n in 0..101 {
@@ -234,7 +224,7 @@ async fn label_submissions(pg: bool) {
             _ => format!("label-{n}"),
         };
         ids.push(
-            codeyard::backend::db::labels::create_label(
+            codeyard_db_repos::labels::create_label(
                 database.pool(),
                 actor,
                 repo.id,
@@ -259,7 +249,7 @@ async fn label_submissions(pg: bool) {
     let refused = alice.form_reply("/alice/proj/issues/new", &pairs).await;
     assert_eq!(refused.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(refused.text().contains("Choose at most 100 labels"));
-    assert!(codeyard::backend::db::issues::list_repo_issues(
+    assert!(codeyard_db_repos::issues::list_repo_issues(
         database.pool(),
         repo.id,
         &Default::default(),
@@ -276,10 +266,10 @@ async fn label_submissions(pg: bool) {
             .status,
         StatusCode::SEE_OTHER
     );
-    let labels = codeyard::backend::db::labels::get_issue_labels(
+    let labels = codeyard_db_repos::labels::get_issue_labels(
         database.pool(),
         repo.id,
-        codeyard::backend::db::issues::get_issue(database.pool(), repo.id, 1)
+        codeyard_db_repos::issues::get_issue(database.pool(), repo.id, 1)
             .await
             .unwrap()
             .unwrap()
@@ -290,7 +280,7 @@ async fn label_submissions(pg: bool) {
     assert_eq!(labels.len(), 100);
     // One exact label on each issue, so trimming would return the wrong row.
     for (index, label) in ids.iter().take(2).enumerate() {
-        let issue = codeyard::backend::db::issues::create_issue(
+        let issue = codeyard_db_repos::issues::create_issue(
             database.pool(),
             repo.id,
             actor,
@@ -299,7 +289,7 @@ async fn label_submissions(pg: bool) {
         )
         .await
         .unwrap();
-        codeyard::backend::db::labels::add_issue_labels(
+        codeyard_db_repos::labels::add_issue_labels(
             database.pool(),
             actor,
             repo.id,
@@ -329,7 +319,7 @@ async fn label_submissions(pg: bool) {
         .await;
     assert_eq!(exact.as_array().unwrap().len(), 2);
     // Issue 1's history names each of its labels once, with the label's color.
-    let first = codeyard::backend::db::issues::get_issue(database.pool(), repo.id, 1)
+    let first = codeyard_db_repos::issues::get_issue(database.pool(), repo.id, 1)
         .await
         .unwrap()
         .unwrap();
@@ -381,14 +371,10 @@ async fn label_submissions(pg: bool) {
     );
     assert!(partial.text().contains("Partial creation"));
     assert_eq!(
-        codeyard::backend::db::issues::count_repo_issues(
-            database.pool(),
-            repo.id,
-            &Default::default()
-        )
-        .await
-        .unwrap()
-        .all,
+        codeyard_db_repos::issues::count_repo_issues(database.pool(), repo.id, &Default::default())
+            .await
+            .unwrap()
+            .all,
         3
     );
     database.finish().await;
@@ -423,15 +409,12 @@ async fn closed_pulls(pg: bool) {
 async fn fork_choices(pg: bool) {
     let (mut database, _root, alice, _) = setup(pg).await;
     alice.save("main", "README.md", "unborn").await;
-    let repo = codeyard::backend::db::repositories::records::get_repository(
-        database.pool(),
-        "alice",
-        "proj",
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    let bob = codeyard::backend::db::users::accounts::get_user_by_username(database.pool(), "bob")
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
+    let bob = codeyard_db_identity::users::accounts::get_user_by_username(database.pool(), "bob")
         .await
         .unwrap()
         .unwrap();
@@ -440,15 +423,12 @@ async fn fork_choices(pg: bool) {
     for n in 1..=102 {
         database.execute(&format!("INSERT INTO repositories(owner_user_id,name,disk_path,is_fork,forked_from_id,is_private) SELECT {},'fork-{n}',disk_path,TRUE,id,{} FROM repositories WHERE id=$1", bob.id, if n == 1 || n == 102 { "TRUE" } else { "FALSE" }), &[repo.id]).await;
     }
-    let selected = codeyard::backend::db::repositories::records::get_repository(
-        database.pool(),
-        "bob",
-        "fork-1",
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    let selected =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "bob", "fork-1")
+            .await
+            .unwrap()
+            .unwrap();
+    codeyard_db_repos::repositories::access::grant_repo_access(
         database.pool(),
         owner,
         selected.id,

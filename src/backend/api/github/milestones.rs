@@ -20,7 +20,7 @@ use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 
 fn write_error(error: anyhow::Error) -> Error {
-    use crate::backend::db::milestones::MilestoneWriteRefusal;
+    use codeyard_db_repos::milestones::MilestoneWriteRefusal;
     match error.downcast_ref::<MilestoneWriteRefusal>() {
         Some(MilestoneWriteRefusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Milestone mutation denied")
@@ -43,7 +43,7 @@ pub(super) async fn document(
     repo: &str,
 ) -> Result<Value> {
     let creator = match summary.milestone.creator_id {
-        Some(id) => crate::backend::db::users::accounts::get_user_by_id(pool, id)
+        Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
             .await
             .map_err(Error::unavailable)?,
         None => None,
@@ -61,7 +61,7 @@ async fn find(
     repo_id: i64,
     number: &str,
 ) -> Result<MilestoneSummary> {
-    crate::backend::db::milestones::get_milestone(
+    codeyard_db_repos::milestones::get_milestone(
         pool,
         repo_id,
         number.parse().map_err(|_| Error::missing())?,
@@ -77,7 +77,7 @@ async fn get_milestone(
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let summary = crate::backend::db::milestones::read_milestones(
+    let summary = codeyard_db_repos::milestones::read_milestones(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
@@ -145,12 +145,12 @@ async fn save(
     {
         return Err(Error::invalid("State must be open or closed"));
     }
-    let milestone = crate::backend::db::milestones::save_milestone(
+    let milestone = codeyard_db_repos::milestones::save_milestone(
         &state.pool,
         actor.database_actor(),
         repo.id,
         number,
-        crate::backend::db::milestones::MilestoneInput {
+        codeyard_db_repos::milestones::MilestoneInput {
             title: input.title.as_deref(),
             description: value
                 .get("description")
@@ -162,7 +162,7 @@ async fn save(
     .await
     .map_err(write_error)?;
     let summary =
-        crate::backend::db::milestones::get_milestone(&state.pool, repo.id, milestone.number)
+        codeyard_db_repos::milestones::get_milestone(&state.pool, repo.id, milestone.number)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -201,7 +201,7 @@ async fn remove(
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let summary = find(&state.pool, repo.id, &p["milestone_number"]).await?;
-    crate::backend::db::milestones::delete_milestone(
+    codeyard_db_repos::milestones::delete_milestone(
         &state.pool,
         actor.database_actor(),
         repo.id,
@@ -247,7 +247,7 @@ async fn list(
         _ => return Err(Error::invalid("Invalid sort")),
     };
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::milestones::read_milestones(
+    let rows = codeyard_db_repos::milestones::read_milestones(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
@@ -268,7 +268,7 @@ async fn list(
         .into_iter()
         .collect();
     let creators: HashMap<_, _> =
-        crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &ids)
+        codeyard_db_identity::users::accounts::get_users_by_ids(&state.pool, &ids)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
@@ -296,7 +296,7 @@ async fn labels(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let milestone = crate::backend::db::milestones::read_milestones(
+    let milestone = codeyard_db_repos::milestones::read_milestones(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,
@@ -315,7 +315,7 @@ async fn labels(
     .pop()
     .ok_or_else(Error::missing)?;
     let (offset, limit) = page.window()?;
-    let labels = crate::backend::db::labels::list_milestone_labels(
+    let labels = codeyard_db_repos::labels::list_milestone_labels(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,

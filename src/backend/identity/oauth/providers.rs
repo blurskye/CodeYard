@@ -114,7 +114,7 @@ pub fn username_from_profile(name: Option<&str>, provider_user_id: &str) -> Stri
             .take(8)
             .collect();
         format!("user_{prefix}")
-    } else if crate::backend::db::users::is_reserved_name(&derived) {
+    } else if codeyard_db_identity::users::is_reserved_name(&derived) {
         format!("{derived}_user")
     } else {
         derived

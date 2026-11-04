@@ -70,7 +70,7 @@ async fn browser_routes(pg: bool) {
     assert_eq!(query["code_challenge_method"], "S256");
     assert!(!query["code_challenge"].is_empty());
     let state = &query["state"];
-    let stored = codeyard::backend::db::users::sessions::get_oauth_state(database.pool(), state)
+    let stored = codeyard_db_identity::users::sessions::get_oauth_state(database.pool(), state)
         .await
         .unwrap()
         .unwrap();
@@ -99,7 +99,7 @@ async fn browser_routes(pg: bool) {
             .unwrap()
             .contains("no-store"));
         assert!(
-            codeyard::backend::db::users::sessions::get_oauth_state(database.pool(), state)
+            codeyard_db_identity::users::sessions::get_oauth_state(database.pool(), state)
                 .await
                 .unwrap()
                 .is_some()

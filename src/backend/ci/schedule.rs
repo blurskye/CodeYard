@@ -94,7 +94,7 @@ impl CiRuns {
             .context("invalid schedule time")?;
         let mut after = 0;
         loop {
-            let ids = crate::backend::db::ci::scheduled_repositories(&self.pool, after).await?;
+            let ids = codeyard_db_actions::ci::scheduled_repositories(&self.pool, after).await?;
             if ids.is_empty() {
                 break;
             }
@@ -125,12 +125,12 @@ impl CiRuns {
         now: DateTime<Utc>,
     ) -> Result<(), AdmissionError> {
         let Some(repo) =
-            crate::backend::db::repositories::records::get_repository_by_id(&self.pool, id).await?
+            codeyard_db_repos::repositories::records::get_repository_by_id(&self.pool, id).await?
         else {
             return Ok(());
         };
         // With Actions turned off, nothing would be queued, so Git is not read either.
-        if !crate::backend::db::action_settings::actions_enabled(&self.pool, repo.id).await? {
+        if !codeyard_db_actions::action_settings::actions_enabled(&self.pool, repo.id).await? {
             return Ok(());
         }
         let store = repo_store(&repo, self.cluster.as_ref());
@@ -164,10 +164,10 @@ impl CiRuns {
             return Ok(());
         }
         let definitions = crate::backend::ci::list_workflows_for_ref(&store, &commit.sha).await?;
-        let owner = crate::backend::db::ci::ci_repository_owner(&self.pool, repo.id)
+        let owner = codeyard_db_actions::ci::ci_repository_owner(&self.pool, repo.id)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
-        let sender = crate::backend::db::users::accounts::get_user_by_id(&self.pool, actor)
+        let sender = codeyard_db_identity::users::accounts::get_user_by_id(&self.pool, actor)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
         for definition in definitions {

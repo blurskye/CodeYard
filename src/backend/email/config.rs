@@ -30,7 +30,7 @@ pub async fn load(
     pool: &DbPool,
     secrets: Option<&SecretEncryptor>,
 ) -> Result<Option<(SmtpConfig, Source)>, String> {
-    let Some(row) = crate::backend::db::email::get_email_settings(pool)
+    let Some(row) = codeyard_db_identity::email::get_email_settings(pool)
         .await
         .map_err(unavailable)?
     else {
@@ -54,7 +54,7 @@ pub async fn load(
 /// The settings in use without opening the password, for the admin page. The flag says whether
 /// a password is set.
 pub async fn describe(pool: &DbPool) -> Result<Option<(SmtpConfig, Source, bool)>, String> {
-    match crate::backend::db::email::get_email_settings(pool)
+    match codeyard_db_identity::email::get_email_settings(pool)
         .await
         .map_err(unavailable)?
     {
@@ -71,7 +71,7 @@ pub async fn describe(pool: &DbPool) -> Result<Option<(SmtpConfig, Source, bool)
 
 /// Whether a mail server is set up, without opening the password.
 pub async fn is_configured(pool: &DbPool) -> bool {
-    match crate::backend::db::email::get_email_settings(pool).await {
+    match codeyard_db_identity::email::get_email_settings(pool).await {
         Ok(Some(_)) => true,
         Ok(None) => environment_configured(),
         Err(error) => {

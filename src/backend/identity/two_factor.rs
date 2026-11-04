@@ -12,11 +12,11 @@ use crate::backend::identity::passwords::PasswordError;
 use crate::backend::identity::sessions::AccountAuthorityError;
 use codeyard_support::secrets::SecretEncryptor;
 
-use crate::backend::db::users::two_factor::FactorAuthority;
-use crate::backend::db::users::two_factor::StoredTwoFactor;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
+use codeyard_db_identity::users::two_factor::FactorAuthority;
+use codeyard_db_identity::users::two_factor::StoredTwoFactor;
 use data_encoding::BASE32_NOPAD;
 use hmac::{Hmac, Mac};
 use rand::{seq::SliceRandom, RngCore};
@@ -245,7 +245,7 @@ pub async fn begin_setup(
         return Err(TwoFactorError::PasswordRequired);
     }
     crate::backend::identity::passwords::verify_current_password(pool, user, password).await?;
-    if crate::backend::db::users::two_factor::get_two_factor(pool, user.id)
+    if codeyard_db_identity::users::two_factor::get_two_factor(pool, user.id)
         .await
         .map_err(|_| TwoFactorError::Unavailable)?
         .is_some()
@@ -331,7 +331,7 @@ pub async fn confirm_setup(
         last_used_step: Some(step),
     };
     let authority = password_authority(user, session)?;
-    let enabled = crate::backend::db::users::two_factor::enable_two_factor(
+    let enabled = codeyard_db_identity::users::two_factor::enable_two_factor(
         pool,
         user.id,
         authority,
@@ -358,7 +358,7 @@ pub async fn verify_totp_code(
     if !is_totp_code(&code) {
         return Ok(None);
     }
-    let Some(stored) = crate::backend::db::users::two_factor::get_two_factor(pool, user_id)
+    let Some(stored) = codeyard_db_identity::users::two_factor::get_two_factor(pool, user_id)
         .await
         .map_err(|_| TwoFactorError::Unavailable)?
     else {
@@ -380,7 +380,7 @@ pub async fn regenerate_recovery_codes(
     crate::backend::identity::passwords::verify_current_password(pool, user, password).await?;
     let codes = new_recovery_codes();
     let hashes: Vec<String> = codes.iter().map(|code| recovery_code_hash(code)).collect();
-    if !crate::backend::db::users::two_factor::replace_recovery_codes(
+    if !codeyard_db_identity::users::two_factor::replace_recovery_codes(
         pool,
         user.id,
         password_authority(user, session)?,
@@ -447,7 +447,7 @@ async fn turn_off(
     user_id: i64,
     authority: FactorAuthority<'_>,
 ) -> Result<(), TwoFactorError> {
-    if crate::backend::db::users::two_factor::disable_two_factor(pool, user_id, authority)
+    if codeyard_db_identity::users::two_factor::disable_two_factor(pool, user_id, authority)
         .await
         .map_err(|_| TwoFactorError::Unavailable)?
     {
@@ -459,7 +459,7 @@ async fn turn_off(
 
 pub async fn is_enabled(pool: &DbPool, user_id: i64) -> Result<bool, TwoFactorError> {
     Ok(
-        crate::backend::db::users::two_factor::get_two_factor(pool, user_id)
+        codeyard_db_identity::users::two_factor::get_two_factor(pool, user_id)
             .await
             .map_err(|_| TwoFactorError::Unavailable)?
             .is_some(),

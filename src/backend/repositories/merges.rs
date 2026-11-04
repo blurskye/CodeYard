@@ -36,7 +36,7 @@ pub async fn merge_branch(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
     owner: &str,
     input: BranchMerge<'_>,

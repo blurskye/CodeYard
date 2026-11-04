@@ -6,16 +6,16 @@ use crate::backend::api::user::responses::Fields;
 
 use crate::backend::app::AppState;
 
-use crate::backend::db::interactions::InteractionRefusal;
-use crate::backend::db::interactions::InteractionScope;
-use crate::backend::db::interactions::NewRestriction;
-use crate::backend::db::pull_caps::{CapUpdate, PullCapRefusal, PullCapScope};
-use crate::backend::db::users::accounts::AccountCredential;
 use axum::{
     extract::{Form, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_db_identity::interactions::InteractionRefusal;
+use codeyard_db_identity::interactions::InteractionScope;
+use codeyard_db_identity::interactions::NewRestriction;
+use codeyard_db_repos::pull_caps::{CapUpdate, PullCapRefusal, PullCapScope};
 use codeyard_support::credentials::AccountRestricted;
 use codeyard_webui::components::interactions::{
     InteractionPanel, InteractionRestriction, PullCapForm,
@@ -34,7 +34,7 @@ pub(crate) async fn panel(
         InteractionScope::Organization(id) => ("organization", id),
         InteractionScope::Repository(id) => ("repository", id),
     };
-    let restriction = crate::backend::db::interactions::get_restriction(pool, actor, scope)
+    let restriction = codeyard_db_identity::interactions::get_restriction(pool, actor, scope)
         .await?
         .map(|restriction| InteractionRestriction {
             limit: restriction.limit,
@@ -47,7 +47,7 @@ pub(crate) async fn panel(
         InteractionScope::User(_) => None,
     };
     let cap = if let Some(scope) = cap_scope {
-        let cap = crate::backend::db::pull_caps::get_cap(pool, actor, scope).await?;
+        let cap = codeyard_db_repos::pull_caps::get_cap(pool, actor, scope).await?;
         Some(PullCapForm {
             enabled: cap.enabled,
             maximum: cap.max_open_pull_requests.to_string(),
@@ -57,7 +57,7 @@ pub(crate) async fn panel(
         None
     };
     let bypass = if let InteractionScope::Repository(repo) = scope {
-        crate::backend::db::pull_caps::bypass_users(pool, actor, repo)
+        codeyard_db_repos::pull_caps::bypass_users(pool, actor, repo)
             .await?
             .into_iter()
             .map(|user| user.username)
@@ -114,7 +114,7 @@ pub(crate) async fn post(
     };
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    if let Err(error) = crate::backend::db::interactions::set_restriction(
+    if let Err(error) = codeyard_db_identity::interactions::set_restriction(
         &ctx.state.pool,
         actor.id,
         &AccountCredential::Session(&session),
@@ -160,12 +160,9 @@ async fn scope_target(ctx: &PageContext, scope: InteractionScope) -> String {
         InteractionScope::Organization(id) => format!("/settings/organizations/{id}"),
         InteractionScope::Repository(id) => {
             match (
-                crate::backend::db::repositories::records::get_repository_by_id(
-                    &ctx.state.pool,
-                    id,
-                )
-                .await,
-                crate::backend::db::repositories::records::repository_owner_name(
+                codeyard_db_repos::repositories::records::get_repository_by_id(&ctx.state.pool, id)
+                    .await,
+                codeyard_db_repos::repositories::records::repository_owner_name(
                     &ctx.state.pool,
                     id,
                 )
@@ -239,7 +236,7 @@ pub(crate) async fn post_cap(
     };
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    if let Err(error) = crate::backend::db::pull_caps::update_cap(
+    if let Err(error) = codeyard_db_repos::pull_caps::update_cap(
         &ctx.state.pool,
         actor.id,
         &AccountCredential::Session(&session),
@@ -279,7 +276,7 @@ pub(crate) async fn post_bypass(
     };
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    if let Err(error) = crate::backend::db::pull_caps::change_bypass(
+    if let Err(error) = codeyard_db_repos::pull_caps::change_bypass(
         &ctx.state.pool,
         actor.id,
         &AccountCredential::Session(&session),

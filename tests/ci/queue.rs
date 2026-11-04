@@ -14,16 +14,16 @@ use crate::support::native_database as native;
 use crate::support::organizations::applied;
 use crate::support::production_ci as production;
 
-use codeyard::backend::db::organizations::NewOrganization;
-use codeyard::backend::db::organizations::NewTeam;
-use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::db::organizations::TeamPrivacy;
-use codeyard::backend::db::organizations::TeamProfile;
-use codeyard::backend::db::organizations::TeamRepositoryPermission;
-use codeyard::backend::db::organizations::TeamRole;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::NewTeam;
+use codeyard_db_orgs::organizations::OrganizationProfile;
+use codeyard_db_orgs::organizations::TeamPrivacy;
+use codeyard_db_orgs::organizations::TeamProfile;
+use codeyard_db_orgs::organizations::TeamRepositoryPermission;
+use codeyard_db_orgs::organizations::TeamRole;
 use std::{
     future::Future,
     sync::atomic::{AtomicU64, Ordering},
@@ -38,7 +38,7 @@ fn platforms() -> Vec<String> {
 }
 
 const WORKER: &str = "worker-1";
-const ACCESS_LOST: &str = codeyard::backend::db::ci::ACCESS_LOST_MESSAGE;
+const ACCESS_LOST: &str = codeyard_db_actions::ci::ACCESS_LOST_MESSAGE;
 const WORKFLOW: &str = ".github/workflows/ci.yml";
 
 impl Database {
@@ -51,7 +51,7 @@ impl Database {
 
     /// A private repository owned by `owner`. Nothing here touches its files.
     async fn repo(&self, owner: i64, name: &str) -> i64 {
-        codeyard::backend::db::repositories::records::create_repository(
+        codeyard_db_repos::repositories::records::create_repository(
             self.pool(),
             owner,
             name,
@@ -70,9 +70,9 @@ impl Database {
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let sha = format!("{:040x}", NEXT.fetch_add(1, Ordering::Relaxed));
         let blobs = serde_json::json!({ ".github/workflows/ci.yml": sha });
-        codeyard::backend::db::ci::enqueue_ci_run(
+        codeyard_db_actions::ci::enqueue_ci_run(
             self.pool(),
-            codeyard::backend::db::ci::NewCiRun {
+            codeyard_db_actions::ci::NewCiRun {
                 repo_id: repo,
                 triggered_by_id: actor,
                 pipeline: if deploy { "full" } else { "ci" },
@@ -115,7 +115,7 @@ impl Database {
     }
 
     async fn run(&self, run_id: Uuid) -> CiRun {
-        codeyard::backend::db::ci::get_ci_run_by_run_id(self.pool(), run_id)
+        codeyard_db_actions::ci::get_ci_run_by_run_id(self.pool(), run_id)
             .await
             .unwrap()
             .expect("the run exists")
@@ -177,7 +177,7 @@ async fn world(db: &Database, prefix: &str) -> World {
     let owner = db.site_admin(&format!("{prefix}_owner")).await;
     let collab = db.actor(&format!("{prefix}_collab")).await;
     let repo = db.repo(owner, &format!("{prefix}_repo")).await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         db.pool(),
         collab,
         repo,
@@ -194,11 +194,11 @@ async fn world(db: &Database, prefix: &str) -> World {
 
 /// Private repositories run workflows from fork pull requests only once their settings allow it.
 async fn allow_fork_workflows(db: &Database, owner: i64, repo: i64) {
-    codeyard::backend::db::action_settings::settings(
+    codeyard_db_actions::action_settings::settings(
         db.pool(),
         owner,
-        &codeyard::backend::db::action_settings::Scope::Repository(repo),
-        codeyard::backend::db::action_settings::Setting::ForkWorkflows,
+        &codeyard_db_core::queries::action_settings::Scope::Repository(repo),
+        codeyard_db_core::queries::action_settings::Setting::ForkWorkflows,
         Some(&serde_json::json!({"run_workflows_from_fork_pull_requests": true})),
     )
     .await
@@ -238,14 +238,14 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
     // The oldest run belongs to the collaborator, who is gone: it is cancelled and the
     // claim moves on to the owner's deployment.
     let claimed =
-        codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+        codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
             .await
             .unwrap()
             .expect("the owner's run may still start");
     assert_eq!(claimed.id, deploy.id);
     assert_eq!(claimed.status, "running");
     assert_eq!(claimed.worker.as_deref(), Some(WORKER));
-    let deployment = codeyard::backend::db::ci::get_ci_deployment_by_run_id(db.pool(), deploy.id)
+    let deployment = codeyard_db_actions::ci::get_ci_deployment_by_run_id(db.pool(), deploy.id)
         .await
         .unwrap()
         .unwrap();
@@ -254,7 +254,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
     let lost = db.run(lost.run_id).await;
     assert_cancelled(&lost, ACCESS_LOST);
     assert!(lost.worker.is_none() && lost.started_at.is_none());
-    let statuses = codeyard::backend::db::repositories::protection::list_commit_statuses(
+    let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses(
         db.pool(),
         w.repo,
         lost.head_sha.as_deref().unwrap(),
@@ -277,7 +277,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
 
     // The run queued behind it is dealt with by the next claim, from another slot, since the
     // first slot still holds the deployment.
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "worker-2",
         "local",
@@ -293,7 +293,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
     assert!(!untouched.cancel_requested);
 
     // Other ways to lose the right to run workflows. Each is seen only by the claim.
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         db.pool(),
         w.collab,
         w.repo,
@@ -324,7 +324,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
         let run = db.enqueue(w.repo, w.collab, false, &trusted).await;
         db.execute(apply, &[id]).await;
         assert!(
-            codeyard::backend::db::ci::claim_ci_run(
+            codeyard_db_actions::ci::claim_ci_run(
                 db.pool(),
                 "worker-2",
                 "local",
@@ -343,7 +343,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
     // Being trusted to run workflows is part of the permission, and is read from the
     // configuration of the node that claims.
     let run = db.enqueue(w.repo, w.collab, false, &trusted).await;
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "worker-2",
         "local",
@@ -362,7 +362,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
         &[run.id],
     )
     .await;
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "worker-2",
         "local",
@@ -382,7 +382,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
         &[flagged.id],
     )
     .await;
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "worker-2",
         "local",
@@ -396,7 +396,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
 
     // A person who still has access gets the run.
     let fine = db.enqueue(w.repo, w.collab, false, &trusted).await;
-    let claimed = codeyard::backend::db::ci::claim_ci_run(
+    let claimed = codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "worker-2",
         "local",
@@ -429,7 +429,7 @@ async fn a_long_line_of_denied_runs_does_not_hide_later_work(db: &Database) {
 
     // One claim passes every denied run, cancels each of them and reaches the run that may start.
     let claimed =
-        codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+        codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
             .await
             .unwrap()
             .expect("the owner's run is reached");
@@ -450,7 +450,7 @@ async fn claim_filters_incompatible_jobs_before_its_candidate_bound(db: &Databas
         &[w.repo, queued[149].id],
     ).await;
     let claimed =
-        codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+        codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
             .await
             .unwrap()
             .expect("incompatible jobs do not consume the candidate limit");
@@ -469,7 +469,7 @@ async fn claim_filters_incompatible_jobs_before_its_candidate_bound(db: &Databas
     )
     .await;
 
-    let limit = codeyard::backend::db::ci::claims::candidate_limit().unwrap();
+    let limit = codeyard_db_actions::ci::claims::candidate_limit().unwrap();
     let mut denied = Vec::new();
     for _ in 0..=limit {
         denied.push(db.enqueue(w.repo, w.collab, false, &[w.collab]).await);
@@ -480,7 +480,7 @@ async fn claim_filters_incompatible_jobs_before_its_candidate_bound(db: &Databas
         &[w.repo, w.collab],
     )
     .await;
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "bounded-worker",
         "local",
@@ -502,7 +502,7 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
     let w = world(db, "stop").await;
     let trusted = [w.collab];
     let other = db.repo(w.owner, "stop_other").await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         db.pool(),
         w.collab,
         other,
@@ -515,7 +515,7 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
         // A run a worker has started, with more of the collaborator's runs and the
         // owner's own run waiting.
         let running = db.enqueue(w.repo, w.collab, false, &trusted).await;
-        let started = codeyard::backend::db::ci::claim_ci_run(
+        let started = codeyard_db_actions::ci::claim_ci_run(
             db.pool(),
             WORKER,
             "local",
@@ -532,7 +532,7 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
 
         match case {
             "ban" => {
-                let change = codeyard::backend::db::users::transitions::change_ban(
+                let change = codeyard_db_identity::users::transitions::change_ban(
                     db.pool(),
                     w.owner,
                     w.collab,
@@ -542,11 +542,11 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
                 .unwrap();
                 assert!(matches!(
                     change,
-                    codeyard::backend::db::users::transitions::BanChange::Updated(_)
+                    codeyard_db_identity::users::transitions::BanChange::Updated(_)
                 ));
             }
             "forced password change" => {
-                codeyard::backend::db::users::accounts::update_user_password(
+                codeyard_db_identity::users::accounts::update_user_password(
                     db.pool(),
                     w.collab,
                     "temporary-hash",
@@ -555,22 +555,20 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
                 .await
                 .unwrap();
             }
-            _ => assert!(
-                codeyard::backend::db::repositories::access::revoke_repo_access(
-                    db.pool(),
-                    w.collab,
-                    w.repo
-                )
-                .await
-                .unwrap()
-            ),
+            _ => assert!(codeyard_db_repos::repositories::access::revoke_repo_access(
+                db.pool(),
+                w.collab,
+                w.repo
+            )
+            .await
+            .unwrap()),
         }
 
         // Queued work is cancelled on the spot, for the person and the notification.
         assert_cancelled(&db.run(queued.run_id).await, ACCESS_LOST);
         // The run a worker holds is asked to stop; nothing is finished underneath it.
         assert_eq!(
-            codeyard::backend::db::ci::heartbeat_ci_run(db.pool(), running.id, WORKER)
+            codeyard_db_actions::ci::heartbeat_ci_run(db.pool(), running.id, WORKER)
                 .await
                 .unwrap(),
             Some(true),
@@ -592,7 +590,7 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
         // Put the world back and empty the queue for the next case.
         match case {
             "ban" => {
-                codeyard::backend::db::users::transitions::change_ban(
+                codeyard_db_identity::users::transitions::change_ban(
                     db.pool(),
                     w.owner,
                     w.collab,
@@ -609,7 +607,7 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
                 .await;
             }
             _ => {
-                codeyard::backend::db::repositories::access::grant_repo_access(
+                codeyard_db_repos::repositories::access::grant_repo_access(
                     db.pool(),
                     w.collab,
                     w.repo,
@@ -619,7 +617,7 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
                 .unwrap();
             }
         }
-        codeyard::backend::db::ci::finish_ci_run(
+        codeyard_db_actions::ci::finish_ci_run(
             db.pool(),
             running.id,
             WORKER,
@@ -631,7 +629,7 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
         for run in [&elsewhere, &theirs] {
             if db.run(run.run_id).await.status == "queued" {
                 assert!(
-                    codeyard::backend::db::ci::request_ci_cancellation(
+                    codeyard_db_actions::ci::request_ci_cancellation(
                         db.pool(),
                         run.run_id,
                         w.owner
@@ -647,7 +645,7 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
     // Lifting a ban, and removing a grant that is not there, change nothing.
     let waiting = db.enqueue(w.repo, w.owner, false, &trusted).await;
     assert!(
-        !codeyard::backend::db::repositories::access::revoke_repo_access(
+        !codeyard_db_repos::repositories::access::revoke_repo_access(
             db.pool(),
             w.collab,
             other + 1000
@@ -655,7 +653,7 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
         .await
         .unwrap()
     );
-    codeyard::backend::db::users::transitions::change_ban(db.pool(), w.owner, w.collab, false)
+    codeyard_db_identity::users::transitions::change_ban(db.pool(), w.owner, w.collab, false)
         .await
         .unwrap();
     assert_eq!(db.run(waiting.run_id).await.status, "queued");
@@ -670,7 +668,7 @@ struct OrganizationWork {
 
 async fn organization_repository(db: &Database, owner: i64, prefix: &str) -> OrganizationWork {
     let organization = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             db.pool(),
             owner,
             &NewOrganization::new(
@@ -695,7 +693,7 @@ async fn organization_repository(db: &Database, owner: i64, prefix: &str) -> Org
 }
 
 async fn deployment_status(db: &Database, run: &CiRun) -> String {
-    codeyard::backend::db::ci::get_ci_deployment_by_run_id(db.pool(), run.id)
+    codeyard_db_actions::ci::get_ci_deployment_by_run_id(db.pool(), run.id)
         .await
         .unwrap()
         .expect("deployment row")
@@ -710,7 +708,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
     let trusted = [runner];
 
     let affected = organization_repository(db, owner, &format!("{kind}_affected")).await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         db.pool(),
         runner,
         affected.repo,
@@ -721,7 +719,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
 
     let running = db.enqueue(affected.repo, runner, false, &trusted).await;
     assert_eq!(
-        codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+        codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
             .await
             .unwrap()
             .unwrap()
@@ -732,7 +730,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
     // A second slot holds the deployment, since the first one still holds its run.
     let deploy_worker = "worker-2";
     assert_eq!(
-        codeyard::backend::db::ci::claim_ci_run(
+        codeyard_db_actions::ci::claim_ci_run(
             db.pool(),
             deploy_worker,
             "local",
@@ -753,7 +751,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
     let survivor = db.actor(&format!("{kind}_survivor")).await;
     let retained = organization_repository(db, owner, &format!("{kind}_retained")).await;
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             db.pool(),
             owner,
             retained.id,
@@ -763,7 +761,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
         .await
         .unwrap(),
     );
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         db.pool(),
         runner,
         retained.repo,
@@ -778,7 +776,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
     let unrelated_owner = db.actor(&format!("{kind}_unrelated_owner")).await;
     let unrelated =
         organization_repository(db, unrelated_owner, &format!("{kind}_unrelated")).await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         db.pool(),
         runner,
         unrelated.repo,
@@ -793,7 +791,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
     let target_run = db.enqueue(target_repo, owner, false, &[owner]).await;
 
     if forced_password {
-        codeyard::backend::db::users::accounts::update_user_password(
+        codeyard_db_identity::users::accounts::update_user_password(
             db.pool(),
             owner,
             "temporary-hash",
@@ -803,10 +801,10 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
         .unwrap();
     } else {
         assert!(matches!(
-            codeyard::backend::db::users::transitions::change_ban(db.pool(), site, owner, true)
+            codeyard_db_identity::users::transitions::change_ban(db.pool(), site, owner, true)
                 .await
                 .unwrap(),
-            codeyard::backend::db::users::transitions::BanChange::Updated(user) if user.is_banned
+            codeyard_db_identity::users::transitions::BanChange::Updated(user) if user.is_banned
         ));
     }
 
@@ -819,14 +817,14 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
         assert_eq!(current.status, "running");
         assert!(current.cancel_requested);
         assert_eq!(
-            codeyard::backend::db::ci::heartbeat_ci_run(db.pool(), run.id, worker)
+            codeyard_db_actions::ci::heartbeat_ci_run(db.pool(), run.id, worker)
                 .await
                 .unwrap(),
             Some(true)
         );
     }
     assert_eq!(deployment_status(db, &running_deploy).await, "in_progress");
-    codeyard::backend::db::ci::finish_ci_run(
+    codeyard_db_actions::ci::finish_ci_run(
         db.pool(),
         running_deploy.id,
         deploy_worker,
@@ -861,7 +859,7 @@ async fn ordinary_password_changes_leave_organization_work_running(db: &Database
     let owner = db.actor("password_owner").await;
     let runner = db.actor("password_runner").await;
     let organization = organization_repository(db, owner, "password_ordinary").await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         db.pool(),
         runner,
         organization.repo,
@@ -871,7 +869,7 @@ async fn ordinary_password_changes_leave_organization_work_running(db: &Database
     .unwrap();
     let first = db.enqueue(organization.repo, runner, true, &[runner]).await;
 
-    codeyard::backend::db::users::accounts::update_user_password(
+    codeyard_db_identity::users::accounts::update_user_password(
         db.pool(),
         owner,
         "ordinary-one",
@@ -885,7 +883,7 @@ async fn ordinary_password_changes_leave_organization_work_running(db: &Database
         .enqueue(organization.repo, runner, false, &[runner])
         .await;
     assert!(
-        codeyard::backend::db::users::transitions::compare_exchange_password(
+        codeyard_db_identity::users::transitions::compare_exchange_password(
             db.pool(),
             owner,
             "ordinary-one",
@@ -915,19 +913,19 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
 
     // Finished by its worker, then found by a sweep: the first outcome stands.
     let run = db.enqueue(w.repo, w.owner, true, &trusted).await;
-    codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+    codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
         .await
         .unwrap()
         .expect("claim");
     db.stop_heartbeat(run.id).await;
     let (finished, _, _) =
-        codeyard::backend::db::ci::finish_ci_run(db.pool(), run.id, WORKER, "success", None)
+        codeyard_db_actions::ci::finish_ci_run(db.pool(), run.id, WORKER, "success", None)
             .await
             .unwrap()
             .expect("the worker owns the run");
     assert_eq!(finished.status, "success");
     assert_eq!(
-        codeyard::backend::db::ci::fail_stale_ci_runs(db.pool(), 90)
+        codeyard_db_actions::ci::fail_stale_ci_runs(db.pool(), 90)
             .await
             .unwrap()
             .0
@@ -939,12 +937,12 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
         (after.status.as_str(), after.error_message.as_deref()),
         ("success", None)
     );
-    let deployment = codeyard::backend::db::ci::get_ci_deployment_by_run_id(db.pool(), run.id)
+    let deployment = codeyard_db_actions::ci::get_ci_deployment_by_run_id(db.pool(), run.id)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(deployment.status, "success");
-    let statuses = codeyard::backend::db::repositories::protection::list_commit_statuses(
+    let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses(
         db.pool(),
         w.repo,
         run.head_sha.as_deref().unwrap(),
@@ -956,19 +954,19 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
 
     // Found by a sweep, then finished by the worker that came back: still the sweep's.
     let run = db.enqueue(w.repo, w.owner, true, &trusted).await;
-    codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+    codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
         .await
         .unwrap()
         .expect("claim");
     db.stop_heartbeat(run.id).await;
-    let (failed, created, _) = codeyard::backend::db::ci::fail_stale_ci_runs(db.pool(), 90)
+    let (failed, created, _) = codeyard_db_actions::ci::fail_stale_ci_runs(db.pool(), 90)
         .await
         .unwrap();
     assert_eq!(failed.len(), 1);
     assert_eq!(created.len(), 1);
     assert_eq!(created[0].0, w.owner);
     assert!(
-        codeyard::backend::db::ci::finish_ci_run(db.pool(), run.id, WORKER, "success", None)
+        codeyard_db_actions::ci::finish_ci_run(db.pool(), run.id, WORKER, "success", None)
             .await
             .unwrap()
             .is_none()
@@ -979,12 +977,12 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
         after.error_message.as_deref(),
         Some("The CI worker stopped before the run finished")
     );
-    let deployment = codeyard::backend::db::ci::get_ci_deployment_by_run_id(db.pool(), run.id)
+    let deployment = codeyard_db_actions::ci::get_ci_deployment_by_run_id(db.pool(), run.id)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(deployment.status, "failed");
-    let statuses = codeyard::backend::db::repositories::protection::list_commit_statuses(
+    let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses(
         db.pool(),
         w.repo,
         run.head_sha.as_deref().unwrap(),
@@ -993,14 +991,14 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     .unwrap();
     assert_eq!(statuses[0].state, "failure");
     assert_eq!(notified().await, 1, "one outcome, one notification");
-    let swept = codeyard::backend::db::ci::fail_stale_ci_runs(db.pool(), 90)
+    let swept = codeyard_db_actions::ci::fail_stale_ci_runs(db.pool(), 90)
         .await
         .unwrap();
     assert!(swept.0.is_empty() && swept.1.is_empty());
 
     // Cancelling something that already ended does nothing.
     assert!(
-        !codeyard::backend::db::ci::request_ci_cancellation(db.pool(), run.run_id, w.owner)
+        !codeyard_db_actions::ci::request_ci_cancellation(db.pool(), run.run_id, w.owner)
             .await
             .unwrap()
             .0
@@ -1010,12 +1008,12 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     // Cancelled while queued: no worker brings it back.
     let queued = db.enqueue(w.repo, w.owner, false, &trusted).await;
     assert!(
-        codeyard::backend::db::ci::request_ci_cancellation(db.pool(), queued.run_id, w.owner)
+        codeyard_db_actions::ci::request_ci_cancellation(db.pool(), queued.run_id, w.owner)
             .await
             .unwrap()
             .0
     );
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         WORKER,
         "local",
@@ -1027,7 +1025,7 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     .is_none());
     assert_cancelled(&db.run(queued.run_id).await, "Cancelled before it started");
     assert!(
-        !codeyard::backend::db::ci::request_ci_cancellation(db.pool(), queued.run_id, w.owner)
+        !codeyard_db_actions::ci::request_ci_cancellation(db.pool(), queued.run_id, w.owner)
             .await
             .unwrap()
             .0
@@ -1036,24 +1034,24 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     // Cancelled while running: the worker is asked, ends it as cancelled, and a later
     // sweep leaves it alone.
     let running = db.enqueue(w.repo, w.owner, false, &trusted).await;
-    codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+    codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
         .await
         .unwrap()
         .expect("claim");
     assert!(
-        codeyard::backend::db::ci::request_ci_cancellation(db.pool(), running.run_id, w.owner)
+        codeyard_db_actions::ci::request_ci_cancellation(db.pool(), running.run_id, w.owner)
             .await
             .unwrap()
             .0
     );
     assert_eq!(db.run(running.run_id).await.status, "running");
     assert_eq!(
-        codeyard::backend::db::ci::heartbeat_ci_run(db.pool(), running.id, WORKER)
+        codeyard_db_actions::ci::heartbeat_ci_run(db.pool(), running.id, WORKER)
             .await
             .unwrap(),
         Some(true)
     );
-    codeyard::backend::db::ci::finish_ci_run(
+    codeyard_db_actions::ci::finish_ci_run(
         db.pool(),
         running.id,
         WORKER,
@@ -1064,7 +1062,7 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     .unwrap()
     .expect("the worker owns the run");
     db.stop_heartbeat(running.id).await;
-    let swept = codeyard::backend::db::ci::fail_stale_ci_runs(db.pool(), 90)
+    let swept = codeyard_db_actions::ci::fail_stale_ci_runs(db.pool(), 90)
         .await
         .unwrap();
     assert!(swept.0.is_empty() && swept.1.is_empty());
@@ -1091,9 +1089,9 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
     let app = db.router(root.path()).await;
 
     async fn enqueue(db: &Database, w: &World, sha: &str, workflow: &str) -> CiRun {
-        codeyard::backend::db::ci::enqueue_ci_run(
+        codeyard_db_actions::ci::enqueue_ci_run(
             db.pool(),
-            codeyard::backend::db::ci::NewCiRun {
+            codeyard_db_actions::ci::NewCiRun {
                 repo_id: w.repo,
                 triggered_by_id: w.owner,
                 pipeline: "full",
@@ -1125,7 +1123,7 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
         // Two slots each take one of the runs, as two workers would.
         let slots = [format!("{WORKER}-0"), format!("{WORKER}-1")];
         for slot in &slots {
-            codeyard::backend::db::ci::claim_ci_run(db.pool(), slot, "local", &[], &platforms())
+            codeyard_db_actions::ci::claim_ci_run(db.pool(), slot, "local", &[], &platforms())
                 .await
                 .unwrap()
                 .unwrap();
@@ -1136,7 +1134,7 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
             } else {
                 (passed.id, &slots[1])
             };
-            codeyard::backend::db::ci::finish_ci_run(db.pool(), id, slot, status, None)
+            codeyard_db_actions::ci::finish_ci_run(db.pool(), id, slot, status, None)
                 .await
                 .unwrap()
                 .unwrap();
@@ -1176,40 +1174,34 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
 
     let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let older = enqueue(db, &w, sha, ".github/workflows/test.yml").await;
-    codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+    codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
         .await
         .unwrap()
         .unwrap();
     let newer = enqueue(db, &w, sha, ".github/workflows/test.yml").await;
     // Even an older finish cannot replace the newer pending status.
-    codeyard::backend::db::ci::finish_ci_run(db.pool(), older.id, WORKER, "success", None)
+    codeyard_db_actions::ci::finish_ci_run(db.pool(), older.id, WORKER, "success", None)
         .await
         .unwrap()
         .unwrap();
-    let statuses = codeyard::backend::db::repositories::protection::list_commit_statuses(
-        db.pool(),
-        w.repo,
-        sha,
-    )
-    .await
-    .unwrap();
+    let statuses =
+        codeyard_db_repos::repositories::protection::list_commit_statuses(db.pool(), w.repo, sha)
+            .await
+            .unwrap();
     assert_eq!(statuses[0].state, "pending");
     assert_eq!(db.scalar("SELECT COUNT(*) FROM commit_statuses WHERE ci_run_id = $1 AND context = 'gitserv/workflow/.github/workflows/test.yml'", &[newer.id]).await, 1);
-    codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+    codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
         .await
         .unwrap()
         .unwrap();
-    codeyard::backend::db::ci::finish_ci_run(db.pool(), newer.id, WORKER, "failed", None)
+    codeyard_db_actions::ci::finish_ci_run(db.pool(), newer.id, WORKER, "failed", None)
         .await
         .unwrap()
         .unwrap();
-    let statuses = codeyard::backend::db::repositories::protection::list_commit_statuses(
-        db.pool(),
-        w.repo,
-        sha,
-    )
-    .await
-    .unwrap();
+    let statuses =
+        codeyard_db_repos::repositories::protection::list_commit_statuses(db.pool(), w.repo, sha)
+            .await
+            .unwrap();
     assert_eq!(statuses[0].state, "failure");
     assert_eq!(db.scalar("SELECT COUNT(*) FROM commit_statuses WHERE ci_run_id = $1 AND context = 'gitserv/workflow/.github/workflows/test.yml'", &[newer.id]).await, 1);
 
@@ -1221,17 +1213,14 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
     )
     .await;
     assert_eq!(multi.commit_status_context(), "gitserv/pipeline/full");
-    let statuses = codeyard::backend::db::repositories::protection::list_commit_statuses(
-        db.pool(),
-        w.repo,
-        sha,
-    )
-    .await
-    .unwrap();
+    let statuses =
+        codeyard_db_repos::repositories::protection::list_commit_statuses(db.pool(), w.repo, sha)
+            .await
+            .unwrap();
     assert!(statuses
         .iter()
         .any(|s| s.context == "gitserv/pipeline/full" && s.state == "pending"));
-    codeyard::backend::db::ci::request_ci_cancellation(db.pool(), multi.run_id, w.owner)
+    codeyard_db_actions::ci::request_ci_cancellation(db.pool(), multi.run_id, w.owner)
         .await
         .unwrap();
 }
@@ -1261,7 +1250,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
         notifications: broadcaster,
     };
     let session = Uuid::new_v4().simple().to_string().repeat(2);
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         db.pool(),
         &session,
         w.owner,
@@ -1285,7 +1274,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
 
     // A failed run sends one notice, and an unowned finish sends nothing.
     let run = db.enqueue(w.repo, w.owner, false, &[]).await;
-    codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+    codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
         .await
         .unwrap()
         .unwrap();
@@ -1350,7 +1339,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
 /// The collaborator's own run is queued, claimed and finished by the worker.
 async fn finish_collaborator_run(db: &Database, w: &World) {
     let run = db.enqueue(w.repo, w.collab, false, &[w.collab]).await;
-    let claimed = codeyard::backend::db::ci::claim_ci_run(
+    let claimed = codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         WORKER,
         "local",
@@ -1361,7 +1350,7 @@ async fn finish_collaborator_run(db: &Database, w: &World) {
     .unwrap()
     .expect("claim");
     assert_eq!(claimed.id, run.id);
-    codeyard::backend::db::ci::finish_ci_run(
+    codeyard_db_actions::ci::finish_ci_run(
         db.pool(),
         claimed.id,
         WORKER,
@@ -1379,7 +1368,7 @@ async fn ignoring_the_repository_silences_run_results(db: &Database) {
     let w = world(db, "quiet").await;
     finish_collaborator_run(db, &w).await;
     assert_eq!(db.notifications(w.collab).await, 1);
-    codeyard::backend::db::repositories::engagement::set_watch_level(
+    codeyard_db_repos::repositories::engagement::set_watch_level(
         db.pool(),
         w.collab,
         w.repo,
@@ -1399,11 +1388,11 @@ async fn ignoring_the_repository_silences_run_results(db: &Database) {
 // ---- The global run list follows the repository read rule ----
 
 async fn visible_repositories(db: &Database, user: i64, limit: i64) -> Vec<i64> {
-    let runs = codeyard::backend::db::ci::list_ci_runs_for_user(db.pool(), user, limit)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_user(db.pool(), user, limit)
         .await
         .unwrap();
     let ids: Vec<_> = runs.iter().map(|run| run.repo_id).collect();
-    let metadata = codeyard::backend::db::repositories::access::readable_repositories_by_ids(
+    let metadata = codeyard_db_repos::repositories::access::readable_repositories_by_ids(
         db.pool(),
         user,
         &ids,
@@ -1424,7 +1413,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     let owner = db.actor("list_owner").await;
     let member = db.actor("list_member").await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             db.pool(),
             owner,
             &NewOrganization::new(
@@ -1437,7 +1426,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             db.pool(),
             owner,
             org.id,
@@ -1448,7 +1437,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             db.pool(),
             owner,
             org.id,
@@ -1459,7 +1448,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
         .unwrap(),
     );
     let team = applied(
-        codeyard::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             db.pool(),
             owner,
             org.id,
@@ -1473,7 +1462,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             db.pool(),
             owner,
             org.id,
@@ -1491,7 +1480,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     )
     .await;
     applied(
-        codeyard::backend::db::organizations::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::grant_organization_team_repository(
             db.pool(),
             owner,
             org.id,
@@ -1504,7 +1493,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     );
     let personal = db.repo(owner, "list_personal").await;
     let direct = db.repo(owner, "list_direct").await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         db.pool(),
         member,
         direct,
@@ -1541,7 +1530,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     // With a team grant they see them, and once removed from the organization they
     // lose them again, administrator or not.
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             db.pool(),
             owner,
             org.id,
@@ -1556,14 +1545,9 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     seen.sort();
     assert_eq!(seen, [org_repo, personal, direct, public]);
     applied(
-        codeyard::backend::db::organizations::remove_organization_member(
-            db.pool(),
-            owner,
-            org.id,
-            site,
-        )
-        .await
-        .unwrap(),
+        codeyard_db_orgs::organizations::remove_organization_member(db.pool(), owner, org.id, site)
+            .await
+            .unwrap(),
     );
     let mut seen = visible_repositories(db, site, 50).await;
     seen.sort();
@@ -1585,12 +1569,12 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     )
     .await;
     assert!(
-        codeyard::backend::db::repositories::access::revoke_repo_access(db.pool(), member, direct)
+        codeyard_db_repos::repositories::access::revoke_repo_access(db.pool(), member, direct)
             .await
             .unwrap()
     );
     assert_eq!(visible_repositories(db, member, 50).await, [public]);
-    let metadata = codeyard::backend::db::repositories::access::readable_repositories_by_ids(
+    let metadata = codeyard_db_repos::repositories::access::readable_repositories_by_ids(
         db.pool(),
         member,
         &previously_readable,
@@ -1603,7 +1587,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     );
 
     // An account that cannot use the site sees nothing.
-    codeyard::backend::db::users::transitions::change_ban(db.pool(), site, member, true)
+    codeyard_db_identity::users::transitions::change_ban(db.pool(), site, member, true)
         .await
         .unwrap();
     assert!(visible_repositories(db, member, 50).await.is_empty());
@@ -1620,14 +1604,14 @@ async fn global_run_list_applies_visibility_before_the_limit(db: &Database) {
         let hidden = db.repo(other, &format!("hidden_{index}")).await;
         db.history(hidden, viewer).await;
     }
-    let runs = codeyard::backend::db::ci::list_ci_runs_for_user(db.pool(), viewer, 1)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_user(db.pool(), viewer, 1)
         .await
         .unwrap();
     assert_eq!(
         runs.iter().map(|run| run.repo_id).collect::<Vec<_>>(),
         [visible]
     );
-    let runs = codeyard::backend::db::ci::list_ci_runs_for_user(db.pool(), viewer, 100)
+    let runs = codeyard_db_actions::ci::list_ci_runs_for_user(db.pool(), viewer, 100)
         .await
         .unwrap();
     assert_eq!(runs.len(), 1);
@@ -1680,11 +1664,11 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
     }
 
     let w = world(db, "log_page").await;
-    codeyard::backend::db::node_config::upsert_node_configuration(db.pool(), "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(db.pool(), "public", true)
         .await
         .unwrap();
     let session = native::token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         db.pool(),
         &session,
         w.owner,
@@ -1698,7 +1682,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
     // Both the scoped Actions page and the global page load the same selected run.
     let path = root.path().join("repo.git");
     git2::Repository::init_bare(&path).unwrap();
-    let repo = codeyard::backend::db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         db.pool(),
         w.owner,
         "logs",
@@ -1723,7 +1707,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
     for (character, count) in [('x', 1100), ('"', 600)] {
         let run = db.enqueue(repo.id, w.owner, false, &[]).await;
         assert_eq!(
-            codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+            codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
                 .await
                 .unwrap()
                 .unwrap()
@@ -1739,7 +1723,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
             })
             .collect();
         for (sequence, batch) in lines.chunks(16).enumerate() {
-            codeyard::backend::db::ci::append_ci_logs(
+            codeyard_db_actions::ci::append_ci_logs(
                 db.pool(),
                 run.id,
                 WORKER,
@@ -1749,7 +1733,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
             .await
             .unwrap();
         }
-        let stored = codeyard::backend::db::ci::list_ci_logs(db.pool(), run.id, 2000)
+        let stored = codeyard_db_actions::ci::list_ci_logs(db.pool(), run.id, 2000)
             .await
             .unwrap();
         assert_eq!(stored.len(), count);
@@ -1758,7 +1742,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
             ("/log_page_owner/logs/actions", "success"),
         ] {
             if status == "success" {
-                assert!(codeyard::backend::db::ci::finish_ci_run(
+                assert!(codeyard_db_actions::ci::finish_ci_run(
                     db.pool(),
                     run.id,
                     WORKER,
@@ -1829,9 +1813,9 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
 
 async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
     let w = world(db, "pr_identity").await;
-    let fork_repo = codeyard::backend::db::repositories::discovery::create_forked_repository(
+    let fork_repo = codeyard_db_repos::repositories::discovery::create_forked_repository(
         db.pool(),
-        codeyard::backend::db::repositories::discovery::NewForkedRepository {
+        codeyard_db_repos::repositories::discovery::NewForkedRepository {
             owner_id: w.owner,
             name: "pr_identity_fork",
             description: None,
@@ -1846,9 +1830,9 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
     .id;
     allow_fork_workflows(db, w.owner, w.repo).await;
     let sha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
-    let same_repo = codeyard::backend::db::pull_requests::records::create_pull_request(
+    let same_repo = codeyard_db_repos::pull_requests::records::create_pull_request(
         db.pool(),
-        codeyard::backend::db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: w.repo,
             head_repo_id: Some(w.repo),
             author_id: w.owner,
@@ -1865,9 +1849,9 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
     )
     .await
     .unwrap();
-    let fork = codeyard::backend::db::pull_requests::records::create_pull_request(
+    let fork = codeyard_db_repos::pull_requests::records::create_pull_request(
         db.pool(),
-        codeyard::backend::db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: w.repo,
             head_repo_id: Some(fork_repo),
             author_id: w.owner,
@@ -1885,7 +1869,7 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
     .await
     .unwrap();
     let blobs = serde_json::json!({WORKFLOW: sha});
-    let input = |pull_request_id| codeyard::backend::db::ci::NewCiRun {
+    let input = |pull_request_id| codeyard_db_actions::ci::NewCiRun {
         repo_id: w.repo,
         triggered_by_id: w.owner,
         pipeline: "ci",
@@ -1900,11 +1884,11 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
         manual: false,
     };
 
-    let pending = codeyard::backend::db::ci::enqueue_ci_run(db.pool(), input(Some(fork.id)), &[])
+    let pending = codeyard_db_actions::ci::enqueue_ci_run(db.pool(), input(Some(fork.id)), &[])
         .await
         .unwrap();
     assert!(pending.approval_required && pending.is_fork);
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "unapproved",
         "local",
@@ -1916,13 +1900,13 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
     .is_none());
 
     let same_run =
-        codeyard::backend::db::ci::enqueue_ci_run(db.pool(), input(Some(same_repo.id)), &[])
+        codeyard_db_actions::ci::enqueue_ci_run(db.pool(), input(Some(same_repo.id)), &[])
             .await
             .unwrap();
     assert_eq!(same_run.pull_request_id, Some(same_repo.id));
     assert!(!same_run.is_fork);
     assert_eq!(
-        codeyard::backend::db::ci::enqueue_ci_run(db.pool(), input(Some(same_repo.id)), &[])
+        codeyard_db_actions::ci::enqueue_ci_run(db.pool(), input(Some(same_repo.id)), &[])
             .await
             .unwrap()
             .id,
@@ -1930,7 +1914,7 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
     );
 
     assert!(
-        codeyard::backend::db::pull_requests::records::approve_pull_request_workflows(
+        codeyard_db_repos::pull_requests::records::approve_pull_request_workflows(
             db.pool(),
             fork.id,
             w.owner,
@@ -1939,7 +1923,7 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
         .await
         .unwrap()
     );
-    let fork_run = codeyard::backend::db::ci::enqueue_ci_run(db.pool(), input(Some(fork.id)), &[])
+    let fork_run = codeyard_db_actions::ci::enqueue_ci_run(db.pool(), input(Some(fork.id)), &[])
         .await
         .unwrap();
     assert_eq!(fork_run.pull_request_id, Some(fork.id));
@@ -1948,12 +1932,12 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
     assert!(fork_run.is_fork);
     assert_ne!(fork_run.id, same_run.id);
 
-    let ambiguous = codeyard::backend::db::ci::enqueue_ci_run(db.pool(), input(None), &[])
+    let ambiguous = codeyard_db_actions::ci::enqueue_ci_run(db.pool(), input(None), &[])
         .await
         .unwrap_err();
     assert!(matches!(
-        ambiguous.downcast_ref::<codeyard::backend::db::ci::CiAdmissionRefusal>(),
-        Some(codeyard::backend::db::ci::CiAdmissionRefusal::Conflict(
+        ambiguous.downcast_ref::<codeyard_db_actions::ci::CiAdmissionRefusal>(),
+        Some(codeyard_db_actions::ci::CiAdmissionRefusal::Conflict(
             "CI pull request revision is not open"
         ))
     ));
@@ -1961,9 +1945,9 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
 
 async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database) {
     let w = world(db, "pr_snapshot").await;
-    let pull = codeyard::backend::db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         db.pool(),
-        codeyard::backend::db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: w.repo,
             head_repo_id: Some(w.repo),
             author_id: w.owner,
@@ -1981,7 +1965,7 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
     .await
     .unwrap();
     let blobs = serde_json::json!({WORKFLOW: "b".repeat(40)});
-    let input = || codeyard::backend::db::ci::NewCiRun {
+    let input = || codeyard_db_actions::ci::NewCiRun {
         repo_id: w.repo,
         triggered_by_id: w.owner,
         pipeline: "ci",
@@ -1995,12 +1979,12 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
         environment: None,
         manual: false,
     };
-    let queued = codeyard::backend::db::ci::enqueue_ci_run(db.pool(), input(), &[])
+    let queued = codeyard_db_actions::ci::enqueue_ci_run(db.pool(), input(), &[])
         .await
         .unwrap();
     assert_eq!(queued.mode, "unassigned");
     assert!(
-        codeyard::backend::db::pull_requests::records::move_open_pull_request_base(
+        codeyard_db_repos::pull_requests::records::move_open_pull_request_base(
             db.pool(),
             pull.id,
             &pull.base_sha,
@@ -2016,13 +2000,13 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
         &[pull.id],
     )
     .await;
-    let duplicate = codeyard::backend::db::ci::enqueue_ci_run(db.pool(), input(), &[])
+    let duplicate = codeyard_db_actions::ci::enqueue_ci_run(db.pool(), input(), &[])
         .await
         .unwrap();
     assert_eq!(duplicate.id, queued.id);
     assert_eq!(duplicate.pull_request_event, queued.pull_request_event);
     let claimed =
-        codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+        codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
             .await
             .unwrap()
             .unwrap();
@@ -2039,7 +2023,7 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
     assert_eq!(db.run(queued.run_id).await.mode, "local");
     let next = db.enqueue(w.repo, w.owner, false, &[]).await;
     assert_eq!(next.mode, "unassigned");
-    assert!(codeyard::backend::db::ci::claim_ci_run(
+    assert!(codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "worker-2",
         "invalid",
@@ -2050,7 +2034,7 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
     .is_err());
     assert_eq!(db.run(next.run_id).await.status, "queued");
     let claimed =
-        codeyard::backend::db::ci::claim_ci_run(db.pool(), "worker-2", "podman", &[], &platforms())
+        codeyard_db_actions::ci::claim_ci_run(db.pool(), "worker-2", "podman", &[], &platforms())
             .await
             .unwrap()
             .unwrap();
@@ -2072,9 +2056,9 @@ async fn pull_request_run(
     manual: bool,
 ) -> anyhow::Result<CiRun> {
     let blobs = serde_json::json!({ WORKFLOW: head });
-    codeyard::backend::db::ci::enqueue_ci_run(
+    codeyard_db_actions::ci::enqueue_ci_run(
         db.pool(),
-        codeyard::backend::db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repo,
             triggered_by_id: actor,
             pipeline: "ci",
@@ -2096,9 +2080,9 @@ async fn pull_request_run(
 async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Database) {
     let w = world(db, "attempts").await;
     let sha = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
-    let pull = codeyard::backend::db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         db.pool(),
-        codeyard::backend::db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: w.repo,
             head_repo_id: Some(w.repo),
             author_id: w.owner,
@@ -2123,18 +2107,13 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
     // while the attempt is still queued.
     assert_eq!(admit(false).await.unwrap().id, first.id);
     assert_eq!(admit(true).await.unwrap().id, first.id);
-    let claimed = codeyard::backend::db::ci::claim_ci_run(
-        db.pool(),
-        WORKER,
-        "local",
-        &[w.owner],
-        &platforms(),
-    )
-    .await
-    .unwrap()
-    .expect("the attempt is claimed");
+    let claimed =
+        codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
+            .await
+            .unwrap()
+            .expect("the attempt is claimed");
     assert_eq!(claimed.id, first.id);
-    codeyard::backend::db::ci::finish_ci_run(
+    codeyard_db_actions::ci::finish_ci_run(
         db.pool(),
         first.id,
         WORKER,
@@ -2155,28 +2134,23 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
     assert_eq!(admit(false).await.unwrap().id, second.id);
 
     // Once attempt 2 has finished, the next request starts attempt 3.
-    codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
+    codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
         .await
         .unwrap()
         .expect("the second attempt is claimed");
-    codeyard::backend::db::ci::finish_ci_run(db.pool(), second.id, WORKER, "success", None)
+    codeyard_db_actions::ci::finish_ci_run(db.pool(), second.id, WORKER, "success", None)
         .await
         .unwrap()
         .expect("the second attempt is finished");
     let third = admit(true).await.unwrap();
     assert_eq!(third.attempt, 3);
-    let claimed = codeyard::backend::db::ci::claim_ci_run(
-        db.pool(),
-        WORKER,
-        "local",
-        &[w.owner],
-        &platforms(),
-    )
-    .await
-    .unwrap()
-    .expect("the third attempt is claimed");
+    let claimed =
+        codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
+            .await
+            .unwrap()
+            .expect("the third attempt is claimed");
     assert_eq!(claimed.id, third.id);
-    codeyard::backend::db::ci::finish_ci_run(db.pool(), third.id, WORKER, "success", None)
+    codeyard_db_actions::ci::finish_ci_run(db.pool(), third.id, WORKER, "success", None)
         .await
         .unwrap()
         .expect("the third attempt is finished");
@@ -2190,9 +2164,9 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
     );
 
     // A fork's new attempt needs the approval of its head, as the first run did.
-    let fork_repo = codeyard::backend::db::repositories::discovery::create_forked_repository(
+    let fork_repo = codeyard_db_repos::repositories::discovery::create_forked_repository(
         db.pool(),
-        codeyard::backend::db::repositories::discovery::NewForkedRepository {
+        codeyard_db_repos::repositories::discovery::NewForkedRepository {
             owner_id: w.owner,
             name: "attempts_fork",
             description: None,
@@ -2207,9 +2181,9 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
     .id;
     allow_fork_workflows(db, w.owner, w.repo).await;
     let fork_sha = "bcdefbcdefbcdefbcdefbcdefbcdefbcdefbcdef";
-    let fork = codeyard::backend::db::pull_requests::records::create_pull_request(
+    let fork = codeyard_db_repos::pull_requests::records::create_pull_request(
         db.pool(),
-        codeyard::backend::db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: w.repo,
             head_repo_id: Some(fork_repo),
             author_id: w.owner,
@@ -2232,7 +2206,7 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
             .is_err()
     );
     assert!(
-        codeyard::backend::db::pull_requests::records::approve_pull_request_workflows(
+        codeyard_db_repos::pull_requests::records::approve_pull_request_workflows(
             db.pool(),
             fork.id,
             w.owner,
@@ -2245,11 +2219,11 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
         .await
         .unwrap();
     assert!(fork_first.is_fork);
-    codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
+    codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
         .await
         .unwrap()
         .expect("the fork attempt is claimed");
-    codeyard::backend::db::ci::finish_ci_run(db.pool(), fork_first.id, WORKER, "failed", None)
+    codeyard_db_actions::ci::finish_ci_run(db.pool(), fork_first.id, WORKER, "failed", None)
         .await
         .unwrap()
         .expect("the fork attempt is finished");
@@ -2266,7 +2240,7 @@ async fn a_retried_claim_gets_back_the_run_its_worker_holds(db: &Database) {
     let trusted = [w.collab];
     let first = db.enqueue(w.repo, w.collab, false, &trusted).await;
     let second = db.enqueue(w.repo, w.collab, false, &trusted).await;
-    let claimed = codeyard::backend::db::ci::claim_ci_run(
+    let claimed = codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "node/slot-1",
         "local",
@@ -2279,7 +2253,7 @@ async fn a_retried_claim_gets_back_the_run_its_worker_holds(db: &Database) {
     assert_eq!(claimed.id, first.id);
 
     // The reply to that claim was lost, so the same slot asks again and gets the same run.
-    let retried = codeyard::backend::db::ci::claim_ci_run(
+    let retried = codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "node/slot-1",
         "local",
@@ -2293,7 +2267,7 @@ async fn a_retried_claim_gets_back_the_run_its_worker_holds(db: &Database) {
     assert_eq!(retried.status, "running");
 
     // Another slot takes the next queued run.
-    let other = codeyard::backend::db::ci::claim_ci_run(
+    let other = codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "node/slot-2",
         "local",
@@ -2306,12 +2280,12 @@ async fn a_retried_claim_gets_back_the_run_its_worker_holds(db: &Database) {
     assert_eq!(other.id, second.id);
 
     // Once the slot has recorded its result, its next claim takes new work.
-    codeyard::backend::db::ci::finish_ci_run(db.pool(), first.id, "node/slot-1", "success", None)
+    codeyard_db_actions::ci::finish_ci_run(db.pool(), first.id, "node/slot-1", "success", None)
         .await
         .unwrap()
         .expect("the slot still holds its run");
     let third = db.enqueue(w.repo, w.collab, false, &trusted).await;
-    let next = codeyard::backend::db::ci::claim_ci_run(
+    let next = codeyard_db_actions::ci::claim_ci_run(
         db.pool(),
         "node/slot-1",
         "local",
@@ -2338,21 +2312,15 @@ async fn commit_status_descriptions_redact_runner_messages(db: &Database) {
         (None, "CI run completed"),
     ] {
         let run = db.enqueue(w.repo, w.owner, false, &[w.owner]).await;
-        codeyard::backend::db::ci::claim_ci_run(
-            db.pool(),
-            WORKER,
-            "local",
-            &[w.owner],
-            &platforms(),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-        codeyard::backend::db::ci::finish_ci_run(db.pool(), run.id, WORKER, "failed", message)
+        codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
             .await
             .unwrap()
             .unwrap();
-        let statuses = codeyard::backend::db::repositories::protection::list_commit_statuses(
+        codeyard_db_actions::ci::finish_ci_run(db.pool(), run.id, WORKER, "failed", message)
+            .await
+            .unwrap()
+            .unwrap();
+        let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses(
             db.pool(),
             w.repo,
             run.head_sha.as_deref().unwrap(),
@@ -2369,7 +2337,7 @@ async fn log_batches_preserve_line_order_and_totals(db: &Database) {
     use codeyard_model::ci::LogLine;
     let w = world(db, "batch_order").await;
     let run = db.enqueue(w.repo, w.owner, false, &[w.owner]).await;
-    codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
+    codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
         .await
         .unwrap()
         .unwrap();
@@ -2381,10 +2349,10 @@ async fn log_batches_preserve_line_order_and_totals(db: &Database) {
             ..Default::default()
         })
         .collect();
-    codeyard::backend::db::ci::append_ci_logs(db.pool(), run.id, WORKER, 0, &lines)
+    codeyard_db_actions::ci::append_ci_logs(db.pool(), run.id, WORKER, 0, &lines)
         .await
         .unwrap();
-    let stored = codeyard::backend::db::ci::list_ci_logs(db.pool(), run.id, 100)
+    let stored = codeyard_db_actions::ci::list_ci_logs(db.pool(), run.id, 100)
         .await
         .unwrap();
     assert_eq!(stored.len(), lines.len());
@@ -2414,7 +2382,7 @@ async fn log_batches_preserve_line_order_and_totals(db: &Database) {
 /// A claim as `node_key` must fail and leave the run queued with no worker.
 async fn refused_claim(db: &Database, node_key: &str, run: i64, trusted: &[i64]) {
     let worker = format!("{node_key}/slot-1");
-    let claimed = codeyard::backend::db::ci::claim_ci_run_on_node(
+    let claimed = codeyard_db_actions::ci::claim_ci_run_on_node(
         db.pool(),
         node_key,
         &worker,
@@ -2439,7 +2407,7 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     let trusted = [w.owner];
     let queued = db.enqueue(w.repo, w.owner, false, &trusted).await;
     let key = "a".repeat(64);
-    let node = codeyard::backend::db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         db.pool(),
         &key,
         "claim-node",
@@ -2449,9 +2417,9 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     .await
     .unwrap();
 
-    codeyard::backend::db::cluster::set_node_status(
+    codeyard_db_cluster::cluster::set_node_status(
         db.pool(),
-        codeyard::backend::db::cluster::Authority::Operator,
+        codeyard_db_cluster::cluster::Authority::Operator,
         &node.name,
         "revoked",
     )
@@ -2459,9 +2427,9 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     .unwrap();
     refused_claim(db, &key, queued.id, &trusted).await;
 
-    codeyard::backend::db::cluster::set_node_status(
+    codeyard_db_cluster::cluster::set_node_status(
         db.pool(),
-        codeyard::backend::db::cluster::Authority::Operator,
+        codeyard_db_cluster::cluster::Authority::Operator,
         &node.name,
         "pending",
     )
@@ -2470,9 +2438,9 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     refused_claim(db, &key, queued.id, &trusted).await;
 
     // Active again, but no longer an actions worker.
-    codeyard::backend::db::cluster::upsert_declared_nodes(
+    codeyard_db_cluster::cluster::upsert_declared_nodes(
         db.pool(),
-        &[codeyard::backend::db::cluster::DeclaredMember {
+        &[codeyard_db_cluster::cluster::DeclaredMember {
             public_key: key.clone(),
             name: node.name.clone(),
             roles: vec!["storage".into()],
@@ -2483,9 +2451,9 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     refused_claim(db, &key, queued.id, &trusted).await;
 
     // An actions worker again, but under a new key: the old key belongs to no node.
-    codeyard::backend::db::cluster::upsert_declared_nodes(
+    codeyard_db_cluster::cluster::upsert_declared_nodes(
         db.pool(),
-        &[codeyard::backend::db::cluster::DeclaredMember {
+        &[codeyard_db_cluster::cluster::DeclaredMember {
             public_key: key.clone(),
             name: node.name.clone(),
             roles: vec!["runner".into()],
@@ -2498,7 +2466,7 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     refused_claim(db, &key, queued.id, &trusted).await;
 
     let worker = format!("{rekeyed}/slot-1");
-    let claimed = codeyard::backend::db::ci::claim_ci_run_on_node(
+    let claimed = codeyard_db_actions::ci::claim_ci_run_on_node(
         db.pool(),
         &rekeyed,
         &worker,
@@ -2547,7 +2515,7 @@ async fn stale_failures_are_broadcast_after_commit(db: &Database) {
     use std::sync::Arc;
     let w = world(db, "stale_live").await;
     let run = db.enqueue(w.repo, w.owner, false, &[]).await;
-    codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+    codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
         .await
         .unwrap()
         .unwrap();
@@ -2581,15 +2549,15 @@ async fn stale_failures_are_broadcast_after_commit(db: &Database) {
 async fn ci_notification_links_follow_renames_and_transfers(db: &Database) {
     let w = world(db, "ci_links").await;
     let run = db.enqueue(w.repo, w.owner, false, &[]).await;
-    codeyard::backend::db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+    codeyard_db_actions::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
         .await
         .unwrap()
         .unwrap();
-    codeyard::backend::db::ci::finish_ci_run(db.pool(), run.id, WORKER, "failed", None)
+    codeyard_db_actions::ci::finish_ci_run(db.pool(), run.id, WORKER, "failed", None)
         .await
         .unwrap()
         .unwrap();
-    codeyard::backend::db::repositories::records::rename_repository(
+    codeyard_db_repos::repositories::records::rename_repository(
         db.pool(),
         w.owner,
         w.repo,
@@ -2599,7 +2567,7 @@ async fn ci_notification_links_follow_renames_and_transfers(db: &Database) {
     .unwrap();
     for owner in [w.owner, w.collab] {
         if owner == w.collab {
-            codeyard::backend::db::repositories::access::grant_repo_access(
+            codeyard_db_repos::repositories::access::grant_repo_access(
                 db.pool(),
                 w.collab,
                 w.repo,
@@ -2607,16 +2575,16 @@ async fn ci_notification_links_follow_renames_and_transfers(db: &Database) {
             )
             .await
             .unwrap();
-            codeyard::backend::db::repositories::records::transfer_repository(
+            codeyard_db_repos::repositories::records::transfer_repository(
                 db.pool(),
                 w.collab,
                 w.repo,
-                codeyard::backend::db::repositories::creation::RepositoryTarget::Personal(w.collab),
+                codeyard_db_repos::repositories::creation::RepositoryTarget::Personal(w.collab),
             )
             .await
             .unwrap();
         }
-        let notices = codeyard::backend::db::notifications::records::list_notifications_for_user(
+        let notices = codeyard_db_repos::notifications::records::list_notifications_for_user(
             db.pool(),
             w.owner,
             10,
@@ -2624,7 +2592,7 @@ async fn ci_notification_links_follow_renames_and_transfers(db: &Database) {
         )
         .await
         .unwrap();
-        let name = codeyard::backend::db::users::accounts::get_user_by_id(db.pool(), owner)
+        let name = codeyard_db_identity::users::accounts::get_user_by_id(db.pool(), owner)
             .await
             .unwrap()
             .unwrap()
@@ -2733,7 +2701,7 @@ mod interleaved {
     /// A claimed run: queued by the owner and started by `WORKER`.
     async fn running_run(db: &Database, w: &World) -> CiRun {
         let run = db.enqueue(w.repo, w.owner, false, &[w.collab]).await;
-        let claimed = codeyard::backend::db::ci::claim_ci_run(
+        let claimed = codeyard_db_actions::ci::claim_ci_run(
             db.pool(),
             WORKER,
             "local",
@@ -2755,9 +2723,9 @@ mod interleaved {
     ) -> anyhow::Result<CiRun> {
         let sha = format!("{:040x}", Uuid::new_v4().as_u128());
         let blobs = serde_json::json!({ ".github/workflows/ci.yml": sha });
-        codeyard::backend::db::ci::enqueue_ci_run(
+        codeyard_db_actions::ci::enqueue_ci_run(
             pool,
-            codeyard::backend::db::ci::NewCiRun {
+            codeyard_db_actions::ci::NewCiRun {
                 repo_id: repo,
                 triggered_by_id: actor,
                 pipeline: "ci",
@@ -2794,7 +2762,7 @@ mod interleaved {
             .unwrap();
         let pool = db.pool().clone();
         let claiming = tokio::spawn(async move {
-            codeyard::backend::db::ci::claim_ci_run(&pool, WORKER, "local", &[], &platforms()).await
+            codeyard_db_actions::ci::claim_ci_run(&pool, WORKER, "local", &[], &platforms()).await
         });
         wait_until_blocked(raw, holder, 1).await;
         let released_at: chrono::DateTime<chrono::Utc> =
@@ -2830,26 +2798,14 @@ mod interleaved {
             .unwrap();
         let pool = db.pool().clone();
         let claiming = tokio::spawn(async move {
-            codeyard::backend::db::ci::claim_ci_run(
-                &pool,
-                WORKER,
-                "local",
-                &[w.owner],
-                &platforms(),
-            )
-            .await
+            codeyard_db_actions::ci::claim_ci_run(&pool, WORKER, "local", &[w.owner], &platforms())
+                .await
         });
         wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         let pool = db.pool().clone();
         let retrying = tokio::spawn(async move {
-            codeyard::backend::db::ci::claim_ci_run(
-                &pool,
-                WORKER,
-                "local",
-                &[w.owner],
-                &platforms(),
-            )
-            .await
+            codeyard_db_actions::ci::claim_ci_run(&pool, WORKER, "local", &[w.owner], &platforms())
+                .await
         });
         wait_until_blocked(&fixture(&db).raw, holder, 2).await;
         gate.commit().await.unwrap();
@@ -2881,7 +2837,7 @@ mod interleaved {
         let (mut worker, _) = lock_run(&fixture(&db).raw, run.id).await;
         let swept = promptly(
             "the stale sweep",
-            codeyard::backend::db::ci::fail_stale_ci_runs(db.pool(), 90),
+            codeyard_db_actions::ci::fail_stale_ci_runs(db.pool(), 90),
         )
         .await
         .unwrap();
@@ -2902,7 +2858,7 @@ mod interleaved {
             "the sweep announced nothing"
         );
         // Once the worker is done, the sweep still has nothing to fail.
-        let swept = codeyard::backend::db::ci::fail_stale_ci_runs(db.pool(), 90)
+        let swept = codeyard_db_actions::ci::fail_stale_ci_runs(db.pool(), 90)
             .await
             .unwrap();
         assert!(swept.0.is_empty() && swept.1.is_empty());
@@ -2924,7 +2880,7 @@ mod interleaved {
             .unwrap();
         let pool = db.pool().clone();
         let finishing = tokio::spawn(async move {
-            codeyard::backend::db::ci::finish_ci_run(&pool, run.id, WORKER, "success", None).await
+            codeyard_db_actions::ci::finish_ci_run(&pool, run.id, WORKER, "success", None).await
         });
         wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         sweep.commit().await.unwrap();
@@ -2959,7 +2915,7 @@ mod interleaved {
         let pool = db.pool().clone();
         let owner = w.owner;
         let cancelling = tokio::spawn(async move {
-            codeyard::backend::db::ci::request_ci_cancellation(&pool, run.run_id, owner).await
+            codeyard_db_actions::ci::request_ci_cancellation(&pool, run.run_id, owner).await
         });
         wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         claim.commit().await.unwrap();
@@ -2990,7 +2946,7 @@ mod interleaved {
         let (held, _) = lock_run(&fixture(&db).raw, first.id).await;
         let claimed = promptly(
             "the claim",
-            codeyard::backend::db::ci::claim_ci_run(
+            codeyard_db_actions::ci::claim_ci_run(
                 db.pool(),
                 WORKER,
                 "local",
@@ -3003,7 +2959,7 @@ mod interleaved {
         .expect("the second run is free");
         assert_eq!(claimed.id, second.id);
         held.rollback().await.unwrap();
-        let claimed = codeyard::backend::db::ci::claim_ci_run(
+        let claimed = codeyard_db_actions::ci::claim_ci_run(
             db.pool(),
             "worker-2",
             "local",
@@ -3030,7 +2986,7 @@ mod interleaved {
             let pool = db.pool().clone();
             let trusted = [w.collab];
             claims.push(tokio::spawn(async move {
-                codeyard::backend::db::ci::claim_ci_run(
+                codeyard_db_actions::ci::claim_ci_run(
                     &pool,
                     &format!("worker-{index}"),
                     "local",
@@ -3060,7 +3016,7 @@ mod interleaved {
         let runner = db.actor("concurrent_runner").await;
         let organization = organization_repository(&db, first_owner, "concurrent_governance").await;
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 db.pool(),
                 first_owner,
                 organization.id,
@@ -3070,7 +3026,7 @@ mod interleaved {
             .await
             .unwrap(),
         );
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             db.pool(),
             runner,
             organization.repo,
@@ -3081,7 +3037,7 @@ mod interleaved {
         let trusted = [runner];
         let running = db.enqueue(organization.repo, runner, false, &trusted).await;
         assert_eq!(
-            codeyard::backend::db::ci::claim_ci_run(
+            codeyard_db_actions::ci::claim_ci_run(
                 db.pool(),
                 WORKER,
                 "local",
@@ -3111,12 +3067,12 @@ mod interleaved {
 
         let pool = db.pool().clone();
         let banning = tokio::spawn(async move {
-            codeyard::backend::db::users::transitions::change_ban(&pool, site, first_owner, true)
+            codeyard_db_identity::users::transitions::change_ban(&pool, site, first_owner, true)
                 .await
         });
         let pool = db.pool().clone();
         let forcing = tokio::spawn(async move {
-            codeyard::backend::db::users::accounts::update_user_password(
+            codeyard_db_identity::users::accounts::update_user_password(
                 &pool,
                 second_owner,
                 "temporary-hash",
@@ -3132,14 +3088,14 @@ mod interleaved {
                 .await
                 .unwrap()
                 .unwrap(),
-            codeyard::backend::db::users::transitions::BanChange::Updated(user) if user.is_banned
+            codeyard_db_identity::users::transitions::BanChange::Updated(user) if user.is_banned
         ));
         promptly("the concurrent forced password change", forcing)
             .await
             .unwrap()
             .unwrap();
         assert!(
-            codeyard::backend::db::users::accounts::get_user_by_id(db.pool(), second_owner)
+            codeyard_db_identity::users::accounts::get_user_by_id(db.pool(), second_owner)
                 .await
                 .unwrap()
                 .unwrap()
@@ -3149,7 +3105,7 @@ mod interleaved {
         assert_cancelled(&db.run(queued_deploy.run_id).await, ACCESS_LOST);
         assert_eq!(deployment_status(&db, &queued_deploy).await, "cancelled");
         assert_eq!(
-            codeyard::backend::db::ci::heartbeat_ci_run(db.pool(), running.id, WORKER)
+            codeyard_db_actions::ci::heartbeat_ci_run(db.pool(), running.id, WORKER)
                 .await
                 .unwrap(),
             Some(true)
@@ -3185,8 +3141,8 @@ mod interleaved {
             .unwrap()
             .expect_err("the committed revocation must deny admission");
         assert!(matches!(
-            error.downcast_ref::<codeyard::backend::db::ci::CiAdmissionRefusal>(),
-            Some(codeyard::backend::db::ci::CiAdmissionRefusal::Denied(
+            error.downcast_ref::<codeyard_db_actions::ci::CiAdmissionRefusal>(),
+            Some(codeyard_db_actions::ci::CiAdmissionRefusal::Denied(
                 "CI repository execution permission denied"
             ))
         ));
@@ -3221,7 +3177,7 @@ mod interleaved {
 
         let pool = db.pool().clone();
         let claiming = tokio::spawn(async move {
-            codeyard::backend::db::ci::claim_ci_run(&pool, WORKER, "local", &trusted, &platforms())
+            codeyard_db_actions::ci::claim_ci_run(&pool, WORKER, "local", &trusted, &platforms())
                 .await
         });
         wait_until_blocked(&fixture(&db).raw, holder, 1).await;
@@ -3243,7 +3199,7 @@ mod interleaved {
         let actor = db.actor("enqueue_org_revoke_actor").await;
         let organization = organization_repository(&db, owner, "enqueue_org_revoke").await;
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 db.pool(),
                 owner,
                 organization.id,
@@ -3284,8 +3240,8 @@ mod interleaved {
             .unwrap()
             .expect_err("the committed membership revocation must deny admission");
         assert!(matches!(
-            error.downcast_ref::<codeyard::backend::db::ci::CiAdmissionRefusal>(),
-            Some(codeyard::backend::db::ci::CiAdmissionRefusal::Denied(
+            error.downcast_ref::<codeyard_db_actions::ci::CiAdmissionRefusal>(),
+            Some(codeyard_db_actions::ci::CiAdmissionRefusal::Denied(
                 "CI repository execution permission denied"
             ))
         ));
@@ -3312,7 +3268,7 @@ mod interleaved {
             .unwrap();
         let pool = db.pool().clone();
         let claiming = tokio::spawn(async move {
-            codeyard::backend::db::ci::claim_ci_run(&pool, WORKER, "local", &trusted, &platforms())
+            codeyard_db_actions::ci::claim_ci_run(&pool, WORKER, "local", &trusted, &platforms())
                 .await
         });
         wait_until_blocked(&fixture(&db).raw, holder, 1).await;

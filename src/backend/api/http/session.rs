@@ -190,7 +190,7 @@ pub(crate) async fn get_optional_user(
     let Some(session_id) = extract_session_id(headers) else {
         return Ok(None);
     };
-    let user = crate::backend::db::users::sessions::get_session_account(pool, &session_id)
+    let user = codeyard_db_identity::users::sessions::get_session_account(pool, &session_id)
         .await
         .map_err(|_| crate::backend::api::auth::errors::session_failure())?;
     // Absent/expired/revoked is anonymous; a storage outage is NOT anonymous.

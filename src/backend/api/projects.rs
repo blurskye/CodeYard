@@ -5,9 +5,6 @@ use crate::backend::api::user::responses::mutation_guard;
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::db::projects::Content;
-use crate::backend::db::projects::NewView;
-use crate::backend::db::projects::Owner;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -15,6 +12,9 @@ use axum::{
     routing::get,
     Router,
 };
+use codeyard_db_repos::projects::Content;
+use codeyard_db_repos::projects::NewView;
+use codeyard_db_repos::projects::Owner;
 use codeyard_webui::{app::Page, pages::projects as view};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -64,7 +64,7 @@ pub(crate) async fn sidebar(
     let mut item_ids = HashMap::new();
     let mut offset = 0;
     loop {
-        let (count, items) = crate::backend::db::projects::content_items(
+        let (count, items) = codeyard_db_repos::projects::content_items(
             pool, viewer, &content, true, offset, 100, true,
         )
         .await?;
@@ -79,11 +79,11 @@ pub(crate) async fn sidebar(
     let mut assigned = Vec::new();
     let mut seen = std::collections::HashSet::new();
     for filter in [
-        crate::backend::db::projects::ListFilter {
+        codeyard_db_repos::projects::ListFilter {
             content: Some((matches!(content, Content::Issue(_)), id)),
             ..Default::default()
         },
-        crate::backend::db::projects::ListFilter {
+        codeyard_db_repos::projects::ListFilter {
             repo: Some(repo),
             ..Default::default()
         },
@@ -91,7 +91,7 @@ pub(crate) async fn sidebar(
         let mut offset = 0;
         loop {
             let (count, rows) =
-                crate::backend::db::projects::list(pool, viewer, &filter, offset, 100).await?;
+                codeyard_db_repos::projects::list(pool, viewer, &filter, offset, 100).await?;
             for project in rows {
                 if seen.insert(project.id) {
                     assigned.push(project);
@@ -111,7 +111,7 @@ pub(crate) async fn sidebar(
             Owner::User(project.owner_id)
         };
         let can_edit = match viewer {
-            Some(id) => crate::backend::db::projects::can_write(pool, id, owner).await?,
+            Some(id) => codeyard_db_repos::projects::can_write(pool, id, owner).await?,
             None => false,
         };
         let item_id = item_ids.get(&project.id).copied();
@@ -120,13 +120,13 @@ pub(crate) async fn sidebar(
         }
         let name = match owner {
             Owner::User(id) => {
-                crate::backend::db::users::accounts::get_user_by_id(pool, id)
+                codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
                     .await?
                     .ok_or(codeyard_model::project_query::Refusal::Missing)?
                     .username
             }
             Owner::Organization(id) => {
-                crate::backend::db::organizations::profiles::get_public_organization_by_id(pool, id)
+                codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(pool, id)
                     .await?
                     .ok_or(codeyard_model::project_query::Refusal::Missing)?
                     .name
@@ -173,7 +173,7 @@ fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
 
 async fn owner(ctx: &PageContext, params: &Params) -> anyhow::Result<(Owner, String, String)> {
     if let Some(name) = params.get("org") {
-        let org = crate::backend::db::organizations::profiles::get_public_organization(
+        let org = codeyard_db_orgs::organizations::profiles::get_public_organization(
             &ctx.state.pool,
             name,
         )
@@ -188,9 +188,10 @@ async fn owner(ctx: &PageContext, params: &Params) -> anyhow::Result<(Owner, Str
         let name = params
             .get("username")
             .ok_or(codeyard_model::project_query::Refusal::Missing)?;
-        let user = crate::backend::db::users::accounts::get_user_by_username(&ctx.state.pool, name)
-            .await?
-            .ok_or(codeyard_model::project_query::Refusal::Missing)?;
+        let user =
+            codeyard_db_identity::users::accounts::get_user_by_username(&ctx.state.pool, name)
+                .await?
+                .ok_or(codeyard_model::project_query::Refusal::Missing)?;
         let base = format!(
             "/users/{}/projects",
             codeyard_webui::encode_component(&user.username)
@@ -199,7 +200,7 @@ async fn owner(ctx: &PageContext, params: &Params) -> anyhow::Result<(Owner, Str
     }
 }
 
-fn summary(project: crate::backend::db::projects::Project) -> view::Project {
+fn summary(project: codeyard_db_repos::projects::Project) -> view::Project {
     view::Project {
         number: project.number,
         title: project.title,
@@ -214,7 +215,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
     let (owner, name, base) = owner(ctx, params).await?;
     let viewer = ctx.user.as_ref().map(|u| u.id);
     let can_edit = match viewer {
-        Some(id) => crate::backend::db::projects::can_write(pool, id, owner).await?,
+        Some(id) => codeyard_db_repos::projects::can_write(pool, id, owner).await?,
         None => false,
     };
     let mut page = view::Page {
@@ -251,12 +252,11 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         let offset = (number - 1)
             .checked_mul(50)
             .ok_or(codeyard_model::project_query::Refusal::Invalid)?;
-        let mut filter =
-            crate::backend::db::projects::ListFilter::search(Some(owner), &page.filter);
-        filter.order = crate::backend::db::projects::ListOrder::Number;
+        let mut filter = codeyard_db_repos::projects::ListFilter::search(Some(owner), &page.filter);
+        filter.order = codeyard_db_repos::projects::ListOrder::Number;
         filter.descending = true;
         let (count, rows) =
-            crate::backend::db::projects::list(pool, viewer, &filter, offset, 50).await?;
+            codeyard_db_repos::projects::list(pool, viewer, &filter, offset, 50).await?;
         page.projects = rows.into_iter().map(summary).collect();
         let link = |number: i64| {
             let mut query = url::form_urlencoded::Serializer::new(String::new());
@@ -272,9 +272,9 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
     let number = number
         .parse()
         .map_err(|_| codeyard_model::project_query::Refusal::Missing)?;
-    let project = crate::backend::db::projects::get(pool, viewer, owner, number).await?;
-    let fields = crate::backend::db::projects::fields(pool, viewer, project.id).await?;
-    let views = crate::backend::db::projects::views(pool, viewer, project.id).await?;
+    let project = codeyard_db_repos::projects::get(pool, viewer, owner, number).await?;
+    let fields = codeyard_db_repos::projects::fields(pool, viewer, project.id).await?;
+    let views = codeyard_db_repos::projects::views(pool, viewer, project.id).await?;
     page.view_number = params
         .get("view_number")
         .map(|s| s.parse())
@@ -320,7 +320,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         })
         .collect::<anyhow::Result<_>>()?;
     for field in &fields {
-        let config = crate::backend::db::projects::field_configuration(field)?;
+        let config = codeyard_db_repos::projects::field_configuration(field)?;
         let options = config[if field.data_type == "iteration" {
             "iterations"
         } else {
@@ -353,7 +353,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             options,
         });
     }
-    let items = crate::backend::db::projects::items(pool, viewer, project.id)
+    let items = codeyard_db_repos::projects::items(pool, viewer, project.id)
         .await?
         .into_iter()
         .filter(|item| !item.archived)
@@ -416,7 +416,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
     items.truncate(ITEMS_PAGE);
     let item_ids: Vec<_> = items.iter().map(|(_, item)| item.id).collect();
     let links: HashMap<_, _> =
-        crate::backend::db::projects::item_links(pool, viewer, project.id, &item_ids)
+        codeyard_db_repos::projects::item_links(pool, viewer, project.id, &item_ids)
             .await?
             .into_iter()
             .map(|(id, owner, name, kind, number)| {
@@ -439,7 +439,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         None
     };
     if let Some(field) = group {
-        let options = crate::backend::db::projects::field_configuration(field)?;
+        let options = codeyard_db_repos::projects::field_configuration(field)?;
         page.columns.push(view::Column {
             name: "No value".into(),
             items: vec![],
@@ -570,10 +570,11 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
         .id;
     let session = crate::backend::api::http::session::extract_session_id(&ctx.headers)
         .ok_or(codeyard_model::project_query::Refusal::Denied)?;
-    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
     let (owner, _, base) = owner(ctx, params).await?;
     let Some(number) = params.get("project_number") else {
-        let project = crate::backend::db::projects::create(
+        let project = codeyard_db_repos::projects::create(
             pool,
             actor,
             &credential,
@@ -585,7 +586,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
         .await?;
         return Ok(format!("{base}/{}", project.number));
     };
-    let project = crate::backend::db::projects::get(
+    let project = codeyard_db_repos::projects::get(
         pool,
         Some(actor),
         owner,
@@ -602,12 +603,12 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
     };
     match field(form, "action") {
         "save" => {
-            crate::backend::db::projects::save(
+            codeyard_db_repos::projects::save(
                 pool,
                 actor,
                 &credential,
                 project.id,
-                &crate::backend::db::projects::Settings {
+                &codeyard_db_repos::projects::Settings {
                     title: Some(field(form, "title").into()),
                     description: Some(field(form, "description").into()),
                     public: Some(form.contains_key("public")),
@@ -618,7 +619,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             return Ok(format!("{path}/settings"));
         }
         "delete" => {
-            crate::backend::db::projects::delete(pool, actor, &credential, project.id).await?;
+            codeyard_db_repos::projects::delete(pool, actor, &credential, project.id).await?;
             return Ok(base);
         }
         "add-field" => {
@@ -627,7 +628,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 field(form, "options")
                     .lines()
                     .filter(|s| !s.trim().is_empty())
-                    .map(|s| crate::backend::db::projects::SelectOption {
+                    .map(|s| codeyard_db_repos::projects::SelectOption {
                         name: s.trim().into(),
                         color: None,
                         description: None,
@@ -635,14 +636,14 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                     .collect()
             });
             let iteration_configuration = if kind == "iteration" {
-                Some(crate::backend::db::projects::IterationConfiguration {
+                Some(codeyard_db_repos::projects::IterationConfiguration {
                     start_date: field(form, "start_date")
                         .parse()
                         .map_err(|_| codeyard_model::project_query::Refusal::Invalid)?,
                     duration: field(form, "duration")
                         .parse()
                         .map_err(|_| codeyard_model::project_query::Refusal::Invalid)?,
-                    iterations: vec![crate::backend::db::projects::Iteration {
+                    iterations: vec![codeyard_db_repos::projects::Iteration {
                         title: "Iteration 1".into(),
                         start_date: field(form, "start_date")
                             .parse()
@@ -655,12 +656,12 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             } else {
                 None
             };
-            crate::backend::db::projects::add_field(
+            codeyard_db_repos::projects::add_field(
                 pool,
                 actor,
                 &credential,
                 project.id,
-                &crate::backend::db::projects::NewField {
+                &codeyard_db_repos::projects::NewField {
                     name: field(form, "name").into(),
                     data_type: kind.into(),
                     single_select_options,
@@ -671,7 +672,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             return Ok(format!("{path}/settings"));
         }
         "delete-field" => {
-            crate::backend::db::projects::delete_field(
+            codeyard_db_repos::projects::delete_field(
                 pool,
                 actor,
                 &credential,
@@ -682,7 +683,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             return Ok(format!("{path}/settings"));
         }
         "draft" => {
-            crate::backend::db::projects::add_item(
+            codeyard_db_repos::projects::add_item(
                 pool,
                 actor,
                 &credential,
@@ -695,7 +696,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             .await?;
         }
         "add-item" | "link-repository" => {
-            let repo = crate::backend::db::repositories::records::get_repository(
+            let repo = codeyard_db_repos::repositories::records::get_repository(
                 pool,
                 field(form, "owner"),
                 field(form, "repo"),
@@ -703,7 +704,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             .await?
             .ok_or(codeyard_model::project_query::Refusal::Missing)?;
             if field(form, "action") == "link-repository" {
-                crate::backend::db::projects::link_repository(
+                codeyard_db_repos::projects::link_repository(
                     pool,
                     actor,
                     &credential,
@@ -724,13 +725,13 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 .map_err(|_| codeyard_model::project_query::Refusal::Invalid)?;
             let content = match field(form, "kind") {
                 "Issue" => Content::Issue(
-                    crate::backend::db::issues::get_issue(pool, repo.id, number)
+                    codeyard_db_repos::issues::get_issue(pool, repo.id, number)
                         .await?
                         .ok_or(codeyard_model::project_query::Refusal::Missing)?
                         .id,
                 ),
                 "PullRequest" => Content::PullRequest(
-                    crate::backend::db::pull_requests::records::get_pull_request(
+                    codeyard_db_repos::pull_requests::records::get_pull_request(
                         pool, repo.id, number,
                     )
                     .await?
@@ -739,12 +740,11 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 ),
                 _ => return Err(codeyard_model::project_query::Refusal::Invalid.into()),
             };
-            crate::backend::db::projects::add_item(pool, actor, &credential, project.id, &content)
+            codeyard_db_repos::projects::add_item(pool, actor, &credential, project.id, &content)
                 .await?;
         }
         "update-item" => {
-            let fields =
-                crate::backend::db::projects::fields(pool, Some(actor), project.id).await?;
+            let fields = codeyard_db_repos::projects::fields(pool, Some(actor), project.id).await?;
             let mut updates = Vec::new();
             for f in fields {
                 let Some(value) = form.get(&format!("value_{}", f.id)) else {
@@ -771,9 +771,9 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 } else {
                     json!(value)
                 };
-                updates.push(crate::backend::db::projects::FieldUpdate { id: f.id, value });
+                updates.push(codeyard_db_repos::projects::FieldUpdate { id: f.id, value });
             }
-            crate::backend::db::projects::update_item(
+            codeyard_db_repos::projects::update_item(
                 pool,
                 actor,
                 &credential,
@@ -784,7 +784,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             .await?;
         }
         "delete-item" => {
-            crate::backend::db::projects::delete_item(
+            codeyard_db_repos::projects::delete_item(
                 pool,
                 actor,
                 &credential,
@@ -795,7 +795,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
         }
         "view" => {
             let group = field(form, "group");
-            let view = crate::backend::db::projects::create_view(
+            let view = codeyard_db_repos::projects::create_view(
                 pool,
                 actor,
                 &credential,

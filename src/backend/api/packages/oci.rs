@@ -5,9 +5,9 @@ use crate::backend::api::packages::Error;
 use crate::backend::api::packages::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::packages::Blob;
-use crate::backend::db::packages::Publish;
-use crate::backend::db::packages::Upload;
+use codeyard_db_repos::packages::Blob;
+use codeyard_db_repos::packages::Publish;
+use codeyard_db_repos::packages::Upload;
 
 use crate::backend::storage::Download;
 use axum::{
@@ -171,10 +171,9 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
             if !crate::backend::packages::valid_digest(reference) {
                 return Err(Error::invalid());
             }
-            let blob =
-                crate::backend::db::packages::blob(&state.pool, package.id, token, reference)
-                    .await
-                    .map_err(Error::db)?;
+            let blob = codeyard_db_repos::packages::blob(&state.pool, package.id, token, reference)
+                .await
+                .map_err(Error::db)?;
             download(state, &blob, &method, &headers).await
         }
         ("uploads", "POST") if reference.is_empty() => {
@@ -198,7 +197,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                                 false,
                             )
                             .await?;
-                            let blob = crate::backend::db::packages::blob(
+                            let blob = codeyard_db_repos::packages::blob(
                                 &state.pool,
                                 source.id,
                                 Some(token.into()),
@@ -206,12 +205,12 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                             )
                             .await
                             .map_err(Error::db)?;
-                            crate::backend::db::packages::reserve_blob(
+                            codeyard_db_repos::packages::reserve_blob(
                                 &state.pool,
                                 package.id,
                                 token,
                                 &blob,
-                                crate::backend::db::packages::Charge::Upload,
+                                codeyard_db_repos::packages::Charge::Upload,
                             )
                             .await
                             .map_err(Error::db)?;
@@ -238,7 +237,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
             }
             let id = uuid::Uuid::new_v4().to_string();
             let upload =
-                crate::backend::db::packages::start_upload(&state.pool, package.id, token, &id)
+                codeyard_db_repos::packages::start_upload(&state.pool, package.id, token, &id)
                     .await
                     .map_err(Error::db)?;
             if let Some(digest) = query.get("digest") {
@@ -267,13 +266,13 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
         ("uploads", "GET" | "HEAD" | "PATCH" | "PUT" | "DELETE") => {
             let token = write_token()?;
             let upload =
-                crate::backend::db::packages::upload(&state.pool, package.id, token, reference)
+                codeyard_db_repos::packages::upload(&state.pool, package.id, token, reference)
                     .await
                     .map_err(Error::db)?;
             match method.as_str() {
                 "GET" | "HEAD" => upload_response(StatusCode::NO_CONTENT, name, &upload),
                 "DELETE" => {
-                    crate::backend::db::packages::cancel_upload(
+                    codeyard_db_repos::packages::cancel_upload(
                         &state.pool,
                         package.id,
                         token,
@@ -314,7 +313,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
         }
         ("manifests", "GET" | "HEAD") => {
             let version =
-                crate::backend::db::packages::version(&state.pool, package.id, token, reference)
+                codeyard_db_repos::packages::version(&state.pool, package.id, token, reference)
                     .await
                     .map_err(Error::db)?;
             let mut response = response(StatusCode::OK, None, Some(&version.digest))?;
@@ -373,7 +372,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 package.id,
                 token,
                 bytes.to_vec(),
-                crate::backend::db::packages::Charge::Upload,
+                codeyard_db_repos::packages::Charge::Upload,
             )
             .await
             .map_err(Error::db)?;
@@ -385,7 +384,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 vec![reference.into()]
             };
             let text = std::str::from_utf8(&bytes).map_err(|_| Error::invalid())?;
-            crate::backend::db::packages::publish(
+            codeyard_db_repos::packages::publish(
                 &state.pool,
                 token,
                 Publish {
@@ -411,10 +410,10 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 return Err(Error::invalid());
             }
             let version =
-                crate::backend::db::packages::version(&state.pool, package.id, token, reference)
+                codeyard_db_repos::packages::version(&state.pool, package.id, token, reference)
                     .await
                     .map_err(Error::db)?;
-            crate::backend::db::packages::set_deleted(
+            codeyard_db_repos::packages::set_deleted(
                 &state.pool,
                 package.id,
                 Some(version.id),
@@ -433,7 +432,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 .map_err(|_| Error::invalid())?
                 .unwrap_or(100)
                 .clamp(1, 1000);
-            let mut tags: Vec<String> = crate::backend::db::packages::tag_page(
+            let mut tags: Vec<String> = codeyard_db_repos::packages::tag_page(
                 &state.pool,
                 package.id,
                 token,
@@ -539,11 +538,11 @@ async fn append(
         package,
         token,
         bytes.to_vec(),
-        crate::backend::db::packages::Charge::Chunk(&upload.id),
+        codeyard_db_repos::packages::Charge::Chunk(&upload.id),
     )
     .await
     .map_err(Error::db)?;
-    crate::backend::db::packages::append_upload(
+    codeyard_db_repos::packages::append_upload(
         &state.pool,
         package,
         token,
@@ -561,7 +560,7 @@ async fn append(
 )]
 async fn finish(
     state: &AppState,
-    package: &crate::backend::db::packages::Package,
+    package: &codeyard_db_repos::packages::Package,
     token: i64,
     upload: &Upload,
     digest: &str,
@@ -573,14 +572,14 @@ async fn finish(
         return Err(Error::invalid());
     }
     let _slot = crate::backend::api::packages::upload_slot(state)?;
-    let current = crate::backend::db::packages::upload(&state.pool, package.id, token, &upload.id)
+    let current = codeyard_db_repos::packages::upload(&state.pool, package.id, token, &upload.id)
         .await
         .map_err(Error::db)?;
     let upload = append(state, package.id, token, current, headers, body, true).await?;
     let chunks: Vec<Blob> =
         serde_json::from_str(&upload.chunks).map_err(|_| Error::unavailable())?;
     let blob = if chunks.len() == 1 && chunks[0].digest == digest {
-        crate::backend::db::packages::blob(&state.pool, package.id, Some(token.into()), digest)
+        codeyard_db_repos::packages::blob(&state.pool, package.id, Some(token.into()), digest)
             .await
             .map_err(Error::db)?
     } else {
@@ -606,12 +605,12 @@ async fn finish(
             package.id,
             token,
             bytes,
-            crate::backend::db::packages::Charge::Assembled,
+            codeyard_db_repos::packages::Charge::Assembled,
         )
         .await
         .map_err(Error::db)?
     };
-    crate::backend::db::packages::finish_upload(
+    codeyard_db_repos::packages::finish_upload(
         &state.pool,
         package.id,
         token,
@@ -676,7 +675,7 @@ async fn manifest_blobs(
             .filter(|digest| crate::backend::packages::valid_digest(digest))
             .ok_or_else(Error::invalid)?;
         if index {
-            let child = crate::backend::db::packages::version(
+            let child = codeyard_db_repos::packages::version(
                 &state.pool,
                 package,
                 Some(token.into()),
@@ -722,7 +721,7 @@ async fn manifest_blobs(
             continue;
         }
         let blob =
-            crate::backend::db::packages::blob(&state.pool, package, Some(token.into()), digest)
+            codeyard_db_repos::packages::blob(&state.pool, package, Some(token.into()), digest)
                 .await
                 .map_err(Error::db)?;
         if blob.size != size {
@@ -791,7 +790,7 @@ pub(super) async fn download(
     match state
         .storage
         .download(
-            &crate::backend::db::packages::object_key(&blob.digest),
+            &codeyard_db_repos::packages::object_key(&blob.digest),
             &blob.digest,
             None,
         )

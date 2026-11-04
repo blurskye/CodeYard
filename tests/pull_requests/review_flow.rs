@@ -40,9 +40,7 @@ impl World {
         let repository = codeyard::backend::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
-            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
-                alice_id,
-            ),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
             "proj",
             None,
             true,
@@ -55,7 +53,7 @@ impl World {
             (carol_id, codeyard_db_core::models::AccessLevel::Write),
             (dave_id, codeyard_db_core::models::AccessLevel::Read),
         ] {
-            codeyard::backend::db::repositories::access::grant_repo_access(
+            codeyard_db_repos::repositories::access::grant_repo_access(
                 database.pool(),
                 user,
                 repository.id,
@@ -396,7 +394,7 @@ async fn reader_merge_form_leaves_the_stored_head(pg: bool) {
     let (number, first) = open_pull(&world.alice, "topic", world.base.as_str()).await;
     // The branch moves in the store. A save through the API would refresh the pull request
     // first, so the stored head would not be stale.
-    let repository = codeyard::backend::db::repositories::records::get_repository(
+    let repository = codeyard_db_repos::repositories::records::get_repository(
         world.database.pool(),
         "alice",
         "proj",
@@ -1265,7 +1263,7 @@ async fn review_requests_for(
     pool: &codeyard_db_core::DbPool,
     user_id: i64,
 ) -> Vec<(String, Option<String>)> {
-    codeyard::backend::db::notifications::records::list_notifications_for_user(
+    codeyard_db_repos::notifications::records::list_notifications_for_user(
         pool, user_id, 100, false,
     )
     .await
@@ -1739,7 +1737,7 @@ async fn commit_tree(
     parent_sha: &str,
     files: &[(&str, &str)],
 ) -> String {
-    let repository = codeyard::backend::db::repositories::records::get_repository(
+    let repository = codeyard_db_repos::repositories::records::get_repository(
         world.database.pool(),
         "alice",
         "proj",

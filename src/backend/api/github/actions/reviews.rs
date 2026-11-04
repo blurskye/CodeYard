@@ -30,10 +30,10 @@ async fn pending(
             .ok_or_else(crate::backend::api::github::auth::required)?
             .database_actor();
         let Json(input) =
-            Json::<crate::backend::db::deployment_reviews::Input>::from_request(request, &state)
+            Json::<codeyard_db_actions::deployment_reviews::Input>::from_request(request, &state)
                 .await
                 .map_err(|_| Error::validation("DeploymentReview", "configuration", "invalid"))?;
-        let rows = crate::backend::db::deployment_reviews::review(
+        let rows = codeyard_db_actions::deployment_reviews::review(
             &state.pool,
             actor,
             repo.id,
@@ -52,7 +52,7 @@ async fn pending(
         return Ok(Json(json!(values)));
     }
     let rows =
-        crate::backend::db::deployment_reviews::pending(&state.pool, repo.id, run.id, viewer)
+        codeyard_db_actions::deployment_reviews::pending(&state.pool, repo.id, run.id, viewer)
             .await
             .map_err(Error::unavailable)?;
     let mut values = Vec::new();
@@ -86,13 +86,13 @@ async fn history(
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let run = crate::backend::api::github::actions::run(&state, repo.id, id).await?;
-    let rows = crate::backend::db::deployment_reviews::history(&state.pool, repo.id, run.id)
+    let rows = codeyard_db_actions::deployment_reviews::history(&state.pool, repo.id, run.id)
         .await
         .map_err(Error::unavailable)?;
     let mut values = Vec::new();
     for row in rows {
         let user = if let Some(actor) = row.actor_id {
-            crate::backend::db::users::accounts::get_user_by_id(&state.pool, actor)
+            codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, actor)
                 .await
                 .map_err(Error::unavailable)?
                 .map(|user| crate::backend::webhooks::payloads::user(&user))

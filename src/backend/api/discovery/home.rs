@@ -46,7 +46,7 @@ pub(super) async fn home(
     let offset = i64::try_from(page.saturating_sub(1).saturating_mul(PAGE_SIZE as usize))
         .unwrap_or(i64::MAX);
     let (own, repository_count) =
-        match crate::backend::db::repositories::records::list_user_repository_page(
+        match codeyard_db_repos::repositories::records::list_user_repository_page(
             &ctx.state.pool,
             user.id,
             ctx.session_id.as_deref(),
@@ -61,7 +61,7 @@ pub(super) async fn home(
             Err(_) => return unavailable(&ctx, "home_repositories"),
         };
     let (shared, shared_count) =
-        match crate::backend::db::repositories::records::list_shared_repository_page(
+        match codeyard_db_repos::repositories::records::list_shared_repository_page(
             &ctx.state.pool,
             user.id,
             &find,
@@ -76,7 +76,7 @@ pub(super) async fn home(
         };
     // Trending is for other people's repositories, so the viewer's own are left out. The filter
     // narrows every repository list on the dashboard, Trending included.
-    let public = match crate::backend::db::repositories::records::list_trending_repositories(
+    let public = match codeyard_db_repos::repositories::records::list_trending_repositories(
         &ctx.state.pool,
         user.id,
         &find,

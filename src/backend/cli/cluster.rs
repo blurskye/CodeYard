@@ -18,10 +18,10 @@ use crate::backend::cluster::Relay;
 use crate::backend::cluster::NEEDS_POSTGRES;
 use codeyard_support::node_identity::NodeKey;
 
-use crate::backend::db::cluster::Authority;
 use crate::backend::node::NodeRoles;
 use anyhow::{anyhow, bail, ensure, Context, Result};
 use chrono::{DateTime, Utc};
+use codeyard_db_cluster::cluster::Authority;
 use codeyard_db_core::models::NodeStatusChange;
 use codeyard_db_core::models::ReplicaSetting;
 use codeyard_db_core::DbPool;
@@ -32,7 +32,7 @@ pub async fn own_address(pool: &DbPool, key: &NodeKey) -> Result<NodeAddress> {
     let not_serving = || {
         anyhow!("this node is not serving in cluster mode yet; start `codeyard serve` with cluster settings (for example IROH_BIND=0.0.0.0:7444) and try again")
     };
-    let node = crate::backend::db::cluster::get_node_by_public_key(pool, &key.public_hex())
+    let node = codeyard_db_cluster::cluster::get_node_by_public_key(pool, &key.public_hex())
         .await?
         .ok_or_else(not_serving)?;
     let hint = node.addr_hint.as_deref().ok_or_else(not_serving)?;
@@ -211,7 +211,7 @@ pub async fn run(
     require_postgres(pool)?;
     match command {
         Command::Enable => {
-            if crate::backend::db::cluster::enable_cluster(pool).await? {
+            if codeyard_db_cluster::cluster::enable_cluster(pool).await? {
                 println!("Cluster mode is on: machines can now join with the web, storage and ssh roles (see docs/CLUSTER.md).");
             } else {
                 println!("Cluster mode was already on.");
@@ -225,7 +225,7 @@ pub async fn run(
             approve,
         } => {
             ensure!(
-                roles.worker_only() || crate::backend::db::cluster::cluster_enabled(pool).await?,
+                roles.worker_only() || codeyard_db_cluster::cluster::cluster_enabled(pool).await?,
                 "this installation is in single-node mode, where an invite admits only runners (`--roles runner`); run `codeyard cluster enable` first to invite web, storage or ssh machines"
             );
             let key = load_existing(state_dir)?.ok_or_else(|| {
@@ -265,7 +265,7 @@ pub async fn run(
         Command::Invites => invites(pool).await,
         Command::CancelInvite { id } => {
             ensure!(
-                crate::backend::db::cluster::delete_join_token(pool, *id).await?,
+                codeyard_db_cluster::cluster::delete_join_token(pool, *id).await?,
                 "no invite with id {id}"
             );
             println!("Invite {id} cancelled; nodes that joined with it stay.");
@@ -291,7 +291,7 @@ pub async fn run(
         },
         Command::Adopt => {
             ensure!(
-                crate::backend::db::cluster::cluster_enabled(pool).await?,
+                codeyard_db_cluster::cluster::cluster_enabled(pool).await?,
                 "enable cluster mode before adopting repositories"
             );
             let key = load_existing(state_dir)?.ok_or_else(|| {
@@ -299,7 +299,7 @@ pub async fn run(
                     "this node has no key yet; start `codeyard serve` with cluster settings first"
                 )
             })?;
-            let node = crate::backend::db::cluster::get_node_by_public_key(pool, &key.public_hex())
+            let node = codeyard_db_cluster::cluster::get_node_by_public_key(pool, &key.public_hex())
                 .await?
                 .ok_or_else(|| {
                     anyhow!("this node is not registered; start `codeyard serve` with cluster settings first")
@@ -349,12 +349,12 @@ fn describe(setting: ReplicaSetting) -> String {
 }
 
 async fn replicas_status(pool: &DbPool) -> Result<()> {
-    let setting: ReplicaSetting = crate::backend::db::cluster::get_replicas(pool)
+    let setting: ReplicaSetting = codeyard_db_cluster::cluster::get_replicas(pool)
         .await?
         .parse()?;
     println!("Each repository keeps {}.", describe(setting));
-    let nodes = crate::backend::db::cluster::list_nodes(pool).await?;
-    let counts = crate::backend::db::cluster::replica_counts(pool).await?;
+    let nodes = codeyard_db_cluster::cluster::list_nodes(pool).await?;
+    let counts = codeyard_db_cluster::cluster::replica_counts(pool).await?;
     println!(
         "{:<20} {:<8} {:<10} {:<8} {:<8} Behind",
         "Node", "Status", "Primaries", "Copies", "Current"
@@ -382,7 +382,7 @@ async fn replicas_status(pool: &DbPool) -> Result<()> {
 async fn set_replicas(pool: &DbPool, value: &str) -> Result<()> {
     let setting: ReplicaSetting = value.parse()?;
     ensure!(
-        crate::backend::db::cluster::set_replicas(pool, &setting.to_string()).await?,
+        codeyard_db_cluster::cluster::set_replicas(pool, &setting.to_string()).await?,
         "this installation has no configuration yet; finish its setup first"
     );
     println!(
@@ -394,7 +394,7 @@ async fn set_replicas(pool: &DbPool, value: &str) -> Result<()> {
 }
 
 async fn node_id(pool: &DbPool, name: &str) -> Result<i64> {
-    crate::backend::db::cluster::get_node_by_name(pool, name)
+    codeyard_db_cluster::cluster::get_node_by_name(pool, name)
         .await?
         .map(|node| node.id)
         .ok_or_else(|| {
@@ -403,7 +403,7 @@ async fn node_id(pool: &DbPool, name: &str) -> Result<i64> {
 }
 
 async fn node_name(pool: &DbPool, id: i64) -> Result<String> {
-    Ok(crate::backend::db::cluster::get_node_by_id(pool, id)
+    Ok(codeyard_db_cluster::cluster::get_node_by_id(pool, id)
         .await?
         .map_or_else(|| format!("node {id}"), |node| node.name))
 }
@@ -411,7 +411,7 @@ async fn node_name(pool: &DbPool, id: i64) -> Result<String> {
 /// Whether `node` is the primary of `repository` now.
 async fn is_primary(pool: &DbPool, repository: i64, node: i64) -> Result<bool> {
     Ok(
-        crate::backend::db::repositories::records::get_repository_by_id(pool, repository)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository)
             .await?
             .is_some_and(|row| row.storage_node_id == Some(node)),
     )
@@ -422,7 +422,7 @@ async fn report_promotion(pool: &DbPool, promotion: Promotion) -> Result<()> {
         crate::backend::cluster::replicas::repository_name(pool, promotion.repository).await?;
     let from = node_name(pool, promotion.from).await?;
     let to = node_name(pool, promotion.to).await?;
-    if crate::backend::db::cluster::writes::write_settings(pool)
+    if codeyard_db_cluster::cluster::writes::write_settings(pool)
         .await?
         .write_quorum
         .is_some()
@@ -451,7 +451,7 @@ async fn promote_with_recovery(
     state_dir: &Path,
     repos_path: &Path,
 ) -> Result<Vec<Promotion>> {
-    let from = crate::backend::db::repositories::records::get_repository_by_id(pool, repository)
+    let from = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository)
         .await?
         .and_then(|row| row.storage_node_id)
         .context("repository has no primary")?;
@@ -470,7 +470,7 @@ async fn promote_with_recovery(
         return Err(error);
     };
     let Some(local) =
-        crate::backend::db::cluster::get_node_by_public_key(pool, &key.public_hex()).await?
+        codeyard_db_cluster::cluster::get_node_by_public_key(pool, &key.public_hex()).await?
     else {
         return Err(error);
     };
@@ -480,7 +480,7 @@ async fn promote_with_recovery(
         return Err(error);
     }
     Ok(
-        crate::backend::db::cluster::writes::write_family(pool, repository)
+        codeyard_db_cluster::cluster::writes::write_family(pool, repository)
             .await?
             .into_iter()
             .map(|(repository, _, _)| Promotion {
@@ -507,7 +507,7 @@ async fn promote_command(
             let (owner, repo) = name
                 .split_once('/')
                 .context("name the repository as owner/name")?;
-            let row = crate::backend::db::repositories::records::get_repository(pool, owner, repo)
+            let row = codeyard_db_repos::repositories::records::get_repository(pool, owner, repo)
                 .await?
                 .ok_or_else(|| anyhow!("no repository is named {name}"))?;
             let to = match to {
@@ -524,7 +524,7 @@ async fn promote_command(
         (None, Some(node)) => {
             let primary = node_id(pool, node).await?;
             let repositories: Vec<i64> =
-                crate::backend::db::cluster::list_primary_paths(pool, primary)
+                codeyard_db_cluster::cluster::list_primary_paths(pool, primary)
                     .await?
                     .into_iter()
                     .map(|(id, _)| id)
@@ -553,16 +553,16 @@ async fn promote_command(
             }
             // Check every remaining family member, including one whose root moved before
             // a later member failed. Successful later retries are not counted as failures.
-            let remaining = crate::backend::db::cluster::list_primary_paths(pool, primary).await?;
+            let remaining = codeyard_db_cluster::cluster::list_primary_paths(pool, primary).await?;
             let mut fenced = 0;
-            if crate::backend::db::cluster::writes::write_settings(pool)
+            if codeyard_db_cluster::cluster::writes::write_settings(pool)
                 .await?
                 .write_quorum
                 .is_some()
             {
                 for (repository, error) in &failures {
                     if !remaining.iter().any(|(id, _)| id == repository)
-                        && !crate::backend::db::cluster::writes::recovery_view(pool, *repository)
+                        && !codeyard_db_cluster::cluster::writes::recovery_view(pool, *repository)
                             .await?
                             .serving
                     {
@@ -597,7 +597,7 @@ async fn promote_command(
 }
 
 async fn list(pool: &DbPool) -> Result<()> {
-    let nodes = crate::backend::db::cluster::list_nodes(pool).await?;
+    let nodes = codeyard_db_cluster::cluster::list_nodes(pool).await?;
     if nodes.is_empty() {
         println!("No nodes yet. `codeyard serve` with cluster settings adds this one.");
         return Ok(());
@@ -621,7 +621,7 @@ async fn list(pool: &DbPool) -> Result<()> {
 }
 
 async fn invites(pool: &DbPool) -> Result<()> {
-    let invites = crate::backend::db::cluster::list_join_tokens(pool).await?;
+    let invites = codeyard_db_cluster::cluster::list_join_tokens(pool).await?;
     if invites.is_empty() {
         println!("No open invites. `codeyard cluster invite` creates one.");
         return Ok(());

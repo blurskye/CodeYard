@@ -24,7 +24,7 @@ pub(crate) async fn native_commits(
         return Err(ctx.error(StatusCode::NOT_FOUND, "Pull request not found."));
     };
     // A retargeted stack layer lists only its own commits, from its saved fork point.
-    let pull = crate::backend::db::pull_requests::records::get_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
         &ctx.state.pool,
         repo.record.id,
         number,

@@ -256,7 +256,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::dependabot_alerts::alerts(f.pool(), owner, repo)
+        codeyard_db_security::dependabot_alerts::alerts(f.pool(), owner, repo)
             .await
             .unwrap()[0]
             .state,
@@ -270,7 +270,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let rows = codeyard::backend::db::dependabot_alerts::alerts(f.pool(), owner, repo)
+    let rows = codeyard_db_security::dependabot_alerts::alerts(f.pool(), owner, repo)
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
@@ -281,7 +281,7 @@ async fn contract(pg: bool) {
     let a = db::advisories::create(f.pool(), owner, repo, &repo_advisory, false)
         .await
         .unwrap();
-    assert!(!codeyard::backend::db::dependabot_alerts::global(f.pool())
+    assert!(!codeyard_db_security::dependabot_alerts::global(f.pool())
         .await
         .unwrap()
         .iter()
@@ -295,13 +295,13 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(codeyard::backend::db::dependabot_alerts::global(f.pool())
+    assert!(codeyard_db_security::dependabot_alerts::global(f.pool())
         .await
         .unwrap()
         .iter()
         .any(|v| v["ghsa_id"] == a.ghsa_id));
     assert_eq!(
-        codeyard::backend::db::dependabot_alerts::alerts(f.pool(), owner, repo)
+        codeyard_db_security::dependabot_alerts::alerts(f.pool(), owner, repo)
             .await
             .unwrap()
             .len(),
@@ -397,7 +397,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    assert!(!codeyard::backend::db::dependabot_alerts::global(f.pool())
+    assert!(!codeyard_db_security::dependabot_alerts::global(f.pool())
         .await
         .unwrap()
         .iter()
@@ -411,10 +411,10 @@ async fn contract(pg: bool) {
     }
     let mut withdrawn = advisory();
     withdrawn["withdrawn_at"] = json!("2026-02-01T00:00:00Z");
-    codeyard::backend::db::dependabot_alerts::import(f.pool(), owner, &withdrawn)
+    codeyard_db_security::dependabot_alerts::import(f.pool(), owner, &withdrawn)
         .await
         .unwrap();
-    let rows = codeyard::backend::db::dependabot_alerts::alerts(f.pool(), owner, repo)
+    let rows = codeyard_db_security::dependabot_alerts::alerts(f.pool(), owner, repo)
         .await
         .unwrap();
     assert_eq!(

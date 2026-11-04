@@ -327,7 +327,7 @@ pub(crate) async fn require_node_access(
     next: Next,
 ) -> Response {
     let node_config =
-        match crate::backend::db::node_config::get_node_configuration(&state.pool).await {
+        match codeyard_db_cluster::node_config::get_node_configuration(&state.pool).await {
             Ok(config) => config,
             Err(_) => {
                 return (

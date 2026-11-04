@@ -6,13 +6,13 @@ use crate::backend::api::discovery::DiscoveryReadError;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
 
-use crate::backend::db::repositories::discovery::ItemSort;
-use crate::backend::db::repositories::records::RepositorySort;
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_db_repos::repositories::discovery::ItemSort;
+use codeyard_db_repos::repositories::records::RepositorySort;
 use codeyard_webui::app::Page as AppPage;
 use codeyard_webui::components::body_preview;
 use codeyard_webui::pages::discovery::{
@@ -159,7 +159,7 @@ async fn issue_cards(
 ) -> Result<Vec<IssueCard>, DiscoveryReadError> {
     let ids = rows.iter().map(|row| row.repo_id).collect::<Vec<_>>();
     let repos =
-        crate::backend::db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
+        codeyard_db_repos::repositories::records::get_repositories_by_ids(&state.pool, &ids)
             .await
             .map_err(|_| DiscoveryReadError::Unavailable)?
             .into_iter()
@@ -167,11 +167,11 @@ async fn issue_cards(
             .collect::<HashMap<_, _>>();
     let ids = repos.keys().copied().collect::<Vec<_>>();
     let owners =
-        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &ids)
+        codeyard_db_repos::repositories::records::repository_owner_names(&state.pool, &ids)
             .await
             .map_err(|_| DiscoveryReadError::Unavailable)?;
     let author_ids = rows.iter().map(|row| row.author_id).collect::<Vec<_>>();
-    let authors = crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &author_ids)
+    let authors = codeyard_db_identity::users::accounts::get_users_by_ids(&state.pool, &author_ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?
         .into_iter()
@@ -239,7 +239,7 @@ async fn load_search(
     } else {
         SearchCounts {
             repositories: count_as_usize(
-                crate::backend::db::repositories::discovery::count_repositories(
+                codeyard_db_repos::repositories::discovery::count_repositories(
                     &state.pool,
                     viewer,
                     &query,
@@ -249,7 +249,7 @@ async fn load_search(
                 .map_err(unavailable)?,
             ),
             issues: badge_count(
-                crate::backend::db::repositories::discovery::count_issues(
+                codeyard_db_repos::repositories::discovery::count_issues(
                     &state.pool,
                     viewer,
                     &query,
@@ -260,7 +260,7 @@ async fn load_search(
                 &mut model.counts_unavailable,
             )?,
             pulls: badge_count(
-                crate::backend::db::repositories::discovery::count_pull_requests(
+                codeyard_db_repos::repositories::discovery::count_pull_requests(
                     &state.pool,
                     viewer,
                     &query,
@@ -271,7 +271,7 @@ async fn load_search(
                 &mut model.counts_unavailable,
             )?,
             users: count_as_usize(
-                crate::backend::db::repositories::discovery::count_users(&state.pool, &query, cap)
+                codeyard_db_repos::repositories::discovery::count_users(&state.pool, &query, cap)
                     .await
                     .map_err(unavailable)?,
             ),
@@ -283,7 +283,7 @@ async fn load_search(
     let limit = RESULTS_PER_PAGE as i64 + 1;
     match model.tab.as_str() {
         "repos" => {
-            let repos = crate::backend::db::repositories::discovery::search_repositories(
+            let repos = codeyard_db_repos::repositories::discovery::search_repositories(
                 &state.pool,
                 viewer,
                 &query,
@@ -298,7 +298,7 @@ async fn load_search(
             model.repositories = repository_cards(state, viewer, repos).await?;
         }
         "issues" => {
-            let issues = crate::backend::db::repositories::discovery::search_issues(
+            let issues = codeyard_db_repos::repositories::discovery::search_issues(
                 &state.pool,
                 viewer,
                 &query,
@@ -329,7 +329,7 @@ async fn load_search(
             .await?;
         }
         "pulls" => {
-            let pulls = crate::backend::db::repositories::discovery::search_pull_requests(
+            let pulls = codeyard_db_repos::repositories::discovery::search_pull_requests(
                 &state.pool,
                 viewer,
                 &query,
@@ -364,7 +364,7 @@ async fn load_search(
             .await?;
         }
         "users" => {
-            let users = crate::backend::db::repositories::discovery::search_users(
+            let users = codeyard_db_repos::repositories::discovery::search_users(
                 &state.pool,
                 &query,
                 offset,
@@ -448,7 +448,7 @@ pub(super) async fn search_page(
     if let Some(viewer) = viewer {
         let live = match ctx.session_id.as_deref() {
             Some(id) => {
-                match crate::backend::db::users::sessions::get_session_user(&ctx.state.pool, id)
+                match codeyard_db_identity::users::sessions::get_session_user(&ctx.state.pool, id)
                     .await
                 {
                     Ok(user) => user.is_some_and(|user| user.id == viewer),

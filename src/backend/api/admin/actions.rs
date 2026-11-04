@@ -8,7 +8,6 @@ use crate::backend::api::user::responses::require_account;
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::db::actions::ActionsSettings;
 use axum::{
     extract::{DefaultBodyLimit, Form, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -16,6 +15,7 @@ use axum::{
     routing::get,
     Router,
 };
+use codeyard_db_actions::actions::ActionsSettings;
 use codeyard_webui::{app::Page, pages::admin::actions as view};
 use std::sync::Arc;
 
@@ -149,7 +149,7 @@ async fn render(
             cache_retention_days: field(fields, "cache_retention_days").trim().to_owned(),
             artifact_retention_days: field(fields, "artifact_retention_days").trim().to_owned(),
         },
-        None => match crate::backend::db::actions::get_actions_settings(&ctx.state.pool).await {
+        None => match codeyard_db_actions::actions::get_actions_settings(&ctx.state.pool).await {
             Ok(saved) => view::Settings {
                 default_engine: saved.default_engine,
                 codeyard_actions_enabled: saved.codeyard_actions_enabled,
@@ -227,7 +227,7 @@ async fn save_form(
     let actor = ctx.user.as_ref().expect("admin guard").id;
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match crate::backend::db::actions::save_actions_settings(
+    match codeyard_db_actions::actions::save_actions_settings(
         &ctx.state.pool,
         actor,
         &session,

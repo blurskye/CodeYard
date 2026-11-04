@@ -14,9 +14,9 @@ use crate::backend::api::repos::forms::authorize_post;
 use crate::backend::api::repos::forms::field;
 use crate::backend::app::AppState;
 
-use crate::backend::db::assignees::AssignedItem;
-use crate::backend::db::assignees::AssignmentRefusal;
-use crate::backend::db::assignees::MAX_ASSIGNEES;
+use codeyard_db_repos::assignees::AssignedItem;
+use codeyard_db_repos::assignees::AssignmentRefusal;
+use codeyard_db_repos::assignees::MAX_ASSIGNEES;
 
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -26,7 +26,7 @@ use codeyard_webui::pages::repos::issues::Kind;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-fn authority(ctx: &PageContext) -> ResultPage<crate::backend::db::credentials::Actor> {
+fn authority(ctx: &PageContext) -> ResultPage<codeyard_db_core::queries::credentials::Actor> {
     Ok(ctx.database_actor(ctx.require_user()?.id))
 }
 
@@ -70,13 +70,13 @@ pub(crate) async fn assigned_item(
 ) -> ResultPage<AssignedItem> {
     match kind {
         Kind::Issue => {
-            crate::backend::db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
+            codeyard_db_repos::issues::get_issue(&ctx.state.pool, repo.record.id, number)
                 .await
                 .map_err(|_| unavailable(ctx))?
                 .map(|issue| AssignedItem::Issue(issue.id))
                 .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))
         }
-        Kind::Pull => crate::backend::db::pull_requests::records::get_pull_request(
+        Kind::Pull => codeyard_db_repos::pull_requests::records::get_pull_request(
             &ctx.state.pool,
             repo.record.id,
             number,
@@ -91,7 +91,7 @@ pub(crate) async fn assigned_item(
 /// The user id of a username. A name that is no user matches nothing.
 pub(crate) async fn user_id(ctx: &PageContext, username: &str) -> ResultPage<Option<i64>> {
     Ok(
-        crate::backend::db::users::accounts::get_user_by_username(&ctx.state.pool, username)
+        codeyard_db_identity::users::accounts::get_user_by_username(&ctx.state.pool, username)
             .await
             .map_err(|_| unavailable(ctx))?
             .map(|user| user.id),
@@ -126,7 +126,7 @@ pub(crate) async fn native_assign(
         number,
         title: &value.title,
     };
-    let outcome = match crate::backend::db::users::accounts::get_user_by_username(
+    let outcome = match codeyard_db_identity::users::accounts::get_user_by_username(
         &ctx.state.pool,
         username.trim(),
     )

@@ -1,7 +1,7 @@
 //! The webhooks section's forms on an organization settings page. Only owners may use them.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
-use crate::backend::db::webhooks::HookOwner;
+use codeyard_db_repos::webhooks::HookOwner;
 
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, Uri};
@@ -39,7 +39,7 @@ pub(super) async fn post(
         &ctx.state.pool,
         ctx.state.secret_encryptor.as_deref(),
         actor,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),

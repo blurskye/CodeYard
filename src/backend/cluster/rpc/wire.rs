@@ -34,16 +34,16 @@ fn is_zero(value: &usize) -> bool {
 /// number from an older peer carries no secret and fails to decode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct PublicationCredential(crate::backend::db::credentials::Actor);
+pub struct PublicationCredential(codeyard_db_core::queries::credentials::Actor);
 impl PublicationCredential {
     /// Trusted in-process callers carry no credential, and the receiving node uses the caller.
-    pub fn retain(actor: crate::backend::db::credentials::Actor) -> Option<Self> {
+    pub fn retain(actor: codeyard_db_core::queries::credentials::Actor) -> Option<Self> {
         actor.credential.is_some().then_some(Self(actor))
     }
     pub fn into_actor(
         self,
         expected: i64,
-    ) -> Result<crate::backend::db::credentials::Actor, RepoError> {
+    ) -> Result<codeyard_db_core::queries::credentials::Actor, RepoError> {
         let Self(actor) = self;
         if actor.user_id != expected {
             return Err(invalid("publication credential actor mismatch"));
@@ -60,7 +60,7 @@ pub enum PublicationText {
     Legacy(String),
     Retained {
         value: String,
-        authority: crate::backend::db::credentials::Actor,
+        authority: codeyard_db_core::queries::credentials::Actor,
     },
 }
 impl From<&str> for PublicationText {
@@ -74,7 +74,7 @@ impl From<String> for PublicationText {
     }
 }
 impl PublicationText {
-    pub fn retain(value: &str, authority: crate::backend::db::credentials::Actor) -> Self {
+    pub fn retain(value: &str, authority: codeyard_db_core::queries::credentials::Actor) -> Self {
         if authority.credential.is_none() {
             return Self::Legacy(value.into());
         }
@@ -86,7 +86,7 @@ impl PublicationText {
     pub fn into_parts(
         self,
         actor: i64,
-    ) -> Result<(crate::backend::db::credentials::Actor, String), RepoError> {
+    ) -> Result<(codeyard_db_core::queries::credentials::Actor, String), RepoError> {
         match self {
             Self::Legacy(value) => Ok((actor.into(), value)),
             Self::Retained { value, authority } => {
@@ -438,8 +438,8 @@ pub enum Operation {
         alias = "ConfigureDependencySecurity"
     )]
     ConfigureDependencySecurity {
-        credential: crate::backend::db::users::accounts::OwnedAccountCredential,
-        feature: crate::backend::db::repositories::dependencies::Feature,
+        credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential,
+        feature: codeyard_db_repos::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
     },
@@ -449,7 +449,7 @@ pub enum Operation {
     },
     PatchRepository {
         default_branch: PublicationText,
-        changes: crate::backend::db::repositories::records::RepositoryChanges<String>,
+        changes: codeyard_db_repos::repositories::records::RepositoryChanges<String>,
     },
     CreateTag {
         name: String,
@@ -478,7 +478,7 @@ pub enum Operation {
     )]
     PublishDependencyUpdate {
         prepared: PreparedFile,
-        publication: Box<crate::backend::db::repositories::dependencies::Publication>,
+        publication: Box<codeyard_db_repos::repositories::dependencies::Publication>,
     },
     SaveFile {
         write: FileWrite,
@@ -524,7 +524,7 @@ pub enum Operation {
         token: Option<PublicationCredential>,
         /// The merge policy revision the merge was checked against; the publish refuses a newer one.
         #[serde(default)]
-        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
+        policy: Option<codeyard_db_repos::pull_requests::merge_policy::Snapshot>,
     },
     /// Publishes a stacked merge commit. Each head is `(head branch or pull ref, commit)`.
     PublishStackedMerge {
@@ -536,7 +536,7 @@ pub enum Operation {
         token: Option<PublicationCredential>,
         /// The merge policy revision the merge was checked against; the publish refuses a newer one.
         #[serde(default)]
-        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
+        policy: Option<codeyard_db_repos::pull_requests::merge_policy::Snapshot>,
     },
     /// Builds the commits of a restack: `from..head` replayed onto `onto`.
     PrepareRestack {

@@ -3,9 +3,9 @@ use crate::backend::api::github::pagination::Pagination;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 
-use crate::backend::db::users::gpg_keys::GpgKey;
+use codeyard_db_identity::users::gpg_keys::GpgKey;
 
 use crate::backend::identity::gpg::GpgError;
 
@@ -40,7 +40,7 @@ async fn documents(state: &AppState, user: &User, keys: &[GpgKey]) -> Result<Vec
         .into_iter()
         .filter_map(|(email, verified)| verified.then_some(email))
         .collect();
-    let subkeys = crate::backend::db::users::gpg_keys::list_subkeys(
+    let subkeys = codeyard_db_identity::users::gpg_keys::list_subkeys(
         &state.pool,
         user.id,
         &keys.iter().map(|key| key.id).collect::<Vec<_>>(),
@@ -59,7 +59,7 @@ async fn page(
     uri: axum::http::Uri,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let mut keys = crate::backend::db::users::gpg_keys::list_gpg_keys(
+    let mut keys = codeyard_db_identity::users::gpg_keys::list_gpg_keys(
         &state.pool,
         user.id,
         (limit + 1) as i64,
@@ -152,7 +152,7 @@ async fn detail(
     let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
-    let key = crate::backend::db::users::gpg_keys::get_gpg_key(&state.pool, actor.user.id, id)
+    let key = codeyard_db_identity::users::gpg_keys::get_gpg_key(&state.pool, actor.user.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;

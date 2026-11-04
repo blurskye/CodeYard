@@ -153,7 +153,7 @@ pub(super) async fn actor(
     pool: &codeyard_db_core::DbPool,
     id: i64,
 ) -> Result<codeyard_db_core::models::User, OperationError> {
-    crate::backend::db::users::accounts::get_user_by_id(pool, id)
+    codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
         .await
         .map_err(write_error)?
         .filter(|user| !user.is_banned)
@@ -241,15 +241,15 @@ pub(super) async fn require_admin(
 }
 
 pub(crate) fn write_error(error: anyhow::Error) -> OperationError {
-    if error.is::<crate::backend::db::pull_caps::PullCapReached>() {
+    if error.is::<codeyard_db_repos::pull_caps::PullCapReached>() {
         return OperationError::Invalid {
             code: "pull_request_creation_cap",
             message: error.to_string(),
         };
     }
-    use crate::backend::db::discussions::DiscussionWriteRefusal;
+    use codeyard_db_core::queries::discussions::DiscussionWriteRefusal;
     if let Some(refusal) =
-        error.downcast_ref::<crate::backend::db::pull_requests::records::IssueConversionRefusal>()
+        error.downcast_ref::<codeyard_db_repos::pull_requests::records::IssueConversionRefusal>()
     {
         return OperationError::Invalid {
             code: "invalid_issue_conversion",

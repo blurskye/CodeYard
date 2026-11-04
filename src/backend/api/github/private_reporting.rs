@@ -36,7 +36,7 @@ async fn check(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let enabled = crate::backend::db::repositories::security::enabled(&state.pool, repo.id)
+    let enabled = codeyard_db_repos::repositories::security::enabled(&state.pool, repo.id)
         .await
         .map_err(failure)?;
     Ok(Json(serde_json::json!({"enabled": enabled})))
@@ -50,7 +50,7 @@ async fn set(
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
-    crate::backend::db::repositories::security::set_enabled(
+    codeyard_db_repos::repositories::security::set_enabled(
         &state.pool,
         actor.database_actor(),
         repo.id,

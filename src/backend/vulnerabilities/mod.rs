@@ -14,9 +14,9 @@ use std::{cmp::Ordering, io::Read, sync::Arc, time::Duration};
 pub async fn ingest(pool: &codeyard_db_core::DbPool, bytes: &[u8]) -> Result<bool> {
     let bytes = bytes.to_vec();
     let record = tokio::task::spawn_blocking(move || Advisory::parse(&bytes)?.prepare()).await??;
-    let changed = crate::backend::db::vulnerabilities::upsert(pool, &record).await?;
+    let changed = codeyard_db_security::vulnerabilities::upsert(pool, &record).await?;
     if changed {
-        crate::backend::db::vulnerabilities::rescan_all(pool).await?;
+        codeyard_db_security::vulnerabilities::rescan_all(pool).await?;
     }
     Ok(changed)
 }
@@ -28,7 +28,7 @@ pub async fn findings(pool: &codeyard_db_core::DbPool, package: &Package) -> Res
         versions::compare(ecosystem, &package.version, &package.version).is_some(),
         "Unsupported locked package version"
     );
-    let rows = crate::backend::db::vulnerabilities::advisories(
+    let rows = codeyard_db_security::vulnerabilities::advisories(
         pool,
         ecosystem,
         &name(ecosystem, &package.name),
@@ -48,7 +48,7 @@ pub async fn scan(
     repo: &codeyard_db_core::models::Repository,
     generation: i64,
 ) -> Result<()> {
-    let reader = crate::backend::db::dependency_graph::Reader::Scan(generation);
+    let reader = codeyard_db_security::dependency_graph::Reader::Scan(generation);
     let reference = format!("refs/heads/{}", repo.default_branch);
     let (sha, packages) = match crate::backend::repositories::dependency_graph::native_inventory(
         state, &reader, repo, &reference,
@@ -63,17 +63,22 @@ pub async fn scan(
     };
     let snapshot =
         crate::backend::repositories::dependency_graph::snapshot(sha, reference, packages);
-    crate::backend::db::vulnerabilities::save_snapshot(&state.pool, repo.id, generation, &snapshot)
-        .await
+    codeyard_db_security::vulnerabilities::save_snapshot(
+        &state.pool,
+        repo.id,
+        generation,
+        &snapshot,
+    )
+    .await
 }
 async fn sync(state: &AppState) -> Result<()> {
-    let settings = crate::backend::db::vulnerabilities::settings(&state.pool).await?;
+    let settings = codeyard_db_security::vulnerabilities::settings(&state.pool).await?;
     synchronize(&state.pool, &settings).await
 }
 /// Downloads each enabled ecosystem's `all.zip` from the OSV mirror and stores its records.
 pub async fn synchronize(
     pool: &codeyard_db_core::DbPool,
-    settings: &crate::backend::db::vulnerabilities::Settings,
+    settings: &codeyard_db_security::vulnerabilities::Settings,
 ) -> Result<()> {
     let enabled: Vec<String> = serde_json::from_str(&settings.ecosystems)?;
     let client = reqwest::Client::builder()
@@ -146,10 +151,10 @@ pub async fn synchronize(
             // Repositories are rescanned once per archive, not once per changed record.
             let mut changed = false;
             for record in records {
-                changed |= crate::backend::db::vulnerabilities::upsert(pool, &record).await?;
+                changed |= codeyard_db_security::vulnerabilities::upsert(pool, &record).await?;
             }
             if changed {
-                crate::backend::db::vulnerabilities::rescan_all(pool).await?;
+                codeyard_db_security::vulnerabilities::rescan_all(pool).await?;
             }
             Ok::<_, anyhow::Error>(())
         }
@@ -173,22 +178,22 @@ pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bo
     loop {
         tokio::select! {_ = stop.changed()=>break,_=interval.tick()=>{}}
         let work = async {
-            if crate::backend::db::vulnerabilities::claim_sync(&state.pool).await? {
+            if codeyard_db_security::vulnerabilities::claim_sync(&state.pool).await? {
                 if let Err(error) = sync(&state).await {
                     tracing::warn!(%error,"OSV synchronization failed");
                 }
             }
             if !discovered {
-                crate::backend::db::vulnerabilities::queue_changed(&state.pool).await?;
+                codeyard_db_security::vulnerabilities::queue_changed(&state.pool).await?;
                 discovered = true;
             }
             for _ in 0..20 {
                 let Some((repo, generation)) =
-                    crate::backend::db::vulnerabilities::claim(&state.pool).await?
+                    codeyard_db_security::vulnerabilities::claim(&state.pool).await?
                 else {
                     break;
                 };
-                if let Some(repo) = crate::backend::db::repositories::records::get_repository_by_id(
+                if let Some(repo) = codeyard_db_repos::repositories::records::get_repository_by_id(
                     &state.pool,
                     repo,
                 )
@@ -265,7 +270,7 @@ mod tests {
             document["ghsa_id"].as_str().unwrap().to_owned(),
             advisory,
         )]);
-        let matches = crate::backend::db::dependabot_alerts::matches(
+        let matches = codeyard_db_core::queries::dependabot_alerts::matches(
             std::slice::from_ref(&snapshot),
             std::slice::from_ref(&document),
             &osv,
@@ -274,11 +279,13 @@ mod tests {
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].0.version, "1.0rc1");
         osv.values_mut().next().unwrap().withdrawn = Some(chrono::Utc::now());
-        assert!(
-            crate::backend::db::dependabot_alerts::matches(&[snapshot], &[document], &osv)
-                .unwrap()
-                .is_empty()
-        );
+        assert!(codeyard_db_core::queries::dependabot_alerts::matches(
+            &[snapshot],
+            &[document],
+            &osv
+        )
+        .unwrap()
+        .is_empty());
     }
     #[test]
     fn local_maven_advisories_match_namespaced_package_urls() {
@@ -298,7 +305,7 @@ mod tests {
             "refs/heads/main".into(),
             vec![package],
         );
-        let matches = crate::backend::db::dependabot_alerts::matches(
+        let matches = codeyard_db_core::queries::dependabot_alerts::matches(
             &[snapshot],
             &[document],
             &std::collections::BTreeMap::new(),

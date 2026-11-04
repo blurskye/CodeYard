@@ -3,9 +3,9 @@ use crate::backend::api::discovery::repository_cards;
 use crate::backend::api::discovery::unavailable;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
-use crate::backend::db::repositories::records::RepositoryFilter;
-use crate::backend::db::repositories::records::RepositoryKind;
-use crate::backend::db::repositories::records::RepositorySort;
+use codeyard_db_repos::repositories::records::RepositoryFilter;
+use codeyard_db_repos::repositories::records::RepositoryKind;
+use codeyard_db_repos::repositories::records::RepositorySort;
 
 use axum::{
     extract::State,
@@ -99,7 +99,7 @@ pub(super) async fn explore_page(
     };
     // One row past the page shows whether an older page exists.
     let offset = (filters.page as i64 - 1) * EXPLORE_PAGE_SIZE as i64;
-    let mut repos = match crate::backend::db::repositories::records::search_public_repositories(
+    let mut repos = match codeyard_db_repos::repositories::records::search_public_repositories(
         &ctx.state.pool,
         &filters.query,
         RepositoryFilter {
@@ -124,7 +124,7 @@ pub(super) async fn explore_page(
             Err(_) => return unavailable(&ctx, "explore_owners"),
         };
     let languages =
-        crate::backend::db::repositories::records::public_languages(&ctx.state.pool, 100)
+        codeyard_db_repos::repositories::records::public_languages(&ctx.state.pool, 100)
             .await
             .unwrap_or_default();
     ctx.page_model(

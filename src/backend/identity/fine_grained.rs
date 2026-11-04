@@ -4,20 +4,20 @@
 //! request still runs as the user, and this module only narrows it.
 use codeyard_support::token_hash::token_hash;
 
-use crate::backend::db::fine_grained_tokens::within;
-use crate::backend::db::fine_grained_tokens::Bounds;
-use crate::backend::db::fine_grained_tokens::NewToken;
-use crate::backend::db::fine_grained_tokens::Policy;
 use chrono::{DateTime, Utc};
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::queries::fine_grained_tokens::within;
+use codeyard_db_core::queries::fine_grained_tokens::Bounds;
+use codeyard_db_core::queries::fine_grained_tokens::Policy;
 use codeyard_db_core::DbPool;
+use codeyard_db_identity::fine_grained_tokens::NewToken;
 use serde_json::{Map, Value};
 
 pub const PREFIX: &str = codeyard_support::tokens::FGPAT_PREFIX;
 /// The longest lifetime any token may have, and the default organization maximum.
 pub const MAX_DAYS: i64 = 366;
 pub const DEFAULT_DAYS: i64 = 30;
-pub const MAX_REPOSITORIES: usize = crate::backend::db::fine_grained_tokens::MAX_REPOSITORIES;
+pub const MAX_REPOSITORIES: usize = codeyard_db_identity::fine_grained_tokens::MAX_REPOSITORIES;
 
 /// What any token may read on a public repository, as an anonymous visitor can.
 fn public_read() -> Value {
@@ -197,7 +197,7 @@ pub async fn create(
 ) -> Result<Created, TokenError> {
     let session = session.ok_or(TokenError::Denied)?;
     let unavailable = |_| TokenError::Unavailable;
-    let account = crate::backend::db::users::accounts::get_user_by_id(pool, user)
+    let account = codeyard_db_identity::users::accounts::get_user_by_id(pool, user)
         .await
         .map_err(unavailable)?
         .ok_or(TokenError::Denied)?;
@@ -205,7 +205,7 @@ pub async fn create(
         Owner::User(id) if id == user => None,
         Owner::User(_) => return Err(TokenError::Denied),
         Owner::Organization(org) => {
-            let policy = crate::backend::db::fine_grained_tokens::policy(pool, org)
+            let policy = codeyard_db_identity::fine_grained_tokens::policy(pool, org)
                 .await
                 .map_err(unavailable)?;
             if !policy.fine_grained_allowed {
@@ -218,7 +218,7 @@ pub async fn create(
     };
     let permissions = validate(&request, policy.as_ref(), Utc::now())?;
     for id in &request.repositories {
-        let repo = crate::backend::db::repositories::records::get_repository_by_id(pool, *id)
+        let repo = codeyard_db_repos::repositories::records::get_repository_by_id(pool, *id)
             .await
             .map_err(unavailable)?;
         let readable = match &repo {
@@ -238,7 +238,7 @@ pub async fn create(
     let value = format!("{PREFIX}{}", codeyard_support::crypto::random_hex());
     let write = permissions.values().any(|level| level != "read");
     let permissions = Value::Object(permissions).to_string();
-    let (id, status) = crate::backend::db::fine_grained_tokens::create(
+    let (id, status) = codeyard_db_identity::fine_grained_tokens::create(
         pool,
         user,
         session,
@@ -273,14 +273,14 @@ pub async fn regenerate(
 ) -> Result<String, TokenError> {
     let session = session.ok_or(TokenError::Denied)?;
     let unavailable = |_| TokenError::Unavailable;
-    let token = crate::backend::db::fine_grained_tokens::get(pool, id)
+    let token = codeyard_db_identity::fine_grained_tokens::get(pool, id)
         .await
         .map_err(unavailable)?
         .filter(|token| token.user_id == user)
         .ok_or(TokenError::Missing)?;
     let policy = match token.owner_org_id {
         Some(org) => Some(
-            crate::backend::db::fine_grained_tokens::policy(pool, org)
+            codeyard_db_identity::fine_grained_tokens::policy(pool, org)
                 .await
                 .map_err(unavailable)?,
         ),
@@ -298,7 +298,7 @@ pub async fn regenerate(
         ));
     }
     let value = format!("{PREFIX}{}", codeyard_support::crypto::random_hex());
-    if crate::backend::db::fine_grained_tokens::regenerate(
+    if codeyard_db_identity::fine_grained_tokens::regenerate(
         pool,
         user,
         session,
@@ -374,7 +374,7 @@ impl Grant {
                 Access::All => true,
                 Access::Selected => {
                     !repo.is_gist
-                        && crate::backend::db::fine_grained_tokens::selected(
+                        && codeyard_db_identity::fine_grained_tokens::selected(
                             pool,
                             self.token_id,
                             repo.id,
@@ -387,7 +387,7 @@ impl Grant {
     /// The token's permissions on one repository, before the user's own rights apply.
     pub async fn repository(&self, pool: &DbPool, repo: i64) -> anyhow::Result<Option<Value>> {
         let Some(repo) =
-            crate::backend::db::repositories::records::get_repository_by_id(pool, repo).await?
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo).await?
         else {
             return Ok(None);
         };
@@ -434,7 +434,7 @@ impl Grant {
 }
 
 pub async fn grant(pool: &DbPool, token: i64) -> anyhow::Result<Option<Grant>> {
-    crate::backend::db::fine_grained_tokens::bounds(pool, token)
+    codeyard_db_identity::fine_grained_tokens::bounds(pool, token)
         .await?
         .map(Grant::from_bounds)
         .transpose()

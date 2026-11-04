@@ -2,12 +2,12 @@
 //! keys, and the committer address must be a verified address of the key's owner. The reasons
 //! are GitHub's verification reasons.
 
-use crate::backend::db::users::gpg_keys::GpgKey;
-use crate::backend::db::users::signing_keys::SigningKeyOwner;
 use anyhow::Result;
 use base64::Engine;
 use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
+use codeyard_db_identity::users::gpg_keys::GpgKey;
+use codeyard_db_identity::users::signing_keys::SigningKeyOwner;
 use pgp::{
     composed::{Deserializable, DetachedSignature},
     crypto::hash::HashAlgorithm,
@@ -48,7 +48,7 @@ impl Signers {
             return Ok(keys.clone());
         }
         let keys: Arc<[Arc<GpgKey>]> =
-            crate::backend::db::users::gpg_keys::find_signing_keys(pool, issuer)
+            codeyard_db_identity::users::gpg_keys::find_signing_keys(pool, issuer)
                 .await?
                 .into_iter()
                 .map(Arc::new)
@@ -61,7 +61,7 @@ impl Signers {
         if let Some(key) = self.primaries.get(&(user, id)) {
             return Ok(key.clone());
         }
-        let key = crate::backend::db::users::gpg_keys::get_gpg_key(pool, user, id)
+        let key = codeyard_db_identity::users::gpg_keys::get_gpg_key(pool, user, id)
             .await?
             .map(Arc::new);
         remember(&mut self.primaries, (user, id), key.clone());
@@ -77,7 +77,7 @@ impl Signers {
             return Ok(key.clone());
         }
         let key =
-            crate::backend::db::users::signing_keys::find_signing_key(pool, fingerprint).await?;
+            codeyard_db_identity::users::signing_keys::find_signing_key(pool, fingerprint).await?;
         remember(&mut self.ssh, fingerprint.to_owned(), key.clone());
         Ok(key)
     }
@@ -88,7 +88,7 @@ impl Signers {
             return Ok(addresses.clone());
         }
         let found: Option<Addresses> =
-            match crate::backend::db::users::accounts::get_user_by_id(pool, owner).await? {
+            match codeyard_db_identity::users::accounts::get_user_by_id(pool, owner).await? {
                 Some(user) => Some(addresses(pool, &user).await?.into()),
                 None => None,
             };
@@ -159,16 +159,16 @@ async fn recorded_check(
     let input = input_hash(signed);
     if let Some(input) = &input {
         if let Some(at) =
-            crate::backend::db::signature_verifications::verified_at(pool, input).await?
+            codeyard_db_identity::signature_verifications::verified_at(pool, input).await?
         {
             return Ok(("valid", Some(at)));
         }
     }
     let reason = check_current(pool, signers, signed).await?;
     let at = match (reason, input) {
-        ("valid", Some(input)) => {
-            Some(crate::backend::db::signature_verifications::record_verified(pool, &input).await?)
-        }
+        ("valid", Some(input)) => Some(
+            codeyard_db_identity::signature_verifications::record_verified(pool, &input).await?,
+        ),
         _ => None,
     };
     Ok((reason, at))
@@ -210,7 +210,7 @@ pub async fn addresses(pool: &DbPool, user: &User) -> Result<Vec<(String, bool)>
         .map(|email| (email.clone(), user.email_verified))
         .collect();
     addresses.extend(
-        crate::backend::db::users::emails::list_emails(pool, user.id)
+        codeyard_db_identity::users::emails::list_emails(pool, user.id)
             .await?
             .into_iter()
             .map(|email| (email.email, email.verified)),

@@ -7,7 +7,6 @@ use crate::backend::api::github::orgs::AppState;
 use crate::backend::api::github::orgs::Error;
 use crate::backend::api::github::orgs::Result;
 
-use crate::backend::db::organizations::OrganizationOutcome;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -15,6 +14,7 @@ use axum::{
     Json,
 };
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -55,7 +55,7 @@ async fn set(
         _ => return Err(Error::validation("Membership", "role", "invalid")),
     };
     let org = target(&state, &name).await?;
-    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(|| Error::validation("Membership", "user", "invalid"))?;
@@ -71,7 +71,7 @@ async fn set(
     .map_err(Error::unavailable)?;
     let membership = if active.is_empty() {
         let invitation = outcome(
-            crate::backend::db::organizations::set_organization_invitation_by_owner(
+            codeyard_db_orgs::organizations::set_organization_invitation_by_owner(
                 &state.pool,
                 actor.database_actor(),
                 org.id,
@@ -91,7 +91,7 @@ async fn set(
         membership_document(&org, &user, &invitation.role, "pending")
     } else {
         let member = outcome(
-            crate::backend::db::organizations::update_organization_member_role_by_owner(
+            codeyard_db_orgs::organizations::update_organization_member_role_by_owner(
                 &state.pool,
                 actor.database_actor(),
                 org.id,
@@ -118,11 +118,11 @@ async fn remove(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(state, name).await?;
-    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)
         .await
         .map_err(Error::unavailable)?
         .map_or(-1, |user| user.id);
-    let result = crate::backend::db::organizations::remove_member_or_invitation_by_owner(
+    let result = codeyard_db_orgs::organizations::remove_member_or_invitation_by_owner(
         &state.pool,
         actor.database_actor(),
         org.id,

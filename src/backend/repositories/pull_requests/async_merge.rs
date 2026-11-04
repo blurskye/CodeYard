@@ -13,7 +13,7 @@ pub struct Job {
     pub pull_request_id: i64,
     /// The token the request came with. The job runs on this server, so the credential stays
     /// in memory and is rechecked before preparation and publication.
-    pub authority: crate::backend::db::credentials::Actor,
+    pub authority: codeyard_db_core::queries::credentials::Actor,
     pub owner: String,
     pub name: String,
     pub number: i32,
@@ -34,19 +34,19 @@ async fn execute(
     job: Job,
 ) -> Result<crate::backend::repositories::pull_requests::merge::MergeResponse, OperationError> {
     let token_id = job.authority.token_id().ok_or_else(denied)?;
-    let actor = crate::backend::db::users::tokens::token_user(pool, token_id, true)
+    let actor = codeyard_db_identity::users::tokens::token_user(pool, token_id, true)
         .await
         .map_err(database_error)?
         .filter(|u| u.id == job.authority.user_id)
         .ok_or_else(denied)?;
-    let repo = crate::backend::db::repositories::records::get_repository_by_id(pool, job.repo_id)
+    let repo = codeyard_db_repos::repositories::records::get_repository_by_id(pool, job.repo_id)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".into(),
         })?;
-    let owner = crate::backend::db::repositories::records::repository_owner_names(pool, &[repo.id])
+    let owner = codeyard_db_repos::repositories::records::repository_owner_names(pool, &[repo.id])
         .await
         .map_err(database_error)?
         .remove(&repo.id)
@@ -71,12 +71,12 @@ async fn execute(
     }
     prepared.bind_async_request(uuid, token_id);
     // Preparation can wait on Git. Recheck the original credential immediately before publication.
-    crate::backend::db::users::tokens::token_user(pool, token_id, true)
+    codeyard_db_identity::users::tokens::token_user(pool, token_id, true)
         .await
         .map_err(database_error)?
         .filter(|u| u.id == actor.id)
         .ok_or_else(denied)?;
-    let row = crate::backend::db::pull_requests::async_merge::get(
+    let row = codeyard_db_repos::pull_requests::async_merge::get(
         pool,
         job.repo_id,
         job.pull_request_id,
@@ -108,13 +108,13 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
         });
     }
     let token_id = job.authority.token_id().ok_or_else(denied)?;
-    let actor = crate::backend::db::users::tokens::token_user(&state.pool, token_id, true)
+    let actor = codeyard_db_identity::users::tokens::token_user(&state.pool, token_id, true)
         .await
         .map_err(database_error)?
         .filter(|u| u.id == job.authority.user_id)
         .ok_or_else(denied)?;
     let repo =
-        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, job.repo_id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, job.repo_id)
             .await
             .map_err(database_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -122,7 +122,7 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
                 message: "Repository not found".into(),
             })?;
     crate::backend::repositories::pull_requests::require_write(&state.pool, &actor, &repo).await?;
-    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         &state.pool,
         job.pull_request_id,
     )
@@ -148,9 +148,9 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
     let uuid = uuid::Uuid::new_v4().to_string();
     let details = json!({"message":"Merge request accepted","uuid":uuid,"merge_method":job.merge.merge_method.as_str(),"merge_action":job.action,"expected_head_sha":job.merge.expected_head,"bypass_rules":false});
     let request = serde_json::to_value(&job.merge).map_err(database_error)?;
-    if !crate::backend::db::pull_requests::async_merge::insert(
+    if !codeyard_db_repos::pull_requests::async_merge::insert(
         &state.pool,
-        crate::backend::db::pull_requests::async_merge::NewAsyncMerge {
+        codeyard_db_repos::pull_requests::async_merge::NewAsyncMerge {
             uuid: &uuid,
             repo_id: job.repo_id,
             pull_request_id: job.pull_request_id,
@@ -186,7 +186,7 @@ pub async fn start(state: &AppState, job: Job) -> Result<Value, OperationError> 
         };
         finish_with_retry(&pool, &task_uuid, status, &details).await;
     }) {
-        crate::backend::db::pull_requests::async_merge::finish(&state.pool,&uuid,"failed",&json!({"message":"The merge worker is unavailable"})).await.map_err(database_error)?;
+        codeyard_db_repos::pull_requests::async_merge::finish(&state.pool,&uuid,"failed",&json!({"message":"The merge worker is unavailable"})).await.map_err(database_error)?;
         return Err(OperationError::Unavailable{code:"merge_worker_unavailable",message:"The merge worker is unavailable".into()});
     }
     Ok(json!({"status":"pending","details":details}))
@@ -202,7 +202,7 @@ async fn finish_with_retry(
     const ATTEMPTS: u32 = 8;
     let mut delay = std::time::Duration::from_millis(250);
     for attempt in 1..=ATTEMPTS {
-        match crate::backend::db::pull_requests::async_merge::finish(pool, uuid, status, details)
+        match codeyard_db_repos::pull_requests::async_merge::finish(pool, uuid, status, details)
             .await
         {
             Ok(()) => return,
@@ -220,7 +220,7 @@ async fn finish_with_retry(
 /// Only this node's abandoned requests fail; starting another web node never cancels live work.
 /// A request whose pull request is already recorded as merged reports that merge instead.
 pub async fn recover(pool: &codeyard_db_core::DbPool, node_id: Option<i64>) -> anyhow::Result<u64> {
-    crate::backend::db::pull_requests::async_merge::recover(
+    codeyard_db_repos::pull_requests::async_merge::recover(
         pool,
         node_id,
         &json!({"message":"The server restarted before this merge request completed"}),

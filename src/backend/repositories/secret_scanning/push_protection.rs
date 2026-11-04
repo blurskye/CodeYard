@@ -21,18 +21,18 @@ pub async fn refuse_blocked_secrets(
     quarantine: Option<&Path>,
     heads: &[String],
 ) -> anyhow::Result<Vec<ApprovedBypass>> {
-    if !crate::backend::db::secret_scanning::settings(pool, repo.id)
+    if !codeyard_db_security::secret_scanning::settings(pool, repo.id)
         .await?
         .push_protection
     {
         return Ok(Vec::new());
     }
-    let owner = crate::backend::db::repositories::records::repository_owner_names(pool, &[repo.id])
+    let owner = codeyard_db_repos::repositories::records::repository_owner_names(pool, &[repo.id])
         .await?
         .remove(&repo.id)
         .ok_or_else(|| anyhow::anyhow!("Repository owner unavailable"))?;
     let (patterns, disabled) =
-        crate::backend::db::secret_scanning::effective_patterns(pool, repo.id).await?;
+        codeyard_db_security::secret_scanning::effective_patterns(pool, repo.id).await?;
     let findings = codeyard_git::secret_scanning::added_secrets(
         path.to_owned(),
         quarantine.map(Path::to_owned),
@@ -45,7 +45,7 @@ pub async fn refuse_blocked_secrets(
     let mut bypasses = Vec::new();
     for finding in findings {
         let hash = codeyard_support::token_hash::token_hash(&finding.detection.secret);
-        if let Some(placeholder) = crate::backend::db::secret_scanning::protection(
+        if let Some(placeholder) = codeyard_db_security::secret_scanning::protection(
             pool,
             actor,
             repo.id,

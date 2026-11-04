@@ -4,7 +4,7 @@ use crate::backend::api::packages::Error;
 use crate::backend::api::packages::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::packages::Publish;
+use codeyard_db_repos::packages::Publish;
 
 use axum::{
     body::{to_bytes, Body},
@@ -156,10 +156,10 @@ fn parse(bytes: &[u8]) -> Result<(String, String, Value)> {
         json!({"version":version,"platform":platform,"dependencies":dependencies,"ruby":requirements(field(&spec,"required_ruby_version"))?,"rubygems":requirements(field(&spec,"required_rubygems_version"))?}),
     ))
 }
-fn metadata(version: &crate::backend::db::packages::Version) -> Result<Value> {
+fn metadata(version: &codeyard_db_repos::packages::Version) -> Result<Value> {
     serde_json::from_str(&version.manifest).map_err(|_| Error::unavailable())
 }
-fn info_body(versions: &[crate::backend::db::packages::Version]) -> Result<String> {
+fn info_body(versions: &[codeyard_db_repos::packages::Version]) -> Result<String> {
     let mut body = String::from("---\n");
     for version in versions {
         let meta = metadata(version)?;
@@ -292,11 +292,11 @@ async fn dispatch(
             package.id,
             auth.token.id,
             bytes.to_vec(),
-            crate::backend::db::packages::Charge::Upload,
+            codeyard_db_repos::packages::Charge::Upload,
         )
         .await
         .map_err(Error::db)?;
-        crate::backend::db::packages::publish(
+        codeyard_db_repos::packages::publish(
             &state.pool,
             auth.token.id,
             Publish {
@@ -370,10 +370,9 @@ async fn dispatch(
         .strip_prefix("gems/")
         .and_then(|s| s.strip_suffix(".gem"))
     {
-        let blob =
-            crate::backend::db::packages::rubygems_file(&state.pool, &owner, token, filename)
-                .await
-                .map_err(Error::db)?;
+        let blob = codeyard_db_repos::packages::rubygems_file(&state.pool, &owner, token, filename)
+            .await
+            .map_err(Error::db)?;
         return crate::backend::api::packages::oci::download(
             state,
             &blob,

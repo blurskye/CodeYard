@@ -5,7 +5,7 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::field;
 use crate::backend::app::AppState;
 
-use crate::backend::db::github_apps::App;
+use codeyard_db_identity::github_apps::App;
 
 use axum::{
     crate::backend::api::http::middleware::from_fn,
@@ -92,7 +92,7 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
     let mut model = model("list");
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match crate::backend::db::github_apps::apps(
+    match codeyard_db_identity::github_apps::apps(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,
         &session,
@@ -132,7 +132,7 @@ async fn delete_registration(
     let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    match crate::backend::db::github_apps::delete_registration(
+    match codeyard_db_identity::github_apps::delete_registration(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,
         &session,
@@ -164,7 +164,7 @@ async fn managed_installations(
     let mut model = model("installations");
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match crate::backend::db::github_apps::managed_installations(
+    match codeyard_db_identity::github_apps::managed_installations(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,
         &session,
@@ -215,7 +215,7 @@ async fn uninstall(
     let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    match crate::backend::db::github_apps::uninstall(
+    match codeyard_db_identity::github_apps::uninstall(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,
         &session,
@@ -274,7 +274,7 @@ async fn regenerate(
     let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    match crate::backend::db::github_apps::app(&ctx.state.pool, &slug).await {
+    match codeyard_db_identity::github_apps::app(&ctx.state.pool, &slug).await {
         Ok(Some(app)) if app.owner_id == actor && app.slug == slug => {}
         Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "App not found"),
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Apps unavailable"),
@@ -286,7 +286,7 @@ async fn regenerate(
             Err(error) => return key_failure(&ctx, error),
         };
     let secret = codeyard_support::crypto::random_hex();
-    match crate::backend::db::github_apps::rotate_credentials(
+    match codeyard_db_identity::github_apps::rotate_credentials(
         &ctx.state.pool,
         actor,
         &session,
@@ -434,7 +434,7 @@ async fn register(
         },
         created_at: chrono::Utc::now(),
     };
-    match crate::backend::db::github_apps::register(
+    match codeyard_db_identity::github_apps::register(
         &ctx.state.pool,
         app.owner_id,
         &session,
@@ -471,7 +471,7 @@ async fn install_get(
     if let Some(r) = login(&ctx) {
         return r;
     }
-    match crate::backend::db::github_apps::app(&ctx.state.pool, &slug).await {
+    match codeyard_db_identity::github_apps::app(&ctx.state.pool, &slug).await {
         Ok(Some(app))
             if app.is_public
                 || ctx
@@ -505,7 +505,7 @@ async fn install_post(
     if let Err(r) = ctx.check_csrf(&form) {
         return r;
     }
-    let app = match crate::backend::db::github_apps::app(&ctx.state.pool, &slug).await {
+    let app = match codeyard_db_identity::github_apps::app(&ctx.state.pool, &slug).await {
         Ok(Some(app)) => app,
         _ => return ctx.error(StatusCode::NOT_FOUND, "App not found"),
     };
@@ -536,7 +536,7 @@ async fn install_post(
         let Some(org) = org else {
             return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Choose an organization");
         };
-        return match crate::backend::db::github_apps::request_installation(
+        return match codeyard_db_identity::github_apps::request_installation(
             &ctx.state.pool,
             actor,
             &session,
@@ -556,7 +556,7 @@ async fn install_post(
             ),
         };
     }
-    match crate::backend::db::github_apps::install(
+    match codeyard_db_identity::github_apps::install(
         &ctx.state.pool,
         actor,
         &session,

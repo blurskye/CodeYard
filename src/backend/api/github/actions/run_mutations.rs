@@ -7,7 +7,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::ci::CiRunDeletion;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
@@ -15,6 +14,7 @@ use axum::{
     routing::{delete, post, MethodRouter},
     Json,
 };
+use codeyard_db_actions::ci::CiRunDeletion;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -55,7 +55,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
     let authentication = authentication.ok_or_else(crate::backend::api::github::auth::required)?;
-    if !crate::backend::db::ci::delete_ci_run_data(
+    if !codeyard_db_actions::ci::delete_ci_run_data(
         &state.pool,
         authentication.database_actor(),
         repo.id,

@@ -24,7 +24,7 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
     let postgres = native::PostgresDatabase::new().await;
     let sqlite = native::NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {
-        codeyard::backend::db::users::transitions::complete_setup(
+        codeyard_db_identity::users::transitions::complete_setup(
             pool,
             "root_admin",
             None,
@@ -41,14 +41,14 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
             "é".repeat(255),
             "𐐀".repeat(255),
         ] {
-            let owner = codeyard::backend::db::users::accounts::create_user(pool, &username, None)
+            let owner = codeyard_db_identity::users::accounts::create_user(pool, &username, None)
                 .await
                 .unwrap();
             let root = tempfile::tempdir().unwrap();
             let repo = lifecycle::provision(
                 (pool, None),
                 root.path(),
-                codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
                     owner.id,
                 ),
                 "project",
@@ -104,7 +104,7 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
                 .await;
             assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
             assert_eq!(
-                codeyard::backend::db::ci::list_ci_runs_for_repo(pool, repo.id, 10)
+                codeyard_db_actions::ci::list_ci_runs_for_repo(pool, repo.id, 10)
                     .await
                     .unwrap()
                     .len(),
@@ -119,7 +119,7 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
             let root = tempfile::tempdir().unwrap();
             let router = crate::support::database::router(pool, root.path()).await;
             let admin =
-                codeyard::backend::db::users::accounts::get_user_by_username(pool, "root_admin")
+                codeyard_db_identity::users::accounts::get_user_by_username(pool, "root_admin")
                     .await
                     .unwrap()
                     .unwrap();
@@ -176,7 +176,7 @@ jobs:
       - run: echo deploy
 ";
     for pool in [&postgres.pool, &sqlite.pool] {
-        codeyard::backend::db::users::transitions::complete_setup(
+        codeyard_db_identity::users::transitions::complete_setup(
             pool,
             "root_admin",
             None,
@@ -186,16 +186,14 @@ jobs:
         )
         .await
         .unwrap();
-        let owner = codeyard::backend::db::users::accounts::create_user(pool, "inputs_owner", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(pool, "inputs_owner", None)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
         let repo = lifecycle::provision(
             (pool, None),
             root.path(),
-            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
-                owner.id,
-            ),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             "project",
             None,
             false,
@@ -359,13 +357,12 @@ jobs:
             "{}",
             malformed.text()
         );
-        let stored: Vec<Value> =
-            codeyard::backend::db::ci::list_ci_runs_for_repo(pool, repo.id, 20)
-                .await
-                .unwrap()
-                .into_iter()
-                .filter_map(|run| run.workflow_inputs)
-                .collect();
+        let stored: Vec<Value> = codeyard_db_actions::ci::list_ci_runs_for_repo(pool, repo.id, 20)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter_map(|run| run.workflow_inputs)
+            .collect();
         assert_eq!(stored.len(), 4, "{stored:?}");
         assert!(stored.contains(&json!({"target": "production", "debug": "true", "retries": "4"})));
         assert!(stored.contains(&json!({"target": "production", "debug": "true", "retries": "3"})));
@@ -387,7 +384,7 @@ async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
     let postgres = native::PostgresDatabase::new().await;
     let sqlite = native::NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {
-        codeyard::backend::db::users::transitions::complete_setup(
+        codeyard_db_identity::users::transitions::complete_setup(
             pool,
             "root_admin",
             None,
@@ -397,16 +394,14 @@ async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
         )
         .await
         .unwrap();
-        let owner = codeyard::backend::db::users::accounts::create_user(pool, "alice", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(pool, "alice", None)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
         let repo = lifecycle::provision(
             (pool, None),
             root.path(),
-            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
-                owner.id,
-            ),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             "proj",
             None,
             false,
@@ -449,7 +444,7 @@ async fn pull_request_base_names_that_look_like_refs_keep_their_branch_kind() {
                 .save(&topic, &format!("topic-{index}.txt"), sha)
                 .await;
             client.open_pull("Review", &topic, base).await;
-            let runs = codeyard::backend::db::ci::list_ci_runs_for_repo(pool, repo.id, 10)
+            let runs = codeyard_db_actions::ci::list_ci_runs_for_repo(pool, repo.id, 10)
                 .await
                 .unwrap();
             let run = runs
@@ -604,7 +599,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
     );
     // A push is recorded under its full ref. After a force-push moves the branch, a rerun of
     // that push still runs the commit it pushed.
-    codeyard::backend::db::ci::record_ci_accepted_push(
+    codeyard_db_actions::ci::record_ci_accepted_push(
         &f.pool,
         f.repo.id,
         f.owner.id,

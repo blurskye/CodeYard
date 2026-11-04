@@ -8,9 +8,9 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::dependabot_alerts as store;
-use crate::backend::db::dependabot_alerts::Alert;
-use crate::backend::db::dependabot_alerts::Update;
+use codeyard_db_core::queries::dependabot_alerts::Alert;
+use codeyard_db_security::dependabot_alerts as store;
+use codeyard_db_security::dependabot_alerts::Update;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -384,7 +384,7 @@ pub(crate) async fn document(
         .unwrap_or(json!({"score":0.0,"vector_string":null}));
     let advisory = json!({"ghsa_id":global["ghsa_id"],"cve_id":global["cve_id"],"summary":global["summary"],"description":global["description"].as_str().unwrap_or(""),"severity":global["severity"],"classification":if global["type"]=="malware" {"malware"} else {"general"},"cvss":cvss,"cwes":global["cwes"].as_array().cloned().unwrap_or_default(),"identifiers":global["identifiers"],"references":global["references"].as_array().into_iter().flatten().filter_map(Value::as_str).map(|s|json!({"url":s})).collect::<Vec<_>>(),"vulnerabilities":vulnerabilities,"published_at":global["published_at"],"updated_at":global["updated_at"],"withdrawn_at":global["withdrawn_at"]});
     let dismissed_by = if let Some(id) = row.dismissed_by {
-        crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .as_ref()
@@ -461,12 +461,12 @@ async fn list(
             }
             Err(error) => return Err(failure(error)),
         };
-        let repo = crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
+        let repo = codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
         let owner =
-            crate::backend::db::repositories::records::repository_owner_name(&state.pool, id)
+            codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;

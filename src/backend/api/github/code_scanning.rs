@@ -110,15 +110,15 @@ async fn scope(
 }
 
 fn failure(error: anyhow::Error) -> Error {
-    match error.downcast_ref::<crate::backend::db::code_scanning::Refusal>() {
-        Some(crate::backend::db::code_scanning::Refusal::Missing) => Error::missing(),
-        Some(crate::backend::db::code_scanning::Refusal::Denied) => {
+    match error.downcast_ref::<codeyard_db_security::code_scanning::Refusal>() {
+        Some(codeyard_db_security::code_scanning::Refusal::Missing) => Error::missing(),
+        Some(codeyard_db_security::code_scanning::Refusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Repository write denied")
         }
-        Some(crate::backend::db::code_scanning::Refusal::RateLimited) => {
+        Some(codeyard_db_security::code_scanning::Refusal::RateLimited) => {
             Error::new(StatusCode::FORBIDDEN, error.to_string())
         }
-        Some(crate::backend::db::code_scanning::Refusal::DeleteOrder) => {
+        Some(codeyard_db_security::code_scanning::Refusal::DeleteOrder) => {
             Error::new(StatusCode::BAD_REQUEST, error.to_string())
         }
         None => Error::unavailable(error),
@@ -195,9 +195,9 @@ async fn upload(
             }
             _ => crate::backend::api::github::contents::store_error(error),
         })?;
-    let upload = crate::backend::db::code_scanning::enqueue(
+    let upload = codeyard_db_security::code_scanning::enqueue(
         &state.pool,
-        &crate::backend::db::code_scanning::NewUpload {
+        &codeyard_db_security::code_scanning::NewUpload {
             actor: auth.database_actor(),
             repo: repo.id,
             ref_name: &input.ref_name,
@@ -217,7 +217,7 @@ async fn upload_status(
     Path((owner, name, id)): Path<(String, String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
-    let upload = crate::backend::db::code_scanning::upload_status(&state.pool, repo.id, &id)
+    let upload = codeyard_db_security::code_scanning::upload_status(&state.pool, repo.id, &id)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -262,7 +262,7 @@ impl Filters {
             per_page: self.per_page,
         }
     }
-    fn analysis_filters(&self) -> Result<crate::backend::db::code_scanning::AnalysisFilters<'_>> {
+    fn analysis_filters(&self) -> Result<codeyard_db_security::code_scanning::AnalysisFilters<'_>> {
         if self.sort.as_deref().is_some_and(|sort| sort != "created") {
             return Err(Error::validation("Analysis", "sort", "invalid"));
         }
@@ -273,7 +273,7 @@ impl Filters {
         {
             return Err(Error::validation("Analysis", "direction", "invalid"));
         }
-        Ok(crate::backend::db::code_scanning::AnalysisFilters {
+        Ok(codeyard_db_security::code_scanning::AnalysisFilters {
             reference: None,
             tool_name: self.tool_name.as_deref(),
             tool_guid: self.tool_guid.as_deref(),
@@ -282,7 +282,7 @@ impl Filters {
             ascending: self.direction.as_deref() == Some("asc"),
         })
     }
-    fn alert_filters(&self) -> Result<crate::backend::db::code_scanning::AlertFilters<'_>> {
+    fn alert_filters(&self) -> Result<codeyard_db_security::code_scanning::AlertFilters<'_>> {
         if self
             .state
             .as_deref()
@@ -316,12 +316,12 @@ impl Filters {
             self.sort.as_deref() == Some("updated"),
             self.direction.as_deref() == Some("asc"),
         ) {
-            (false, false) => crate::backend::db::code_scanning::AlertSort::CreatedDesc,
-            (false, true) => crate::backend::db::code_scanning::AlertSort::CreatedAsc,
-            (true, false) => crate::backend::db::code_scanning::AlertSort::UpdatedDesc,
-            (true, true) => crate::backend::db::code_scanning::AlertSort::UpdatedAsc,
+            (false, false) => codeyard_db_security::code_scanning::AlertSort::CreatedDesc,
+            (false, true) => codeyard_db_security::code_scanning::AlertSort::CreatedAsc,
+            (true, false) => codeyard_db_security::code_scanning::AlertSort::UpdatedDesc,
+            (true, true) => codeyard_db_security::code_scanning::AlertSort::UpdatedAsc,
         };
-        Ok(crate::backend::db::code_scanning::AlertFilters {
+        Ok(codeyard_db_security::code_scanning::AlertFilters {
             reference: None,
             tool_name: self.tool_name.as_deref(),
             tool_guid: self.tool_guid.as_deref(),
@@ -333,7 +333,7 @@ impl Filters {
     }
 }
 fn analysis_document(
-    row: &crate::backend::db::code_scanning::Analysis,
+    row: &codeyard_db_security::code_scanning::Analysis,
     owner: &str,
     name: &str,
     deletable: bool,
@@ -354,7 +354,7 @@ async fn analyses(
     let reference = query.ref_name.as_deref().map(normalize_ref);
     let mut filters = query.analysis_filters()?;
     filters.reference = reference.as_deref();
-    let rows = crate::backend::db::code_scanning::analyses(
+    let rows = codeyard_db_security::code_scanning::analyses(
         &state.pool,
         repo.id,
         &filters,
@@ -377,7 +377,7 @@ async fn analysis(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Response> {
     let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
-    let entry = crate::backend::db::code_scanning::analysis(&state.pool, repo.id, id)
+    let entry = codeyard_db_security::code_scanning::analysis(&state.pool, repo.id, id)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -394,11 +394,11 @@ async fn analysis(
             crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
                 .await
                 .ok_or_else(|| Error::unavailable(()))?;
-        let raw = crate::backend::db::code_scanning::analysis_sarif(&state.pool, repo.id, id)
+        let raw = codeyard_db_security::code_scanning::analysis_sarif(&state.pool, repo.id, id)
             .await
             .map_err(failure)?
             .ok_or_else(Error::missing)?;
-        let alerts = crate::backend::db::code_scanning::analysis_alerts(&state.pool, row.id)
+        let alerts = codeyard_db_security::code_scanning::analysis_alerts(&state.pool, row.id)
             .await
             .map_err(failure)?;
         let alerts_url = format!("{}/code-scanning/alerts", repo_url(&owner, &name));
@@ -452,7 +452,7 @@ async fn delete_analysis(
     Query(query): Query<Filters>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, true).await?;
-    let next = crate::backend::db::code_scanning::delete_analysis(
+    let next = codeyard_db_security::code_scanning::delete_analysis(
         &state.pool,
         auth.database_actor(),
         repo.id,
@@ -483,21 +483,21 @@ async fn find_alert(
     state: &AppState,
     repo: i64,
     number: i64,
-) -> Result<crate::backend::db::code_scanning::Alert> {
-    crate::backend::db::code_scanning::alert(&state.pool, repo, number)
+) -> Result<codeyard_db_security::code_scanning::Alert> {
+    codeyard_db_security::code_scanning::alert(&state.pool, repo, number)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)
 }
 async fn alert_document(
     state: &AppState,
-    row: &crate::backend::db::code_scanning::Alert,
+    row: &codeyard_db_security::code_scanning::Alert,
     owner: &str,
     name: &str,
     reference: Option<&str>,
     pull_request: Option<i32>,
 ) -> Result<Value> {
-    let instance = crate::backend::db::code_scanning::instance_filtered(
+    let instance = codeyard_db_security::code_scanning::instance_filtered(
         &state.pool,
         row.id,
         reference,
@@ -507,7 +507,7 @@ async fn alert_document(
     .map_err(failure)?
     .ok_or_else(Error::missing)?;
     let dismissed = match row.dismissed_by {
-        Some(id) => crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+        Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .as_ref()
@@ -535,9 +535,9 @@ async fn alerts(
     let reference = query.ref_name.as_deref().map(normalize_ref);
     let mut filters = query.alert_filters()?;
     filters.reference = reference.as_deref();
-    let rows = crate::backend::db::code_scanning::alert_page(
+    let rows = codeyard_db_security::code_scanning::alert_page(
         &state.pool,
-        crate::backend::db::code_scanning::AlertScope::Repository(repo.id),
+        codeyard_db_security::code_scanning::AlertScope::Repository(repo.id),
         &filters,
         offset as i64,
         (limit + 1) as i64,
@@ -563,7 +563,7 @@ async fn alerts(
 }
 async fn listed_alert(
     state: &AppState,
-    row: &crate::backend::db::code_scanning::Alert,
+    row: &codeyard_db_security::code_scanning::Alert,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
     reference: Option<&str>,
@@ -597,7 +597,7 @@ async fn org_alerts(
     let reference = query.ref_name.as_deref().map(normalize_ref);
     let mut filters = query.alert_filters()?;
     filters.reference = reference.as_deref();
-    let rows = crate::backend::db::code_scanning::organization_alert_page(
+    let rows = codeyard_db_security::code_scanning::organization_alert_page(
         &state.pool,
         auth.user.id,
         org.id,
@@ -650,7 +650,7 @@ async fn update_alert(
     Json(input): Json<UpdateAlert>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, false).await?;
-    let input = crate::backend::db::code_scanning::Dismissal {
+    let input = codeyard_db_security::code_scanning::Dismissal {
         state: &input.state,
         reason: input.dismissed_reason.as_deref(),
         comment: input.dismissed_comment.as_deref(),
@@ -682,7 +682,7 @@ async fn instances(
     let row = find_alert(&state, repo.id, number).await?;
     let (offset, limit) = query.pagination().window()?;
     let reference = query.ref_name.as_deref().map(normalize_ref);
-    let rows = crate::backend::db::code_scanning::instances_filtered(
+    let rows = codeyard_db_security::code_scanning::instances_filtered(
         &state.pool,
         row.id,
         reference.as_deref(),

@@ -3,13 +3,13 @@
 //! UI. Its pushes are attributed to the account that added it, and it gets no more than that
 //! account's access, capped at write.
 
-use crate::backend::db::deploy_keys::NewDeployKey;
 use crate::backend::repositories::access::can_admin;
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::DeployKey;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
+use codeyard_db_identity::deploy_keys::NewDeployKey;
 use codeyard_model::identity::SshKeyWriteRefusal;
 use codeyard_model::repositories::DeployKeyError;
 use codeyard_webui::components::deploy_keys::{DeployKeyPanel, DeployKeyRow};
@@ -46,10 +46,10 @@ pub async fn list_keys(
     pool: &codeyard_db_core::DbPool,
     actor: &User,
     repo: &Repository,
-    credential: impl Into<crate::backend::db::deploy_keys::Credential>,
+    credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
 ) -> Result<Vec<DeployKey>, DeployKeyError> {
     require_admin(pool, actor, repo).await?;
-    crate::backend::db::deploy_keys::list_deploy_keys(
+    codeyard_db_identity::deploy_keys::list_deploy_keys(
         pool,
         actor.id,
         repo.id,
@@ -66,7 +66,7 @@ pub async fn list_keys(
 pub async fn add_key(
     pool: &codeyard_db_core::DbPool,
     actor: &User,
-    credential: impl Into<crate::backend::db::deploy_keys::Credential>,
+    credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
     repo: &Repository,
     title: &str,
     public_key: &str,
@@ -77,7 +77,7 @@ pub async fn add_key(
     if title.is_empty() || title.chars().count() > 255 || title.contains('\0') {
         return Err(DeployKeyError::InvalidTitle);
     }
-    let parsed = crate::backend::db::users::ssh_keys::parse_public_key(public_key)?;
+    let parsed = codeyard_db_identity::users::ssh_keys::parse_public_key(public_key)?;
     let key = NewDeployKey {
         repo_id: repo.id,
         title: title.to_owned(),
@@ -86,7 +86,7 @@ pub async fn add_key(
         can_write,
         created_by_id: actor.id,
     };
-    crate::backend::db::deploy_keys::insert_deploy_key(pool, &key, credential)
+    codeyard_db_identity::deploy_keys::insert_deploy_key(pool, &key, credential)
         .await
         .map_err(refusal)
 }
@@ -94,12 +94,12 @@ pub async fn add_key(
 pub async fn remove_key(
     pool: &codeyard_db_core::DbPool,
     actor: &User,
-    credential: impl Into<crate::backend::db::deploy_keys::Credential>,
+    credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
     repo: &Repository,
     key_id: i64,
 ) -> Result<(), DeployKeyError> {
     require_admin(pool, actor, repo).await?;
-    let deleted = crate::backend::db::deploy_keys::delete_deploy_key(
+    let deleted = codeyard_db_identity::deploy_keys::delete_deploy_key(
         pool, repo.id, key_id, actor.id, credential,
     )
     .await
@@ -118,7 +118,7 @@ pub struct Place<'a> {
     /// The repository form endpoint, `/owner/repo/_forms`.
     pub action: &'a str,
     pub csrf_token: &'a str,
-    pub credential: crate::backend::db::deploy_keys::Credential,
+    pub credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential,
 }
 
 /// The section for the settings page. `notice` is the query's `notice` value, which names a
@@ -132,7 +132,7 @@ pub async fn settings_panel(
     after: i64,
 ) -> Result<DeployKeyPanel, DeployKeyError> {
     require_admin(pool, actor, repo).await?;
-    let mut keys = crate::backend::db::deploy_keys::list_deploy_keys(
+    let mut keys = codeyard_db_identity::deploy_keys::list_deploy_keys(
         pool,
         actor.id,
         repo.id,
@@ -195,7 +195,7 @@ pub async fn authorize(
     repo: &Repository,
     write: bool,
 ) -> Result<(User, AccessLevel)> {
-    let key = crate::backend::db::deploy_keys::usable_deploy_key(pool, key_id)
+    let key = codeyard_db_identity::deploy_keys::usable_deploy_key(pool, key_id)
         .await?
         .context("deploy key unavailable")?;
     ensure!(
@@ -207,7 +207,7 @@ pub async fn authorize(
     let creator_id = key
         .created_by_id
         .context("deploy key creator unavailable")?;
-    let creator = crate::backend::db::users::accounts::get_user_by_id(pool, creator_id)
+    let creator = codeyard_db_identity::users::accounts::get_user_by_id(pool, creator_id)
         .await?
         .context("deploy key creator unavailable")?;
     ensure!(
@@ -217,7 +217,7 @@ pub async fn authorize(
     let access = if repo.owner_kind == "user" && creator.is_admin {
         AccessLevel::Write
     } else {
-        crate::backend::db::repositories::access::get_user_repo_access(pool, creator.id, repo.id)
+        codeyard_db_repos::repositories::access::get_user_repo_access(pool, creator.id, repo.id)
             .await?
     };
     let required = if write {
@@ -231,7 +231,7 @@ pub async fn authorize(
 
 /// Records that a key authenticated. A failure is logged and does not refuse the session.
 pub async fn record_use(pool: &codeyard_db_core::DbPool, key_id: i64) {
-    if let Err(error) = crate::backend::db::deploy_keys::touch_deploy_key(pool, key_id).await {
+    if let Err(error) = codeyard_db_identity::deploy_keys::touch_deploy_key(pool, key_id).await {
         warn!(key_id, error = %error, "could not record deploy key use");
     }
 }

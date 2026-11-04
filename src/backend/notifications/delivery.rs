@@ -28,7 +28,7 @@ pub async fn current_event(
         } => Some(*notification_id),
         NotificationEvent::ReadAll { .. } | NotificationEvent::UnreadCount { .. } => None,
     };
-    let projection = crate::backend::db::notifications::records::notification_delivery(
+    let projection = codeyard_db_repos::notifications::records::notification_delivery(
         pool, session_id, user_id, id,
     )
     .await

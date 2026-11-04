@@ -27,7 +27,7 @@ pub struct PublicUserResponse {
 }
 
 impl PublicUserResponse {
-    pub fn from_display(author: &crate::backend::db::users::accounts::AuthorDisplay) -> Self {
+    pub fn from_display(author: &codeyard_db_identity::users::accounts::AuthorDisplay) -> Self {
         Self {
             id: author.id,
             username: author.username.clone(),

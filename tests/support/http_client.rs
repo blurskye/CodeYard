@@ -89,7 +89,7 @@ impl Client {
     pub async fn login(router: &Router, pool: &codeyard_db_core::DbPool, user: i64) -> Self {
         let session = native::token();
         let csrf = native::token();
-        codeyard::backend::db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             pool,
             &session,
             user,
@@ -100,7 +100,7 @@ impl Client {
         .await
         .unwrap();
         assert_eq!(
-            codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+            codeyard_db_identity::users::sessions::get_or_create_csrf_token(
                 pool,
                 &session,
                 Some(user),

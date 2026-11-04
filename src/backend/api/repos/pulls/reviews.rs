@@ -29,7 +29,7 @@ pub async fn create_pull_request_review(
         state.cluster.as_ref(),
         &state.notification_broadcaster,
         current_actor.id,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         ),
         (owner, repo, number),
@@ -67,7 +67,7 @@ pub async fn dismiss_pull_request_review(
         .await
         .map_err(crate::backend::api::repos::pulls::operation_error)?;
     let author =
-        crate::backend::db::users::accounts::get_user_by_id(&state.pool, dismissed.author_id)
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, dismissed.author_id)
             .await
             .map_err(crate::backend::api::http::error::discussion_write_error)?;
 
@@ -122,7 +122,7 @@ pub async fn list_pull_request_reviews(
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let (offset, limit) = json_page(query.page, query.per_page)?;
 
-    let pull_request = crate::backend::db::pull_requests::records::get_pull_request(
+    let pull_request = codeyard_db_repos::pull_requests::records::get_pull_request(
         &state.pool,
         repository.id,
         number,
@@ -136,7 +136,7 @@ pub async fn list_pull_request_reviews(
         )
     })?;
 
-    let reviews = crate::backend::db::pull_requests::reviews::list_pull_request_reviews(
+    let reviews = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviews(
         &state.pool,
         pull_request.id,
         limit as i64,

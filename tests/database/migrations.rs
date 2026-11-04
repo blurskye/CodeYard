@@ -31,7 +31,7 @@ fn ledger(pool: &DbPool) -> &'static str {
 /// Changes the ledger of a migrated database, then checks that startup refuses it and
 /// leaves the ledger and the rows as they were.
 async fn check_refused(pool: &DbPool, change: &str, message: &str) {
-    codeyard::backend::db::users::accounts::create_user(pool, "kept", None)
+    codeyard_db_identity::users::accounts::create_user(pool, "kept", None)
         .await
         .unwrap();
     let ledger = ledger(pool);
@@ -43,7 +43,7 @@ async fn check_refused(pool: &DbPool, change: &str, message: &str) {
     assert!(format!("{error:#}").contains(message), "{error:#}");
     assert_eq!(strings(pool, &history).await, before);
     assert_eq!(
-        codeyard::backend::db::users::accounts::count_users(pool)
+        codeyard_db_identity::users::accounts::count_users(pool)
             .await
             .unwrap(),
         1
@@ -86,7 +86,7 @@ async fn postgres_newer_database_is_refused_without_changes() {
 async fn sqlite_in_memory_migrations_keep_the_connection_and_restore_foreign_keys() {
     let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
     codeyard_db_core::run_migrations(&pool).await.unwrap();
-    let user = codeyard::backend::db::users::accounts::create_user(&pool, "kept", None)
+    let user = codeyard_db_identity::users::accounts::create_user(&pool, "kept", None)
         .await
         .unwrap();
     execute(
@@ -96,7 +96,7 @@ async fn sqlite_in_memory_migrations_keep_the_connection_and_restore_foreign_key
     .await;
     assert!(codeyard_db_core::run_migrations(&pool).await.is_err());
     assert_eq!(
-        codeyard::backend::db::users::accounts::get_user_by_id(&pool, user.id)
+        codeyard_db_identity::users::accounts::get_user_by_id(&pool, user.id)
             .await
             .unwrap()
             .unwrap()

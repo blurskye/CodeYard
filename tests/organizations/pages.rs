@@ -261,7 +261,7 @@ async fn raw_organization_html_requires_matching_runtime_assets() {
     let team = fixture
         .team(
             "raw_team",
-            codeyard::backend::db::organizations::TeamPrivacy::Visible,
+            codeyard_db_orgs::organizations::TeamPrivacy::Visible,
         )
         .await;
     let team_path = format!("{}?team={team}", fixture.path());

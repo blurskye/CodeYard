@@ -34,7 +34,7 @@ pub(crate) async fn native_lock(
         _ => return Err(ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid lock state.")),
     };
     let reason = field(&form, "lock_reason");
-    crate::backend::db::discussions::set_lock(
+    codeyard_db_repos::discussions::set_lock(
         &ctx.state.pool,
         ctx.database_actor(ctx.require_user()?.id),
         repo.record.id,
@@ -44,15 +44,15 @@ pub(crate) async fn native_lock(
     )
     .await
     .map_err(|error| {
-        match error.downcast_ref::<crate::backend::db::discussions::LockRefusal>() {
-            Some(crate::backend::db::discussions::LockRefusal::Denied) => ctx.error(
+        match error.downcast_ref::<codeyard_db_repos::discussions::LockRefusal>() {
+            Some(codeyard_db_repos::discussions::LockRefusal::Denied) => ctx.error(
                 StatusCode::FORBIDDEN,
                 "Triage access is required to lock this conversation.",
             ),
-            Some(crate::backend::db::discussions::LockRefusal::Missing) => {
+            Some(codeyard_db_repos::discussions::LockRefusal::Missing) => {
                 ctx.error(StatusCode::NOT_FOUND, "Discussion not found.")
             }
-            Some(crate::backend::db::discussions::LockRefusal::InvalidReason) => {
+            Some(codeyard_db_repos::discussions::LockRefusal::InvalidReason) => {
                 ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid lock reason.")
             }
             None => unavailable(&ctx),

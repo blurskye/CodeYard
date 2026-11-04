@@ -109,17 +109,17 @@ pub(crate) async fn repository_cards(
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let owners =
-        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &ids)
+        codeyard_db_repos::repositories::records::repository_owner_names(&state.pool, &ids)
             .await
             .map_err(|_| DiscoveryReadError::Unavailable)?;
-    let forks = crate::backend::db::repositories::discovery::public_fork_counts(&state.pool, &ids)
+    let forks = codeyard_db_repos::repositories::discovery::public_fork_counts(&state.pool, &ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
-    let topics = crate::backend::db::repositories::topics::repository_topics(&state.pool, &ids)
+    let topics = codeyard_db_repos::repositories::topics::repository_topics(&state.pool, &ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
     let languages =
-        crate::backend::db::repository_stats::get_primary_repo_languages(&state.pool, &ids)
+        codeyard_db_repos::repository_stats::get_primary_repo_languages(&state.pool, &ids)
             .await
             .map_err(|_| DiscoveryReadError::Unavailable)?
             .into_iter()
@@ -134,15 +134,12 @@ pub(crate) async fn repository_cards(
                 )
             })
             .collect::<HashMap<_, _>>();
-    let readable = crate::backend::db::repositories::access::readable_repository_ids(
-        &state.pool,
-        viewer,
-        &ids,
-    )
-    .await
-    .map_err(|_| DiscoveryReadError::Unavailable)?
-    .into_iter()
-    .collect::<std::collections::HashSet<_>>();
+    let readable =
+        codeyard_db_repos::repositories::access::readable_repository_ids(&state.pool, viewer, &ids)
+            .await
+            .map_err(|_| DiscoveryReadError::Unavailable)?
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
     let repos = repos
         .into_iter()
         .filter(|repo| readable.contains(&repo.id))
@@ -158,10 +155,10 @@ pub(crate) async fn dashboard_cards(
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let owners =
-        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &ids)
+        codeyard_db_repos::repositories::records::repository_owner_names(&state.pool, &ids)
             .await
             .map_err(|_| DiscoveryReadError::Unavailable)?;
-    let forks = crate::backend::db::repositories::discovery::public_fork_counts(&state.pool, &ids)
+    let forks = codeyard_db_repos::repositories::discovery::public_fork_counts(&state.pool, &ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
     card_list(repos, &owners, BTreeMap::new(), HashMap::new(), forks)

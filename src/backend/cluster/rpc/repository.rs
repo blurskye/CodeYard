@@ -244,12 +244,12 @@ impl RpcHandler {
         let pool = self.context.database()?;
         if let Some(id) = repo_id {
             let repository =
-                crate::backend::db::repositories::records::get_repository_by_id(pool, id)
+                codeyard_db_repos::repositories::records::get_repository_by_id(pool, id)
                     .await
                     .map_err(|_| unavailable())?
                     .ok_or_else(unavailable)?;
             if repository.storage_node_id.is_some()
-                && crate::backend::db::cluster::writes::write_settings(pool)
+                && codeyard_db_cluster::cluster::writes::write_settings(pool)
                     .await
                     .map_err(|_| unavailable())?
                     .write_quorum
@@ -272,7 +272,7 @@ impl RpcHandler {
         &self,
         store: &RepoStore,
         repo_id: Option<i64>,
-        actor: Option<crate::backend::db::credentials::Actor>,
+        actor: Option<codeyard_db_core::queries::credentials::Actor>,
         source: Uuid,
         options: &crate::backend::repositories::store::CopyOptions,
     ) -> Result<(), RepoError> {
@@ -301,7 +301,7 @@ impl RpcHandler {
     ) -> Result<(Option<i64>, PathBuf), RepoError> {
         let pool = self.context.database()?;
         let repository =
-            crate::backend::db::cluster::get_repository_by_uuid(pool, &uuid.to_string())
+            codeyard_db_cluster::cluster::get_repository_by_uuid(pool, &uuid.to_string())
                 .await
                 .map_err(|_| unavailable())?;
         let primary =
@@ -314,7 +314,7 @@ impl RpcHandler {
             return Err(RepoError::storage_node_unavailable());
         };
         if repo.storage_node_id.is_some()
-            && crate::backend::db::cluster::writes::write_settings(pool)
+            && codeyard_db_cluster::cluster::writes::write_settings(pool)
                 .await
                 .map_err(|_| unavailable())?
                 .write_quorum
@@ -341,7 +341,7 @@ impl RpcHandler {
                     .await
                     .map_err(|_| unavailable())?;
                 let current =
-                    crate::backend::db::repositories::records::get_repository_by_id(pool, repo.id)
+                    codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo.id)
                         .await
                         .map_err(|_| unavailable())?
                         .ok_or_else(unavailable)?;
@@ -363,7 +363,7 @@ impl RpcHandler {
             return Ok((Some(repo.id), primary));
         }
         if read_only
-            && crate::backend::db::cluster::replica_applied_version(
+            && codeyard_db_cluster::cluster::replica_applied_version(
                 pool,
                 repo.id,
                 self.context.node_id,
@@ -396,7 +396,7 @@ impl RpcHandler {
         {
             return Ok(false);
         }
-        crate::backend::db::ci::ci_run_allows_repository_read(
+        codeyard_db_actions::ci::ci_run_allows_repository_read(
             self.context.database()?,
             run.id,
             repo_id,
@@ -413,7 +413,7 @@ impl RpcHandler {
         caller: iroh::PublicKey,
     ) -> Result<(RepoStore, Option<i64>), RepoError> {
         let pool = self.context.database()?;
-        let serving = crate::backend::db::cluster::get_node_by_id(pool, self.context.node_id)
+        let serving = codeyard_db_cluster::cluster::get_node_by_id(pool, self.context.node_id)
             .await
             .map_err(|_| unavailable())?
             .is_some_and(|node| {
@@ -424,7 +424,7 @@ impl RpcHandler {
         if !serving {
             return Err(unavailable());
         }
-        let node = crate::backend::db::cluster::get_node_by_public_key(pool, &caller.to_string())
+        let node = codeyard_db_cluster::cluster::get_node_by_public_key(pool, &caller.to_string())
             .await
             .map_err(|_| unavailable())?
             .filter(|node| node.status == "active")
@@ -456,7 +456,7 @@ impl RpcHandler {
         // have completed while the request was waiting for a connection or read guard.
         if request.operation.is_read_only()
             && directory == copy_path(&self.context.repos_path, request.repository)
-            && !crate::backend::db::cluster::replica_is_current(
+            && !codeyard_db_cluster::cluster::replica_is_current(
                 pool,
                 repo_id.ok_or_else(unavailable)?,
                 self.context.node_id,
@@ -469,7 +469,7 @@ impl RpcHandler {
         if matches!(request.operation, Operation::ReplicaPack { .. }) {
             let copy_held = match repo_id {
                 Some(repo_id) => {
-                    crate::backend::db::cluster::replica_applied_version(pool, repo_id, node.id)
+                    codeyard_db_cluster::cluster::replica_applied_version(pool, repo_id, node.id)
                         .await
                         .map_err(|_| unavailable())?
                         .is_some()
@@ -483,7 +483,7 @@ impl RpcHandler {
         } else if !node.roles.iter().any(|role| role == "web" || role == "ssh") {
             let claimed = match (repo_id, request.ci_run.as_ref()) {
                 (Some(repo_id), Some(run)) => {
-                    crate::backend::db::ci::ci_run_allows_repository_read(
+                    codeyard_db_actions::ci::ci_run_allows_repository_read(
                         pool,
                         run.id,
                         repo_id,
@@ -501,7 +501,7 @@ impl RpcHandler {
             }
         }
         if let Operation::GitSession(session) = &request.operation {
-            let repo = crate::backend::db::repositories::records::get_repository_by_id(
+            let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
                 pool,
                 repo_id.ok_or_else(unavailable)?,
             )
@@ -539,7 +539,7 @@ impl RpcHandler {
         request: &Request,
         caller: i64,
     ) -> Result<(RepoStore, Option<i64>), RepoError> {
-        use crate::backend::db::cluster::writes as journal;
+        use codeyard_db_cluster::cluster::writes as journal;
         let pool = self.context.database()?;
         let id = match &request.operation {
             Operation::PrepareWrite { id }
@@ -552,7 +552,7 @@ impl RpcHandler {
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(unavailable)?;
-        let repo = crate::backend::db::cluster::get_repository_by_uuid(
+        let repo = codeyard_db_cluster::cluster::get_repository_by_uuid(
             pool,
             &request.repository.to_string(),
         )
@@ -598,7 +598,7 @@ impl RpcHandler {
         }
         // Write RPCs must reach a voter whose applied version is still the batch's base.
         // Ordinary serving admission correctly refuses that copy after the SQL decision.
-        let local = crate::backend::db::cluster::get_node_by_id(pool, self.context.node_id)
+        let local = codeyard_db_cluster::cluster::get_node_by_id(pool, self.context.node_id)
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(unavailable)?;
@@ -1139,7 +1139,7 @@ impl RpcHandler {
                 Value::Null
             }
             Operation::Languages { git_ref } | Operation::PrimaryLanguages { git_ref } => {
-                let repository = crate::backend::db::repositories::records::get_repository_by_id(
+                let repository = codeyard_db_repos::repositories::records::get_repository_by_id(
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
                 )
@@ -1403,7 +1403,7 @@ impl RpcHandler {
                 })?;
                 let repo_id = repo_id.ok_or_else(|| invalid("repository unavailable"))?;
                 let repository =
-                    crate::backend::db::repositories::records::get_repository_by_id(pool, repo_id)
+                    codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)
                         .await
                         .map_err(|_| RepoError::authority_unavailable())?
                         .ok_or_else(|| invalid("repository unavailable"))?;

@@ -4,9 +4,9 @@ use crate::backend::api::github::pagination::Pagination;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 
-use crate::backend::db::users::profiles::ProfilePatch;
+use codeyard_db_identity::users::profiles::ProfilePatch;
 
 use axum::{
     extract::{OriginalUri, Query, State},
@@ -39,9 +39,10 @@ async fn documents(
     user: &codeyard_db_core::models::User,
     public: bool,
 ) -> Result<Vec<Value>> {
-    let settings = crate::backend::db::users::profiles::get_profile_settings(&state.pool, user.id)
-        .await
-        .map_err(Error::unavailable)?;
+    let settings =
+        codeyard_db_identity::users::profiles::get_profile_settings(&state.pool, user.id)
+            .await
+            .map_err(Error::unavailable)?;
     let mut values = Vec::new();
     if let Some(email) = user
         .email
@@ -50,7 +51,7 @@ async fn documents(
     {
         values.push(json!({"email":email,"primary":true,"verified":user.email_verified,"visibility":settings.primary_visibility}));
     }
-    for address in crate::backend::db::users::emails::list_emails(&state.pool, user.id)
+    for address in codeyard_db_identity::users::emails::list_emails(&state.pool, user.id)
         .await
         .map_err(Error::unavailable)?
     {
@@ -145,7 +146,7 @@ async fn add(
     )
     .await
     .map_err(email_failure)?;
-    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, actor.user.id)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, actor.user.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;

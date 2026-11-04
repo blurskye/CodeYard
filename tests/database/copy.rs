@@ -45,17 +45,17 @@ struct Seed {
 /// text, and a 64-bit integer past 2^53.
 async fn populate(source: &NativeDatabase) -> Seed {
     let pool = &source.pool;
-    let alice = codeyard::backend::db::users::accounts::create_user(
+    let alice = codeyard_db_identity::users::accounts::create_user(
         pool,
         "alice",
         Some("alice@example.test"),
     )
     .await
     .unwrap();
-    let bob = codeyard::backend::db::users::accounts::create_user(pool, "bob", None)
+    let bob = codeyard_db_identity::users::accounts::create_user(pool, "bob", None)
         .await
         .unwrap();
-    let repo = codeyard::backend::db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         pool,
         alice.id,
         "demo",
@@ -65,7 +65,7 @@ async fn populate(source: &NativeDatabase) -> Seed {
     )
     .await
     .unwrap();
-    codeyard::backend::db::milestones::create_milestone(
+    codeyard_db_repos::milestones::create_milestone(
         pool,
         alice.id,
         repo.id,
@@ -75,9 +75,9 @@ async fn populate(source: &NativeDatabase) -> Seed {
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::discovery::create_forked_repository(
+    codeyard_db_repos::repositories::discovery::create_forked_repository(
         pool,
-        codeyard::backend::db::repositories::discovery::NewForkedRepository {
+        codeyard_db_repos::repositories::discovery::NewForkedRepository {
             owner_id: bob.id,
             name: "demo-fork",
             description: None,
@@ -89,13 +89,13 @@ async fn populate(source: &NativeDatabase) -> Seed {
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::engagement::star_repo(pool, bob.id, repo.id)
+    codeyard_db_repos::repositories::engagement::star_repo(pool, bob.id, repo.id)
         .await
         .unwrap();
-    codeyard::backend::db::repositories::engagement::watch_repo(pool, bob.id, repo.id)
+    codeyard_db_repos::repositories::engagement::watch_repo(pool, bob.id, repo.id)
         .await
         .unwrap();
-    codeyard::backend::db::issues::create_issue(
+    codeyard_db_repos::issues::create_issue(
         pool,
         repo.id,
         alice.id,
@@ -105,7 +105,7 @@ async fn populate(source: &NativeDatabase) -> Seed {
     .await
     .unwrap();
     let session = native::token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &session,
         alice.id,
@@ -115,7 +115,7 @@ async fn populate(source: &NativeDatabase) -> Seed {
     )
     .await
     .unwrap();
-    codeyard::backend::db::users::tokens::create_token(
+    codeyard_db_identity::users::tokens::create_token(
         pool,
         alice.id,
         &session,
@@ -128,37 +128,36 @@ async fn populate(source: &NativeDatabase) -> Seed {
     .unwrap();
 
     // Tenant-scoped typed metadata must survive both copy directions unchanged.
-    let org = match codeyard::backend::db::organizations::create_organization(
+    let org = match codeyard_db_orgs::organizations::create_organization(
         pool,
         alice.id,
-        &codeyard::backend::db::organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::NewOrganization::new(
             "metadata-owner",
-            codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        codeyard::backend::db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         other => panic!("organization fixture: {other:?}"),
     };
-    let settings=codeyard::backend::db::organizations::settings::Changes::parse(&serde_json::json!({"company":"Metadata café 名前","email":"public@example.test","billing_email":"private@example.test","location":"Montréal","blog":"https://example.test/metadata","default_repository_permission":"write","members_can_create_private_repositories":true,"members_can_fork_private_repositories":false,"has_organization_projects":false,"web_commit_signoff_required":true,"deploy_keys_enabled_for_repositories":false})).unwrap();
+    let settings=codeyard_db_orgs::organizations::settings::Changes::parse(&serde_json::json!({"company":"Metadata café 名前","email":"public@example.test","billing_email":"private@example.test","location":"Montréal","blog":"https://example.test/metadata","default_repository_permission":"write","members_can_create_private_repositories":true,"members_can_fork_private_repositories":false,"has_organization_projects":false,"web_commit_signoff_required":true,"deploy_keys_enabled_for_repositories":false})).unwrap();
     assert!(matches!(
-        codeyard::backend::db::organizations::settings::change(pool, alice.id, org.id, &settings)
+        codeyard_db_orgs::organizations::settings::change(pool, alice.id, org.id, &settings)
             .await
             .unwrap(),
-        codeyard::backend::db::organizations::OrganizationOutcome::Applied(_)
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
-    let metadata_repo = codeyard::backend::db::repositories::creation::insert_repository(
+    let metadata_repo = codeyard_db_repos::repositories::creation::insert_repository(
         pool,
-        codeyard::backend::db::repositories::creation::NewRepository {
-            owner: codeyard::backend::db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::NewRepository {
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
                 actor_id: alice.id,
-                target:
-                    codeyard::backend::db::repositories::creation::RepositoryTarget::Organization(
-                        org.id,
-                    ),
+                target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                    org.id,
+                ),
             },
             name: "metadata",
             description: None,
@@ -173,27 +172,22 @@ async fn populate(source: &NativeDatabase) -> Seed {
     .unwrap();
     let definition=serde_json::from_value(serde_json::json!({"property_name":"traits","value_type":"multi_select","required":true,"default_value":["ci","café"],"allowed_values":["ci","café","名前"],"description":"Unicode metadata ✓","values_editable_by":"org_and_repo_actors"})).unwrap();
     assert!(matches!(
-        codeyard::backend::db::organizations::properties::define(
-            pool,
-            alice.id,
-            org.id,
-            &[definition]
-        )
-        .await
-        .unwrap(),
-        codeyard::backend::db::organizations::OrganizationOutcome::Applied(_)
+        codeyard_db_orgs::organizations::properties::define(pool, alice.id, org.id, &[definition])
+            .await
+            .unwrap(),
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     assert!(matches!(
-        codeyard::backend::db::organizations::properties::set_values(
+        codeyard_db_orgs::organizations::properties::set_values(
             pool,
             alice.id,
             org.id,
             &["metadata".into()],
             &[
-                codeyard::backend::db::organizations::properties::ValueInput {
+                codeyard_db_core::queries::organizations::properties::ValueInput {
                     property_name: "traits".into(),
                     value: Some(
-                        codeyard::backend::db::organizations::properties::PropertyValue::Strings(
+                        codeyard_db_core::queries::organizations::properties::PropertyValue::Strings(
                             vec!["名前".into()]
                         )
                     )
@@ -202,7 +196,7 @@ async fn populate(source: &NativeDatabase) -> Seed {
         )
         .await
         .unwrap(),
-        codeyard::backend::db::organizations::OrganizationOutcome::Applied(())
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(())
     ));
     assert!(metadata_repo.id > repo.id);
 
@@ -258,13 +252,13 @@ async fn populate(source: &NativeDatabase) -> Seed {
     let hash = "d".repeat(64);
     let digest = format!("sha256:{hash}");
     let statement = json!({"_type":"https://in-toto.io/Statement/v1","subject":[{"name":"Copied 🦀","digest":{"sha256":hash}}],"predicateType":"https://slsa.dev/provenance/v1","predicate":{}});
-    let bundle = codeyard::backend::db::attestation_validation::PreparedBundle::new(&json!({"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","verificationMaterial":{"publicKey":{"hint":"copy fixture"}},"dsseEnvelope":{"payloadType":"application/vnd.in-toto+json","payload":STANDARD.encode(statement.to_string()),"signatures":[{"sig":STANDARD.encode("unverified copy fixture")}]}})).unwrap();
+    let bundle = codeyard_db_security::attestation_validation::PreparedBundle::new(&json!({"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","verificationMaterial":{"publicKey":{"hint":"copy fixture"}},"dsseEnvelope":{"payloadType":"application/vnd.in-toto+json","payload":STANDARD.encode(statement.to_string()),"signatures":[{"sig":STANDARD.encode("unverified copy fixture")}]}})).unwrap();
     for id in [repo.id, provenance_repo] {
-        codeyard::backend::db::attestation_validation::create(pool, alice.id, id, &bundle)
+        codeyard_db_security::attestation_validation::create(pool, alice.id, id, &bundle)
             .await
             .unwrap();
     }
-    let write = codeyard::backend::db::users::tokens::create_token(
+    let write = codeyard_db_identity::users::tokens::create_token(
         pool,
         alice.id,
         &session,
@@ -276,17 +270,17 @@ async fn populate(source: &NativeDatabase) -> Seed {
     .await
     .unwrap()
     .unwrap();
-    let actor = codeyard::backend::db::artifact_metadata::Actor {
+    let actor = codeyard_db_repos::artifact_metadata::Actor {
         user: alice.id,
         token: write.id,
         repo: None,
     };
     let input = serde_json::from_value(json!({"name":"Copied artifact 🦀","digest":digest,"version":"1.0+копия","registry_url":"https://registry.example.test/","path":"copied/名前"})).unwrap();
-    codeyard::backend::db::artifact_metadata::storage(pool, actor, org, &input)
+    codeyard_db_repos::artifact_metadata::storage(pool, actor, org, &input)
         .await
         .unwrap();
     let input = serde_json::from_value(json!({"logical_environment":"production","deployments":[{"name":"Copied artifact 🦀","digest":digest,"deployment_name":"copied-pod"}]})).unwrap();
-    codeyard::backend::db::artifact_metadata::enqueue(pool, actor, org, "copied-cluster", &input)
+    codeyard_db_repos::artifact_metadata::enqueue(pool, actor, org, "copied-cluster", &input)
         .await
         .unwrap();
 
@@ -302,7 +296,7 @@ async fn copies_repository_with_a_deleted_creator_to_postgres() {
     let _turn = TURNS.lock().await;
     let source = NativeDatabase::new().await;
     let creator =
-        codeyard::backend::db::users::accounts::create_user(&source.pool, "former-creator", None)
+        codeyard_db_identity::users::accounts::create_user(&source.pool, "former-creator", None)
             .await
             .unwrap();
     let org: i64 =
@@ -324,7 +318,7 @@ async fn copies_repository_with_a_deleted_creator_to_postgres() {
             .unwrap();
     assert_eq!(retained, creator.id);
     let target = PostgresDatabase::new().await;
-    codeyard::backend::db::copy::copy_database(&source.url, &target.connection_url())
+    codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
         .await
         .unwrap();
     let copied: i64 =
@@ -342,7 +336,7 @@ async fn copies_every_table_and_value_to_postgres() {
     let seed = populate(&source).await;
     let target = PostgresDatabase::new().await;
 
-    let counts = codeyard::backend::db::copy::copy_database(&source.url, &target.connection_url())
+    let counts = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect("copy SQLite to PostgreSQL");
 
@@ -468,7 +462,7 @@ async fn copies_every_table_and_value_to_postgres() {
     );
 
     // New rows must not collide with copied ids.
-    let carol = codeyard::backend::db::users::accounts::create_user(&target.pool, "carol", None)
+    let carol = codeyard_db_identity::users::accounts::create_user(&target.pool, "carol", None)
         .await
         .unwrap();
     assert!(carol.id > seed.bob, "sequence continues past copied ids");
@@ -481,12 +475,12 @@ async fn round_trip_through_postgres_keeps_every_row() {
     let original = NativeDatabase::new().await;
     populate(&original).await;
     let target = PostgresDatabase::new().await;
-    codeyard::backend::db::copy::copy_database(&original.url, &target.connection_url())
+    codeyard_db_cluster::copy::copy_database(&original.url, &target.connection_url())
         .await
         .expect("copy SQLite to PostgreSQL");
 
     let restored = NativeDatabase::new().await;
-    codeyard::backend::db::copy::copy_database(&target.connection_url(), &restored.url)
+    codeyard_db_cluster::copy::copy_database(&target.connection_url(), &restored.url)
         .await
         .expect("copy PostgreSQL to SQLite");
 
@@ -532,7 +526,7 @@ async fn round_trip_through_postgres_keeps_every_row() {
     }
     drop(connection);
 
-    let dave = codeyard::backend::db::users::accounts::create_user(&restored.pool, "dave", None)
+    let dave = codeyard_db_identity::users::accounts::create_user(&restored.pool, "dave", None)
         .await
         .unwrap();
     let largest: i64 = sqlx::query_scalar("SELECT max(id) FROM users")
@@ -548,11 +542,11 @@ async fn non_empty_destination_is_refused_and_left_untouched() {
     let source = NativeDatabase::new().await;
     populate(&source).await;
     let target = PostgresDatabase::new().await;
-    codeyard::backend::db::users::accounts::create_user(&target.pool, "existing", None)
+    codeyard_db_identity::users::accounts::create_user(&target.pool, "existing", None)
         .await
         .unwrap();
 
-    let error = codeyard::backend::db::copy::copy_database(&source.url, &target.connection_url())
+    let error = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect_err("a populated destination is refused");
     assert!(
@@ -577,7 +571,7 @@ async fn missing_baseline_history_is_refused() {
         .unwrap();
     let target = PostgresDatabase::new().await;
 
-    let error = codeyard::backend::db::copy::copy_database(&source.url, &target.connection_url())
+    let error = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect_err("a source without baseline history is refused");
     assert!(
@@ -591,7 +585,7 @@ async fn missing_baseline_history_is_refused() {
 async fn sqlite_source_checksum_mismatch_is_refused() {
     let _turn = TURNS.lock().await;
     let source = NativeDatabase::new().await;
-    codeyard::backend::db::users::accounts::create_user(&source.pool, "kept", None)
+    codeyard_db_identity::users::accounts::create_user(&source.pool, "kept", None)
         .await
         .unwrap();
     sqlx::query("UPDATE _gitserv_sqlite_migrations SET sha256 = 'tampered' WHERE version = 1")
@@ -603,7 +597,7 @@ async fn sqlite_source_checksum_mismatch_is_refused() {
         .unwrap_err();
     let target = PostgresDatabase::new().await;
 
-    let error = codeyard::backend::db::copy::copy_database(&source.url, &target.connection_url())
+    let error = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect_err("copy must reject the same checksum as startup");
     assert_eq!(error.to_string(), startup_error.to_string());
@@ -618,7 +612,7 @@ async fn sqlite_source_checksum_mismatch_is_refused() {
     assert_eq!(checksum, "tampered");
 
     let error =
-        codeyard::backend::db::copy::copy_database(&source.url, "postgres://127.0.0.1:1/unused")
+        codeyard_db_cluster::copy::copy_database(&source.url, "postgres://127.0.0.1:1/unused")
             .await
             .expect_err("validate the snapshot before connecting to the destination");
     assert_eq!(error.to_string(), startup_error.to_string());
@@ -628,7 +622,7 @@ async fn sqlite_source_checksum_mismatch_is_refused() {
 async fn postgres_source_checksum_mismatch_is_refused() {
     let _turn = TURNS.lock().await;
     let source = PostgresDatabase::new().await;
-    codeyard::backend::db::users::accounts::create_user(&source.pool, "kept", None)
+    codeyard_db_identity::users::accounts::create_user(&source.pool, "kept", None)
         .await
         .unwrap();
     sqlx::query("UPDATE _gitserv_migrations SET sha256 = 'tampered' WHERE version = 1")
@@ -642,7 +636,7 @@ async fn postgres_source_checksum_mismatch_is_refused() {
     let path = directory.path().join("copy.sqlite");
     let url = format!("sqlite://{}", path.display());
 
-    let error = codeyard::backend::db::copy::copy_database(&source.connection_url(), &url)
+    let error = codeyard_db_cluster::copy::copy_database(&source.connection_url(), &url)
         .await
         .expect_err("copy must reject the same checksum as startup");
     assert_eq!(error.to_string(), startup_error.to_string());
@@ -661,11 +655,11 @@ async fn postgres_source_checksum_mismatch_is_refused() {
 async fn postgres_cluster_placement_is_refused_before_sqlite_is_opened() {
     let _turn = TURNS.lock().await;
     let source = PostgresDatabase::new().await;
-    let owner = codeyard::backend::db::users::accounts::create_user(&source.pool, "owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(&source.pool, "owner", None)
         .await
         .unwrap();
     let repo = create_repository(&source.pool, owner.id, "placed").await;
-    let node = codeyard::backend::db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         &source.pool,
         &"a".repeat(64),
         "store",
@@ -675,7 +669,7 @@ async fn postgres_cluster_placement_is_refused_before_sqlite_is_opened() {
     .await
     .unwrap();
     assert!(
-        codeyard::backend::db::cluster::place_repository(&source.pool, repo.id, node.id)
+        codeyard_db_cluster::cluster::place_repository(&source.pool, repo.id, node.id)
             .await
             .unwrap()
     );
@@ -683,7 +677,7 @@ async fn postgres_cluster_placement_is_refused_before_sqlite_is_opened() {
     let path = directory.path().join("copy.sqlite");
     let url = format!("sqlite://{}", path.display());
 
-    let error = codeyard::backend::db::copy::copy_database(&source.connection_url(), &url)
+    let error = codeyard_db_cluster::copy::copy_database(&source.connection_url(), &url)
         .await
         .expect_err("SQLite cannot serve placed repositories");
     let message = error.to_string();
@@ -692,7 +686,7 @@ async fn postgres_cluster_placement_is_refused_before_sqlite_is_opened() {
     assert!(message.contains("remove placement"), "{message}");
     assert!(!path.exists(), "destination must not be opened");
     let stored =
-        codeyard::backend::db::repositories::records::get_repository_by_id(&source.pool, repo.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&source.pool, repo.id)
             .await
             .unwrap()
             .unwrap();
@@ -703,15 +697,14 @@ async fn postgres_cluster_placement_is_refused_before_sqlite_is_opened() {
         .execute(&source.raw)
         .await
         .unwrap();
-    codeyard::backend::db::copy::copy_database(&source.connection_url(), &url)
+    codeyard_db_cluster::copy::copy_database(&source.connection_url(), &url)
         .await
         .expect("unplaced repositories may be copied even with membership rows");
     let restored = codeyard_db_core::init_db(&url).await.unwrap();
-    let stored =
-        codeyard::backend::db::repositories::records::get_repository_by_id(&restored, repo.id)
-            .await
-            .unwrap()
-            .unwrap();
+    let stored = codeyard_db_repos::repositories::records::get_repository_by_id(&restored, repo.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(stored.storage_node_id, None);
     assert_eq!(stored.disk_path, repo.disk_path);
     restored.close().await;
@@ -737,7 +730,7 @@ async fn failed_copy_leaves_destination_empty() {
     drop(connection);
 
     let target = PostgresDatabase::new().await;
-    let error = codeyard::backend::db::copy::copy_database(&source.url, &target.connection_url())
+    let error = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect_err("orphaned star breaks the copy");
     assert!(format!("{error:#}").contains("foreign key"), "{error:#}");
@@ -773,7 +766,7 @@ async fn nul_text_is_refused_before_postgres_is_written() {
         .unwrap();
     let target = PostgresDatabase::new().await;
 
-    let error = codeyard::backend::db::copy::copy_database(&source.url, &target.connection_url())
+    let error = codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect_err("NUL text is refused");
     let message = format!("{error:#}");
@@ -837,7 +830,7 @@ async fn create_repository(
     owner: i64,
     name: &str,
 ) -> codeyard_db_core::models::Repository {
-    codeyard::backend::db::repositories::records::create_repository(
+    codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner,
         name,
@@ -857,21 +850,17 @@ async fn create_repository(
 async fn copies_never_reissue_deleted_repository_ids() {
     let _turn = TURNS.lock().await;
     let source = NativeDatabase::new().await;
-    let owner = codeyard::backend::db::users::accounts::create_user(&source.pool, "owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(&source.pool, "owner", None)
         .await
         .unwrap();
     create_repository(&source.pool, owner.id, "kept").await;
     let deleted = create_repository(&source.pool, owner.id, "deleted").await;
-    codeyard::backend::db::repositories::records::delete_repository(
-        &source.pool,
-        owner.id,
-        deleted.id,
-    )
-    .await
-    .unwrap();
+    codeyard_db_repos::repositories::records::delete_repository(&source.pool, owner.id, deleted.id)
+        .await
+        .unwrap();
 
     let target = PostgresDatabase::new().await;
-    codeyard::backend::db::copy::copy_database(&source.url, &target.connection_url())
+    codeyard_db_cluster::copy::copy_database(&source.url, &target.connection_url())
         .await
         .expect("copy SQLite to PostgreSQL");
     let after_copy = create_repository(&target.pool, owner.id, "after-copy").await;
@@ -881,7 +870,7 @@ async fn copies_never_reissue_deleted_repository_ids() {
         deleted.id
     );
     // Deleting the highest id here too leaves only the sequence to remember it.
-    codeyard::backend::db::repositories::records::delete_repository(
+    codeyard_db_repos::repositories::records::delete_repository(
         &target.pool,
         owner.id,
         after_copy.id,
@@ -890,7 +879,7 @@ async fn copies_never_reissue_deleted_repository_ids() {
     .unwrap();
 
     let restored = NativeDatabase::new().await;
-    codeyard::backend::db::copy::copy_database(&target.connection_url(), &restored.url)
+    codeyard_db_cluster::copy::copy_database(&target.connection_url(), &restored.url)
         .await
         .expect("copy PostgreSQL to SQLite");
     let next = create_repository(&restored.pool, owner.id, "restored").await;

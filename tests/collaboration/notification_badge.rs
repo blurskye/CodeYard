@@ -36,9 +36,7 @@ async fn setup(pg: bool) -> World {
         let repo = codeyard::backend::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
-            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
-                alice_id,
-            ),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
             name,
             None,
             private,
@@ -63,9 +61,9 @@ async fn setup(pg: bool) -> World {
 }
 
 async fn notify(database: &Database, user: i64, repo: Option<i64>, title: &str) -> i64 {
-    codeyard::backend::db::notifications::records::create_notification(
+    codeyard_db_repos::notifications::records::create_notification(
         database.pool(),
-        codeyard::backend::db::notifications::NewNotification {
+        codeyard_db_repos::notifications::NewNotification {
             user_id: user,
             actor_id: None,
             repo_id: repo,
@@ -168,7 +166,7 @@ async fn sqlite_badge_follows_marks() {
 
 async fn badge_skips_repositories_the_reader_cannot_read(pg: bool) {
     let mut w = setup(pg).await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         w.database.pool(),
         w.bob_id,
         w.vault,
@@ -183,7 +181,7 @@ async fn badge_skips_repositories_the_reader_cannot_read(pg: bool) {
     assert!(names_unread(&html, "3"));
 
     // Losing access to the repository hides its history, so the count drops with it.
-    codeyard::backend::db::repositories::access::revoke_repo_access(
+    codeyard_db_repos::repositories::access::revoke_repo_access(
         w.database.pool(),
         w.bob_id,
         w.vault,

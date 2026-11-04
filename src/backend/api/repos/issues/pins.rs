@@ -35,10 +35,10 @@ pub(crate) async fn native_pin(
         "false" => false,
         _ => return Err(ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid pin state.")),
     };
-    crate::backend::db::pins::set_pin(
+    codeyard_db_repos::pins::set_pin(
         &ctx.state.pool,
         ctx.require_user()?.id,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -49,15 +49,15 @@ pub(crate) async fn native_pin(
     )
     .await
     .map_err(
-        |error| match error.downcast_ref::<crate::backend::db::pins::PinRefusal>() {
-            Some(crate::backend::db::pins::PinRefusal::Denied) => ctx.error(
+        |error| match error.downcast_ref::<codeyard_db_repos::pins::PinRefusal>() {
+            Some(codeyard_db_repos::pins::PinRefusal::Denied) => ctx.error(
                 StatusCode::FORBIDDEN,
                 "Pinning comments requires write access.",
             ),
-            Some(crate::backend::db::pins::PinRefusal::Missing) => {
+            Some(codeyard_db_repos::pins::PinRefusal::Missing) => {
                 ctx.error(StatusCode::NOT_FOUND, "Comment not found.")
             }
-            Some(crate::backend::db::pins::PinRefusal::Occupied) => ctx.error(
+            Some(codeyard_db_repos::pins::PinRefusal::Occupied) => ctx.error(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "Unpin the current comment before pinning another.",
             ),
@@ -72,9 +72,9 @@ pub(crate) async fn pinned_comment(
     repo: &RepositoryData,
     kind: Kind,
     number: i32,
-    item: crate::backend::db::assignees::AssignedItem,
+    item: codeyard_db_repos::assignees::AssignedItem,
 ) -> ResultPage<Option<Box<view::PinnedComment>>> {
-    let Some(pin) = crate::backend::db::pins::get_pin(&ctx.state.pool, item)
+    let Some(pin) = codeyard_db_repos::pins::get_pin(&ctx.state.pool, item)
         .await
         .map_err(|_| unavailable(ctx))?
     else {
@@ -82,10 +82,10 @@ pub(crate) async fn pinned_comment(
     };
     let base = format!("{}/{number}", repo.view.family_url(kind));
     let (body, author, href) = match item {
-        crate::backend::db::assignees::AssignedItem::Issue(id) => {
+        codeyard_db_repos::assignees::AssignedItem::Issue(id) => {
             // A comment deleted after the pin was read takes its pin with it.
             let Some(comment) =
-                crate::backend::db::issues::get_issue_comment(&ctx.state.pool, pin.comment_id)
+                codeyard_db_repos::issues::get_issue_comment(&ctx.state.pool, pin.comment_id)
                     .await
                     .map_err(|_| unavailable(ctx))?
                     .filter(|comment| comment.issue_id == id)
@@ -93,14 +93,14 @@ pub(crate) async fn pinned_comment(
                 return Ok(None);
             };
             let position =
-                crate::backend::db::issues::issue_comment_position(&ctx.state.pool, comment.id)
+                codeyard_db_repos::issues::issue_comment_position(&ctx.state.pool, comment.id)
                     .await;
             let href = crate::backend::issues::comment_link(&base, comment.id, position);
             (comment.body, comment.author_id, href)
         }
-        crate::backend::db::assignees::AssignedItem::PullRequest(id) => {
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(id) => {
             let Some(comment) =
-                crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+                codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(
                     &ctx.state.pool,
                     pin.comment_id,
                 )
@@ -123,12 +123,12 @@ pub(crate) async fn pinned_comment(
             (comment.body, comment.author_id, href)
         }
     };
-    let author = crate::backend::db::users::accounts::get_user_by_id(&ctx.state.pool, author)
+    let author = codeyard_db_identity::users::accounts::get_user_by_id(&ctx.state.pool, author)
         .await
         .map_err(|_| unavailable(ctx))?
         .map_or_else(|| "Deleted user".into(), |user| user.username);
     let pinned_by = match pin.pinned_by {
-        Some(id) => crate::backend::db::users::accounts::get_user_by_id(&ctx.state.pool, id)
+        Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(&ctx.state.pool, id)
             .await
             .map_err(|_| unavailable(ctx))?
             .map(|user| user.username),

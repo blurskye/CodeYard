@@ -226,7 +226,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         reference: &str,
         sha: &str,
         force: bool,
@@ -469,7 +469,7 @@ impl RepoStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         source: &RepoStore,
         options: &CopyOptions,
     ) -> Result<(), RepoError> {
@@ -522,7 +522,7 @@ impl RepoStore {
     }
 
     /// Removes a deleted repository. A local repository moves to `deleted/` under its
-    /// parent directory and stays there for [`crate::backend::db::files::RESTORE_WINDOW_SECONDS`], so a database
+    /// parent directory and stays there for [`codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS`], so a database
     /// restored to before the delete still finds its files. Remote storage uses the same retirement.
     pub async fn retire(&self) -> Result<(), RepoError> {
         match &self.0 {
@@ -1664,7 +1664,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         old: &str,
         new: &str,
     ) -> Result<String, RepoError> {
@@ -1732,7 +1732,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         name: &str,
         sha: &str,
     ) -> Result<String, RepoError> {
@@ -1763,7 +1763,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         new_owner: &str,
     ) -> Result<Repository, RepoError> {
         let actor = actor.into();
@@ -1798,8 +1798,8 @@ impl RepoStore {
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
         actor: i64,
-        credential: crate::backend::db::users::accounts::OwnedAccountCredential,
-        feature: crate::backend::db::repositories::dependencies::Feature,
+        credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential,
+        feature: codeyard_db_repos::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
     ) -> Result<(), RepoError> {
@@ -1869,9 +1869,9 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         name: &str,
-        changes: &crate::backend::db::repositories::records::RepositoryChanges<&str>,
+        changes: &codeyard_db_repos::repositories::records::RepositoryChanges<&str>,
     ) -> Result<Repository, RepoError> {
         if git::branch_ref(name).is_none() {
             return Err(invalid_ref("branch"));
@@ -1907,7 +1907,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         name: &str,
     ) -> Result<(), RepoError> {
         let actor = actor.into();
@@ -1937,7 +1937,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         name: &str,
     ) -> Result<(), RepoError> {
         let actor = actor.into();
@@ -1972,7 +1972,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         name: &str,
         sha: &str,
         message: Option<&str>,
@@ -2023,7 +2023,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         name: &str,
     ) -> Result<(), RepoError> {
         let actor = actor.into();
@@ -2198,7 +2198,7 @@ impl RepoStore {
         repo_id: i64,
         actor: i64,
         prepared: &PreparedFile,
-        publication: &crate::backend::db::repositories::dependencies::Publication,
+        publication: &codeyard_db_repos::repositories::dependencies::Publication,
     ) -> Result<CommitInfo, RepoError> {
         match &self.0 {
             Backend::Local(local) => {
@@ -2391,14 +2391,14 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         head_branch: &str,
         base_branch: &str,
         head: &str,
         base: &str,
         result: &str,
         method: MergeMethod,
-        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
+        policy: Option<codeyard_db_repos::pull_requests::merge_policy::Snapshot>,
     ) -> Result<(), RepoError> {
         let authority = actor.into();
         let actor = authority.user_id;
@@ -2457,12 +2457,12 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         heads: &[(String, String)],
         base_branch: &str,
         base: &str,
         result: &str,
-        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
+        policy: Option<codeyard_db_repos::pull_requests::merge_policy::Snapshot>,
     ) -> Result<(), RepoError> {
         let authority = actor.into();
         let actor = authority.user_id;
@@ -2552,7 +2552,7 @@ impl RepoStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
-        actor: impl Into<crate::backend::db::credentials::Actor>,
+        actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
         stack_id: i64,
         versions: &[(i64, i64)],
         base_branch: &str,

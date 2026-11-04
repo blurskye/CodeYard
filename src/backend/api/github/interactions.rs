@@ -2,10 +2,10 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::interactions::InteractionRefusal;
-use crate::backend::db::interactions::InteractionScope;
-use crate::backend::db::interactions::NewRestriction;
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_db_identity::interactions::InteractionRefusal;
+use codeyard_db_identity::interactions::InteractionScope;
+use codeyard_db_identity::interactions::NewRestriction;
 
 use axum::{
     extract::{rejection::JsonRejection, Path, State},
@@ -60,17 +60,14 @@ pub(super) async fn resolve(
     Ok(match scope {
         ScopeName::User => InteractionScope::User(actor.id),
         ScopeName::Organization(name) => InteractionScope::Organization(
-            crate::backend::db::organizations::profiles::get_public_organization(
-                &state.pool,
-                &name,
-            )
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?
-            .id,
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, &name)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?
+                .id,
         ),
         ScopeName::Repository(owner, name) => {
-            let repository = crate::backend::db::repositories::records::get_repository(
+            let repository = codeyard_db_repos::repositories::records::get_repository(
                 &state.pool,
                 &owner,
                 &name,
@@ -113,7 +110,7 @@ async fn read(state: Arc<AppState>, headers: HeaderMap, scope: ScopeName) -> Res
         .ok_or_else(crate::backend::api::github::auth::required)?;
     let scope = resolve(&state, &actor.user, scope).await?;
     let restriction =
-        crate::backend::db::interactions::get_restriction(&state.pool, actor.user.id, scope)
+        codeyard_db_identity::interactions::get_restriction(&state.pool, actor.user.id, scope)
             .await
             .map_err(failure)?;
     if restriction.is_none() && matches!(scope, InteractionScope::User(_)) {
@@ -143,7 +140,7 @@ async fn save(
                 .map_err(|_| Error::validation("InteractionLimit", "limit", "invalid"))
         })
         .transpose()?;
-    let restriction = match crate::backend::db::interactions::set_restriction(
+    let restriction = match codeyard_db_identity::interactions::set_restriction(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),

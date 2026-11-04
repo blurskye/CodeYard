@@ -6,9 +6,9 @@ use crate::backend::api::github::repository;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::deployment_protection as protection;
-use crate::backend::db::deployment_protection::Refusal;
-use crate::backend::db::deployment_protection::Rule;
+use codeyard_db_actions::deployment_protection as protection;
+use codeyard_db_actions::deployment_protection::Refusal;
+use codeyard_db_actions::deployment_protection::Rule;
 
 use axum::{
     extract::{OriginalUri, Path, Query, Request, State},
@@ -77,7 +77,7 @@ async fn rules(
         }
     }
     let env =
-        crate::backend::db::environments::get(&state.pool, repo.id, &params["environment_name"])
+        codeyard_db_actions::environments::get(&state.pool, repo.id, &params["environment_name"])
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -143,7 +143,7 @@ async fn integrations(
     {
         return Err(Error::missing());
     }
-    crate::backend::db::environments::get(&state.pool, repo.id, &params["environment_name"])
+    codeyard_db_actions::environments::get(&state.pool, repo.id, &params["environment_name"])
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;

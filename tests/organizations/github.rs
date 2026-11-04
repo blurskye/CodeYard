@@ -18,7 +18,7 @@ mod settings;
 mod teams;
 mod token_grants;
 use crate::support::{
-    codeyard::backend::db::organizations::applied, database::Database,
+    codeyard_db_orgs::organizations::applied, database::Database,
     github_spec::assert_github_schema, http_client::Client,
 };
 use axum::{
@@ -30,8 +30,8 @@ use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
 
-use codeyard::backend::db::organizations::NewOrganization;
-use codeyard::backend::db::organizations::OrganizationProfile;
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::OrganizationProfile;
 
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard::backend::storage::ObjectStore;
@@ -90,7 +90,7 @@ async fn contract(pg: bool) {
     let member = f.actor("member").await;
     let outsider = f.actor("outsider").await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new(
@@ -103,7 +103,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             f.pool(),
             owner,
             org.id,
@@ -114,7 +114,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::invite_organization_member(
+        codeyard_db_orgs::organizations::invite_organization_member(
             f.pool(),
             owner,
             org.id,
@@ -125,7 +125,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let second = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("second", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -563,7 +563,7 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        codeyard::backend::db::organizations::update_organization_member_role(
+        codeyard_db_orgs::organizations::update_organization_member_role(
             f.pool(),
             owner,
             org.id,
@@ -594,7 +594,7 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        codeyard::backend::db::organizations::update_organization_member_role(
+        codeyard_db_orgs::organizations::update_organization_member_role(
             f.pool(),
             owner,
             org.id,

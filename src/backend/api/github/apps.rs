@@ -8,7 +8,7 @@ use codeyard_model::urls::api_url;
 
 use crate::backend::app::AppState;
 
-use crate::backend::db::oauth_apps::Application;
+use codeyard_db_identity::oauth_apps::Application;
 
 use codeyard_support::token_hash::token_hash;
 
@@ -164,11 +164,11 @@ fn access_token(body: &Value) -> Result<&str> {
 }
 
 async fn owned_token(state: &AppState, client: &str, hash: &str) -> Result<PersonalAccessToken> {
-    let token = crate::backend::db::oauth_apps::owned_token(&state.pool, client, hash)
+    let token = codeyard_db_identity::oauth_apps::owned_token(&state.pool, client, hash)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    crate::backend::db::users::tokens::token_user(&state.pool, token.id, false)
+    codeyard_db_identity::users::tokens::token_user(&state.pool, token.id, false)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -185,22 +185,22 @@ struct Authorization {
 }
 
 async fn authorization(state: &AppState, token: &PersonalAccessToken) -> Result<Authorization> {
-    let metadata = crate::backend::db::oauth_apps::token(&state.pool, token.id)
+    let metadata = codeyard_db_identity::oauth_apps::token(&state.pool, token.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let user = crate::backend::db::users::tokens::token_user(&state.pool, token.id, false)
+    let user = codeyard_db_identity::users::tokens::token_user(&state.pool, token.id, false)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let bounds = crate::backend::db::github_apps::token(&state.pool, token.id)
+    let bounds = codeyard_db_identity::github_apps::token(&state.pool, token.id)
         .await
         .map_err(Error::unavailable)?
         .filter(|bounds| bounds.user_token);
     let mut installation = None;
     if let Some(bounds) = bounds {
         if let Some(row) =
-            crate::backend::db::github_apps::installation(&state.pool, bounds.installation_id)
+            codeyard_db_identity::github_apps::installation(&state.pool, bounds.installation_id)
                 .await
                 .map_err(Error::unavailable)?
         {
@@ -249,7 +249,7 @@ async fn check_token(
 ) -> Result<Json<Value>> {
     let app = application(&state, &headers, &id).await?;
     let value = access_token(&body)?;
-    let token = crate::backend::db::oauth_apps::owned_token(&state.pool, &id, &token_hash(value))
+    let token = codeyard_db_identity::oauth_apps::owned_token(&state.pool, &id, &token_hash(value))
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -269,7 +269,7 @@ async fn reset_token(
     // Everything the response shows is read first: once the hash rotates, the old token is
     // gone and the new one exists only in this response.
     let details = authorization(&state, &current).await?;
-    let value = if crate::backend::db::github_apps::app(&state.pool, &id)
+    let value = if codeyard_db_identity::github_apps::app(&state.pool, &id)
         .await
         .map_err(Error::unavailable)?
         .is_some()
@@ -278,7 +278,7 @@ async fn reset_token(
     } else {
         codeyard_support::crypto::random_hex()
     };
-    let token = crate::backend::db::oauth_apps::reset_token(
+    let token = codeyard_db_identity::oauth_apps::reset_token(
         &state.pool,
         &id,
         &token_hash(old),
@@ -297,7 +297,7 @@ async fn delete_token(
     Json(body): Json<Value>,
 ) -> Result<StatusCode> {
     application(&state, &headers, &id).await?;
-    crate::backend::db::oauth_apps::revoke(
+    codeyard_db_identity::oauth_apps::revoke(
         &state.pool,
         &id,
         &token_hash(access_token(&body)?),
@@ -315,7 +315,7 @@ async fn delete_authorization(
     Json(body): Json<Value>,
 ) -> Result<StatusCode> {
     application(&state, &headers, &id).await?;
-    crate::backend::db::oauth_apps::revoke(
+    codeyard_db_identity::oauth_apps::revoke(
         &state.pool,
         &id,
         &token_hash(access_token(&body)?),

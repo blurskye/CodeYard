@@ -81,7 +81,7 @@ async fn set_resolved(
     .await
     .map_err(crate::backend::api::repos::pulls::operation_error)?;
     let author =
-        crate::backend::db::users::accounts::get_user_by_id(&state.pool, comment.author_id)
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, comment.author_id)
             .await
             .ok()
             .flatten()
@@ -144,7 +144,7 @@ pub async fn list_pull_request_comments(
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let (offset, limit) = json_page(query.page, query.per_page)?;
 
-    let pull_request = crate::backend::db::pull_requests::records::get_pull_request(
+    let pull_request = codeyard_db_repos::pull_requests::records::get_pull_request(
         &state.pool,
         repository.id,
         number,
@@ -158,7 +158,7 @@ pub async fn list_pull_request_comments(
         )
     })?;
 
-    let comments = crate::backend::db::pull_requests::reviews::list_pull_request_comments(
+    let comments = codeyard_db_repos::pull_requests::reviews::list_pull_request_comments(
         &state.pool,
         pull_request.id,
         limit as i64,

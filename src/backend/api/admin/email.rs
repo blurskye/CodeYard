@@ -7,7 +7,7 @@ use crate::backend::api::user::responses::require_account;
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::db::email::NewEmailSettings;
+use codeyard_db_identity::email::NewEmailSettings;
 
 use axum::{
     extract::{DefaultBodyLimit, Form, State},
@@ -71,7 +71,7 @@ async fn save(
     // Inherit credentials only for an authenticated relay and only from valid environment
     // settings. An invalid old environment must not prevent saving its replacement.
     if password.is_empty() && !server.username.is_empty() {
-        let saved = crate::backend::db::email::get_email_settings(&state.pool)
+        let saved = codeyard_db_identity::email::get_email_settings(&state.pool)
             .await
             .map_err(|_| {
                 (
@@ -100,7 +100,7 @@ async fn save(
         })?;
         Some(sealed)
     };
-    let saved = crate::backend::db::email::save_email_settings(
+    let saved = codeyard_db_identity::email::save_email_settings(
         &state.pool,
         actor,
         session,

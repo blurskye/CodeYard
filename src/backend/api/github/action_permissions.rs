@@ -38,7 +38,7 @@ async fn get_repository(
             "Repository administration required",
         ));
     }
-    let settings = crate::backend::db::actions::get_repo_actions_settings(&state.pool, repo.id)
+    let settings = codeyard_db_actions::actions::get_repo_actions_settings(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(Json(
@@ -65,7 +65,7 @@ async fn put_repository(
             "Configure an available action execution policy",
         ));
     }
-    crate::backend::db::actions::set_repo_enabled(
+    codeyard_db_actions::actions::set_repo_enabled(
         &state.pool,
         actor.database_actor(),
         repo.id,

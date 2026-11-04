@@ -11,8 +11,8 @@ use crate::backend::identity::sessions::SessionContext;
 use crate::backend::identity::sessions::SessionIssueError;
 use crate::backend::identity::AuthenticatedAccount;
 
-use crate::backend::db::users::transitions::SetupClaim;
 use codeyard_db_core::DbPool;
+use codeyard_db_identity::users::transitions::SetupClaim;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
@@ -36,7 +36,7 @@ pub struct SetupStatus {
 pub struct SetupStatusUnavailable;
 
 pub async fn status(pool: &DbPool) -> Result<SetupStatus, SetupStatusUnavailable> {
-    let config = crate::backend::db::node_config::get_node_configuration(pool)
+    let config = codeyard_db_cluster::node_config::get_node_configuration(pool)
         .await
         .map_err(|_| SetupStatusUnavailable)?;
     Ok(match config {
@@ -106,7 +106,7 @@ pub async fn complete_setup(
     }
     let mode = node_mode(input.node_mode).ok_or(SetupError::InvalidNodeMode)?;
     let existing =
-        crate::backend::db::users::accounts::get_user_by_username(pool, input.account.username)
+        codeyard_db_identity::users::accounts::get_user_by_username(pool, input.account.username)
             .await
             .map_err(|_| SetupError::AccountUnavailable)?;
     // Every setup attempt shares one budget, whatever name it submits, and is charged before the
@@ -144,7 +144,7 @@ pub async fn complete_setup(
     let hash = crate::backend::identity::passwords::hash_password(input.account.password)
         .await
         .map_err(SetupError::Password)?;
-    let user = match crate::backend::db::users::transitions::complete_setup(
+    let user = match codeyard_db_identity::users::transitions::complete_setup(
         pool,
         input.account.username,
         input.account.email.filter(|email| !email.trim().is_empty()),

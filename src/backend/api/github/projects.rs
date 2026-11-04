@@ -7,8 +7,8 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::projects::Owner;
-use crate::backend::db::projects::Project;
+use codeyard_db_repos::projects::Owner;
+use codeyard_db_repos::projects::Project;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -39,7 +39,7 @@ pub(super) fn project_error(error: anyhow::Error) -> Error {
 async fn owner(state: &AppState, params: &Params, numeric: bool) -> Result<(Owner, String)> {
     if let Some(name) = params.get("org") {
         let org =
-            crate::backend::db::organizations::profiles::get_public_organization(&state.pool, name)
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, name)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -50,13 +50,13 @@ async fn owner(state: &AppState, params: &Params, numeric: bool) -> Result<(Owne
             .or_else(|| params.get("account_id"))
             .ok_or_else(Error::missing)?;
         let user = if numeric {
-            crate::backend::db::users::accounts::get_user_by_id(
+            codeyard_db_identity::users::accounts::get_user_by_id(
                 &state.pool,
                 name.parse().map_err(|_| Error::missing())?,
             )
             .await
         } else {
-            crate::backend::db::users::accounts::get_user_by_username(&state.pool, name).await
+            codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, name).await
         }
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -79,7 +79,7 @@ pub(super) fn project_url(project: &Project, name: &str) -> String {
 
 pub(super) async fn document(state: &AppState, project: &Project, name: &str) -> Result<Value> {
     let creator =
-        crate::backend::db::users::accounts::get_user_by_id(&state.pool, project.creator_id)
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, project.creator_id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -134,7 +134,7 @@ async fn context(
         .get("project_number")
         .and_then(|s| s.parse().ok())
         .ok_or_else(Error::missing)?;
-    let project = crate::backend::db::projects::get(
+    let project = codeyard_db_repos::projects::get(
         &state.pool,
         auth.as_ref().map(|a| a.user.id),
         owner,
@@ -165,11 +165,11 @@ async fn list(
     if query.len() > 4096 {
         return Err(Error::invalid("Project query is too long"));
     }
-    let mut filter = crate::backend::db::projects::ListFilter::search(Some(owner), query);
+    let mut filter = codeyard_db_repos::projects::ListFilter::search(Some(owner), query);
     filter.after = (after > 0).then_some(after);
     filter.before = (before < i64::MAX).then_some(before);
     filter.descending = before < i64::MAX;
-    let (_, mut selected) = crate::backend::db::projects::list(
+    let (_, mut selected) = codeyard_db_repos::projects::list(
         &state.pool,
         auth.as_ref().map(|a| a.user.id),
         &filter,
@@ -210,7 +210,7 @@ async fn fields(
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, false, false).await?;
     let (after, before, limit) = page.window()?;
-    let mut fields = crate::backend::db::projects::fields_window(
+    let mut fields = codeyard_db_repos::projects::fields_window(
         &state.pool,
         auth.as_ref().map(|a| a.user.id),
         project.id,
@@ -244,7 +244,7 @@ async fn get_field(
 ) -> Result<Json<Value>> {
     let (project, name, auth) = context(&state, &headers, &params, false, false).await?;
     let id: i64 = params["field_id"].parse().map_err(|_| Error::missing())?;
-    let field = crate::backend::db::projects::fields(
+    let field = codeyard_db_repos::projects::fields(
         &state.pool,
         auth.as_ref().map(|a| a.user.id),
         project.id,
@@ -265,14 +265,14 @@ async fn add_field(
     headers: HeaderMap,
     Path(params): Path<Params>,
     input: std::result::Result<
-        Json<crate::backend::db::projects::NewField>,
+        Json<codeyard_db_repos::projects::NewField>,
         axum::extract::rejection::JsonRejection,
     >,
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
     let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
-    let field = crate::backend::db::projects::add_field(
+    let field = codeyard_db_repos::projects::add_field(
         &state.pool,
         auth.user.id,
         &auth.credential(),

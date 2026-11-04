@@ -11,7 +11,6 @@ use crate::backend::api::repos::labels::label_write_error;
 use crate::backend::api::repos::labels::LabelResponse;
 use crate::backend::app::AppState;
 
-use crate::backend::db::assignees::AssignedItem;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::State;
@@ -20,6 +19,7 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
+use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_webui::pages::repos::issues::DetailDraft;
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -38,7 +38,7 @@ pub async fn add_issue_labels(
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
-    let issue = crate::backend::db::issues::get_issue(&state.pool, repository.id, number)
+    let issue = codeyard_db_repos::issues::get_issue(&state.pool, repository.id, number)
         .await
         .map_err(label_write_error)?
         .ok_or_else(|| {
@@ -69,7 +69,7 @@ pub async fn remove_issue_label(
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
-    let issue = crate::backend::db::issues::get_issue(&state.pool, repository.id, number)
+    let issue = codeyard_db_repos::issues::get_issue(&state.pool, repository.id, number)
         .await
         .map_err(label_write_error)?
         .ok_or_else(|| {
@@ -96,17 +96,17 @@ pub async fn remove_issue_label(
 /// not on it yet. Returns every label the item has afterwards.
 async fn add_labels(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
     subject: AssignedItem,
     ids: &[i64],
 ) -> anyhow::Result<Vec<codeyard_db_core::models::Label>> {
     let labels = match subject {
         AssignedItem::Issue(item_id) => {
-            crate::backend::db::labels::add_issue_labels(pool, actor, repo_id, item_id, ids).await?
+            codeyard_db_repos::labels::add_issue_labels(pool, actor, repo_id, item_id, ids).await?
         }
         AssignedItem::PullRequest(item_id) => {
-            crate::backend::db::labels::add_pull_request_labels(pool, actor, repo_id, item_id, ids)
+            codeyard_db_repos::labels::add_pull_request_labels(pool, actor, repo_id, item_id, ids)
                 .await?
         }
     };
@@ -117,18 +117,18 @@ async fn add_labels(
 /// it. Returns whether it was.
 async fn remove_label(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
     subject: AssignedItem,
     label_id: i64,
 ) -> anyhow::Result<bool> {
     let removed = match subject {
         AssignedItem::Issue(item_id) => {
-            crate::backend::db::labels::remove_issue_label(pool, actor, repo_id, item_id, label_id)
+            codeyard_db_repos::labels::remove_issue_label(pool, actor, repo_id, item_id, label_id)
                 .await?
         }
         AssignedItem::PullRequest(item_id) => {
-            crate::backend::db::labels::remove_pull_request_label(
+            codeyard_db_repos::labels::remove_pull_request_label(
                 pool, actor, repo_id, item_id, label_id,
             )
             .await?
@@ -156,7 +156,7 @@ pub(crate) async fn native_add_label(
         value.id,
     )?;
     let draft = submitted_detail(&form, "label");
-    let labels = crate::backend::db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
+    let labels = codeyard_db_repos::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
         .await
         .map_err(|_| unavailable(&ctx))?;
     let selected = draft

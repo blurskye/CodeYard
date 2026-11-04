@@ -10,10 +10,10 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::github_apps::App;
-use crate::backend::db::github_apps::Installation;
-use crate::backend::db::github_apps::InstallationFilter;
-use crate::backend::db::github_apps::RepositoryChange;
+use codeyard_db_identity::github_apps::App;
+use codeyard_db_identity::github_apps::Installation;
+use codeyard_db_identity::github_apps::InstallationFilter;
+use codeyard_db_identity::github_apps::RepositoryChange;
 
 use codeyard_support::token_hash::token_hash;
 
@@ -38,13 +38,13 @@ pub(super) async fn jwt(state: &AppState, headers: &HeaderMap) -> Result<App> {
 async fn account(state: &AppState, installation: &Installation) -> Result<Value> {
     if let Some(user) = installation.user_id {
         return Ok(crate::backend::webhooks::payloads::user(
-            &crate::backend::db::users::accounts::get_user_by_id(&state.pool, user)
+            &codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, user)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?,
         ));
     }
-    let org = crate::backend::db::organizations::profiles::get_public_organization_by_id(
+    let org = codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
         &state.pool,
         installation.org_id.ok_or_else(Error::missing)?,
     )
@@ -59,7 +59,7 @@ pub(in crate::backend::api::github) async fn app_document(
     state: &AppState,
     app: &App,
 ) -> Result<Value> {
-    let owner = crate::backend::db::users::accounts::get_user_by_id(&state.pool, app.owner_id)
+    let owner = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, app.owner_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -68,7 +68,7 @@ pub(in crate::backend::api::github) async fn app_document(
         ..InstallationFilter::default()
     };
     let (installations, _) =
-        crate::backend::db::github_apps::installations(&state.pool, &filter, 0, 0)
+        codeyard_db_identity::github_apps::installations(&state.pool, &filter, 0, 0)
             .await
             .map_err(Error::unavailable)?;
     app_value(app, &owner, installations)
@@ -89,16 +89,16 @@ pub(in crate::backend::api::github) async fn document(
 ) -> Result<Value> {
     // The request already sees this installation, so an app whose owner is no longer
     // active is still described rather than failing the page.
-    let app = crate::backend::db::github_apps::app_by_id(&state.pool, installation.app_id)
+    let app = codeyard_db_identity::github_apps::app_by_id(&state.pool, installation.app_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     Ok(
-        json!({"id":installation.id,"account":account(state,installation).await?,"repository_selection":if installation.all_repos{"all"}else{"selected"},"access_tokens_url":api_url(&format!("/app/installations/{}/access_tokens",installation.id)),"repositories_url":api_url("/installation/repositories"),"html_url":format!("{}/settings/apps/installations",codeyard_model::http_config::link_origin()),"app_id":app.id,"app_slug":app.slug,"target_id":installation.user_id.or(installation.org_id),"target_type":if installation.org_id.is_some(){"Organization"}else{"User"},"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"created_at":installation.created_at,"updated_at":installation.updated_at,"single_file_name":null,"has_multiple_single_files":false,"single_file_paths":[],"suspended_at":installation.suspended_at,"suspended_by":if let Some(id)=installation.suspended_by{crate::backend::db::users::accounts::get_user_by_id(&state.pool,id).await.map_err(Error::unavailable)?.map(|user|crate::backend::webhooks::payloads::user(&user))}else{None}}),
+        json!({"id":installation.id,"account":account(state,installation).await?,"repository_selection":if installation.all_repos{"all"}else{"selected"},"access_tokens_url":api_url(&format!("/app/installations/{}/access_tokens",installation.id)),"repositories_url":api_url("/installation/repositories"),"html_url":format!("{}/settings/apps/installations",codeyard_model::http_config::link_origin()),"app_id":app.id,"app_slug":app.slug,"target_id":installation.user_id.or(installation.org_id),"target_type":if installation.org_id.is_some(){"Organization"}else{"User"},"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"created_at":installation.created_at,"updated_at":installation.updated_at,"single_file_name":null,"has_multiple_single_files":false,"single_file_paths":[],"suspended_at":installation.suspended_at,"suspended_by":if let Some(id)=installation.suspended_by{codeyard_db_identity::users::accounts::get_user_by_id(&state.pool,id).await.map_err(Error::unavailable)?.map(|user|crate::backend::webhooks::payloads::user(&user))}else{None}}),
     )
 }
 async fn owned(state: &AppState, app: i64, id: i64) -> Result<Installation> {
-    crate::backend::db::github_apps::installation(&state.pool, id)
+    codeyard_db_identity::github_apps::installation(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .filter(|i| i.app_id == app)
@@ -111,7 +111,7 @@ pub(super) async fn installation_requests(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let app = jwt(&state, &headers).await?;
-    let rows = crate::backend::db::github_apps::requests(&state.pool, app.id)
+    let rows = codeyard_db_identity::github_apps::requests(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?;
     let (offset, limit) = page.window()?;
@@ -130,7 +130,7 @@ pub(super) async fn installation_requests(
             updated_at: request.created_at,
         };
         let requester =
-            crate::backend::db::users::accounts::get_user_by_id(&state.pool, request.user_id)
+            codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, request.user_id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -163,7 +163,7 @@ pub(super) async fn get_by_slug(
     } else {
         crate::backend::api::github::auth::authenticate(&state, &headers, false).await?
     };
-    let app = crate::backend::db::github_apps::app(&state.pool, &slug)
+    let app = codeyard_db_identity::github_apps::app(&state.pool, &slug)
         .await
         .map_err(Error::unavailable)?
         .filter(|app| app.slug == slug)
@@ -206,7 +206,7 @@ pub(in crate::backend::api::github) async fn installation_page(
     offset: usize,
     limit: usize,
 ) -> Result<(i64, Vec<Installation>)> {
-    crate::backend::db::github_apps::installations(
+    codeyard_db_identity::github_apps::installations(
         &state.pool,
         filter,
         i64::try_from(offset).map_err(Error::unavailable)?,
@@ -237,11 +237,11 @@ pub(super) async fn find_installation(
     let app = jwt(&state, &headers).await?;
     let found = if let (Some(owner), Some(repo)) = (params.get("owner"), params.get("repo")) {
         let repo =
-            crate::backend::db::repositories::records::get_repository(&state.pool, owner, repo)
+            codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, repo)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-        crate::backend::db::github_apps::repository_installation(
+        codeyard_db_identity::github_apps::repository_installation(
             &state.pool,
             app.id,
             repo.id,
@@ -251,11 +251,11 @@ pub(super) async fn find_installation(
         .await
     } else if let Some(org) = params.get("org") {
         let org =
-            crate::backend::db::organizations::profiles::get_public_organization(&state.pool, org)
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, org)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-        crate::backend::db::github_apps::account_installation(
+        codeyard_db_identity::github_apps::account_installation(
             &state.pool,
             app.id,
             None,
@@ -265,11 +265,11 @@ pub(super) async fn find_installation(
     } else {
         // The generated router canonicalizes this username parameter to user_id.
         let name = params.get("user_id").ok_or_else(Error::missing)?;
-        let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, name)
+        let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, name)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        crate::backend::db::github_apps::account_installation(
+        codeyard_db_identity::github_apps::account_installation(
             &state.pool,
             app.id,
             Some(user.id),
@@ -289,7 +289,7 @@ async fn change(
     action: &str,
 ) -> Result<StatusCode> {
     let app = jwt(state, headers).await?;
-    if crate::backend::db::github_apps::change_installation(&state.pool, app.id, id, action)
+    if codeyard_db_identity::github_apps::change_installation(&state.pool, app.id, id, action)
         .await
         .map_err(Error::unavailable)?
     {
@@ -334,7 +334,7 @@ async fn issue(
     installation: &Installation,
     actor: Option<i64>,
     body: &Value,
-    parent: Option<&crate::backend::db::github_apps::Token>,
+    parent: Option<&codeyard_db_core::queries::github_apps::Token>,
 ) -> Result<Issued> {
     if installation.suspended_at.is_some() {
         return Err(Error::new(StatusCode::FORBIDDEN, "Installation suspended"));
@@ -368,14 +368,11 @@ async fn issue(
         let owner = owner["login"].as_str().ok_or_else(Error::missing)?;
         let mut ids = vec![];
         for name in names {
-            let repo = crate::backend::db::repositories::records::get_repository(
-                &state.pool,
-                owner,
-                &name,
-            )
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(|| Error::invalid("Repository is outside this installation"))?;
+            let repo =
+                codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, &name)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(|| Error::invalid("Repository is outside this installation"))?;
             ids.push(repo.id);
         }
         ids
@@ -407,7 +404,7 @@ async fn issue(
         .get("access_token")
         .and_then(Value::as_str)
         .map(token_hash);
-    let token = crate::backend::db::github_apps::issue(
+    let token = codeyard_db_identity::github_apps::issue(
         &state.pool,
         app.id,
         installation.id,
@@ -432,7 +429,7 @@ async fn issue(
 /// The most repositories one token may select, as on GitHub.
 const MAX_SELECTED: usize = 500;
 /// The repositories a token's bounds select; empty means its whole installation.
-fn selection(token: &crate::backend::db::github_apps::Token) -> Result<Vec<i64>> {
+fn selection(token: &codeyard_db_core::queries::github_apps::Token) -> Result<Vec<i64>> {
     serde_json::from_str(&token.repositories).map_err(Error::unavailable)
 }
 pub(super) async fn create_token(
@@ -455,7 +452,7 @@ pub(super) async fn create_token(
     let mut response = json!({"token":issued.value,"expires_at":issued.token.expires_at,"permissions":issued.permissions,"repository_selection":if issued.all_repositories{"all"}else{"selected"}});
     if !issued.repositories.is_empty() {
         let mut repositories = vec![];
-        for repo in crate::backend::db::repositories::records::get_repositories_by_ids(
+        for repo in codeyard_db_repos::repositories::records::get_repositories_by_ids(
             &state.pool,
             &issued.repositories,
         )
@@ -475,12 +472,12 @@ pub(super) async fn installation_token(
     headers: &HeaderMap,
 ) -> Result<(
     crate::backend::api::github::auth::Authentication,
-    crate::backend::db::github_apps::Token,
+    codeyard_db_core::queries::github_apps::Token,
 )> {
     let auth = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
-    let token = crate::backend::db::github_apps::token(&state.pool, auth.token.id)
+    let token = codeyard_db_identity::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?
         .filter(|token| !token.user_token)
@@ -495,7 +492,7 @@ pub(super) async fn list_repositories(
 ) -> Result<Response> {
     let (auth, token) = installation_token(&state, &headers).await?;
     let installation =
-        crate::backend::db::github_apps::installation(&state.pool, token.installation_id)
+        codeyard_db_identity::github_apps::installation(&state.pool, token.installation_id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -522,7 +519,7 @@ async fn repository_list(
     page: &Pagination,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let (total, rows) = crate::backend::db::github_apps::installation_repositories(
+    let (total, rows) = codeyard_db_identity::github_apps::installation_repositories(
         &state.pool,
         installation.id,
         viewer,
@@ -544,7 +541,7 @@ pub(super) async fn revoke_token(
     headers: HeaderMap,
 ) -> Result<StatusCode> {
     let (auth, _) = installation_token(&state, &headers).await?;
-    crate::backend::db::github_apps::revoke(&state.pool, auth.token.id)
+    codeyard_db_identity::github_apps::revoke(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(StatusCode::NO_CONTENT)
@@ -555,11 +552,11 @@ async fn user_app(
     state: &AppState,
     auth: &crate::backend::api::github::auth::Authentication,
 ) -> Result<Option<i64>> {
-    if let Some(token) = crate::backend::db::github_apps::token(&state.pool, auth.token.id)
+    if let Some(token) = codeyard_db_identity::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?
     {
-        return Ok(crate::backend::db::github_apps::installation(
+        return Ok(codeyard_db_identity::github_apps::installation(
             &state.pool,
             token.installation_id,
         )
@@ -567,12 +564,12 @@ async fn user_app(
         .map_err(Error::unavailable)?
         .map(|i| i.app_id));
     }
-    if let Some(token) = crate::backend::db::oauth_apps::token(&state.pool, auth.token.id)
+    if let Some(token) = codeyard_db_identity::oauth_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?
     {
         return Ok(
-            crate::backend::db::github_apps::app(&state.pool, &token.client_id)
+            codeyard_db_identity::github_apps::app(&state.pool, &token.client_id)
                 .await
                 .map_err(Error::unavailable)?
                 .map(|app| app.id),
@@ -589,7 +586,7 @@ pub(super) async fn user_installations(
     let auth = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
-    let token = crate::backend::db::github_apps::token(&state.pool, auth.token.id)
+    let token = codeyard_db_identity::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?;
     let filter = InstallationFilter {
@@ -620,7 +617,7 @@ pub(super) async fn user_repositories(
     let auth = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
-    let token = crate::backend::db::github_apps::token(&state.pool, auth.token.id)
+    let token = codeyard_db_identity::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?;
     if token
@@ -673,7 +670,7 @@ async fn change_repository(
         .ok_or_else(crate::backend::api::github::auth::required)?;
     auth.require_write()?;
     // A narrowed app token may not widen its own repository grant.
-    if crate::backend::db::github_apps::token(&state.pool, auth.token.id)
+    if codeyard_db_identity::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?
         .is_some()
@@ -686,7 +683,7 @@ async fn change_repository(
     if let Some(app) = user_app(state, &auth).await? {
         owned(state, app, id).await?;
     }
-    match crate::backend::db::github_apps::change_repository(
+    match codeyard_db_identity::github_apps::change_repository(
         &state.pool,
         auth.database_actor(),
         id,
@@ -742,10 +739,10 @@ async fn target_installation(state: &AppState, app: i64, body: &Value) -> Result
         .transpose()?;
     let user = match (login, id) {
         (Some(login), _) => {
-            crate::backend::db::users::accounts::get_user_by_username(&state.pool, login).await
+            codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, login).await
         }
         (None, Some(id)) => {
-            crate::backend::db::users::accounts::get_user_by_id(&state.pool, id).await
+            codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id).await
         }
         (None, None) => Ok(None),
     }
@@ -753,11 +750,11 @@ async fn target_installation(state: &AppState, app: i64, body: &Value) -> Result
     .filter(|user| id.is_none_or(|id| id == user.id));
     let org = match (login, id) {
         (Some(login), _) => {
-            crate::backend::db::organizations::profiles::get_public_organization(&state.pool, login)
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, login)
                 .await
         }
         (None, Some(id)) => {
-            crate::backend::db::organizations::profiles::get_public_organization_by_id(
+            codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
                 &state.pool,
                 id,
             )
@@ -770,7 +767,7 @@ async fn target_installation(state: &AppState, app: i64, body: &Value) -> Result
     let mut found = vec![];
     if let Some(user) = user {
         found.extend(
-            crate::backend::db::github_apps::account_installation(
+            codeyard_db_identity::github_apps::account_installation(
                 &state.pool,
                 app,
                 Some(user.id),
@@ -782,7 +779,7 @@ async fn target_installation(state: &AppState, app: i64, body: &Value) -> Result
     }
     if let Some(org) = org {
         found.extend(
-            crate::backend::db::github_apps::account_installation(
+            codeyard_db_identity::github_apps::account_installation(
                 &state.pool,
                 app,
                 None,
@@ -813,13 +810,13 @@ pub(super) async fn scope_token(
         &token_hash(access_token(&body)?),
     )
     .await?;
-    let app = crate::backend::db::github_apps::app(&state.pool, &client)
+    let app = codeyard_db_identity::github_apps::app(&state.pool, &client)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     // A scoped source keeps its bounds even after its installation is gone, so it can never
     // be scoped again as if it were unbounded.
-    let parent = crate::backend::db::github_apps::token_bounds(&state.pool, source.id)
+    let parent = codeyard_db_identity::github_apps::token_bounds(&state.pool, source.id)
         .await
         .map_err(Error::unavailable)?;
     let installation = target_installation(&state, app.id, &body).await?;

@@ -1,0 +1,529 @@
+use crate::postgres::projects::fields;
+use crate::postgres::projects::items::add_item;
+use crate::postgres::projects::items::can_write;
+use crate::postgres::projects::items::content_items;
+use crate::postgres::projects::items::create_view;
+use crate::postgres::projects::items::delete_field;
+use crate::postgres::projects::items::delete_item;
+use crate::postgres::projects::items::item;
+use crate::postgres::projects::items::item_links;
+use crate::postgres::projects::items::items;
+use crate::postgres::projects::items::items_at;
+use crate::postgres::projects::items::items_page;
+use crate::postgres::projects::items::items_window;
+use crate::postgres::projects::items::link_repository;
+use crate::postgres::projects::items::readable_items;
+use crate::postgres::projects::items::repository_read;
+use crate::postgres::projects::items::update_item;
+use crate::postgres::projects::items::views;
+use crate::postgres::projects::items::writable_item;
+use crate::postgres::projects::items::ITEM;
+use crate::postgres::projects::owner_authority;
+use crate::postgres::projects::readable;
+use crate::postgres::projects::readable_at;
+use crate::postgres::projects::write_project;
+use crate::projects::valid_name;
+use crate::projects::Content;
+use crate::projects::FieldUpdate;
+use crate::projects::Item;
+use crate::projects::NewView;
+use crate::projects::View;
+use serde_json::Value;
+
+pub async fn item_links(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    items: &[i64],
+) -> Result<Vec<crate::projects::ItemLink>> {
+    anyhow::ensure!(items.len() <= 50, Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, viewer, project).await?;
+    let links = sqlx::query_as(&format!("SELECT i.id,COALESCE(owner_user.username,owner_org.name),r.name,CASE WHEN i.issue_id IS NOT NULL THEN 'issues' ELSE 'pulls' END,COALESCE(issues.number,pr.number) FROM project_items i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 LEFT JOIN users owner_user ON owner_user.id=r.owner_user_id LEFT JOIN organizations owner_org ON owner_org.id=r.owner_org_id LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id WHERE i.project_id=$1 AND i.id=ANY($3) AND {}", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+        .bind(project).bind(viewer).bind(items).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(links)
+}
+
+pub(super) const ITEM: &str = "SELECT i.id,i.project_id,i.creator_id,COALESCE(issues.repo_id,pr.repo_id,i.repo_id) AS repo_id,i.issue_id,i.pull_request_id,i.draft_title,i.draft_body,i.field_values,i.archived,i.archived_at,i.position,i.created_at,i.updated_at,COALESCE(issues.title,pr.title,i.draft_title) AS title,COALESCE(issues.state,pr.state,'open') AS state FROM project_items i LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id";
+
+pub(super) async fn repository_read(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: i64,
+    repo: i64,
+) -> Result<()> {
+    use codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction;
+    use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock;
+    let access =
+        lock_user_repo_access_in_transaction(tx, actor, repo, RepositoryRowLock::Shared, true)
+            .await?;
+    anyhow::ensure!(
+        access.is_some_and(|a| a.access.can_read() || (!a.organization && a.is_admin)),
+        Refusal::Missing
+    );
+    Ok(())
+}
+
+pub(super) async fn writable_item(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    id: i64,
+) -> Result<Item> {
+    let item: Item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1 AND i.project_id=$2"))
+        .bind(id)
+        .bind(project)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(Refusal::Missing)?;
+    if let Some(repo) = item.repo_id {
+        repository_read(tx, actor, repo).await?;
+    }
+    write_project(tx, actor, credential, project).await?;
+    let item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1 AND i.project_id=$2"))
+        .bind(id)
+        .bind(project)
+        .fetch_optional(&mut **tx)
+        .await?
+        .ok_or(Refusal::Missing)?;
+    Ok(item)
+}
+
+pub async fn can_write(pool: &PgPool, actor: i64, owner: Owner) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    let result = owner_authority(&mut tx, actor, owner, false).await;
+    match result {
+        Ok(()) => {
+            tx.commit().await?;
+            Ok(true)
+        }
+        Err(error)
+            if matches!(
+                error.downcast_ref::<Refusal>(),
+                Some(Refusal::Denied | Refusal::Missing)
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+pub async fn delete_field(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    field: i64,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    write_project(&mut tx, actor, credential, project).await?;
+    let name: Option<String> =
+        sqlx::query_scalar("SELECT name FROM project_fields WHERE id=$1 AND project_id=$2")
+            .bind(field)
+            .bind(project)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let name = name.ok_or(Refusal::Invalid)?;
+    let views: Vec<View> = sqlx::query_as("SELECT * FROM project_views WHERE project_id=$1")
+        .bind(project)
+        .fetch_all(&mut *tx)
+        .await?;
+    for view in views {
+        let mut config: NewView = serde_json::from_str(&view.configuration)?;
+        // Saved views drop the field with it, so it can be deleted; title protection stays below.
+        config.visible_fields.retain(|id| *id != field);
+        config.group_by.retain(|id| *id != field);
+        config.vertical_group_by.retain(|id| *id != field);
+        config.sort_by.retain(|(id, _)| *id != field);
+        if let Some(filter) = &config.filter {
+            config.filter = Some(codeyard_model::project_query::without_field_terms(
+                filter, &name,
+            )?);
+        }
+        sqlx::query("UPDATE project_views SET configuration=$2 WHERE id=$1")
+            .bind(view.id)
+            .bind(serde_json::to_string(&config)?)
+            .execute(&mut *tx)
+            .await?;
+    }
+    let count = sqlx::query(
+        "DELETE FROM project_fields WHERE id=$1 AND project_id=$2 AND data_type <> 'title'",
+    )
+    .bind(field)
+    .bind(project)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    anyhow::ensure!(count == 1, Refusal::Invalid);
+    sqlx::query("UPDATE project_items SET field_values=(field_values::jsonb - $2::text)::text WHERE project_id=$1 AND jsonb_exists(field_values::jsonb, $2::text)")
+        .bind(project)
+        .bind(field.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn add_item(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    content: &Content,
+) -> Result<Item> {
+    let mut tx = pool.begin().await?;
+    let (issue, pull, repo, title, body) = match content {
+        Content::Issue(id) | Content::PullRequest(id) => {
+            let table = if matches!(content, Content::Issue(_)) {
+                "issues"
+            } else {
+                "pull_requests"
+            };
+            let repo: i64 = sqlx::query_scalar(&format!("SELECT repo_id FROM {table} WHERE id=$1"))
+                .bind(id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(Refusal::Missing)?;
+            repository_read(&mut tx, actor, repo).await?;
+            // A transfer may have moved the item before the repository lock was taken.
+            let same: bool = sqlx::query_scalar(&format!(
+                "SELECT EXISTS(SELECT 1 FROM {table} WHERE id=$1 AND repo_id=$2)"
+            ))
+            .bind(id)
+            .bind(repo)
+            .fetch_one(&mut *tx)
+            .await?;
+            anyhow::ensure!(same, Refusal::Missing);
+            (
+                matches!(content, Content::Issue(_)).then_some(*id),
+                matches!(content, Content::PullRequest(_)).then_some(*id),
+                Some(repo),
+                None,
+                None,
+            )
+        }
+        Content::Draft { title, body } => {
+            anyhow::ensure!(
+                valid_name(title) && body.as_ref().is_none_or(|b| b.len() <= 65536),
+                Refusal::Invalid
+            );
+            (None, None, None, Some(title.as_str()), body.as_deref())
+        }
+    };
+    write_project(&mut tx, actor, credential, project).await?;
+    let now = chrono::Utc::now();
+    // A new item goes after the others, also after a reorder.
+    let id: i64 = sqlx::query_scalar("INSERT INTO project_items(project_id,creator_id,repo_id,issue_id,pull_request_id,draft_title,draft_body,created_at,updated_at,position) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8,(SELECT COALESCE(MAX(position)+1,0) FROM project_items WHERE project_id=$1)) ON CONFLICT DO NOTHING RETURNING id")
+        .bind(project).bind(actor).bind(repo).bind(issue).bind(pull).bind(title).bind(body).bind(now).fetch_optional(&mut *tx).await?.unwrap_or(0);
+    let id = if id == 0 {
+        sqlx::query_scalar("SELECT id FROM project_items WHERE project_id=$1 AND (issue_id=$2 OR pull_request_id=$3)").bind(project).bind(issue).bind(pull).fetch_one(&mut *tx).await?
+    } else {
+        id
+    };
+    let item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(item)
+}
+
+pub async fn item(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    id: i64,
+) -> Result<Option<Item>> {
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, viewer, project).await?;
+    let item = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND i.id=$3 AND (i.repo_id IS NULL OR {})", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+        .bind(project).bind(viewer).bind(id).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(item)
+}
+
+pub async fn items_page(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<Item>> {
+    anyhow::ensure!(
+        after >= 0 && before > 0 && (1..=101).contains(&limit),
+        Refusal::Invalid
+    );
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, viewer, project).await?;
+    let direction = if before < i64::MAX { "DESC" } else { "ASC" };
+    let items = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (i.repo_id IS NULL OR {}) AND ($3=0 OR (i.position,i.id)>(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$3)) AND ($4=9223372036854775807 OR (i.position,i.id)<(SELECT b.position,b.id FROM project_items b WHERE b.project_id=$1 AND b.id=$4)) ORDER BY i.position {direction},i.id {direction} LIMIT $5", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+        .bind(project).bind(viewer).bind(after).bind(before).bind(limit).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(items)
+}
+
+pub async fn content_items(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    content: &Content,
+    include_archived: bool,
+    offset: i64,
+    limit: i64,
+    count: bool,
+) -> Result<(i64, Vec<Item>)> {
+    anyhow::ensure!(offset >= 0 && (0..=100).contains(&limit), Refusal::Invalid);
+    let (issue, pull) = match content {
+        Content::Issue(id) => (Some(*id), None),
+        Content::PullRequest(id) => (None, Some(*id)),
+        _ => return Ok((0, Vec::new())),
+    };
+    let joins = format!(" JOIN projects p ON p.id=i.project_id LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$3 WHERE (i.issue_id=$1 OR i.pull_request_id=$2) AND ($4 OR NOT i.archived) AND {} AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", crate::projects::readable_condition("$3"), codeyard_db_core::queries::postgres::repositories::access::readable_condition());
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let total = if count {
+        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({ITEM}{joins}) visible"))
+            .bind(issue)
+            .bind(pull)
+            .bind(viewer)
+            .bind(include_archived)
+            .fetch_one(&mut *tx)
+            .await?
+    } else {
+        0
+    };
+    let rows = if limit == 0 {
+        Vec::new()
+    } else {
+        sqlx::query_as(&format!("{ITEM}{joins} ORDER BY i.id LIMIT $5 OFFSET $6"))
+            .bind(issue)
+            .bind(pull)
+            .bind(viewer)
+            .bind(include_archived)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&mut *tx)
+            .await?
+    };
+    tx.commit().await?;
+    Ok((total, rows))
+}
+
+pub async fn items_window(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    window: &crate::projects::ItemWindow,
+) -> Result<(i64, Vec<Item>)> {
+    anyhow::ensure!(
+        window.offset >= 0 && (0..=100).contains(&window.limit),
+        Refusal::Invalid
+    );
+    let mut tx = pool.begin().await?;
+    readable_at(&mut tx, viewer, window.project, window.include_deleted).await?;
+    let joins = format!(" LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND ($3::boolean IS NULL OR i.archived=$3) AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", codeyard_db_core::queries::postgres::repositories::access::readable_condition());
+    let total = if window.count {
+        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({ITEM}{joins}) visible"))
+            .bind(window.project)
+            .bind(viewer)
+            .bind(window.archived)
+            .fetch_one(&mut *tx)
+            .await?
+    } else {
+        0
+    };
+    let direction = if window.descending { "DESC" } else { "ASC" };
+    let rows = if window.limit == 0 {
+        Vec::new()
+    } else {
+        sqlx::query_as(&format!(
+            "{ITEM}{joins} ORDER BY i.position {direction},i.id {direction} LIMIT $4 OFFSET $5"
+        ))
+        .bind(window.project)
+        .bind(viewer)
+        .bind(window.archived)
+        .bind(window.limit)
+        .bind(window.offset)
+        .fetch_all(&mut *tx)
+        .await?
+    };
+    tx.commit().await?;
+    Ok((total, rows))
+}
+
+pub async fn items(pool: &PgPool, viewer: Option<i64>, project: i64) -> Result<Vec<Item>> {
+    items_at(pool, viewer, project, false).await
+}
+
+/// The project's items that `viewer` may read, in board order.
+pub(super) async fn readable_items(
+    tx: &mut Transaction<'_, Postgres>,
+    viewer: Option<i64>,
+    project: i64,
+) -> Result<Vec<Item>> {
+    Ok(sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {}) ORDER BY i.position,i.id", codeyard_db_core::queries::postgres::repositories::access::readable_condition()))
+        .bind(project).bind(viewer).fetch_all(&mut **tx).await?)
+}
+
+pub async fn items_at(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    include_deleted: bool,
+) -> Result<Vec<Item>> {
+    let mut tx = pool.begin().await?;
+    readable_at(&mut tx, viewer, project, include_deleted).await?;
+    let items = readable_items(&mut tx, viewer, project).await?;
+    tx.commit().await?;
+    Ok(items)
+}
+
+pub async fn update_item(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    item: i64,
+    updates: &[FieldUpdate],
+) -> Result<Item> {
+    anyhow::ensure!(
+        updates.len() <= crate::projects::MAX_FIELDS,
+        Refusal::Invalid
+    );
+    let mut tx = pool.begin().await?;
+    let existing = writable_item(&mut tx, actor, credential, project, item).await?;
+    let fields: Vec<Field> = sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1")
+        .bind(project)
+        .fetch_all(&mut *tx)
+        .await?;
+    let mut values: Value = serde_json::from_str(&existing.field_values)?;
+    let mut seen = std::collections::HashSet::new();
+    for update in updates {
+        anyhow::ensure!(seen.insert(update.id), Refusal::Invalid);
+        let field = fields
+            .iter()
+            .find(|f| f.id == update.id)
+            .ok_or(Refusal::Invalid)?;
+        crate::projects::validate_value(field, &update.value)?;
+        if update.value.is_null() {
+            values
+                .as_object_mut()
+                .ok_or(Refusal::Invalid)?
+                .remove(&field.id.to_string());
+        } else {
+            values[field.id.to_string()] = update.value.clone();
+        }
+    }
+    sqlx::query(
+        "UPDATE project_items SET field_values=$3,updated_at=$4 WHERE id=$1 AND project_id=$2",
+    )
+    .bind(item)
+    .bind(project)
+    .bind(values.to_string())
+    .bind(chrono::Utc::now())
+    .execute(&mut *tx)
+    .await?;
+    let item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
+        .bind(item)
+        .fetch_one(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(item)
+}
+
+pub async fn delete_item(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    item: i64,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    // The project's writer may remove an item even after losing access to its repository.
+    write_project(&mut tx, actor, credential, project).await?;
+    let removed = sqlx::query("DELETE FROM project_items WHERE id=$1 AND project_id=$2")
+        .bind(item)
+        .bind(project)
+        .execute(&mut *tx)
+        .await?;
+    anyhow::ensure!(removed.rows_affected() == 1, Refusal::Missing);
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn create_view(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    input: &NewView,
+) -> Result<View> {
+    let mut tx = pool.begin().await?;
+    write_project(&mut tx, actor, credential, project).await?;
+    let fields = sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")
+        .bind(project)
+        .fetch_all(&mut *tx)
+        .await?;
+    let mut input = input.clone();
+    let fields: Vec<Field> = fields;
+    if input.visible_fields.is_empty() {
+        input.visible_fields = fields.iter().map(|f| f.id).collect();
+    }
+    if input.layout == "board" && input.vertical_group_by.is_empty() {
+        input.vertical_group_by = fields
+            .iter()
+            .find(|f| f.data_type == "single_select")
+            .map(|f| vec![f.id])
+            .unwrap_or_default();
+    }
+    input.validate(&fields)?;
+    let now = chrono::Utc::now();
+    let view = sqlx::query_as("INSERT INTO project_views(project_id,number,creator_id,configuration,created_at,updated_at) SELECT $1,COALESCE(MAX(number),0)+1,$2,$3,$4,$4 FROM project_views WHERE project_id=$1 RETURNING *")
+        .bind(project).bind(actor).bind(serde_json::to_string(&input)?).bind(now).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(view)
+}
+
+pub async fn views(pool: &PgPool, viewer: Option<i64>, project: i64) -> Result<Vec<View>> {
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, viewer, project).await?;
+    let views = sqlx::query_as("SELECT * FROM project_views WHERE project_id=$1 ORDER BY number")
+        .bind(project)
+        .fetch_all(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(views)
+}
+
+pub async fn link_repository(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    repo: i64,
+    linked: bool,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    anyhow::ensure!(
+        codeyard_db_core::queries::postgres::discussions::lock_admin_authority(
+            &mut tx, actor, repo
+        )
+        .await?,
+        Refusal::Denied
+    );
+    write_project(&mut tx, actor, credential, project).await?;
+    if linked {
+        sqlx::query("INSERT INTO project_repositories(project_id,repo_id) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(project).bind(repo).execute(&mut *tx).await?;
+    } else {
+        sqlx::query("DELETE FROM project_repositories WHERE project_id=$1 AND repo_id=$2")
+            .bind(project)
+            .bind(repo)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(())
+}

@@ -3,12 +3,12 @@ use crate::backend::api::organizations::organization::Fields;
 use crate::backend::api::organizations::INDEX;
 use crate::backend::app::AppState;
 
-use crate::backend::db::secrets::SecretsError;
 use axum::{
     extract::{rejection::FormRejection, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_db_core::queries::secrets::SecretsError;
 use std::sync::Arc;
 
 pub(super) async fn post(
@@ -45,7 +45,7 @@ pub(super) async fn post(
     } else {
         match crate::backend::api::organizations::organization::field(&form, "action") {
             "dependabot-default" => {
-                crate::backend::db::dependabot::set_repository_access_default(
+                codeyard_db_security::dependabot::set_repository_access_default(
                     &ctx.state.pool,
                     ctx.database_actor(actor),
                     org,
@@ -62,7 +62,7 @@ pub(super) async fn post(
                         } else {
                             (&[], &ids)
                         };
-                        crate::backend::db::dependabot::update_repository_access(
+                        codeyard_db_security::dependabot::update_repository_access(
                             &ctx.state.pool,
                             ctx.database_actor(actor),
                             org,

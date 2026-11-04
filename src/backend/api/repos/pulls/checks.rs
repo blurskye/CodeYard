@@ -27,7 +27,7 @@ async fn render_checks(
     repo: &RepositoryData,
     value: view::Item,
 ) -> ResultPage<Response> {
-    let pull = crate::backend::db::pull_requests::records::get_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
         &ctx.state.pool,
         repo.record.id,
         value.number,
@@ -51,7 +51,7 @@ async fn render_checks(
         crate::backend::repositories::pull_requests::stacks::merge_target(&ctx.state.pool, &pull)
             .await
             .map_err(|_| unavailable(ctx))?;
-    let runs = crate::backend::db::ci::latest_ci_runs_for_commit(
+    let runs = codeyard_db_actions::ci::latest_ci_runs_for_commit(
         &ctx.state.pool,
         repo.record.id,
         head,
@@ -67,13 +67,13 @@ async fn render_checks(
     let check_page =
         crate::backend::api::repos::paging::number(ctx, "checks_page", 1, 1..=max_page)?;
     let offset = (check_page - 1) * CHECKS_PER_PAGE;
-    let check_total = crate::backend::db::checks::summary(&ctx.state.pool, repo.record.id, head)
+    let check_total = codeyard_db_actions::checks::summary(&ctx.state.pool, repo.record.id, head)
         .await
         .map_err(|_| unavailable(ctx))?
         .total;
     let more_checks = check_page < max_page
         && i64::try_from(offset + CHECKS_PER_PAGE).is_ok_and(|end| end < check_total);
-    let check_runs = crate::backend::db::checks::rollup_runs(
+    let check_runs = codeyard_db_actions::checks::rollup_runs(
         &ctx.state.pool,
         repo.record.id,
         head,
@@ -101,7 +101,7 @@ async fn render_checks(
         )),
         context: run.name,
     });
-    let statuses = crate::backend::db::repositories::protection::list_commit_statuses(
+    let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses(
         &ctx.state.pool,
         repo.record.id,
         head,
@@ -110,7 +110,7 @@ async fn render_checks(
     .map_err(|_| unavailable(ctx))?
     .into_iter()
     .filter(|status| {
-        !crate::backend::db::repositories::protection::server_owned_status_context(&status.context)
+        !codeyard_db_repos::repositories::protection::server_owned_status_context(&status.context)
             && !runs
                 .iter()
                 .any(|run| run.commit_status_context() == status.context)
@@ -153,14 +153,14 @@ mod tests {
             unreachable!()
         };
         sqlx::query("INSERT INTO node_configuration(id, setup_completed) VALUES(1, TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(sqlite).await.unwrap();
-        let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
         let record = crate::backend::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
-            crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             "proj",
             None,
             false,
@@ -170,9 +170,9 @@ mod tests {
         .unwrap();
         let first = "1".repeat(40);
         let second = "2".repeat(40);
-        let pull = crate::backend::db::pull_requests::records::create_pull_request(
+        let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
             &pool,
-            crate::backend::db::pull_requests::records::NewPullRequest {
+            codeyard_db_repos::pull_requests::records::NewPullRequest {
                 repo_id: record.id,
                 head_repo_id: Some(record.id),
                 author_id: owner.id,

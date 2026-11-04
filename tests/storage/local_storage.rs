@@ -141,12 +141,10 @@ async fn stalled_object_cleanup_is_concurrent_bounded_and_keeps_queued_work() {
         .await
         .unwrap();
     assert_eq!(healthy.load(std::sync::atomic::Ordering::SeqCst), 1);
-    assert!(
-        codeyard::backend::db::files::due_object_deletions(&f.pool, 100)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_db_repos::files::due_object_deletions(&f.pool, 100)
+        .await
+        .unwrap()
+        .is_empty());
     // Successful S3 deletion keeps its tombstone, allowing a later PUT to be reconciled.
     sqlx::query(
         "UPDATE pending_object_deletions SET delete_after=? WHERE object_key='uploads/healthy'",
@@ -174,7 +172,7 @@ async fn confirmations_refuse_a_busy_file_instead_of_queueing_behind_a_put() {
             FileVisibility::Owner,
         )
         .await;
-    let file = codeyard::backend::db::files::get_file_by_id(&f.pool, reservation.file_id)
+    let file = codeyard_db_repos::files::get_file_by_id(&f.pool, reservation.file_id)
         .await
         .unwrap()
         .unwrap();
@@ -199,7 +197,7 @@ async fn put_waiters_on_one_file_leave_the_io_slots_free() {
             FileVisibility::Owner,
         )
         .await;
-    let file = codeyard::backend::db::files::get_file_by_id(&f.pool, reservation.file_id)
+    let file = codeyard_db_repos::files::get_file_by_id(&f.pool, reservation.file_id)
         .await
         .unwrap()
         .unwrap();
@@ -256,7 +254,7 @@ async fn login(
 ) -> Login {
     let session = session_fill.to_string().repeat(64);
     let csrf = csrf_fill.to_string().repeat(64);
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &session,
         user,
@@ -267,7 +265,7 @@ async fn login(
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             pool,
             &session,
             Some(user),
@@ -614,7 +612,7 @@ async fn stream_confirm_download_delete_and_reopen() {
     );
 
     // Until the bytes are confirmed the file is only a pending record.
-    let pending = codeyard::backend::db::files::get_file_by_id(&fixture.pool, id)
+    let pending = codeyard_db_repos::files::get_file_by_id(&fixture.pool, id)
         .await
         .unwrap()
         .unwrap();
@@ -670,7 +668,7 @@ async fn stream_confirm_download_delete_and_reopen() {
     );
 
     fixture.confirm(id).await.unwrap();
-    let active = codeyard::backend::db::files::get_file_by_id(&fixture.pool, id)
+    let active = codeyard_db_repos::files::get_file_by_id(&fixture.pool, id)
         .await
         .unwrap()
         .unwrap();
@@ -726,7 +724,7 @@ async fn stream_confirm_download_delete_and_reopen() {
         signed.expires_in, 0,
         "a local URL is not a time-limited grant"
     );
-    let stats = codeyard::backend::db::files::get_user_file_stats(&fixture.pool, fixture.owner)
+    let stats = codeyard_db_repos::files::get_user_file_stats(&fixture.pool, fixture.owner)
         .await
         .unwrap()
         .unwrap();
@@ -756,12 +754,10 @@ async fn stream_confirm_download_delete_and_reopen() {
         .await
         .unwrap();
     assert!(fixture.stored_names().is_empty());
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&fixture.pool, id)
+        .await
+        .unwrap()
+        .is_none());
     assert_eq!(
         fixture.bytes(id, Some(fixture.owner)).await.unwrap_err(),
         DownloadError::NotFound
@@ -1265,7 +1261,7 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
     assert_eq!(put.await.unwrap(), StatusCode::NO_CONTENT);
     assert_eq!(delete.await.unwrap(), StatusCode::NO_CONTENT);
     assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, deleted.file_id)
+        codeyard_db_repos::files::get_file_by_id(&fixture.pool, deleted.file_id)
             .await
             .unwrap()
             .is_none()
@@ -1327,7 +1323,7 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
     put.await.unwrap().unwrap();
     confirm.await.unwrap().unwrap();
     assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, confirmed.file_id)
+        codeyard_db_repos::files::get_file_by_id(&fixture.pool, confirmed.file_id)
             .await
             .unwrap()
             .is_some_and(|file| file.is_active)
@@ -1379,7 +1375,7 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
     assert_eq!(put.await.unwrap(), Err(LocalUploadError::Rejected));
     assert_eq!(sweep.await.unwrap().unwrap(), 1);
     assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, expired.file_id)
+        codeyard_db_repos::files::get_file_by_id(&fixture.pool, expired.file_id)
             .await
             .unwrap()
             .is_none()
@@ -1441,7 +1437,7 @@ async fn expired_reservations_are_refused_and_swept_with_their_bytes() {
     );
     for gone in [stale.file_id, unsent.file_id] {
         assert!(
-            codeyard::backend::db::files::get_file_by_id(&fixture.pool, gone)
+            codeyard_db_repos::files::get_file_by_id(&fixture.pool, gone)
                 .await
                 .unwrap()
                 .is_none()
@@ -1449,7 +1445,7 @@ async fn expired_reservations_are_refused_and_swept_with_their_bytes() {
     }
     assert_eq!(fixture.stored_names(), vec![active.to_string()]);
     assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, live.file_id)
+        codeyard_db_repos::files::get_file_by_id(&fixture.pool, live.file_id)
             .await
             .unwrap()
             .is_some()
@@ -1624,7 +1620,7 @@ async fn private_files_stay_with_their_owner_and_only_avatars_are_public() {
             .await
             .unwrap();
     assert_eq!(shown.url, format!("/api/files/{avatar}/content"));
-    let stats = codeyard::backend::db::files::get_user_file_stats(&fixture.pool, fixture.owner)
+    let stats = codeyard_db_repos::files::get_user_file_stats(&fixture.pool, fixture.owner)
         .await
         .unwrap()
         .unwrap();
@@ -2191,7 +2187,7 @@ async fn json_api_reserves_uploads_confirms_downloads_and_deletes() {
     assert_eq!(empty["by_reason"]["other"], 0);
     assert_eq!(empty["last_24h"]["uploads"], 0);
     assert!(
-        codeyard::backend::db::files::get_user_file_stats(&fixture.pool, i64::MAX)
+        codeyard_db_repos::files::get_user_file_stats(&fixture.pool, i64::MAX)
             .await
             .unwrap()
             .is_none()
@@ -2756,7 +2752,7 @@ async fn local_storage_io_failures_are_retryable_and_public_errors_are_sanitized
         .to_string()
         .contains(fixture.temporary.path().to_str().unwrap()));
     assert!(
-        !codeyard::backend::db::files::get_file_by_id(&fixture.pool, reservation.file_id)
+        !codeyard_db_repos::files::get_file_by_id(&fixture.pool, reservation.file_id)
             .await
             .unwrap()
             .unwrap()
@@ -2790,12 +2786,10 @@ async fn failed_metadata_deletion_keeps_bytes_and_is_sanitized() {
         DeleteError::MetadataUnavailable
     );
     assert!(fixture.object_path(id).exists());
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, id)
-            .await
-            .unwrap()
-            .is_some()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&fixture.pool, id)
+        .await
+        .unwrap()
+        .is_some());
     let response = call(
         &router,
         request(
@@ -2819,12 +2813,10 @@ async fn failed_metadata_deletion_keeps_bytes_and_is_sanitized() {
     codeyard::backend::files::delete_owned_file(&fixture.pool, &fixture.storage, fixture.owner, id)
         .await
         .unwrap();
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&fixture.pool, id)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 #[tokio::test]
@@ -2850,7 +2842,7 @@ async fn expiry_failure_keeps_the_row_and_object_for_retry() {
         .unwrap_err();
     assert!(fixture.object_path(reservation.file_id).exists());
     assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, reservation.file_id)
+        codeyard_db_repos::files::get_file_by_id(&fixture.pool, reservation.file_id)
             .await
             .unwrap()
             .is_some()
@@ -2881,12 +2873,10 @@ async fn failed_object_removal_is_retried_from_persisted_work() {
         .await
         .unwrap();
     // Metadata is private immediately even though object cleanup must retry.
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&fixture.pool, id)
+        .await
+        .unwrap()
+        .is_none());
     let uri = format!("/api/files/{id}");
     let response = call(
         &router,
@@ -2894,12 +2884,10 @@ async fn failed_object_removal_is_retried_from_persisted_work() {
     )
     .await;
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&fixture.pool, id)
+        .await
+        .unwrap()
+        .is_none());
     // A stranger still cannot tell the file existed.
     assert_eq!(
         status_of(
@@ -2923,12 +2911,10 @@ async fn failed_object_removal_is_retried_from_persisted_work() {
         .await
         .unwrap();
     assert!(!path.exists());
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&fixture.pool, id)
+        .await
+        .unwrap()
+        .is_none());
 }
 
 /// How many queued removals of `key` the sweep would run within the next minute.
@@ -2975,7 +2961,7 @@ async fn bytes_that_land_after_their_upload_deadline_stay_queued_for_the_grace_p
         1
     );
     assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, stale.file_id)
+        codeyard_db_repos::files::get_file_by_id(&fixture.pool, stale.file_id)
             .await
             .unwrap()
             .is_none()
@@ -3094,17 +3080,17 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
         .await;
     assert_eq!(
-        codeyard::backend::db::users::accounts::set_user_avatar(
+        codeyard_db_identity::users::accounts::set_user_avatar(
             &fixture.pool,
             fixture.owner,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&fixture.pool, fixture.owner).await
             ),
             Some(old)
         )
         .await
         .unwrap(),
-        codeyard::backend::db::users::accounts::UserAvatarOutcome::Applied(None)
+        codeyard_db_identity::users::accounts::UserAvatarOutcome::Applied(None)
     );
 
     // If the replaced picture cannot be removed, the change is refused as a whole.
@@ -3112,10 +3098,10 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         .execute(&fixture.raw)
         .await
         .unwrap();
-    assert!(codeyard::backend::db::users::accounts::set_user_avatar(
+    assert!(codeyard_db_identity::users::accounts::set_user_avatar(
         &fixture.pool,
         fixture.owner,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&fixture.pool, fixture.owner).await
         ),
         Some(new)
@@ -3136,24 +3122,22 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
 
     // Otherwise the old row goes with the change, and its bytes are queued.
     assert_eq!(
-        codeyard::backend::db::users::accounts::set_user_avatar(
+        codeyard_db_identity::users::accounts::set_user_avatar(
             &fixture.pool,
             fixture.owner,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&fixture.pool, fixture.owner).await
             ),
             Some(new)
         )
         .await
         .unwrap(),
-        codeyard::backend::db::users::accounts::UserAvatarOutcome::Applied(Some(old))
+        codeyard_db_identity::users::accounts::UserAvatarOutcome::Applied(Some(old))
     );
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, old)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&fixture.pool, old)
+        .await
+        .unwrap()
+        .is_none());
     assert_eq!(
         queued_removals(&fixture, &format!("uploads/{old}")).await,
         1
@@ -3170,14 +3154,14 @@ async fn a_banned_account_keeps_its_picture() {
         .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
         .await;
     // The request was authenticated before the ban, so it still holds the account as it was.
-    let user = codeyard::backend::db::users::accounts::get_user_by_id(&fixture.pool, fixture.owner)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(&fixture.pool, fixture.owner)
         .await
         .unwrap()
         .unwrap();
     codeyard::backend::identity::avatars::set_user_avatar(
         &fixture.pool,
         &user,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&fixture.pool, user.id).await,
         ),
         old,
@@ -3193,7 +3177,7 @@ async fn a_banned_account_keeps_its_picture() {
     let changed = codeyard::backend::identity::avatars::set_user_avatar(
         &fixture.pool,
         &user,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&fixture.pool, user.id).await,
         ),
         new,
@@ -3203,7 +3187,7 @@ async fn a_banned_account_keeps_its_picture() {
     let cleared = codeyard::backend::identity::avatars::remove_user_avatar(
         &fixture.pool,
         &user,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&fixture.pool, user.id).await,
         ),
     )
@@ -3216,10 +3200,8 @@ async fn a_banned_account_keeps_its_picture() {
             .await
             .unwrap();
     assert_eq!(pointer, Some(old));
-    assert!(
-        codeyard::backend::db::files::get_file_by_id(&fixture.pool, old)
-            .await
-            .unwrap()
-            .is_some()
-    );
+    assert!(codeyard_db_repos::files::get_file_by_id(&fixture.pool, old)
+        .await
+        .unwrap()
+        .is_some());
 }

@@ -40,7 +40,7 @@ pub async fn list_collaborators(
         ));
     }
 
-    let collaborators = crate::backend::db::repositories::access::list_repo_collaborators(
+    let collaborators = codeyard_db_repos::repositories::access::list_repo_collaborators(
         &state.pool,
         repository.id,
     )
@@ -48,7 +48,7 @@ pub async fn list_collaborators(
     .map_err(|_| repository_unavailable())?;
 
     let user_ids: Vec<i64> = collaborators.iter().map(|access| access.user_id).collect();
-    let users = crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &user_ids)
+    let users = codeyard_db_identity::users::accounts::get_users_by_ids(&state.pool, &user_ids)
         .await
         .map_err(|_| repository_unavailable())?;
     let user_map: std::collections::HashMap<i64, codeyard_db_core::models::User> =
@@ -96,7 +96,7 @@ pub async fn add_collaborator(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     let target_user = crate::backend::repositories::access::change_collaborator(
         &state.pool,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             user.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),
@@ -127,7 +127,7 @@ pub async fn remove_collaborator(
 
     crate::backend::repositories::access::change_collaborator(
         &state.pool,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             user.id,
             crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
         )),

@@ -73,9 +73,9 @@ async fn queue_link(
     };
     // The token and its mail are saved together. A mail sent less than a minute ago still holds
     // the live token, and then nothing is saved; the answer stays the same.
-    crate::backend::db::email::save_email_token(
+    codeyard_db_identity::email::save_email_token(
         pool,
-        &crate::backend::db::email::EmailLink {
+        &codeyard_db_identity::email::EmailLink {
             user_id: user.id,
             purpose: purpose.name(),
             email,
@@ -115,7 +115,7 @@ pub async fn send_secondary_verifications(
     user: &User,
     emails: &[String],
 ) -> Result<(), LinkError> {
-    let addresses = crate::backend::db::users::emails::list_emails(pool, user.id)
+    let addresses = codeyard_db_identity::users::emails::list_emails(pool, user.id)
         .await
         .map_err(unavailable)?;
     let pending: Vec<&str> = emails
@@ -139,7 +139,7 @@ pub async fn send_secondary_verifications(
         let token = codeyard_support::crypto::random_hex();
         let mail =
             codeyard_model::mail_messages::verify_email(&public_origin(), &user.username, &token);
-        crate::backend::db::users::emails::save_verification(
+        codeyard_db_identity::users::emails::save_verification(
             pool,
             user.id,
             email,
@@ -166,7 +166,7 @@ pub async fn send_password_reset(
     }
     let key = hash(&address.to_lowercase());
     crate::backend::identity::admission::admit_mail(pool, client, &key).await?;
-    let user = crate::backend::db::users::accounts::get_user_by_email(pool, address)
+    let user = codeyard_db_identity::users::accounts::get_user_by_email(pool, address)
         .await
         .map_err(unavailable)?
         .filter(|user| user.email_verified && user.password_hash.is_some() && !user.is_banned);
@@ -183,11 +183,11 @@ pub async fn send_password_reset(
 /// Whether the link can still be used, without using it.
 pub async fn is_valid(pool: &DbPool, purpose: Purpose, token: &str) -> Result<bool, LinkError> {
     let hash = hash(token);
-    let valid = crate::backend::db::email::email_token_is_valid(pool, purpose.name(), &hash)
+    let valid = codeyard_db_identity::email::email_token_is_valid(pool, purpose.name(), &hash)
         .await
         .map_err(unavailable)?;
     if !valid && purpose == Purpose::Verify {
-        return crate::backend::db::users::emails::verification_valid(pool, &hash)
+        return codeyard_db_identity::users::emails::verification_valid(pool, &hash)
             .await
             .map_err(unavailable);
     }
@@ -198,7 +198,7 @@ pub(crate) async fn password_reset_account(
     pool: &DbPool,
     token: &str,
 ) -> Result<Option<User>, LinkError> {
-    crate::backend::db::users::transitions::password_reset_account(pool, &hash(token))
+    codeyard_db_identity::users::transitions::password_reset_account(pool, &hash(token))
         .await
         .map_err(unavailable)
 }
@@ -214,7 +214,7 @@ pub async fn use_reset_link(
     let Some(expected_hash) = expected.password_hash.as_deref() else {
         return Ok(None);
     };
-    crate::backend::db::users::transitions::reset_password_with_link(
+    codeyard_db_identity::users::transitions::reset_password_with_link(
         pool,
         &hash(token),
         password_hash,
@@ -229,12 +229,12 @@ pub async fn use_reset_link(
 /// expired, already used, or the user has changed their address since.
 pub async fn verify_address(pool: &DbPool, token: &str) -> Result<bool, LinkError> {
     let hash = hash(token);
-    match crate::backend::db::email::verify_email_token(pool, &hash)
+    match codeyard_db_identity::email::verify_email_token(pool, &hash)
         .await
         .map_err(unavailable)?
     {
         Some(confirmed) => Ok(confirmed),
-        None => crate::backend::db::users::emails::verify_email(pool, &hash)
+        None => codeyard_db_identity::users::emails::verify_email(pool, &hash)
             .await
             .map_err(unavailable),
     }

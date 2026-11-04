@@ -20,7 +20,7 @@ async fn load_admin(ctx: &PageContext, days: i32) -> Result<Admin, Response> {
         )
     };
     // Reads persisted facts only: repository sizes are recorded after pushes, never by a GET.
-    let points = crate::backend::db::users::accounts::list_admin_activity_points(pool, days)
+    let points = codeyard_db_identity::users::accounts::list_admin_activity_points(pool, days)
         .await
         .map_err(|_| unavailable())?;
     let storage_bytes = points
@@ -40,7 +40,7 @@ async fn load_admin(ctx: &PageContext, days: i32) -> Result<Admin, Response> {
         })
         .collect();
     let pending =
-        crate::backend::db::users::signup_requests::count_signup_requests(pool, "pending")
+        codeyard_db_identity::users::signup_requests::count_signup_requests(pool, "pending")
             .await
             .map_err(|_| unavailable())?;
     let pending_requests = Some(pending as usize);

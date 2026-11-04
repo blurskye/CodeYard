@@ -112,7 +112,7 @@ pub async fn ticket(
     context: Option<&NodeContext>,
 ) -> Result<JoinTicket> {
     let core = context.context("runner registration requires a serving PostgreSQL cluster core")?;
-    let node = crate::backend::db::cluster::get_node_by_id(pool, core.node_id)
+    let node = codeyard_db_cluster::cluster::get_node_by_id(pool, core.node_id)
         .await?
         .filter(|n| n.status == "active")
         .context("runner core is unavailable")?;

@@ -141,33 +141,31 @@ pub(super) async fn run(
         .await[0]["id"],
         repo
     );
-    let row = codeyard::backend::db::repositories::records::get_repository_by_id(pool, repo)
+    let row = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(
-        codeyard::backend::db::organizations::get_organization_repo_access(pool, charlie, &row)
+        codeyard_db_orgs::organizations::get_organization_repo_access(pool, charlie, &row)
             .await
             .unwrap(),
         AccessLevel::Write
     );
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(pool, charlie, repo)
+        codeyard_db_repos::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
         AccessLevel::Write
     );
-    assert!(
-        codeyard::backend::db::repositories::push_teams::contains_actor(
-            pool,
-            repo,
-            charlie,
-            &[child_id]
-        )
-        .await
-        .unwrap()
-    );
-    assert!(codeyard::backend::db::organizations::team_members_by_names(
+    assert!(codeyard_db_repos::repositories::push_teams::contains_actor(
+        pool,
+        repo,
+        charlie,
+        &[child_id]
+    )
+    .await
+    .unwrap());
+    assert!(codeyard_db_orgs::organizations::team_members_by_names(
         pool,
         org,
         &["team-org/platform".into()]
@@ -177,7 +175,7 @@ pub(super) async fn run(
     .iter()
     .any(|(_, id)| *id == charlie));
     assert!(
-        codeyard::backend::db::assignees::list_assignable_usernames(pool, repo)
+        codeyard_db_repos::assignees::list_assignable_usernames(pool, repo)
             .await
             .unwrap()
             .contains(&"charlie".into())
@@ -213,7 +211,7 @@ pub(super) async fn run(
     )
     .await;
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(pool, charlie, repo)
+        codeyard_db_repos::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
         AccessLevel::Write
@@ -235,12 +233,12 @@ pub(super) async fn run(
         .await;
     }
     let foreign_org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             pool,
             alice,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 "foreign-teams",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -274,7 +272,7 @@ pub(super) async fn run(
         ("teams/delete-legacy", 204),
     )
     .await;
-    let deletion_session = codeyard::backend::db::users::sessions::create_session(
+    let deletion_session = codeyard_db_identity::users::sessions::create_session(
         pool,
         &uuid::Uuid::new_v4().simple().to_string().repeat(2),
         alice,
@@ -285,11 +283,11 @@ pub(super) async fn run(
     .await
     .unwrap();
     applied(
-        codeyard::backend::db::organizations::delete_organization(
+        codeyard_db_orgs::organizations::delete_organization(
             pool,
             (
                 alice,
-                &codeyard::backend::db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &deletion_session.id,
                 ),
             ),
@@ -345,14 +343,14 @@ pub(super) async fn run(
     )
     .await;
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(pool, charlie, repo)
+        codeyard_db_repos::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
         AccessLevel::None
     );
     call(router,"PUT",file_path,member,json!({"message":"Refuse a detached team write","content":"bmVzdGVkCg==","sha":file["content"]["sha"]}),("repos/create-or-update-file-contents",404)).await;
     assert!(
-        !codeyard::backend::db::repositories::push_teams::contains_actor(
+        !codeyard_db_repos::repositories::push_teams::contains_actor(
             pool,
             repo,
             charlie,
@@ -394,7 +392,7 @@ pub(super) async fn run(
     )
     .await;
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(pool, charlie, repo)
+        codeyard_db_repos::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
         AccessLevel::Write
@@ -421,7 +419,7 @@ pub(super) async fn run(
             .await;
         assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
         assert_eq!(
-            codeyard::backend::db::repositories::access::get_user_repo_access(pool, charlie, repo)
+            codeyard_db_repos::repositories::access::get_user_repo_access(pool, charlie, repo)
                 .await
                 .unwrap(),
             expected
@@ -447,7 +445,7 @@ pub(super) async fn run(
     )
     .await;
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(pool, charlie, repo)
+        codeyard_db_repos::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
         AccessLevel::None

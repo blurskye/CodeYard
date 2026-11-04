@@ -1,9 +1,9 @@
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_support::credentials::AccountRestricted;
 
-use crate::backend::db::users::blocks::BlockTargetMissing;
-use crate::backend::db::users::blocks::InvalidBlock;
 use codeyard_db_core::DbPool;
+use codeyard_db_identity::users::blocks::BlockTargetMissing;
+use codeyard_db_identity::users::blocks::InvalidBlock;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum BlockError {
@@ -24,11 +24,11 @@ pub async fn change(
     username: &str,
     blocked: bool,
 ) -> Result<(), BlockError> {
-    let target = crate::backend::db::users::accounts::get_user_by_username(pool, username)
+    let target = codeyard_db_identity::users::accounts::get_user_by_username(pool, username)
         .await
         .map_err(|_| BlockError::Unavailable)?
         .ok_or(BlockError::Missing)?;
-    crate::backend::db::users::blocks::change_block(pool, actor, credential, target.id, blocked)
+    codeyard_db_identity::users::blocks::change_block(pool, actor, credential, target.id, blocked)
         .await
         .map_err(|error| {
             if error.is::<AccountRestricted>() {

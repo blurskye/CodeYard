@@ -64,7 +64,7 @@ pub(super) async fn documents(
         .map(|commit| commit.sha.clone())
         .collect::<Vec<_>>();
     let counts: HashMap<_, _> =
-        crate::backend::db::repositories::commit_comments::comment_counts(&state.pool, repo, &shas)
+        codeyard_db_repos::repositories::commit_comments::comment_counts(&state.pool, repo, &shas)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
@@ -291,13 +291,13 @@ async fn identity_emails(
         Some(address) if address.contains('@') => Ok(Some(vec![address.to_owned()])),
         Some(username) => {
             let Some(user) =
-                crate::backend::db::users::accounts::get_user_by_username(pool, username)
+                codeyard_db_identity::users::accounts::get_user_by_username(pool, username)
                     .await
                     .map_err(Error::unavailable)?
             else {
                 return Ok(None);
             };
-            let mut emails = crate::backend::db::users::emails::list_emails(pool, user.id)
+            let mut emails = codeyard_db_identity::users::emails::list_emails(pool, user.id)
                 .await
                 .map_err(Error::unavailable)?
                 .into_iter()

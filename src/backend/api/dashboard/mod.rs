@@ -2,8 +2,6 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
 
-use crate::backend::db::issues::IssueRelation;
-use crate::backend::db::pull_requests::records::PullRequestRelation;
 use axum::{
     extract::{OriginalUri, State},
     http::{HeaderMap, StatusCode},
@@ -11,6 +9,8 @@ use axum::{
     routing::get,
     Router,
 };
+use codeyard_db_repos::issues::IssueRelation;
+use codeyard_db_repos::pull_requests::records::PullRequestRelation;
 use codeyard_webui::app::Page;
 use codeyard_webui::components::relative_time;
 use codeyard_webui::pages::dashboard::{RepositoryChoice, RepositoryChoices, WorkItem, WorkList};
@@ -60,7 +60,7 @@ async fn new_issue_page(
     }
     let offset = i64::from(page - 1) * 30;
     let (own, own_count) =
-        match crate::backend::db::repositories::records::list_user_repository_page(
+        match codeyard_db_repos::repositories::records::list_user_repository_page(
             &ctx.state.pool,
             user.id,
             ctx.session_id.as_deref(),
@@ -75,7 +75,7 @@ async fn new_issue_page(
             Err(_) => return unavailable(),
         };
     let (shared, shared_count) =
-        match crate::backend::db::repositories::records::list_shared_repository_page(
+        match codeyard_db_repos::repositories::records::list_shared_repository_page(
             &ctx.state.pool,
             user.id,
             query,
@@ -94,7 +94,7 @@ async fn new_issue_page(
         .chain(shared.into_iter().map(|row| row.repository))
         .collect();
     let ids: Vec<i64> = repos.iter().map(|repo| repo.id).collect();
-    let owners = match crate::backend::db::repositories::records::repository_owner_names(
+    let owners = match codeyard_db_repos::repositories::records::repository_owner_names(
         &ctx.state.pool,
         &ids,
     )

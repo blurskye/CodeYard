@@ -149,7 +149,7 @@ pub async fn write_token(pool: &codeyard_db_core::DbPool, owner: i64) -> String 
     let token = native::token();
     let stored = hex::encode(Sha256::digest(token.as_bytes()));
     let session = native::token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &session,
         owner,
@@ -159,7 +159,7 @@ pub async fn write_token(pool: &codeyard_db_core::DbPool, owner: i64) -> String 
     )
     .await
     .unwrap();
-    codeyard::backend::db::users::tokens::create_token(
+    codeyard_db_identity::users::tokens::create_token(
         pool, owner, &session, "push", &stored, "write", None,
     )
     .await

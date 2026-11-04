@@ -129,7 +129,7 @@ fn commit_workflow_entries(
 #[tokio::test]
 async fn remote_first_reader_persists_languages() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -660,7 +660,7 @@ async fn open_git_session(
 async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
     let _session_cap = lock_git_session_cap().await;
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
@@ -1061,7 +1061,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
 #[tokio::test]
 async fn control_heavy_blame_uses_the_raw_response_body() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -1153,7 +1153,7 @@ async fn control_heavy_blame_uses_the_raw_response_body() {
 #[tokio::test]
 async fn remote_workflow_discovery_uses_the_bounded_rpc() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)
@@ -1385,7 +1385,7 @@ async fn remote_web_contract() {
     let _session_cap = lock_git_session_cap().await;
     bundle::install();
     let database = native::PostgresDatabase::new().await; // Missing PostgreSQL must fail.
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     db::node_config::upsert_node_configuration(&database.pool, "public", true)

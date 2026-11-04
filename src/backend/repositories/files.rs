@@ -171,7 +171,7 @@ async fn check_web_signoff(
     user: &codeyard_db_core::models::User,
     message: &str,
 ) -> Result<(), WriteError> {
-    let required = crate::backend::db::organizations::settings::repository_requires_web_signoff(
+    let required = codeyard_db_orgs::organizations::settings::repository_requires_web_signoff(
         pool,
         repository.id,
     )
@@ -183,15 +183,11 @@ async fn check_web_signoff(
     })?;
     let email = user.commit_email();
     if required
-        && !crate::backend::db::organizations::settings::has_signoff(
-            message,
-            &user.username,
-            &email,
-        )
+        && !codeyard_db_orgs::organizations::settings::has_signoff(message, &user.username, &email)
     {
         return Err(WriteError {
             kind: WriteFailure::Invalid,
-            message: crate::backend::db::organizations::settings::required_signoff_message(
+            message: codeyard_db_orgs::organizations::settings::required_signoff_message(
                 &user.username,
                 &email,
             ),
@@ -209,7 +205,7 @@ pub async fn write_file(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -305,7 +301,7 @@ pub async fn ensure_readable(
     owner: &str,
     name: &str,
 ) -> Result<i64, WriteError> {
-    let repository = crate::backend::db::repositories::records::get_repository(pool, owner, name)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, owner, name)
         .await
         .map_err(|_| unavailable())?
         .ok_or(WriteError {
@@ -331,7 +327,7 @@ pub async fn named_repository(
     owner: &str,
     name: &str,
 ) -> Result<codeyard_db_core::models::Repository, WriteError> {
-    crate::backend::db::repositories::records::get_repository(pool, owner, name)
+    codeyard_db_repos::repositories::records::get_repository(pool, owner, name)
         .await
         .map_err(|_| unavailable())?
         .ok_or(WriteError {
@@ -349,7 +345,7 @@ pub async fn write_file_bytes(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -382,7 +378,7 @@ pub async fn delete_file(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -413,7 +409,7 @@ pub async fn delete_file_web(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -464,7 +460,7 @@ async fn authorize_write(
     ),
     WriteError,
 > {
-    let user = crate::backend::db::users::accounts::get_user_by_id(pool, actor_id)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor_id)
         .await
         .map_err(|_| unavailable())?
         .ok_or(WriteError {
@@ -472,7 +468,7 @@ async fn authorize_write(
             message: "Sign in to edit this repository.".into(),
         })?;
     let repository =
-        crate::backend::db::repositories::records::get_repository_by_id(pool, repository_id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository_id)
             .await
             .map_err(|_| unavailable())?
             .ok_or(WriteError {
@@ -526,7 +522,7 @@ async fn save_file(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
     _owner: &str,
     repository_id: i64,
     mut input: FileWrite,
@@ -749,7 +745,7 @@ pub async fn upload_files(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
     _owner: &str,
     repository_id: i64,
     write: UploadWrite,

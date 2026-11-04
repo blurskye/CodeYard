@@ -19,8 +19,6 @@ use codeyard::backend::cluster::rpc::Operation;
 use codeyard::backend::cluster::rpc::Request;
 use codeyard_support::node_identity::NodeKey;
 
-use codeyard::backend::db::cluster::FamilyOutcome;
-use codeyard::backend::db::cluster::PromoteOutcome;
 use codeyard::backend::repositories::store::begin_ref_change;
 use codeyard::backend::repositories::store::repo_store;
 use codeyard::backend::repositories::store::FileWrite;
@@ -29,6 +27,8 @@ use codeyard::backend::repositories::store::GitSession;
 use codeyard::backend::repositories::store::GitStreams;
 use codeyard::backend::repositories::store::RepoStore;
 use codeyard::backend::storage::ObjectStore;
+use codeyard_db_cluster::cluster::FamilyOutcome;
+use codeyard_db_cluster::cluster::PromoteOutcome;
 use codeyard_db_core::models::NodeReplicaCounts;
 use codeyard_db_core::models::ReplicaSetting;
 use codeyard_db_core::models::Repository;
@@ -64,7 +64,7 @@ fn replica_setting_accepts_counts_and_all_and_nothing_else() {
 
 /// Registers an active storage node with a fresh key.
 async fn storage_node(pool: &DbPool, name: &str) -> i64 {
-    codeyard::backend::db::cluster::register_own_node(
+    codeyard_db_cluster::cluster::register_own_node(
         pool,
         &NodeKey::generate().public_hex(),
         name,
@@ -85,7 +85,7 @@ async fn reporting_storage_node(pool: &DbPool, name: &str) -> i64 {
 
 /// A repository whose primary is `primary`, at version zero.
 async fn placed_repository(pool: &DbPool, primary: i64) -> i64 {
-    let owner = codeyard::backend::db::users::accounts::create_user(
+    let owner = codeyard_db_identity::users::accounts::create_user(
         pool,
         &format!("owner{}", primary),
         None,
@@ -93,7 +93,7 @@ async fn placed_repository(pool: &DbPool, primary: i64) -> i64 {
     .await
     .unwrap();
     let disk_path = format!("/srv/repos/{}.git", Uuid::new_v4());
-    let repository = codeyard::backend::db::repositories::records::create_repository(
+    let repository = codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner.id,
         "replicated",
@@ -104,7 +104,7 @@ async fn placed_repository(pool: &DbPool, primary: i64) -> i64 {
     .await
     .unwrap();
     assert!(
-        codeyard::backend::db::cluster::place_repository(pool, repository.id, primary)
+        codeyard_db_cluster::cluster::place_repository(pool, repository.id, primary)
             .await
             .unwrap()
     );
@@ -113,37 +113,37 @@ async fn placed_repository(pool: &DbPool, primary: i64) -> i64 {
 
 /// The rules every engine must keep: the setting, versions, copies, promotion and counts.
 async fn check_replica_rules(pool: &DbPool) {
-    codeyard::backend::db::node_config::upsert_node_configuration(pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(pool, "public", true)
         .await
         .unwrap();
     assert_eq!(
-        codeyard::backend::db::cluster::get_replicas(pool)
+        codeyard_db_cluster::cluster::get_replicas(pool)
             .await
             .unwrap(),
         "1"
     );
-    assert!(codeyard::backend::db::cluster::set_replicas(pool, "all")
+    assert!(codeyard_db_cluster::cluster::set_replicas(pool, "all")
         .await
         .unwrap());
     assert_eq!(
-        codeyard::backend::db::cluster::get_replicas(pool)
+        codeyard_db_cluster::cluster::get_replicas(pool)
             .await
             .unwrap(),
         "all"
     );
-    assert!(codeyard::backend::db::cluster::set_replicas(pool, "2")
+    assert!(codeyard_db_cluster::cluster::set_replicas(pool, "2")
         .await
         .unwrap());
     for refused in ["0", "1000", "two", "02"] {
         assert!(
-            codeyard::backend::db::cluster::set_replicas(pool, refused)
+            codeyard_db_cluster::cluster::set_replicas(pool, refused)
                 .await
                 .is_err(),
             "{refused}"
         );
     }
     assert_eq!(
-        codeyard::backend::db::cluster::get_replicas(pool)
+        codeyard_db_cluster::cluster::get_replicas(pool)
             .await
             .unwrap(),
         "2"
@@ -154,33 +154,33 @@ async fn check_replica_rules(pool: &DbPool) {
     let c = storage_node(pool, "store-c").await;
     let repo = placed_repository(pool, a).await;
     assert_eq!(
-        codeyard::backend::db::cluster::get_write_version(pool, repo)
+        codeyard_db_cluster::cluster::get_write_version(pool, repo)
             .await
             .unwrap(),
         Some(0)
     );
-    codeyard::backend::db::cluster::bump_write_version(pool, repo, None)
+    codeyard_db_cluster::cluster::bump_write_version(pool, repo, None)
         .await
         .unwrap();
-    codeyard::backend::db::cluster::bump_write_version(pool, repo, None)
+    codeyard_db_cluster::cluster::bump_write_version(pool, repo, None)
         .await
         .unwrap();
     assert_eq!(
-        codeyard::backend::db::cluster::get_write_version(pool, repo)
+        codeyard_db_cluster::cluster::get_write_version(pool, repo)
             .await
             .unwrap(),
         Some(2)
     );
     assert!(
-        codeyard::backend::db::cluster::bump_write_version(pool, repo + 1000, None)
+        codeyard_db_cluster::cluster::bump_write_version(pool, repo + 1000, None)
             .await
             .is_err()
     );
     // A repository that no storage node holds has no replicas, so nothing is counted.
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "unplaced-owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "unplaced-owner", None)
         .await
         .unwrap();
-    let unplaced = codeyard::backend::db::repositories::records::create_repository(
+    let unplaced = codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner.id,
         "unplaced",
@@ -190,104 +190,104 @@ async fn check_replica_rules(pool: &DbPool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::cluster::bump_write_version(pool, unplaced.id, None)
+    codeyard_db_cluster::cluster::bump_write_version(pool, unplaced.id, None)
         .await
         .unwrap();
     assert_eq!(
-        codeyard::backend::db::cluster::get_write_version(pool, unplaced.id)
+        codeyard_db_cluster::cluster::get_write_version(pool, unplaced.id)
             .await
             .unwrap(),
         Some(0)
     );
 
     assert!(
-        !codeyard::backend::db::cluster::replica_is_current(pool, repo, b)
+        !codeyard_db_cluster::cluster::replica_is_current(pool, repo, b)
             .await
             .unwrap()
     );
 
     // Only the primary adds copies, and a primary never holds a copy of itself.
     assert!(
-        codeyard::backend::db::cluster::insert_replica(pool, repo, b, a)
+        codeyard_db_cluster::cluster::insert_replica(pool, repo, b, a)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::cluster::insert_replica(pool, repo, b, a)
+        !codeyard_db_cluster::cluster::insert_replica(pool, repo, b, a)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::cluster::insert_replica(pool, repo, a, a)
+        !codeyard_db_cluster::cluster::insert_replica(pool, repo, a, a)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::cluster::insert_replica(pool, repo, c, b)
+        !codeyard_db_cluster::cluster::insert_replica(pool, repo, c, b)
             .await
             .unwrap()
     );
     assert!(
-        codeyard::backend::db::cluster::insert_replica(pool, repo, c, a)
+        codeyard_db_cluster::cluster::insert_replica(pool, repo, c, a)
             .await
             .unwrap()
     );
     assert_eq!(
-        codeyard::backend::db::cluster::list_replicas(pool, repo)
+        codeyard_db_cluster::cluster::list_replicas(pool, repo)
             .await
             .unwrap(),
         vec![(b, -1), (c, -1)]
     );
 
     assert!(
-        !codeyard::backend::db::cluster::delete_replica(pool, repo, b, c)
+        !codeyard_db_cluster::cluster::delete_replica(pool, repo, b, c)
             .await
             .unwrap()
     );
     assert!(
-        codeyard::backend::db::cluster::delete_replica(pool, repo, c, a)
+        codeyard_db_cluster::cluster::delete_replica(pool, repo, c, a)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::cluster::delete_replica(pool, repo, c, a)
+        !codeyard_db_cluster::cluster::delete_replica(pool, repo, c, a)
             .await
             .unwrap()
     );
     assert_eq!(
-        codeyard::backend::db::cluster::promote_repository(pool, repo, a, c, false)
+        codeyard_db_cluster::cluster::promote_repository(pool, repo, a, c, false)
             .await
             .unwrap(),
         PromoteOutcome::NoReplica
     );
     assert!(
-        codeyard::backend::db::cluster::insert_replica(pool, repo, c, a)
+        codeyard_db_cluster::cluster::insert_replica(pool, repo, c, a)
             .await
             .unwrap()
     );
 
-    codeyard::backend::db::cluster::set_applied_version(pool, repo, b, a, 1)
+    codeyard_db_cluster::cluster::set_applied_version(pool, repo, b, a, 1)
         .await
         .unwrap();
     assert!(
-        !codeyard::backend::db::cluster::replica_is_current(pool, repo, b)
+        !codeyard_db_cluster::cluster::replica_is_current(pool, repo, b)
             .await
             .unwrap()
     );
-    codeyard::backend::db::cluster::set_applied_version(pool, repo, b, a, 2)
+    codeyard_db_cluster::cluster::set_applied_version(pool, repo, b, a, 2)
         .await
         .unwrap();
     assert!(
-        codeyard::backend::db::cluster::replica_is_current(pool, repo, b)
+        codeyard_db_cluster::cluster::replica_is_current(pool, repo, b)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::cluster::replica_is_current(pool, repo, c)
+        !codeyard_db_cluster::cluster::replica_is_current(pool, repo, c)
             .await
             .unwrap()
     );
-    let row = codeyard::backend::db::repositories::records::get_repository_by_id(pool, repo)
+    let row = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo)
         .await
         .unwrap()
         .unwrap();
@@ -295,31 +295,31 @@ async fn check_replica_rules(pool: &DbPool) {
         .unwrap()
         .to_string();
     assert_eq!(
-        codeyard::backend::db::cluster::read_candidates(pool, &uuid, a)
+        codeyard_db_cluster::cluster::read_candidates(pool, &uuid, a)
             .await
             .unwrap(),
         vec![(b, false)]
     );
-    codeyard::backend::db::cluster::set_applied_version(pool, repo, b, a, 1)
+    codeyard_db_cluster::cluster::set_applied_version(pool, repo, b, a, 1)
         .await
         .unwrap();
     assert!(
-        codeyard::backend::db::cluster::read_candidates(pool, &uuid, a)
+        codeyard_db_cluster::cluster::read_candidates(pool, &uuid, a)
             .await
             .unwrap()
             .is_empty()
     );
-    codeyard::backend::db::cluster::set_applied_version(pool, repo, b, a, 2)
+    codeyard_db_cluster::cluster::set_applied_version(pool, repo, b, a, 2)
         .await
         .unwrap();
-    let held = codeyard::backend::db::cluster::list_held_replicas(pool, b)
+    let held = codeyard_db_cluster::cluster::list_held_replicas(pool, b)
         .await
         .unwrap();
     assert_eq!(held.len(), 1);
     assert_eq!(held[0].repository_id, repo);
     assert_eq!(held[0].primary_node_id, Some(a));
     assert_eq!((held[0].applied_version, held[0].write_version), (2, 2));
-    let primaries = codeyard::backend::db::cluster::list_primary_repositories(pool, a)
+    let primaries = codeyard_db_cluster::cluster::list_primary_repositories(pool, a)
         .await
         .unwrap();
     assert_eq!(
@@ -327,7 +327,7 @@ async fn check_replica_rules(pool: &DbPool) {
         vec![Some(b), Some(c)]
     );
 
-    let counts = codeyard::backend::db::cluster::replica_counts(pool)
+    let counts = codeyard_db_cluster::cluster::replica_counts(pool)
         .await
         .unwrap();
     let of = |node: i64| {
@@ -359,7 +359,7 @@ async fn check_replica_rules(pool: &DbPool) {
 
     // Promotion needs the primary to be where the caller thinks it is, and a copy.
     let promote = |from, to, require_current| {
-        codeyard::backend::db::cluster::promote_repository(pool, repo, from, to, require_current)
+        codeyard_db_cluster::cluster::promote_repository(pool, repo, from, to, require_current)
     };
     assert_eq!(promote(b, c, false).await.unwrap(), PromoteOutcome::Moved);
     assert_eq!(
@@ -384,25 +384,25 @@ async fn check_replica_rules(pool: &DbPool) {
     );
     // A plan read by the former primary cannot retire copies after promotion.
     assert!(
-        !codeyard::backend::db::cluster::delete_replica(pool, repo, c, a)
+        !codeyard_db_cluster::cluster::delete_replica(pool, repo, c, a)
             .await
             .unwrap()
     );
     // `a` keeps a copy with nothing applied; `b` no longer holds one.
     assert_eq!(
-        codeyard::backend::db::cluster::list_replicas(pool, repo)
+        codeyard_db_cluster::cluster::list_replicas(pool, repo)
             .await
             .unwrap(),
         vec![(a, -1), (c, -1)]
     );
     assert_eq!(
-        codeyard::backend::db::cluster::get_write_version(pool, repo)
+        codeyard_db_cluster::cluster::get_write_version(pool, repo)
             .await
             .unwrap(),
         Some(2),
         "promotion keeps the version"
     );
-    assert!(codeyard::backend::db::cluster::list_held_replicas(pool, b)
+    assert!(codeyard_db_cluster::cluster::list_held_replicas(pool, b)
         .await
         .unwrap()
         .is_empty());
@@ -411,7 +411,7 @@ async fn check_replica_rules(pool: &DbPool) {
 #[tokio::test]
 async fn retirement_waits_for_single_and_family_promotions() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -437,19 +437,14 @@ async fn retirement_waits_for_single_and_family_promotions() {
         let promotion = tokio::spawn(async move {
             if family {
                 assert!(matches!(
-                    codeyard::backend::db::cluster::promote_fork_family(
-                        &promotion_pool,
-                        repo,
-                        a,
-                        b
-                    )
-                    .await
-                    .unwrap(),
+                    codeyard_db_cluster::cluster::promote_fork_family(&promotion_pool, repo, a, b)
+                        .await
+                        .unwrap(),
                     FamilyOutcome::Promoted(_)
                 ));
             } else {
                 assert!(matches!(
-                    codeyard::backend::db::cluster::promote_repository(
+                    codeyard_db_cluster::cluster::promote_repository(
                         &promotion_pool,
                         repo,
                         a,
@@ -481,7 +476,7 @@ async fn retirement_waits_for_single_and_family_promotions() {
         .expect("promotion waits after reading the target copy");
         let retire_pool = pool.clone();
         let retirement = tokio::spawn(async move {
-            codeyard::backend::db::cluster::delete_replica(&retire_pool, repo, b, a)
+            codeyard_db_cluster::cluster::delete_replica(&retire_pool, repo, b, a)
                 .await
                 .unwrap()
         });
@@ -499,7 +494,7 @@ async fn retirement_waits_for_single_and_family_promotions() {
             !retirement.is_finished(),
             "retirement must not delete a copy promotion already read"
         );
-        assert!(codeyard::backend::db::cluster::list_replicas(pool, repo)
+        assert!(codeyard_db_cluster::cluster::list_replicas(pool, repo)
             .await
             .unwrap()
             .contains(&(b, 0)));
@@ -523,7 +518,7 @@ async fn replica_rules_hold_on_sqlite() {
 #[tokio::test]
 async fn replica_rules_hold_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_replica_rules(&database.pool).await;
@@ -651,13 +646,13 @@ async fn create_repository<'a>(
     name: &str,
 ) -> Repo<'a> {
     let owner =
-        codeyard::backend::db::users::accounts::create_user(pool, &format!("{name}_owner"), None)
+        codeyard_db_identity::users::accounts::create_user(pool, &format!("{name}_owner"), None)
             .await
             .unwrap();
     let store = RepoStore::create(&primary.context.repos_path, "main", None)
         .await
         .unwrap();
-    let row = codeyard::backend::db::repositories::records::create_repository(
+    let row = codeyard_db_repos::repositories::records::create_repository(
         pool,
         owner.id,
         name,
@@ -668,15 +663,14 @@ async fn create_repository<'a>(
     .await
     .unwrap();
     let placed =
-        codeyard::backend::db::cluster::place_repository(pool, row.id, primary.context.node_id)
+        codeyard_db_cluster::cluster::place_repository(pool, row.id, primary.context.node_id)
             .await
             .unwrap();
     assert!(placed);
-    let repository =
-        codeyard::backend::db::repositories::records::get_repository_by_id(pool, row.id)
-            .await
-            .unwrap()
-            .unwrap();
+    let repository = codeyard_db_repos::repositories::records::get_repository_by_id(pool, row.id)
+        .await
+        .unwrap()
+        .unwrap();
     Repo {
         pool,
         store: repo_store(&repository, Some(&primary.context)),
@@ -709,7 +703,7 @@ async fn applied_on(
     repository: i64,
     node: &codeyard::backend::cluster::Cluster,
 ) -> Option<i64> {
-    codeyard::backend::db::cluster::list_replicas(pool, repository)
+    codeyard_db_cluster::cluster::list_replicas(pool, repository)
         .await
         .unwrap()
         .into_iter()
@@ -751,7 +745,7 @@ async fn assert_current(
         primary_store.head_target().await.unwrap(),
         "the copy's HEAD names the primary's branch"
     );
-    let version = codeyard::backend::db::cluster::get_write_version(repo.pool, repo.id())
+    let version = codeyard_db_cluster::cluster::get_write_version(repo.pool, repo.id())
         .await
         .unwrap()
         .unwrap();
@@ -781,10 +775,10 @@ async fn two_storage_nodes(
     codeyard::backend::cluster::Cluster,
     codeyard::backend::cluster::Cluster,
 ) {
-    codeyard::backend::db::node_config::upsert_node_configuration(pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(pool, "public", true)
         .await
         .unwrap();
-    assert!(codeyard::backend::db::cluster::set_replicas(pool, "2")
+    assert!(codeyard_db_cluster::cluster::set_replicas(pool, "2")
         .await
         .unwrap());
     let primary = start_storage(pool, root, "store-a").await;
@@ -795,7 +789,7 @@ async fn two_storage_nodes(
 #[tokio::test]
 async fn copies_follow_commits_tags_branches_and_force_moves() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -857,7 +851,7 @@ async fn copies_follow_commits_tags_branches_and_force_moves() {
 #[tokio::test]
 async fn replicas_keep_recorded_ci_inputs_after_the_branch_is_deleted() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -874,13 +868,13 @@ async fn replicas_keep_recorded_ci_inputs_after_the_branch_is_deleted() {
         .await
         .unwrap()
         .blob_id;
-    let before = codeyard::backend::db::cluster::get_write_version(repo.pool, repo.id())
+    let before = codeyard_db_cluster::cluster::get_write_version(repo.pool, repo.id())
         .await
         .unwrap()
         .unwrap();
-    codeyard::backend::db::ci::enqueue_ci_run(
+    codeyard_db_actions::ci::enqueue_ci_run(
         repo.pool,
-        codeyard::backend::db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repo.id(),
             triggered_by_id: repo.actor,
             pipeline: "ci",
@@ -899,7 +893,7 @@ async fn replicas_keep_recorded_ci_inputs_after_the_branch_is_deleted() {
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::cluster::get_write_version(repo.pool, repo.id())
+        codeyard_db_cluster::cluster::get_write_version(repo.pool, repo.id())
             .await
             .unwrap(),
         Some(before + 1)
@@ -920,7 +914,7 @@ async fn replicas_keep_recorded_ci_inputs_after_the_branch_is_deleted() {
     );
     primary.shutdown().await;
     assert!(matches!(
-        codeyard::backend::db::cluster::promote_repository(
+        codeyard_db_cluster::cluster::promote_repository(
             repo.pool,
             repo.id(),
             primary.context.node_id,
@@ -945,7 +939,7 @@ async fn replicas_keep_recorded_ci_inputs_after_the_branch_is_deleted() {
 #[tokio::test]
 async fn empty_repositories_and_large_files_copy() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -978,7 +972,7 @@ async fn empty_repositories_and_large_files_copy() {
         &[],
     )
     .unwrap();
-    codeyard::backend::db::cluster::bump_write_version(repo.pool, repo.id(), None)
+    codeyard_db_cluster::cluster::bump_write_version(repo.pool, repo.id(), None)
         .await
         .unwrap();
     assert_current(&primary, &copy, &repo).await;
@@ -994,7 +988,7 @@ async fn empty_repositories_and_large_files_copy() {
 #[tokio::test]
 async fn only_nodes_holding_a_copy_may_ask_for_its_packs() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -1073,11 +1067,11 @@ async fn only_nodes_holding_a_copy_may_ask_for_its_packs() {
 #[tokio::test]
 async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
-    codeyard::backend::db::node_config::upsert_node_configuration(pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(pool, "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -1090,7 +1084,7 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
     repo.save("main", "a.txt", "unborn", b"a").await;
     let has_copy = |node: &codeyard::backend::cluster::Cluster| copy_path(node, uuid).exists();
 
-    assert!(codeyard::backend::db::cluster::set_replicas(pool, "all")
+    assert!(codeyard_db_cluster::cluster::set_replicas(pool, "all")
         .await
         .unwrap());
     pass(&primary).await;
@@ -1101,7 +1095,7 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
         "all: every storage node has a copy"
     );
 
-    assert!(codeyard::backend::db::cluster::set_replicas(pool, "1")
+    assert!(codeyard_db_cluster::cluster::set_replicas(pool, "1")
         .await
         .unwrap());
     pass(&primary).await;
@@ -1120,7 +1114,7 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
     // Stop live disk samples from replacing the tied placement inputs.
     for node in [&first, &second] {
         node.withdraw().await;
-        assert!(codeyard::backend::db::cluster::record_node_heartbeat(
+        assert!(codeyard_db_cluster::cluster::record_node_heartbeat(
             pool,
             &node.endpoint().unwrap().id().to_string(),
             "test",
@@ -1133,7 +1127,7 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
         .await
         .unwrap());
     }
-    assert!(codeyard::backend::db::cluster::set_replicas(pool, "2")
+    assert!(codeyard_db_cluster::cluster::set_replicas(pool, "2")
         .await
         .unwrap());
     pass(&primary).await;
@@ -1152,7 +1146,7 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
 #[tokio::test]
 async fn the_loop_copies_on_its_own_and_stops_at_shutdown() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -1173,7 +1167,7 @@ async fn the_loop_copies_on_its_own_and_stops_at_shutdown() {
     ));
     tokio::time::timeout(Duration::from_secs(90), async {
         loop {
-            let version = codeyard::backend::db::cluster::get_write_version(repo.pool, repo.id())
+            let version = codeyard_db_cluster::cluster::get_write_version(repo.pool, repo.id())
                 .await
                 .unwrap()
                 .unwrap();
@@ -1251,7 +1245,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
         }
     };
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -1327,11 +1321,10 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
     stop.send_replace(true);
     copying.await.unwrap();
     pass(&copy).await;
-    let promoted =
-        codeyard::backend::db::repositories::records::get_repository_by_id(pool, repo.id())
-            .await
-            .unwrap()
-            .unwrap();
+    let promoted = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo.id())
+        .await
+        .unwrap()
+        .unwrap();
     let store = repo_store(&promoted, Some(&copy.context));
     assert_eq!(store.refs().await.unwrap()["refs/heads/main"], head);
     store
@@ -1346,7 +1339,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
 #[tokio::test]
 async fn completed_copies_refill_slots_before_the_next_periodic_pass() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -1368,10 +1361,9 @@ async fn completed_copies_refill_slots_before_the_next_periodic_pass() {
     ));
     let caught_up = tokio::time::timeout(Duration::from_secs(9), async {
         loop {
-            let held =
-                codeyard::backend::db::cluster::list_held_replicas(pool, copy.context.node_id)
-                    .await
-                    .unwrap();
+            let held = codeyard_db_cluster::cluster::list_held_replicas(pool, copy.context.node_id)
+                .await
+                .unwrap();
             if held.len() == repositories.len()
                 && held
                     .iter()
@@ -1398,7 +1390,7 @@ async fn completed_copies_refill_slots_before_the_next_periodic_pass() {
 #[tokio::test]
 async fn busy_repositories_do_not_starve_later_copies() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -1417,7 +1409,7 @@ async fn busy_repositories_do_not_starve_later_copies() {
     let mut copying = Copying::default();
     for _ in 0..3 {
         for &busy in &repositories[..2] {
-            codeyard::backend::db::cluster::bump_write_version(pool, busy, None)
+            codeyard_db_cluster::cluster::bump_write_version(pool, busy, None)
                 .await
                 .unwrap();
         }
@@ -1431,7 +1423,7 @@ async fn busy_repositories_do_not_starve_later_copies() {
         .unwrap();
     }
     let quiet = repositories[2];
-    let version = codeyard::backend::db::cluster::get_write_version(pool, quiet)
+    let version = codeyard_db_cluster::cluster::get_write_version(pool, quiet)
         .await
         .unwrap()
         .unwrap();
@@ -1451,7 +1443,7 @@ async fn busy_repositories_do_not_starve_later_copies() {
 #[tokio::test]
 async fn a_copy_waits_while_a_ref_change_is_counted() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -1462,7 +1454,7 @@ async fn a_copy_waits_while_a_ref_change_is_counted() {
     assert_current(&primary, &copy, &repo).await;
     let uuid =
         codeyard::backend::cluster::rpc::repository_uuid(&repo.repository.disk_path).unwrap();
-    let current = codeyard::backend::db::cluster::get_write_version(pool, repo.id())
+    let current = codeyard_db_cluster::cluster::get_write_version(pool, repo.id())
         .await
         .unwrap()
         .unwrap();
@@ -1522,7 +1514,7 @@ async fn ref_change_counting_on_sqlite() {
 #[tokio::test]
 async fn ref_change_counting_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_ref_change_counting(&database.pool).await;
@@ -1535,42 +1527,41 @@ async fn check_ref_change_counting(pool: &DbPool) {
     let other = storage_node(pool, "count-other").await;
     let repo = placed_repository(pool, holder).await;
     assert!(
-        codeyard::backend::db::cluster::insert_replica(pool, repo, other, holder)
+        codeyard_db_cluster::cluster::insert_replica(pool, repo, other, holder)
             .await
             .unwrap()
     );
     assert!(
-        codeyard::backend::db::cluster::set_applied_version(pool, repo, other, holder, 0)
+        codeyard_db_cluster::cluster::set_applied_version(pool, repo, other, holder, 0)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::cluster::bump_write_version(pool, repo, Some(Some(other)))
+        !codeyard_db_cluster::cluster::bump_write_version(pool, repo, Some(Some(other)))
             .await
             .unwrap(),
         "another node does not count the change"
     );
     assert_eq!(
-        codeyard::backend::db::cluster::get_write_version(pool, repo)
+        codeyard_db_cluster::cluster::get_write_version(pool, repo)
             .await
             .unwrap(),
         Some(0)
     );
     assert!(
-        codeyard::backend::db::cluster::bump_write_version(pool, repo, Some(Some(holder)))
+        codeyard_db_cluster::cluster::bump_write_version(pool, repo, Some(Some(holder)))
             .await
             .unwrap()
     );
     assert_eq!(
-        codeyard::backend::db::cluster::get_write_version(pool, repo)
+        codeyard_db_cluster::cluster::get_write_version(pool, repo)
             .await
             .unwrap(),
         Some(1)
     );
-    let outcome =
-        codeyard::backend::db::cluster::promote_repository(pool, repo, holder, other, true)
-            .await
-            .unwrap();
+    let outcome = codeyard_db_cluster::cluster::promote_repository(pool, repo, holder, other, true)
+        .await
+        .unwrap();
     assert!(
         matches!(
             outcome,
@@ -1582,18 +1573,18 @@ async fn check_ref_change_counting(pool: &DbPool) {
         "{outcome:?}"
     );
     assert!(
-        codeyard::backend::db::cluster::bump_write_version(pool, repo, None)
+        codeyard_db_cluster::cluster::bump_write_version(pool, repo, None)
             .await
             .unwrap()
     );
     assert_eq!(
-        codeyard::backend::db::cluster::get_write_version(pool, repo)
+        codeyard_db_cluster::cluster::get_write_version(pool, repo)
             .await
             .unwrap(),
         Some(2)
     );
     assert!(
-        codeyard::backend::db::cluster::bump_write_version(pool, repo + 1000, None)
+        codeyard_db_cluster::cluster::bump_write_version(pool, repo + 1000, None)
             .await
             .is_err(),
         "a missing repository is an error"
@@ -1603,31 +1594,31 @@ async fn check_ref_change_counting(pool: &DbPool) {
 /// Promotion refuses a copy that is behind, picks the copy with the most writes, and a
 /// forced promotion records the writes the new primary lacks.
 async fn check_promotion(pool: &DbPool) {
-    codeyard::backend::db::node_config::upsert_node_configuration(pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(pool, "public", true)
         .await
         .unwrap();
     let a = storage_node(pool, "promo-a").await;
     let b = reporting_storage_node(pool, "promo-b").await;
     let c = reporting_storage_node(pool, "promo-c").await;
     let repo = placed_repository(pool, a).await;
-    codeyard::backend::db::cluster::bump_write_version(pool, repo, None)
+    codeyard_db_cluster::cluster::bump_write_version(pool, repo, None)
         .await
         .unwrap();
-    codeyard::backend::db::cluster::bump_write_version(pool, repo, None)
+    codeyard_db_cluster::cluster::bump_write_version(pool, repo, None)
         .await
         .unwrap();
     assert!(
-        codeyard::backend::db::cluster::insert_replica(pool, repo, b, a)
+        codeyard_db_cluster::cluster::insert_replica(pool, repo, b, a)
             .await
             .unwrap()
     );
     assert!(
-        codeyard::backend::db::cluster::insert_replica(pool, repo, c, a)
+        codeyard_db_cluster::cluster::insert_replica(pool, repo, c, a)
             .await
             .unwrap()
     );
     assert!(
-        codeyard::backend::db::cluster::set_applied_version(pool, repo, b, a, 2)
+        codeyard_db_cluster::cluster::set_applied_version(pool, repo, b, a, 2)
             .await
             .unwrap()
     );
@@ -1663,12 +1654,12 @@ async fn check_promotion(pool: &DbPool) {
     );
     assert_eq!(primary_of(pool, repo).await, b);
     assert!(
-        codeyard::backend::db::cluster::set_applied_version(pool, repo, c, b, 1)
+        codeyard_db_cluster::cluster::set_applied_version(pool, repo, c, b, 1)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::cluster::set_applied_version(pool, repo, c, a, 2)
+        !codeyard_db_cluster::cluster::set_applied_version(pool, repo, c, a, 2)
             .await
             .unwrap(),
         "a copy taken from the old primary is not recorded after the promotion"
@@ -1692,27 +1683,27 @@ async fn check_promotion(pool: &DbPool) {
     let d = storage_node(pool, "promo-d").await;
     let ahead = placed_repository(pool, d).await;
     for _ in 0..3 {
-        codeyard::backend::db::cluster::bump_write_version(pool, ahead, None)
+        codeyard_db_cluster::cluster::bump_write_version(pool, ahead, None)
             .await
             .unwrap();
     }
     assert!(
-        codeyard::backend::db::cluster::insert_replica(pool, ahead, b, d)
+        codeyard_db_cluster::cluster::insert_replica(pool, ahead, b, d)
             .await
             .unwrap()
     );
     assert!(
-        codeyard::backend::db::cluster::insert_replica(pool, ahead, c, d)
+        codeyard_db_cluster::cluster::insert_replica(pool, ahead, c, d)
             .await
             .unwrap()
     );
     assert!(
-        codeyard::backend::db::cluster::set_applied_version(pool, ahead, b, d, 3)
+        codeyard_db_cluster::cluster::set_applied_version(pool, ahead, b, d, 3)
             .await
             .unwrap()
     );
     assert!(
-        codeyard::backend::db::cluster::set_applied_version(pool, ahead, c, d, 1)
+        codeyard_db_cluster::cluster::set_applied_version(pool, ahead, c, d, 1)
             .await
             .unwrap()
     );
@@ -1729,7 +1720,7 @@ async fn check_promotion(pool: &DbPool) {
         }]
     );
     assert_eq!(
-        codeyard::backend::db::cluster::list_replicas(pool, ahead)
+        codeyard_db_cluster::cluster::list_replicas(pool, ahead)
             .await
             .unwrap(),
         vec![(b, 1), (d, -1)],
@@ -1738,7 +1729,7 @@ async fn check_promotion(pool: &DbPool) {
 }
 
 async fn primary_of(pool: &DbPool, repository: i64) -> i64 {
-    codeyard::backend::db::repositories::records::get_repository_by_id(pool, repository)
+    codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository)
         .await
         .unwrap()
         .unwrap()
@@ -1752,29 +1743,29 @@ async fn check_old_transfers_after_rollback(pool: &DbPool) {
     let c = reporting_storage_node(pool, "rollback-c").await;
     let repo = placed_repository(pool, a).await;
     for _ in 0..5 {
-        codeyard::backend::db::cluster::bump_write_version(pool, repo, None)
+        codeyard_db_cluster::cluster::bump_write_version(pool, repo, None)
             .await
             .unwrap();
     }
     for node in [b, c] {
         assert!(
-            codeyard::backend::db::cluster::insert_replica(pool, repo, node, a)
+            codeyard_db_cluster::cluster::insert_replica(pool, repo, node, a)
                 .await
                 .unwrap()
         );
     }
     assert!(
-        codeyard::backend::db::cluster::set_applied_version(pool, repo, b, a, 3)
+        codeyard_db_cluster::cluster::set_applied_version(pool, repo, b, a, 3)
             .await
             .unwrap()
     );
     assert!(matches!(
-        codeyard::backend::db::cluster::promote_repository(pool, repo, a, b, false)
+        codeyard_db_cluster::cluster::promote_repository(pool, repo, a, b, false)
             .await
             .unwrap(),
         PromoteOutcome::Promoted { .. }
     ));
-    let version = codeyard::backend::db::cluster::get_write_version(pool, repo)
+    let version = codeyard_db_cluster::cluster::get_write_version(pool, repo)
         .await
         .unwrap()
         .unwrap();
@@ -1783,24 +1774,24 @@ async fn check_old_transfers_after_rollback(pool: &DbPool) {
         "rolling back the chosen history advances its version"
     );
     assert!(
-        codeyard::backend::db::cluster::set_applied_version(pool, repo, a, b, version)
+        codeyard_db_cluster::cluster::set_applied_version(pool, repo, a, b, version)
             .await
             .unwrap()
     );
     assert!(matches!(
-        codeyard::backend::db::cluster::promote_repository(pool, repo, b, a, true)
+        codeyard_db_cluster::cluster::promote_repository(pool, repo, b, a, true)
             .await
             .unwrap(),
         PromoteOutcome::Promoted { .. }
     ));
     // C completes its original version-5 copy from A, after A is primary again.
     assert!(
-        codeyard::backend::db::cluster::set_applied_version(pool, repo, c, a, 5)
+        codeyard_db_cluster::cluster::set_applied_version(pool, repo, c, a, 5)
             .await
             .unwrap()
     );
     assert!(matches!(
-        codeyard::backend::db::cluster::promote_repository(pool, repo, a, c, true)
+        codeyard_db_cluster::cluster::promote_repository(pool, repo, a, c, true)
             .await
             .unwrap(),
         PromoteOutcome::Stale { .. }
@@ -1816,7 +1807,7 @@ async fn sqlite_old_transfers_cannot_become_current_after_rollback_and_return() 
 #[tokio::test]
 async fn postgres_old_transfers_cannot_become_current_after_rollback_and_return() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_old_transfers_after_rollback(&database.pool).await;
@@ -1831,7 +1822,7 @@ async fn promotion_on_sqlite() {
 #[tokio::test]
 async fn promotion_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_promotion(&database.pool).await;
@@ -1840,39 +1831,38 @@ async fn promotion_on_postgres() {
 /// The delete returns the row it deleted. Cleanup removes files on that row's primary, so a
 /// promotion after the caller's read must not send cleanup to the old primary.
 async fn check_delete_names_the_promoted_primary(pool: &DbPool) {
-    codeyard::backend::db::node_config::upsert_node_configuration(pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(pool, "public", true)
         .await
         .unwrap();
     let a = storage_node(pool, "delete-a").await;
     let b = reporting_storage_node(pool, "delete-b").await;
     let repo = placed_repository(pool, a).await;
     assert!(
-        codeyard::backend::db::cluster::insert_replica(pool, repo, b, a)
+        codeyard_db_cluster::cluster::insert_replica(pool, repo, b, a)
             .await
             .unwrap()
     );
-    let before = codeyard::backend::db::repositories::records::get_repository_by_id(pool, repo)
+    let before = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(before.storage_node_id, Some(a));
     // Only a copy that has been made can take over, even when forced.
     assert!(
-        codeyard::backend::db::cluster::set_applied_version(pool, repo, b, a, 0)
+        codeyard_db_cluster::cluster::set_applied_version(pool, repo, b, a, 0)
             .await
             .unwrap()
     );
 
-    let promoted = codeyard::backend::db::cluster::promote_repository(pool, repo, a, b, false)
+    let promoted = codeyard_db_cluster::cluster::promote_repository(pool, repo, a, b, false)
         .await
         .unwrap();
     assert!(matches!(promoted, PromoteOutcome::Promoted { .. }));
 
     let owner = before.owner_user_id.unwrap();
-    let deleted =
-        codeyard::backend::db::repositories::records::delete_repository(pool, owner, repo)
-            .await
-            .unwrap();
+    let deleted = codeyard_db_repos::repositories::records::delete_repository(pool, owner, repo)
+        .await
+        .unwrap();
     assert_eq!(deleted.storage_node_id, Some(b));
     assert_eq!(deleted.disk_path, before.disk_path);
 }
@@ -1886,7 +1876,7 @@ async fn delete_names_the_promoted_primary_on_sqlite() {
 #[tokio::test]
 async fn delete_names_the_promoted_primary_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_delete_names_the_promoted_primary(&database.pool).await;
@@ -1900,7 +1890,7 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     };
     use codeyard::backend::notifications::NotificationBroadcaster;
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -1915,7 +1905,7 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
         .unwrap()
         .to_string();
     let key = codeyard_support::node_identity::NodeKey::generate();
-    codeyard::backend::db::cluster::register_own_node(
+    codeyard_db_cluster::cluster::register_own_node(
         pool,
         &key.public_hex(),
         "ci-copy-worker",
@@ -1936,9 +1926,9 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
         context: Some(primary.context.clone()),
         notifications: Arc::new(NotificationBroadcaster::new(pool)),
     };
-    codeyard::backend::db::ci::enqueue_ci_run(
+    codeyard_db_actions::ci::enqueue_ci_run(
         pool,
-        codeyard::backend::db::ci::NewCiRun {
+        codeyard_db_actions::ci::NewCiRun {
             repo_id: repo.id(),
             triggered_by_id: repo.actor,
             pipeline: "ci",
@@ -1994,7 +1984,7 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
         yaml
     );
     assert_eq!(store.blob_by_id(&blob).await.unwrap(), yaml);
-    codeyard::backend::db::ci::finish_ci_run(pool, claim.run.id, &worker, "success", None)
+    codeyard_db_actions::ci::finish_ci_run(pool, claim.run.id, &worker, "success", None)
         .await
         .unwrap();
     assert!(store.blob_by_id(&blob).await.is_err());
@@ -2005,7 +1995,7 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
 #[tokio::test]
 async fn a_promoted_copy_takes_writes_and_the_old_primary_follows() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -2043,13 +2033,11 @@ async fn a_promoted_copy_takes_writes_and_the_old_primary_follows() {
     assert!(!copy_path(&copy, uuid).exists());
 
     // Writes now go to the new primary, which is the database's node for the repository.
-    let promoted = codeyard::backend::db::repositories::records::get_repository_by_id(
-        &database.pool,
-        repo.id(),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let promoted =
+        codeyard_db_repos::repositories::records::get_repository_by_id(&database.pool, repo.id())
+            .await
+            .unwrap()
+            .unwrap();
     let writes = repo_store(&promoted, Some(&copy.context));
     let head = writes.refs().await.unwrap()["refs/heads/main"].clone();
     writes
@@ -2075,7 +2063,7 @@ async fn a_promoted_copy_takes_writes_and_the_old_primary_follows() {
 #[tokio::test]
 async fn returning_former_primary_cleanup_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -2087,7 +2075,7 @@ async fn returning_former_primary_cleanup_on_postgres() {
     let unplaced_store = RepoStore::create(&former.context.repos_path, "main", None)
         .await
         .unwrap();
-    let unplaced = codeyard::backend::db::repositories::records::create_repository(
+    let unplaced = codeyard_db_repos::repositories::records::create_repository(
         pool,
         repo.actor,
         "unplaced",
@@ -2126,13 +2114,9 @@ async fn returning_former_primary_cleanup_on_postgres() {
     pass(&primary).await;
     assert_eq!(applied_on(pool, repo.id(), &former).await, None);
     assert_eq!(applied_on(pool, deleted.id(), &former).await, None);
-    codeyard::backend::db::repositories::records::delete_repository(
-        pool,
-        deleted.actor,
-        deleted.id(),
-    )
-    .await
-    .unwrap();
+    codeyard_db_repos::repositories::records::delete_repository(pool, deleted.actor, deleted.id())
+        .await
+        .unwrap();
 
     former.publish().await.unwrap();
     pass(&former).await;
@@ -2163,7 +2147,7 @@ async fn returning_former_primary_cleanup_on_postgres() {
 #[tokio::test]
 async fn a_former_primary_with_a_copy_keeps_the_repository_through_cleanup() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -2198,7 +2182,7 @@ async fn a_former_primary_with_a_copy_keeps_the_repository_through_cleanup() {
 #[tokio::test]
 async fn a_former_primary_without_a_copy_row_drops_its_directory() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -2218,7 +2202,7 @@ async fn a_former_primary_without_a_copy_row_drops_its_directory() {
     .await
     .unwrap();
     // The new primary retires the former copy row once a replacement is ready.
-    assert!(codeyard::backend::db::cluster::delete_replica(
+    assert!(codeyard_db_cluster::cluster::delete_replica(
         pool,
         repo.id(),
         former.context.node_id,
@@ -2239,7 +2223,7 @@ async fn a_former_primary_without_a_copy_row_drops_its_directory() {
 /// A storage node registered as active, with its key so the test can make it report in.
 async fn keyed_storage_node(pool: &DbPool, name: &str) -> (i64, String) {
     let key = NodeKey::generate().public_hex();
-    let node = codeyard::backend::db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         pool,
         &key,
         name,
@@ -2252,7 +2236,7 @@ async fn keyed_storage_node(pool: &DbPool, name: &str) -> (i64, String) {
 }
 
 async fn report_in(pool: &DbPool, key: &str) {
-    assert!(codeyard::backend::db::cluster::record_node_heartbeat(
+    assert!(codeyard_db_cluster::cluster::record_node_heartbeat(
         pool,
         key,
         "test",
@@ -2265,11 +2249,10 @@ async fn report_in(pool: &DbPool, key: &str) {
 
 /// `node` holds a copy of `repo` that has applied `applied` writes.
 async fn add_copy(pool: &DbPool, repo: i64, node: i64, primary: i64, applied: i64) {
-    let added = codeyard::backend::db::cluster::insert_replica(pool, repo, node, primary).await;
+    let added = codeyard_db_cluster::cluster::insert_replica(pool, repo, node, primary).await;
     assert!(added.unwrap());
     let set =
-        codeyard::backend::db::cluster::set_applied_version(pool, repo, node, primary, applied)
-            .await;
+        codeyard_db_cluster::cluster::set_applied_version(pool, repo, node, primary, applied).await;
     set.unwrap();
 }
 
@@ -2277,14 +2260,14 @@ async fn add_copy(pool: &DbPool, repo: i64, node: i64, primary: i64, applied: i6
 /// of its own, so the names only need to be unique within one test.
 async fn family_member(pool: &DbPool, name: &str, primary: i64, source: Option<i64>) -> i64 {
     let owner =
-        codeyard::backend::db::users::accounts::create_user(pool, &format!("{name}_owner"), None)
+        codeyard_db_identity::users::accounts::create_user(pool, &format!("{name}_owner"), None)
             .await
             .unwrap();
     let disk_path = format!("/srv/repos/{}.git", Uuid::new_v4());
-    codeyard::backend::db::repositories::creation::insert_repository(
+    codeyard_db_repos::repositories::creation::insert_repository(
         pool,
-        codeyard::backend::db::repositories::creation::NewRepository {
-            owner: codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+        codeyard_db_repos::repositories::creation::NewRepository {
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
                 owner.id,
             ),
             name,
@@ -2330,7 +2313,7 @@ async fn move_primary(pool: &DbPool, repository: i64, node: i64) {
 async fn take_over(pool: &DbPool, node: i64, silent: &mut Silent, wait: Duration) -> Vec<i64> {
     // The metadata fixtures need usable directories as well as recorded versions.
     let root = tempfile::tempdir().unwrap();
-    for row in codeyard::backend::db::cluster::list_held_replicas(pool, node)
+    for row in codeyard_db_cluster::cluster::list_held_replicas(pool, node)
         .await
         .unwrap()
     {
@@ -2359,7 +2342,7 @@ async fn check_take_over(pool: &DbPool) {
     // `a` has never reported in, so it is offline. `b` holds every write and `c` does not.
     let repo = placed_repository(pool, a).await;
     for _ in 0..2 {
-        codeyard::backend::db::cluster::bump_write_version(pool, repo, None)
+        codeyard_db_cluster::cluster::bump_write_version(pool, repo, None)
             .await
             .unwrap();
     }
@@ -2373,7 +2356,7 @@ async fn check_take_over(pool: &DbPool) {
 
     // A primary that was revoked is left to the operator.
     let kept = placed_repository(pool, revoked).await;
-    codeyard::backend::db::cluster::bump_write_version(pool, kept, None)
+    codeyard_db_cluster::cluster::bump_write_version(pool, kept, None)
         .await
         .unwrap();
     add_copy(pool, kept, b, revoked, 1).await;
@@ -2407,7 +2390,7 @@ async fn check_take_over(pool: &DbPool) {
 }
 
 async fn clear_heartbeat(pool: &DbPool, key: &str) {
-    codeyard::backend::db::cluster::clear_node_heartbeat(pool, key)
+    codeyard_db_cluster::cluster::clear_node_heartbeat(pool, key)
         .await
         .unwrap();
 }
@@ -2415,7 +2398,7 @@ async fn clear_heartbeat(pool: &DbPool, key: &str) {
 async fn cluster_revoke(pool: &DbPool, name: &str) {
     codeyard::backend::cluster::revoke(
         pool,
-        codeyard::backend::db::cluster::Authority::Operator,
+        codeyard_db_cluster::cluster::Authority::Operator,
         name,
     )
     .await
@@ -2428,7 +2411,7 @@ async fn check_heartbeat_clock(pool: &DbPool) {
     let repo = family_member(pool, "clock", a, None).await;
     add_copy(pool, repo, b, a, 0).await;
     report_in(pool, &key).await;
-    let node = codeyard::backend::db::cluster::get_node_by_id(pool, a)
+    let node = codeyard_db_cluster::cluster::get_node_by_id(pool, a)
         .await
         .unwrap()
         .unwrap();
@@ -2449,20 +2432,20 @@ async fn check_heartbeat_clock(pool: &DbPool) {
     }
     // A primary that returned after the caller's offline observation must not move.
     assert_eq!(
-        codeyard::backend::db::cluster::promote_fork_family(pool, repo, a, b)
+        codeyard_db_cluster::cluster::promote_fork_family(pool, repo, a, b)
             .await
             .unwrap(),
         FamilyOutcome::Refused
     );
     assert_eq!(primary_of(pool, repo).await, a);
     clear_heartbeat(pool, &key).await;
-    assert!(!codeyard::backend::db::cluster::get_node_by_id(pool, a)
+    assert!(!codeyard_db_cluster::cluster::get_node_by_id(pool, a)
         .await
         .unwrap()
         .unwrap()
         .is_online());
     assert_eq!(
-        codeyard::backend::db::cluster::promote_fork_family(pool, repo, a, b)
+        codeyard_db_cluster::cluster::promote_fork_family(pool, repo, a, b)
             .await
             .unwrap(),
         FamilyOutcome::Promoted(vec![repo])
@@ -2478,7 +2461,7 @@ async fn heartbeat_clock_on_sqlite() {
 #[tokio::test]
 async fn heartbeat_clock_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_heartbeat_clock(&database.pool).await;
@@ -2493,7 +2476,7 @@ async fn take_over_on_sqlite() {
 #[tokio::test]
 async fn take_over_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_take_over(&database.pool).await;
@@ -2508,7 +2491,7 @@ async fn check_missing_copy_blocks_take_over(pool: &DbPool) {
     for repo in [source, fork] {
         add_copy(pool, repo, b, a, 0).await;
     }
-    let rows = codeyard::backend::db::cluster::list_held_replicas(pool, b)
+    let rows = codeyard_db_cluster::cluster::list_held_replicas(pool, b)
         .await
         .unwrap();
     let paths: Vec<_> = rows
@@ -2536,19 +2519,19 @@ async fn check_missing_copy_blocks_take_over(pool: &DbPool) {
     assert_eq!(primary_of(pool, source).await, a);
     assert_eq!(primary_of(pool, fork).await, a);
     assert_eq!(
-        codeyard::backend::db::cluster::list_replicas(pool, fork)
+        codeyard_db_cluster::cluster::list_replicas(pool, fork)
             .await
             .unwrap(),
         vec![(b, -1)]
     );
     assert_eq!(
-        codeyard::backend::db::cluster::promote_fork_family(pool, source, a, b)
+        codeyard_db_cluster::cluster::promote_fork_family(pool, source, a, b)
             .await
             .unwrap(),
         FamilyOutcome::Refused
     );
     assert!(matches!(
-        codeyard::backend::db::cluster::promote_repository(pool, fork, a, b, false)
+        codeyard_db_cluster::cluster::promote_repository(pool, fork, a, b, false)
             .await
             .unwrap(),
         PromoteOutcome::Stale {
@@ -2571,7 +2554,7 @@ async fn check_missing_copy_blocks_take_over(pool: &DbPool) {
         .is_empty(),
         "an initialized directory is not a completed copy"
     );
-    codeyard::backend::db::cluster::set_applied_version(pool, fork, b, a, 0)
+    codeyard_db_cluster::cluster::set_applied_version(pool, fork, b, a, 0)
         .await
         .unwrap();
     assert_eq!(
@@ -2597,7 +2580,7 @@ async fn missing_copy_blocks_take_over_on_sqlite() {
 #[tokio::test]
 async fn missing_copy_blocks_take_over_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_missing_copy_blocks_take_over(&database.pool).await;
@@ -2606,7 +2589,7 @@ async fn missing_copy_blocks_take_over_on_postgres() {
 #[tokio::test]
 async fn lost_current_copies_are_rebuilt_without_a_primary_write() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -2617,7 +2600,7 @@ async fn lost_current_copies_are_rebuilt_without_a_primary_write() {
         codeyard::backend::cluster::rpc::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo.save("main", "README.md", "unborn", b"survives").await;
     assert_current(&primary, &copy, &repo).await;
-    let version = codeyard::backend::db::cluster::get_write_version(pool, repo.id())
+    let version = codeyard_db_cluster::cluster::get_write_version(pool, repo.id())
         .await
         .unwrap();
     let copy_id = copy.context.node_id;
@@ -2657,7 +2640,7 @@ async fn lost_current_copies_are_rebuilt_without_a_primary_write() {
         head
     );
     assert_eq!(
-        codeyard::backend::db::cluster::get_write_version(pool, repo.id())
+        codeyard_db_cluster::cluster::get_write_version(pool, repo.id())
             .await
             .unwrap(),
         version
@@ -2685,13 +2668,13 @@ async fn check_offline_target_is_refused(pool: &DbPool) {
     add_copy(pool, repo, b, a, 0).await;
     // `b` holds a current copy but is not reporting in, so it cannot take the repository.
     assert_eq!(
-        codeyard::backend::db::cluster::promote_repository(pool, repo, a, b, true)
+        codeyard_db_cluster::cluster::promote_repository(pool, repo, a, b, true)
             .await
             .unwrap(),
         PromoteOutcome::TargetOffline
     );
     assert_eq!(
-        codeyard::backend::db::cluster::promote_fork_family(pool, repo, a, b)
+        codeyard_db_cluster::cluster::promote_fork_family(pool, repo, a, b)
             .await
             .unwrap(),
         FamilyOutcome::Refused
@@ -2699,7 +2682,7 @@ async fn check_offline_target_is_refused(pool: &DbPool) {
     assert_eq!(primary_of(pool, repo).await, a);
     report_in(pool, &b_key).await;
     assert!(matches!(
-        codeyard::backend::db::cluster::promote_repository(pool, repo, a, b, true)
+        codeyard_db_cluster::cluster::promote_repository(pool, repo, a, b, true)
             .await
             .unwrap(),
         PromoteOutcome::Promoted { .. }
@@ -2716,7 +2699,7 @@ async fn offline_target_is_refused_on_sqlite() {
 #[tokio::test]
 async fn offline_target_is_refused_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_offline_target_is_refused(&database.pool).await;
@@ -2727,7 +2710,7 @@ async fn offline_target_is_refused_on_postgres() {
 #[tokio::test]
 async fn a_copy_git_cannot_open_is_cleared_and_rebuilt() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -2738,7 +2721,7 @@ async fn a_copy_git_cannot_open_is_cleared_and_rebuilt() {
         codeyard::backend::cluster::rpc::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo.save("main", "README.md", "unborn", b"survives").await;
     assert_current(&primary, &copy, &repo).await;
-    let version = codeyard::backend::db::cluster::get_write_version(pool, repo.id())
+    let version = codeyard_db_cluster::cluster::get_write_version(pool, repo.id())
         .await
         .unwrap();
     let copy_id = copy.context.node_id;
@@ -2779,7 +2762,7 @@ async fn a_copy_git_cannot_open_is_cleared_and_rebuilt() {
 #[tokio::test]
 async fn a_complete_copy_removes_stale_unusable_directories_only() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -2844,7 +2827,7 @@ async fn a_complete_copy_removes_stale_unusable_directories_only() {
 #[tokio::test]
 async fn an_incremental_copy_clears_stale_unusable_directories_after_it_succeeds() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -2876,7 +2859,7 @@ async fn an_incremental_copy_clears_stale_unusable_directories_after_it_succeeds
     std::fs::write(&config, b"[broken").unwrap();
     pass(&copy).await;
     assert!(stale.exists(), "a failed copy keeps the stale directory");
-    let version = codeyard::backend::db::cluster::get_write_version(pool, repo.id())
+    let version = codeyard_db_cluster::cluster::get_write_version(pool, repo.id())
         .await
         .unwrap();
     assert_ne!(applied_on(pool, repo.id(), &copy).await, version);
@@ -2904,7 +2887,7 @@ async fn an_incremental_copy_clears_stale_unusable_directories_after_it_succeeds
 #[tokio::test]
 async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -2912,7 +2895,7 @@ async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
     let b = reporting_storage_node(pool, "race-b").await;
     let source = family_member(pool, "promotion-race", a, None).await;
     add_copy(pool, source, b, a, 0).await;
-    let owner = codeyard::backend::db::users::accounts::create_user(pool, "late-fork-owner", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(pool, "late-fork-owner", None)
         .await
         .unwrap();
     let DbPool::Postgres(raw) = pool else {
@@ -2953,7 +2936,7 @@ async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
 #[tokio::test]
 async fn replica_copies_follow_ref_namespace_changes_in_both_directions() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -2975,7 +2958,7 @@ async fn replica_copies_follow_ref_namespace_changes_in_both_directions() {
 #[tokio::test]
 async fn retiring_a_replica_removes_quarantined_directories_too() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -2988,7 +2971,7 @@ async fn retiring_a_replica_removes_quarantined_directories_too() {
     let aside = copy_path(&copy, uuid).with_file_name(format!("{uuid}.git.unusable-123"));
     std::fs::create_dir(&aside).unwrap();
     std::fs::write(aside.join("data"), b"failed rebuild").unwrap();
-    codeyard::backend::db::cluster::delete_replica(
+    codeyard_db_cluster::cluster::delete_replica(
         &database.pool,
         repo.id(),
         copy.context.node_id,
@@ -3049,7 +3032,7 @@ async fn default_promotion_takes_a_holder_that_is_reporting_in_on_sqlite() {
 #[tokio::test]
 async fn default_promotion_takes_a_holder_that_is_reporting_in_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_default_target_is_reporting_in(&database.pool).await;
@@ -3064,7 +3047,7 @@ async fn check_unreadable_copy_does_not_stop_takeover(pool: &DbPool) {
     let missing = family_member(pool, "missing", a, None).await;
     add_copy(pool, unreadable, b, a, 0).await;
     add_copy(pool, missing, b, a, 0).await;
-    let rows = codeyard::backend::db::cluster::list_held_replicas(pool, b)
+    let rows = codeyard_db_cluster::cluster::list_held_replicas(pool, b)
         .await
         .unwrap();
     let uuid = rows
@@ -3088,13 +3071,13 @@ async fn check_unreadable_copy_does_not_stop_takeover(pool: &DbPool) {
     .unwrap();
     assert!(taken.is_empty());
     assert_eq!(
-        codeyard::backend::db::cluster::list_replicas(pool, unreadable)
+        codeyard_db_cluster::cluster::list_replicas(pool, unreadable)
             .await
             .unwrap(),
         vec![(b, -1)]
     );
     assert_eq!(
-        codeyard::backend::db::cluster::list_replicas(pool, missing)
+        codeyard_db_cluster::cluster::list_replicas(pool, missing)
             .await
             .unwrap(),
         vec![(b, -1)]
@@ -3110,7 +3093,7 @@ async fn unreadable_copy_does_not_stop_takeover_on_sqlite() {
 #[tokio::test]
 async fn unreadable_copy_does_not_stop_takeover_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_unreadable_copy_does_not_stop_takeover(&database.pool).await;
@@ -3122,7 +3105,7 @@ async fn unreadable_copy_does_not_stop_takeover_on_postgres() {
 #[tokio::test]
 async fn an_unreadable_copy_does_not_stop_the_others_from_being_rebuilt() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -3139,7 +3122,7 @@ async fn an_unreadable_copy_does_not_stop_the_others_from_being_rebuilt() {
     assert_current(&primary, &copy, &first).await;
     assert_current(&primary, &copy, &second).await;
     let first_applied = applied_on(pool, first.id(), &copy).await;
-    let second_version = codeyard::backend::db::cluster::get_write_version(pool, second.id())
+    let second_version = codeyard_db_cluster::cluster::get_write_version(pool, second.id())
         .await
         .unwrap();
     copy.shutdown().await;
@@ -3173,7 +3156,7 @@ async fn an_unreadable_copy_does_not_stop_the_others_from_being_rebuilt() {
 #[tokio::test]
 async fn a_copy_takes_over_when_its_primary_stops() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -3210,13 +3193,11 @@ async fn a_copy_takes_over_when_its_primary_stops() {
     pass(&copy).await;
     assert!(primary_path(&copy, uuid).is_dir());
     assert!(!copy_path(&copy, uuid).exists());
-    let promoted = codeyard::backend::db::repositories::records::get_repository_by_id(
-        &database.pool,
-        repo.id(),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let promoted =
+        codeyard_db_repos::repositories::records::get_repository_by_id(&database.pool, repo.id())
+            .await
+            .unwrap()
+            .unwrap();
     let writes = repo_store(&promoted, Some(&copy.context));
     let head = writes.refs().await.unwrap()["refs/heads/main"].clone();
     writes
@@ -3260,7 +3241,7 @@ async fn check_fork_family_promotion(pool: &DbPool) {
     }
     assert_eq!(primary_of(pool, elsewhere).await, c);
     assert_eq!(
-        codeyard::backend::db::cluster::list_replicas(pool, fork)
+        codeyard_db_cluster::cluster::list_replicas(pool, fork)
             .await
             .unwrap(),
         vec![(a, -1)],
@@ -3310,7 +3291,7 @@ async fn check_fork_family_promotion(pool: &DbPool) {
     let never_fork = family_member(pool, "nevfork", g, Some(never)).await;
     add_copy(pool, never, h, g, 0).await;
     assert!(
-        codeyard::backend::db::cluster::insert_replica(pool, never_fork, h, g)
+        codeyard_db_cluster::cluster::insert_replica(pool, never_fork, h, g)
             .await
             .unwrap()
     );
@@ -3334,7 +3315,7 @@ async fn fork_family_promotion_on_sqlite() {
 #[tokio::test]
 async fn fork_family_promotion_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_fork_family_promotion(&database.pool).await;
@@ -3382,12 +3363,12 @@ async fn check_fork_family_take_over(pool: &DbPool) {
     add_copy(pool, split_source, c, a, 0).await;
     add_copy(pool, split_fork, c, a, 0).await;
     let moved =
-        codeyard::backend::db::cluster::promote_repository(pool, split_source, a, b, true).await;
+        codeyard_db_cluster::cluster::promote_repository(pool, split_source, a, b, true).await;
     assert!(matches!(moved.unwrap(), PromoteOutcome::Promoted { .. }));
     let split_taken = take_over(pool, c, &mut Silent::default(), now).await;
     assert!(split_taken.is_empty(), "a split family waits");
     assert_eq!(primary_of(pool, split_fork).await, a);
-    let refused = codeyard::backend::db::cluster::promote_fork_family(pool, split_fork, a, c).await;
+    let refused = codeyard_db_cluster::cluster::promote_fork_family(pool, split_fork, a, c).await;
     assert_eq!(refused.unwrap(), FamilyOutcome::Refused);
     assert_eq!(primary_of(pool, split_source).await, b);
     assert_eq!(primary_of(pool, split_fork).await, a);
@@ -3402,7 +3383,7 @@ async fn fork_family_take_over_on_sqlite() {
 #[tokio::test]
 async fn fork_family_take_over_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_fork_family_take_over(&database.pool).await;
@@ -3459,7 +3440,7 @@ async fn two_take_overs_keep_a_fork_family_whole_on_sqlite() {
 #[tokio::test]
 async fn two_take_overs_keep_a_fork_family_whole_on_postgres() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     check_two_take_overs_keep_a_fork_family_whole(&database.pool).await;
@@ -3470,7 +3451,7 @@ async fn two_take_overs_keep_a_fork_family_whole_on_postgres() {
 #[tokio::test]
 async fn promote_all_from_moves_a_fork_family_once() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -3527,7 +3508,7 @@ fn fetch_input(sha: &str) -> String {
 #[tokio::test]
 async fn reads_are_served_by_a_copy_while_the_primary_is_down() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -3612,7 +3593,7 @@ async fn reads_are_served_by_a_copy_while_the_primary_is_down() {
 #[tokio::test]
 async fn git_fetches_use_the_primary_instead_of_a_lagging_copy() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -3674,7 +3655,7 @@ async fn git_fetches_use_the_primary_instead_of_a_lagging_copy() {
 #[tokio::test]
 async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -3687,9 +3668,9 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
     assert_current(&primary, &copy, &repo).await;
     // The primary moves `topic` on and the copy is not told. The recorded head is the new commit.
     let head = repo.save("topic", "topic.txt", &base, b"topic\n").await;
-    let pull = codeyard::backend::db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         pool,
-        codeyard::backend::db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: repo.id(),
             head_repo_id: Some(repo.id()),
             author_id: repo.actor,
@@ -3729,11 +3710,10 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
         refreshed,
         Err(codeyard::backend::repositories::pull_requests::branches::RefreshError::Storage)
     ));
-    let recorded =
-        codeyard::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
-            .await
-            .unwrap()
-            .unwrap();
+    let recorded = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(recorded.head_sha, head);
     assert_eq!(recorded.base_sha, base);
 
@@ -3744,7 +3724,7 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
 #[tokio::test]
 async fn a_commit_a_database_write_depends_on_is_not_read_from_a_copy() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -3757,7 +3737,7 @@ async fn a_commit_a_database_write_depends_on_is_not_read_from_a_copy() {
     assert_current(&primary, &copy, &repo).await;
     // A write makes the existing copy ineligible, even for the user who just wrote.
     let head = repo.save("topic", "topic.txt", &base, b"topic\n").await;
-    assert!(!codeyard::backend::db::cluster::replica_is_current(
+    assert!(!codeyard_db_cluster::cluster::replica_is_current(
         pool,
         repo.id(),
         copy.context.node_id
@@ -3780,7 +3760,7 @@ async fn a_commit_a_database_write_depends_on_is_not_read_from_a_copy() {
 #[tokio::test]
 async fn a_read_aimed_at_the_old_primary_reaches_the_promoted_copy() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -3819,15 +3799,15 @@ async fn a_read_aimed_at_the_old_primary_reaches_the_promoted_copy() {
 #[tokio::test]
 async fn a_copy_holder_reads_its_own_copy_while_the_primary_is_down() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    codeyard::backend::db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     assert!(
-        codeyard::backend::db::cluster::set_replicas(&database.pool, "2")
+        codeyard_db_cluster::cluster::set_replicas(&database.pool, "2")
             .await
             .unwrap()
     );
@@ -3892,7 +3872,7 @@ async fn a_copy_holder_reads_its_own_copy_while_the_primary_is_down() {
 #[tokio::test]
 async fn unreadable_fallbacks_are_skipped_but_an_answering_primary_is_not() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -3900,7 +3880,7 @@ async fn unreadable_fallbacks_are_skipped_but_an_answering_primary_is_not() {
     let (primary, first) = two_storage_nodes(pool, root.path()).await;
     let healthy = start_storage(pool, root.path(), "store-c").await;
     let web = web_node(pool, root.path()).await;
-    assert!(codeyard::backend::db::cluster::set_replicas(pool, "all")
+    assert!(codeyard_db_cluster::cluster::set_replicas(pool, "all")
         .await
         .unwrap());
     let repo = create_repository(pool, &primary, "unreadable").await;
@@ -3985,7 +3965,7 @@ async fn unreadable_fallbacks_are_skipped_but_an_answering_primary_is_not() {
 #[tokio::test]
 async fn a_moved_primary_that_answers_is_final_even_when_a_copy_could_serve() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let pool = &database.pool;
@@ -3993,7 +3973,7 @@ async fn a_moved_primary_that_answers_is_final_even_when_a_copy_could_serve() {
     let (old, new) = two_storage_nodes(pool, root.path()).await;
     let copy = start_storage(pool, root.path(), "store-c").await;
     let web = web_node(pool, root.path()).await;
-    assert!(codeyard::backend::db::cluster::set_replicas(pool, "all")
+    assert!(codeyard_db_cluster::cluster::set_replicas(pool, "all")
         .await
         .unwrap());
     let repo = create_repository(pool, &old, "moved").await;
@@ -4042,15 +4022,15 @@ async fn a_moved_primary_that_answers_is_final_even_when_a_copy_could_serve() {
 #[tokio::test]
 async fn a_read_moves_on_when_the_own_copy_cannot_serve() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
-    codeyard::backend::db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     assert!(
-        codeyard::backend::db::cluster::set_replicas(&database.pool, "3")
+        codeyard_db_cluster::cluster::set_replicas(&database.pool, "3")
             .await
             .unwrap()
     );
@@ -4101,7 +4081,7 @@ async fn a_read_moves_on_when_the_own_copy_cannot_serve() {
 #[tokio::test]
 async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -4110,9 +4090,9 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
     let repo = create_repository(&database.pool, &primary, "review-primary").await;
     let head = repo.save("main", "README.md", "unborn", b"base\n").await;
     repo.branch("topic", &head).await;
-    let pull = codeyard::backend::db::pull_requests::records::create_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request(
         &database.pool,
-        codeyard::backend::db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: repo.id(),
             head_repo_id: Some(repo.id()),
             author_id: repo.actor,
@@ -4139,14 +4119,14 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
         .await
         .unwrap_err()
         .is_storage_node_unavailable());
-    let actor = codeyard::backend::db::users::accounts::get_user_by_id(&database.pool, repo.actor)
+    let actor = codeyard_db_identity::users::accounts::get_user_by_id(&database.pool, repo.actor)
         .await
         .unwrap()
         .unwrap();
     let error = codeyard::backend::repositories::pull_requests::reviews::create_pull_request_review(
         &database.pool, Some(&web.context),
         &codeyard::backend::notifications::NotificationBroadcaster::new(&database.pool), repo.actor,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, repo.actor).await),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, repo.actor).await),
         (actor.username, repo.repository.name.clone(), pull.number),
         codeyard::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
             state:Some("commented".into()), body:Some("Old revision".into()), commit_sha:Some(head), review_id:None, token:None,
@@ -4160,7 +4140,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
         }
     ));
     assert!(
-        codeyard::backend::db::pull_requests::reviews::list_pull_request_reviews(
+        codeyard_db_repos::pull_requests::reviews::list_pull_request_reviews(
             &database.pool,
             pull.id,
             100,
@@ -4177,7 +4157,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
 #[tokio::test]
 async fn writes_are_refused_while_the_primary_is_down() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -4255,7 +4235,7 @@ async fn writes_are_refused_while_the_primary_is_down() {
 #[tokio::test]
 async fn a_node_without_a_copy_row_refuses_reads() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -4316,7 +4296,7 @@ async fn a_node_without_a_copy_row_refuses_reads() {
 #[tokio::test]
 async fn a_read_without_a_copy_that_has_copied_is_unavailable() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -4355,7 +4335,7 @@ async fn a_read_without_a_copy_that_has_copied_is_unavailable() {
 #[tokio::test]
 async fn a_not_found_from_the_primary_does_not_fail_over() {
     let database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();

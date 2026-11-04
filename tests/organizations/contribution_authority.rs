@@ -9,7 +9,7 @@ use crate::support::native_database as native;
 use crate::support::organizations::applied;
 use crate::support::production_ci as production;
 
-use codeyard::backend::db::discussions::DiscussionEdit;
+use codeyard_db_repos::discussions::DiscussionEdit;
 
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Issue;
@@ -32,7 +32,7 @@ impl Database {
         name: &str,
         private: bool,
     ) -> Repository {
-        let repo = codeyard::backend::db::repositories::records::create_repository(
+        let repo = codeyard_db_repos::repositories::records::create_repository(
             self.pool(),
             owner,
             name,
@@ -45,7 +45,7 @@ impl Database {
         if let Some(org) = org {
             self.execute("UPDATE repositories SET owner_kind='org',owner_user_id=NULL,owner_org_id=$1 WHERE id=$2", &[org, repo.id]).await;
         }
-        codeyard::backend::db::repositories::records::get_repository_by_id(self.pool(), repo.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(self.pool(), repo.id)
             .await
             .unwrap()
             .unwrap()
@@ -66,13 +66,13 @@ impl Database {
             .unwrap(),
         };
         json!({
-            "repo": codeyard::backend::db::repositories::records::get_repository_by_id(self.pool(), repo).await.unwrap(),
-            "issues": codeyard::backend::db::issues::list_repo_issues(self.pool(), repo, &Default::default(), 4096).await.unwrap().into_iter().map(|entry| entry.issue).collect::<Vec<_>>(),
-            "prs": codeyard::backend::db::pull_requests::records::list_repo_pull_requests(self.pool(), repo, &Default::default(), 4096).await.unwrap().into_iter().map(|entry| entry.pull_request).collect::<Vec<_>>(),
-            "comments": codeyard::backend::db::issues::list_issue_comments(self.pool(), issue, 100, 0).await.unwrap().into_iter().map(|entry| entry.comment).collect::<Vec<_>>(),
-            "pr_comments": codeyard::backend::db::pull_requests::reviews::list_pull_request_comments(self.pool(), pr, 100, 0).await.unwrap().into_iter().map(|entry| entry.comment).collect::<Vec<_>>(),
-            "reviews": codeyard::backend::db::pull_requests::reviews::list_pull_request_reviews(self.pool(), pr, 100, 0).await.unwrap().into_iter().map(|entry| entry.review).collect::<Vec<_>>(),
-            "reviewers": codeyard::backend::db::pull_requests::reviews::list_pull_request_reviewers(self.pool(), pr).await.unwrap().iter().map(|u| u.id).collect::<Vec<_>>(),
+            "repo": codeyard_db_repos::repositories::records::get_repository_by_id(self.pool(), repo).await.unwrap(),
+            "issues": codeyard_db_repos::issues::list_repo_issues(self.pool(), repo, &Default::default(), 4096).await.unwrap().into_iter().map(|entry| entry.issue).collect::<Vec<_>>(),
+            "prs": codeyard_db_repos::pull_requests::records::list_repo_pull_requests(self.pool(), repo, &Default::default(), 4096).await.unwrap().into_iter().map(|entry| entry.pull_request).collect::<Vec<_>>(),
+            "comments": codeyard_db_repos::issues::list_issue_comments(self.pool(), issue, 100, 0).await.unwrap().into_iter().map(|entry| entry.comment).collect::<Vec<_>>(),
+            "pr_comments": codeyard_db_repos::pull_requests::reviews::list_pull_request_comments(self.pool(), pr, 100, 0).await.unwrap().into_iter().map(|entry| entry.comment).collect::<Vec<_>>(),
+            "reviews": codeyard_db_repos::pull_requests::reviews::list_pull_request_reviews(self.pool(), pr, 100, 0).await.unwrap().into_iter().map(|entry| entry.review).collect::<Vec<_>>(),
+            "reviewers": codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(self.pool(), pr).await.unwrap().iter().map(|u| u.id).collect::<Vec<_>>(),
             "counters": counters,
         })
     }
@@ -114,9 +114,9 @@ async fn new_pr(
         "feature-{actor}-{}",
         NEXT_PR_BRANCH.fetch_add(1, Ordering::Relaxed)
     );
-    codeyard::backend::db::pull_requests::records::create_pull_request(
+    codeyard_db_repos::pull_requests::records::create_pull_request(
         pool,
-        codeyard::backend::db::pull_requests::records::NewPullRequest {
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
             head_repo_id: None,
             repo_id: repo,
             author_id: actor,
@@ -137,8 +137,8 @@ fn comment(
     pr: i64,
     actor: i64,
     parent: Option<i64>,
-) -> codeyard::backend::db::pull_requests::reviews::NewPullRequestComment<'static> {
-    codeyard::backend::db::pull_requests::reviews::NewPullRequestComment {
+) -> codeyard_db_repos::pull_requests::reviews::NewPullRequestComment<'static> {
+    codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
         pr_id: pr,
         author_id: actor,
         body: "Contribution",
@@ -155,7 +155,7 @@ fn comment(
 async fn contributions(d: &Database, repo: i64, actor: i64, issue: i64, pr: i64, allowed: bool) {
     let before = d.snapshot(repo, issue, pr).await;
     // A missing account cannot hold a session, so it presents one that does not exist.
-    let session = if codeyard::backend::db::users::accounts::get_user_by_id(d.pool(), actor)
+    let session = if codeyard_db_identity::users::accounts::get_user_by_id(d.pool(), actor)
         .await
         .unwrap()
         .is_some()
@@ -164,25 +164,20 @@ async fn contributions(d: &Database, repo: i64, actor: i64, issue: i64, pr: i64,
     } else {
         "0".repeat(64)
     };
-    let i = codeyard::backend::db::issues::create_issue(
-        d.pool(),
-        repo,
-        actor,
-        "Contribution",
-        "Fixture",
-    )
-    .await;
+    let i =
+        codeyard_db_repos::issues::create_issue(d.pool(), repo, actor, "Contribution", "Fixture")
+            .await;
     let p = new_pr(d.pool(), repo, actor).await;
-    let ic = codeyard::backend::db::issues::add_issue_comment(
+    let ic = codeyard_db_repos::issues::add_issue_comment(
         d.pool(),
         repo,
         issue,
         actor,
         "Contribution",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&session),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
     )
     .await;
-    let pc = codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
+    let pc = codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
         d.pool(),
         comment(pr, actor, None),
     )
@@ -209,11 +204,11 @@ async fn contributions(d: &Database, repo: i64, actor: i64, issue: i64, pr: i64,
 async fn review_refused(d: &Database, pr: i64, actor: i64) {
     for state in ["commented", "approved", "changes_requested"] {
         refusal(
-            codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+            codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
                 d.pool(),
                 pr,
                 actor,
-                &codeyard::backend::db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(d.pool(), actor).await,
                 ),
                 state,
@@ -237,7 +232,7 @@ async fn review_denied(
     // Dismissing and requesting reviewers need write authority. Reviews are checked by
     // review_refused, since a reader may vote.
     refusal(
-        codeyard::backend::db::pull_requests::reviews::dismiss_pull_request_review(
+        codeyard_db_repos::pull_requests::reviews::dismiss_pull_request_review(
             d.pool(),
             review,
             actor,
@@ -246,7 +241,7 @@ async fn review_denied(
         .await,
     );
     refusal(
-        codeyard::backend::db::pull_requests::reviews::request_pull_request_reviewer(
+        codeyard_db_repos::pull_requests::reviews::request_pull_request_reviewer(
             d.pool(),
             pr,
             actor,
@@ -255,7 +250,7 @@ async fn review_denied(
         .await,
     );
     refusal(
-        codeyard::backend::db::pull_requests::reviews::remove_pull_request_reviewer(
+        codeyard_db_repos::pull_requests::reviews::remove_pull_request_reviewer(
             d.pool(),
             pr,
             actor,
@@ -274,7 +269,7 @@ async fn edits(
     pr: &PullRequest,
     allowed: bool,
 ) {
-    let issue_edit = codeyard::backend::db::issues::update_issue(
+    let issue_edit = codeyard_db_repos::issues::update_issue(
         pool,
         issue.id,
         DiscussionEdit {
@@ -289,7 +284,7 @@ async fn edits(
     .await
     .unwrap();
     assert_eq!(issue_edit.is_some(), allowed);
-    let pr_edit = codeyard::backend::db::pull_requests::records::update_pull_request(
+    let pr_edit = codeyard_db_repos::pull_requests::records::update_pull_request(
         pool,
         pr.id,
         DiscussionEdit {
@@ -322,12 +317,12 @@ async fn contract(pg: bool) {
     d.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[site])
         .await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             d.pool(),
             owner,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 "contribution_org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -337,7 +332,7 @@ async fn contract(pg: bool) {
     .id;
     for (actor, role) in [(admin, OrgRole::Admin), (member, OrgRole::Member)] {
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 d.pool(),
                 owner,
                 org,
@@ -356,27 +351,17 @@ async fn contract(pg: bool) {
         .await;
     let personal = d.new_repo(owner, None, "contribution_personal", true).await;
     let foreign = d.new_repo(other, None, "contribution_foreign", true).await;
-    let issue = codeyard::backend::db::issues::create_issue(
-        d.pool(),
-        private.id,
-        owner,
-        "Original",
-        "Fixture",
-    )
-    .await
-    .unwrap();
+    let issue =
+        codeyard_db_repos::issues::create_issue(d.pool(), private.id, owner, "Original", "Fixture")
+            .await
+            .unwrap();
     let pr = new_pr(d.pool(), private.id, owner).await.unwrap();
-    let public_issue = codeyard::backend::db::issues::create_issue(
-        d.pool(),
-        public.id,
-        owner,
-        "Original",
-        "Fixture",
-    )
-    .await
-    .unwrap();
+    let public_issue =
+        codeyard_db_repos::issues::create_issue(d.pool(), public.id, owner, "Original", "Fixture")
+            .await
+            .unwrap();
     let public_pr = new_pr(d.pool(), public.id, owner).await.unwrap();
-    let personal_issue = codeyard::backend::db::issues::create_issue(
+    let personal_issue = codeyard_db_repos::issues::create_issue(
         d.pool(),
         personal.id,
         owner,
@@ -386,18 +371,13 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let personal_pr = new_pr(d.pool(), personal.id, owner).await.unwrap();
-    let foreign_issue = codeyard::backend::db::issues::create_issue(
-        d.pool(),
-        foreign.id,
-        other,
-        "Original",
-        "Fixture",
-    )
-    .await
-    .unwrap();
+    let foreign_issue =
+        codeyard_db_repos::issues::create_issue(d.pool(), foreign.id, other, "Original", "Fixture")
+            .await
+            .unwrap();
     let foreign_pr = new_pr(d.pool(), foreign.id, other).await.unwrap();
     for repo in [private.id, public.id, personal.id] {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             d.pool(),
             writer,
             repo,
@@ -406,11 +386,11 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     }
-    let review = codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+    let review = codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         d.pool(),
         pr.id,
         writer,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), writer).await,
         ),
         "approved",
@@ -419,11 +399,11 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let public_review = codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+    let public_review = codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         d.pool(),
         public_pr.id,
         writer,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), writer).await,
         ),
         "approved",
@@ -456,11 +436,11 @@ async fn contract(pg: bool) {
         true,
     )
     .await;
-    let personal_review = codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+    let personal_review = codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         d.pool(),
         personal_pr.id,
         writer,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), writer).await,
         ),
         "approved",
@@ -469,7 +449,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::pull_requests::reviews::dismiss_pull_request_review(
+    codeyard_db_repos::pull_requests::reviews::dismiss_pull_request_review(
         d.pool(),
         personal_review.id,
         site,
@@ -477,7 +457,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         d.pool(),
         reader,
         private.id,
@@ -485,7 +465,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         d.pool(),
         reader,
         personal.id,
@@ -512,20 +492,20 @@ async fn contract(pg: bool) {
     )
     .await;
     refusal(
-        codeyard::backend::db::issues::add_issue_comment(
+        codeyard_db_repos::issues::add_issue_comment(
             d.pool(),
             private.id,
             i64::MAX,
             reader,
             "Missing",
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(d.pool(), reader).await,
             ),
         )
         .await,
     );
     refusal(
-        codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
+        codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
             d.pool(),
             comment(i64::MAX, reader, None),
         )
@@ -534,16 +514,10 @@ async fn contract(pg: bool) {
     contributions(&d, private.id, i64::MAX, issue.id, pr.id, false).await;
     refusal(new_pr(d.pool(), i64::MAX, reader).await);
     refusal(
-        codeyard::backend::db::issues::create_issue(
-            d.pool(),
-            i64::MAX,
-            reader,
-            "Missing",
-            "Missing",
-        )
-        .await,
+        codeyard_db_repos::issues::create_issue(d.pool(), i64::MAX, reader, "Missing", "Missing")
+            .await,
     );
-    let parent = codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
+    let parent = codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
         d.pool(),
         comment(foreign_pr.id, other, None),
     )
@@ -556,7 +530,7 @@ async fn contract(pg: bool) {
         .await;
     let before = d.snapshot(private.id, issue.id, pr.id).await;
     refusal(
-        codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
+        codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
             d.pool(),
             comment(pr.id, reader, Some(parent.id)),
         )
@@ -572,11 +546,11 @@ async fn contract(pg: bool) {
     // Write reviewers retain power, never Read/Triage outsiders; own approval and
     // closed-PR review submission are rechecked under the admitted parent lock.
     assert!(
-        codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+        codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
             d.pool(),
             pr.id,
             owner,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(d.pool(), owner).await
             ),
             "approved",
@@ -589,7 +563,7 @@ async fn contract(pg: bool) {
     let before = d.snapshot(private.id, issue.id, pr.id).await;
     for target in [reader, other, i64::MAX] {
         refusal(
-            codeyard::backend::db::pull_requests::reviews::request_pull_request_reviewer(
+            codeyard_db_repos::pull_requests::reviews::request_pull_request_reviewer(
                 d.pool(),
                 pr.id,
                 owner,
@@ -599,7 +573,7 @@ async fn contract(pg: bool) {
         );
         assert_eq!(d.snapshot(private.id, issue.id, pr.id).await, before);
     }
-    codeyard::backend::db::pull_requests::reviews::request_pull_request_reviewer(
+    codeyard_db_repos::pull_requests::reviews::request_pull_request_reviewer(
         d.pool(),
         pr.id,
         owner,
@@ -608,18 +582,18 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let requested =
-        codeyard::backend::db::pull_requests::reviews::list_pull_request_reviewers(d.pool(), pr.id)
+        codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(d.pool(), pr.id)
             .await
             .unwrap();
     assert!(
         requested.iter().any(|user| user.id == writer),
         "review request must exist before the review clears it"
     );
-    codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+    codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         d.pool(),
         pr.id,
         writer,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), writer).await,
         ),
         "commented",
@@ -629,14 +603,14 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert!(
-        codeyard::backend::db::pull_requests::reviews::list_pull_request_reviewers(d.pool(), pr.id)
+        codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(d.pool(), pr.id)
             .await
             .unwrap()
             .is_empty()
     );
     for actor in [writer, reader] {
         refusal(
-            codeyard::backend::db::pull_requests::reviews::dismiss_pull_request_review(
+            codeyard_db_repos::pull_requests::reviews::dismiss_pull_request_review(
                 d.pool(),
                 review.id,
                 actor,
@@ -645,7 +619,7 @@ async fn contract(pg: bool) {
             .await,
         );
     }
-    codeyard::backend::db::pull_requests::reviews::dismiss_pull_request_review(
+    codeyard_db_repos::pull_requests::reviews::dismiss_pull_request_review(
         d.pool(),
         review.id,
         admin,
@@ -653,7 +627,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         d.pool(),
         writer,
         private.id,
@@ -663,7 +637,7 @@ async fn contract(pg: bool) {
     .unwrap();
     contributions(&d, private.id, writer, issue.id, pr.id, true).await;
     review_denied(&d, private.id, writer, issue.id, pr.id, review.id, reader).await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         d.pool(),
         writer,
         private.id,
@@ -674,32 +648,32 @@ async fn contract(pg: bool) {
 
     // Caller-supplied CAS survives comment/review touches. Never reload and
     // substitute the revision, including when current authority is sufficient.
-    let stale_issue = codeyard::backend::db::issues::get_issue_by_id(d.pool(), issue.id)
+    let stale_issue = codeyard_db_repos::issues::get_issue_by_id(d.pool(), issue.id)
         .await
         .unwrap()
         .unwrap();
     let stale_pr =
-        codeyard::backend::db::pull_requests::records::get_pull_request_by_id(d.pool(), pr.id)
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(d.pool(), pr.id)
             .await
             .unwrap()
             .unwrap();
-    codeyard::backend::db::issues::add_issue_comment(
+    codeyard_db_repos::issues::add_issue_comment(
         d.pool(),
         issue.repo_id,
         issue.id,
         reader,
         "Invalidate revision",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), reader).await,
         ),
     )
     .await
     .unwrap();
-    codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+    codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         d.pool(),
         pr.id,
         writer,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(d.pool(), writer).await,
         ),
         "commented",
@@ -710,18 +684,18 @@ async fn contract(pg: bool) {
     .unwrap();
     let before = d.snapshot(private.id, issue.id, pr.id).await;
     edit_denied(d.pool(), owner, &stale_issue, &stale_pr).await;
-    let current_issue = codeyard::backend::db::issues::get_issue_by_id(d.pool(), issue.id)
+    let current_issue = codeyard_db_repos::issues::get_issue_by_id(d.pool(), issue.id)
         .await
         .unwrap()
         .unwrap();
     let current_pr =
-        codeyard::backend::db::pull_requests::records::get_pull_request_by_id(d.pool(), pr.id)
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(d.pool(), pr.id)
             .await
             .unwrap()
             .unwrap();
     // As on GitHub, a reader may edit the issue and the pull request they opened, and no
     // others.
-    let reader_issue = codeyard::backend::db::issues::create_issue(
+    let reader_issue = codeyard_db_repos::issues::create_issue(
         d.pool(),
         private.id,
         reader,
@@ -757,7 +731,7 @@ async fn contract(pg: bool) {
     assert_eq!(before["comments"], after["comments"]);
     assert_eq!(before["pr_comments"], after["pr_comments"]);
     assert_eq!(before["reviews"], after["reviews"]);
-    let closed = codeyard::backend::db::pull_requests::records::update_pull_request(
+    let closed = codeyard_db_repos::pull_requests::records::update_pull_request(
         d.pool(),
         pr.id,
         DiscussionEdit {
@@ -775,11 +749,11 @@ async fn contract(pg: bool) {
     .unwrap();
     assert_eq!(closed.state, "closed");
     assert!(
-        codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+        codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
             d.pool(),
             pr.id,
             writer,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(d.pool(), writer).await
             ),
             "approved",
@@ -789,7 +763,7 @@ async fn contract(pg: bool) {
         .await
         .is_err()
     );
-    codeyard::backend::db::pull_requests::records::update_pull_request(
+    codeyard_db_repos::pull_requests::records::update_pull_request(
         d.pool(),
         pr.id,
         DiscussionEdit {
@@ -809,16 +783,16 @@ async fn contract(pg: bool) {
     // Cross-tenant team facts never become grants for the current repo. Same-org
     // Read team contributions work, then current membership revocation wins.
     let team = applied(
-        codeyard::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             d.pool(),
             owner,
             org,
-            &codeyard::backend::db::organizations::NewTeam::new(
+            &codeyard_db_orgs::organizations::NewTeam::new(
                 "contribution_team",
-                codeyard::backend::db::organizations::TeamProfile::new(
+                codeyard_db_orgs::organizations::TeamProfile::new(
                     "Contribution",
                     None,
-                    codeyard::backend::db::organizations::TeamPrivacy::Secret,
+                    codeyard_db_orgs::organizations::TeamPrivacy::Secret,
                 )
                 .unwrap(),
             )
@@ -829,25 +803,25 @@ async fn contract(pg: bool) {
     )
     .id;
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             d.pool(),
             owner,
             org,
             team,
             member,
-            codeyard::backend::db::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::TeamRole::Member,
         )
         .await
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::grant_organization_team_repository(
             d.pool(),
             owner,
             org,
             team,
             private.id,
-            codeyard::backend::db::organizations::TeamRepositoryPermission::new(1).unwrap(),
+            codeyard_db_orgs::organizations::TeamRepositoryPermission::new(1).unwrap(),
         )
         .await
         .unwrap(),
@@ -855,7 +829,7 @@ async fn contract(pg: bool) {
     contributions(&d, private.id, member, issue.id, pr.id, true).await;
     review_denied(&d, private.id, member, issue.id, pr.id, review.id, writer).await;
     applied(
-        codeyard::backend::db::organizations::remove_organization_team_member(
+        codeyard_db_orgs::organizations::remove_organization_team_member(
             d.pool(),
             owner,
             org,
@@ -867,13 +841,13 @@ async fn contract(pg: bool) {
     );
     contributions(&d, private.id, member, issue.id, pr.id, false).await;
     applied(
-        codeyard::backend::db::organizations::add_organization_team_member(
+        codeyard_db_orgs::organizations::add_organization_team_member(
             d.pool(),
             owner,
             org,
             team,
             member,
-            codeyard::backend::db::organizations::TeamRole::Member,
+            codeyard_db_orgs::organizations::TeamRole::Member,
         )
         .await
         .unwrap(),
@@ -902,12 +876,12 @@ async fn contract(pg: bool) {
     )
     .await;
     let foreign_org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             d.pool(),
             other,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 "contribution_foreign_org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -922,12 +896,12 @@ async fn contract(pg: bool) {
     .await;
     contributions(&d, private.id, member, issue.id, pr.id, false).await;
     // Current grant/role revocation wins over any previously observed permission.
-    codeyard::backend::db::repositories::access::revoke_repo_access(d.pool(), reader, private.id)
+    codeyard_db_repos::repositories::access::revoke_repo_access(d.pool(), reader, private.id)
         .await
         .unwrap();
     contributions(&d, private.id, reader, issue.id, pr.id, false).await;
     applied(
-        codeyard::backend::db::organizations::update_organization_member_role(
+        codeyard_db_orgs::organizations::update_organization_member_role(
             d.pool(),
             owner,
             org,
@@ -941,7 +915,7 @@ async fn contract(pg: bool) {
     review_denied(&d, private.id, admin, issue.id, pr.id, review.id, writer).await;
     review_refused(&d, pr.id, admin).await;
     applied(
-        codeyard::backend::db::organizations::update_organization_member_role(
+        codeyard_db_orgs::organizations::update_organization_member_role(
             d.pool(),
             owner,
             org,
@@ -951,7 +925,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap(),
     );
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         d.pool(),
         reader,
         private.id,
@@ -991,7 +965,7 @@ async fn contract(pg: bool) {
         .await;
         for actor in [reader, writer, admin, member, site] {
             assert_eq!(
-                codeyard::backend::db::repositories::access::get_user_repo_access(
+                codeyard_db_repos::repositories::access::get_user_repo_access(
                     d.pool(),
                     actor,
                     public.id
@@ -1027,15 +1001,10 @@ async fn contract(pg: bool) {
     .await;
     // A deleted repository takes no contributions either.
     let doomed = d.new_repo(owner, None, "contribution_deleted", true).await;
-    let doomed_issue = codeyard::backend::db::issues::create_issue(
-        d.pool(),
-        doomed.id,
-        owner,
-        "Original",
-        "Fixture",
-    )
-    .await
-    .unwrap();
+    let doomed_issue =
+        codeyard_db_repos::issues::create_issue(d.pool(), doomed.id, owner, "Original", "Fixture")
+            .await
+            .unwrap();
     let doomed_pr = new_pr(d.pool(), doomed.id, owner).await.unwrap();
     d.execute("DELETE FROM repositories WHERE id=$1", &[doomed.id])
         .await;
@@ -1104,9 +1073,9 @@ async fn contract(pg: bool) {
 }
 
 async fn file_comment(pool: &codeyard_db_core::DbPool, pr: i64, author: i64) -> i64 {
-    codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
+    codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
         pool,
-        codeyard::backend::db::pull_requests::reviews::NewPullRequestComment {
+        codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
             pr_id: pr,
             author_id: author,
             body: "Conversation",
@@ -1131,13 +1100,13 @@ async fn resolve(
     resolved: bool,
     actor: i64,
 ) -> anyhow::Result<Option<codeyard_db_core::models::PullRequestComment>> {
-    codeyard::backend::db::pull_requests::reviews::set_pull_request_comment_resolved(
+    codeyard_db_repos::pull_requests::reviews::set_pull_request_comment_resolved(
         pool, pr, comment, resolved, actor,
     )
     .await
 }
 async fn still_open(pool: &codeyard_db_core::DbPool, comment: i64) -> bool {
-    codeyard::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment)
+    codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(pool, comment)
         .await
         .unwrap()
         .unwrap()
@@ -1159,7 +1128,7 @@ async fn comment_resolution_contract(pg: bool) {
         (writer, AccessLevel::Write),
         (revoked, AccessLevel::Write),
     ] {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             d.pool(),
             actor,
             personal.id,
@@ -1168,7 +1137,7 @@ async fn comment_resolution_contract(pg: bool) {
         .await
         .unwrap();
     }
-    codeyard::backend::db::repositories::access::revoke_repo_access(d.pool(), revoked, personal.id)
+    codeyard_db_repos::repositories::access::revoke_repo_access(d.pool(), revoked, personal.id)
         .await
         .unwrap();
     let pr = new_pr(d.pool(), personal.id, author).await.unwrap();
@@ -1209,12 +1178,12 @@ async fn comment_resolution_contract(pg: bool) {
 
     // An author keeps the right to resolve only while the owning organization has a usable owner.
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             d.pool(),
             owner,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 "resolve_org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -1223,7 +1192,7 @@ async fn comment_resolution_contract(pg: bool) {
     )
     .id;
     let shared = d.new_repo(owner, Some(org), "resolve_shared", true).await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         d.pool(),
         author,
         shared.id,
@@ -1267,7 +1236,7 @@ async fn sqlite_organization_contributions() {
 #[tokio::test]
 async fn postgres_contributions_recheck_after_grant_revocation_before_parent_locks() {
     let mut f = production::Fixture::new().await;
-    let actor = codeyard::backend::db::users::accounts::create_user(
+    let actor = codeyard_db_identity::users::accounts::create_user(
         &f.pool,
         "contribution_wait_reader",
         None,
@@ -1275,7 +1244,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     .await
     .unwrap()
     .id;
-    let target = codeyard::backend::db::users::accounts::create_user(
+    let target = codeyard_db_identity::users::accounts::create_user(
         &f.pool,
         "contribution_wait_target",
         None,
@@ -1284,12 +1253,12 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     .unwrap()
     .id;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             &f.pool,
             f.owner.id,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 "contribution_wait_org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -1305,7 +1274,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     .execute(&f.raw)
     .await
     .unwrap();
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &f.pool,
         actor,
         f.repo.id,
@@ -1313,17 +1282,16 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     )
     .await
     .unwrap();
-    let issue = codeyard::backend::db::issues::create_issue(
-        &f.pool, f.repo.id, f.owner.id, "Wait", "Fixture",
-    )
-    .await
-    .unwrap();
+    let issue =
+        codeyard_db_repos::issues::create_issue(&f.pool, f.repo.id, f.owner.id, "Wait", "Fixture")
+            .await
+            .unwrap();
     let pr = new_pr(&f.pool, f.repo.id, f.owner.id).await.unwrap();
-    let review = codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+    let review = codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         &f.pool,
         pr.id,
         actor,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&f.pool, actor).await,
         ),
         "approved",
@@ -1333,7 +1301,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     .await
     .unwrap();
     for operation in 0..8 {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             &f.pool,
             actor,
             f.repo.id,
@@ -1358,35 +1326,35 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
         let (repo_id, issue_id, pr_id, review_id) = (f.repo.id, issue.id, pr.id, review.id);
         let task = tokio::spawn(async move {
             match operation {
-                0 => codeyard::backend::db::issues::create_issue(
+                0 => codeyard_db_repos::issues::create_issue(
                     &pool, repo_id, actor, "Denied", "Denied",
                 )
                 .await
                 .map(|_| ()),
                 1 => new_pr(&pool, repo_id, actor).await.map(|_| ()),
-                2 => codeyard::backend::db::issues::add_issue_comment(
+                2 => codeyard_db_repos::issues::add_issue_comment(
                     &pool,
                     repo_id,
                     issue_id,
                     actor,
                     "Denied",
-                    &codeyard::backend::db::users::accounts::AccountCredential::Session(
+                    &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                         &crate::support::live_session(&pool, actor).await,
                     ),
                 )
                 .await
                 .map(|_| ()),
-                3 => codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
+                3 => codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
                     &pool,
                     comment(pr_id, actor, None),
                 )
                 .await
                 .map(|_| ()),
-                4 => codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+                4 => codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
                     &pool,
                     pr_id,
                     actor,
-                    &codeyard::backend::db::users::accounts::AccountCredential::Session(
+                    &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                         &crate::support::live_session(&pool, actor).await,
                     ),
                     "approved",
@@ -1395,17 +1363,17 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
                 )
                 .await
                 .map(|_| ()),
-                5 => codeyard::backend::db::pull_requests::reviews::request_pull_request_reviewer(
+                5 => codeyard_db_repos::pull_requests::reviews::request_pull_request_reviewer(
                     &pool, pr_id, actor, target,
                 )
                 .await
                 .map(|_| ()),
-                6 => codeyard::backend::db::pull_requests::reviews::remove_pull_request_reviewer(
+                6 => codeyard_db_repos::pull_requests::reviews::remove_pull_request_reviewer(
                     &pool, pr_id, actor, target,
                 )
                 .await
                 .map(|_| ()),
-                _ => codeyard::backend::db::pull_requests::reviews::dismiss_pull_request_review(
+                _ => codeyard_db_repos::pull_requests::reviews::dismiss_pull_request_review(
                     &pool, review_id, actor, None,
                 )
                 .await
@@ -1437,7 +1405,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     }
     // A comment accepted before a later revocation stays, but a saved author ID
     // cannot authorize a replay.
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &f.pool,
         actor,
         f.repo.id,
@@ -1445,36 +1413,36 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     )
     .await
     .unwrap();
-    let accepted = codeyard::backend::db::issues::add_issue_comment(
+    let accepted = codeyard_db_repos::issues::add_issue_comment(
         &f.pool,
         issue.repo_id,
         issue.id,
         actor,
         "Accepted snapshot",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&f.pool, actor).await,
         ),
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::access::revoke_repo_access(&f.pool, actor, f.repo.id)
+    codeyard_db_repos::repositories::access::revoke_repo_access(&f.pool, actor, f.repo.id)
         .await
         .unwrap();
     refusal(
-        codeyard::backend::db::issues::add_issue_comment(
+        codeyard_db_repos::issues::add_issue_comment(
             &f.pool,
             issue.repo_id,
             issue.id,
             actor,
             "Replay",
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&f.pool, actor).await,
             ),
         )
         .await,
     );
     assert!(
-        codeyard::backend::db::issues::list_issue_comments(&f.pool, issue.id, 100, 0)
+        codeyard_db_repos::issues::list_issue_comments(&f.pool, issue.id, 100, 0)
             .await
             .unwrap()
             .iter()
@@ -1486,7 +1454,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
 #[tokio::test]
 async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
     let mut f = production::Fixture::new().await;
-    let actor = codeyard::backend::db::users::accounts::create_user(
+    let actor = codeyard_db_identity::users::accounts::create_user(
         &f.pool,
         "contribution_commit_reader",
         None,
@@ -1494,7 +1462,7 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
     .await
     .unwrap()
     .id;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &f.pool,
         actor,
         f.repo.id,
@@ -1502,7 +1470,7 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
     )
     .await
     .unwrap();
-    let issue = codeyard::backend::db::issues::create_issue(
+    let issue = codeyard_db_repos::issues::create_issue(
         &f.pool,
         f.repo.id,
         f.owner.id,
@@ -1525,13 +1493,13 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
     let pool = f.pool.clone();
     let (repo_id, issue_id) = (issue.repo_id, issue.id);
     let effect = tokio::spawn(async move {
-        codeyard::backend::db::issues::add_issue_comment(
+        codeyard_db_repos::issues::add_issue_comment(
             &pool,
             repo_id,
             issue_id,
             actor,
             "Accepted before revocation",
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&pool, actor).await,
             ),
         )
@@ -1542,7 +1510,7 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
     let pool = f.pool.clone();
     let repo = f.repo.id;
     let revocation = tokio::spawn(async move {
-        codeyard::backend::db::repositories::access::revoke_repo_access(&pool, actor, repo).await
+        codeyard_db_repos::repositories::access::revoke_repo_access(&pool, actor, repo).await
     });
     wait_until_blocked(&f.raw, blocker, 2).await;
     assert!(!revocation.is_finished());
@@ -1552,13 +1520,13 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
     assert!(revocation.await.unwrap().unwrap());
     assert_eq!(comment.body, "Accepted before revocation");
     refusal(
-        codeyard::backend::db::issues::add_issue_comment(
+        codeyard_db_repos::issues::add_issue_comment(
             &f.pool,
             issue.repo_id,
             issue.id,
             actor,
             "Denied after",
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&f.pool, actor).await,
             ),
         )
@@ -1571,17 +1539,17 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
 async fn postgres_team_contributions_wait_for_each_revoked_authority_row() {
     let mut f = production::Fixture::new().await;
     let actor =
-        codeyard::backend::db::users::accounts::create_user(&f.pool, "team_wait_reader", None)
+        codeyard_db_identity::users::accounts::create_user(&f.pool, "team_wait_reader", None)
             .await
             .unwrap()
             .id;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             &f.pool,
             f.owner.id,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 "team_wait_org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -1604,11 +1572,10 @@ async fn postgres_team_contributions_wait_for_each_revoked_authority_row() {
     .fetch_one(&f.raw)
     .await
     .unwrap();
-    let issue = codeyard::backend::db::issues::create_issue(
-        &f.pool, f.repo.id, f.owner.id, "Wait", "Fixture",
-    )
-    .await
-    .unwrap();
+    let issue =
+        codeyard_db_repos::issues::create_issue(&f.pool, f.repo.id, f.owner.id, "Wait", "Fixture")
+            .await
+            .unwrap();
 
     for revoked_row in 0..3 {
         sqlx::query("INSERT INTO org_memberships(org_id,user_id,role) VALUES($1,$2,'member') ON CONFLICT(org_id,user_id) DO UPDATE SET role='member'")
@@ -1652,13 +1619,13 @@ async fn postgres_team_contributions_wait_for_each_revoked_authority_row() {
         let pool = f.pool.clone();
         let (repo_id, issue_id) = (issue.repo_id, issue.id);
         let task = tokio::spawn(async move {
-            codeyard::backend::db::issues::add_issue_comment(
+            codeyard_db_repos::issues::add_issue_comment(
                 &pool,
                 repo_id,
                 issue_id,
                 actor,
                 "Denied",
-                &codeyard::backend::db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&pool, actor).await,
                 ),
             )
@@ -1674,7 +1641,7 @@ async fn postgres_team_contributions_wait_for_each_revoked_authority_row() {
         );
     }
     assert!(
-        codeyard::backend::db::issues::list_issue_comments(&f.pool, issue.id, 100, 0)
+        codeyard_db_repos::issues::list_issue_comments(&f.pool, issue.id, 100, 0)
             .await
             .unwrap()
             .is_empty()
@@ -1685,7 +1652,7 @@ async fn postgres_team_contributions_wait_for_each_revoked_authority_row() {
 #[tokio::test]
 async fn sqlite_contributions_use_reserved_writer_snapshot() {
     let f = native::NativeDatabase::new().await;
-    let owner = codeyard::backend::db::users::accounts::create_user(
+    let owner = codeyard_db_identity::users::accounts::create_user(
         &f.pool,
         "sqlite_contribution_owner",
         None,
@@ -1693,7 +1660,7 @@ async fn sqlite_contributions_use_reserved_writer_snapshot() {
     .await
     .unwrap()
     .id;
-    let actor = codeyard::backend::db::users::accounts::create_user(
+    let actor = codeyard_db_identity::users::accounts::create_user(
         &f.pool,
         "sqlite_contribution_reader",
         None,
@@ -1701,7 +1668,7 @@ async fn sqlite_contributions_use_reserved_writer_snapshot() {
     .await
     .unwrap()
     .id;
-    let repo = codeyard::backend::db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         &f.pool,
         owner,
         "sqlite_contribution",
@@ -1712,10 +1679,10 @@ async fn sqlite_contributions_use_reserved_writer_snapshot() {
     .await
     .unwrap();
     let issue =
-        codeyard::backend::db::issues::create_issue(&f.pool, repo.id, owner, "Reserved", "Fixture")
+        codeyard_db_repos::issues::create_issue(&f.pool, repo.id, owner, "Reserved", "Fixture")
             .await
             .unwrap();
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &f.pool,
         actor,
         repo.id,
@@ -1723,13 +1690,13 @@ async fn sqlite_contributions_use_reserved_writer_snapshot() {
     )
     .await
     .unwrap();
-    let accepted = codeyard::backend::db::issues::add_issue_comment(
+    let accepted = codeyard_db_repos::issues::add_issue_comment(
         &f.pool,
         issue.repo_id,
         issue.id,
         actor,
         "Accepted snapshot",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(&f.pool, actor).await,
         ),
     )
@@ -1747,19 +1714,19 @@ async fn sqlite_contributions_use_reserved_writer_snapshot() {
     revoke.commit().await.unwrap();
     let second = f.second_handle().await;
     refusal(
-        codeyard::backend::db::issues::add_issue_comment(
+        codeyard_db_repos::issues::add_issue_comment(
             &second,
             issue.repo_id,
             issue.id,
             actor,
             "Revoked snapshot",
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(&second, actor).await,
             ),
         )
         .await,
     );
-    let comments = codeyard::backend::db::issues::list_issue_comments(&second, issue.id, 100, 0)
+    let comments = codeyard_db_repos::issues::list_issue_comments(&second, issue.id, 100, 0)
         .await
         .unwrap();
     assert_eq!(comments.len(), 1);

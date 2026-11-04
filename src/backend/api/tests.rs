@@ -261,15 +261,15 @@ async fn incomplete_native_forms_are_bounded_and_expire_before_extraction() {
 async fn anonymous_slow_posts_cannot_block_authenticated_mutations() {
     let pool = codeyard_db_core::init_db("sqlite::memory:").await.unwrap();
     codeyard_db_core::run_migrations(&pool).await.unwrap();
-    crate::backend::db::node_config::upsert_node_configuration(&pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&pool, "public", true)
         .await
         .unwrap();
-    let user = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
+    let user = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
         .await
         .unwrap();
     let session = "a".repeat(64);
     let csrf = "b".repeat(64);
-    crate::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         &pool,
         &session,
         user.id,
@@ -279,7 +279,7 @@ async fn anonymous_slow_posts_cannot_block_authenticated_mutations() {
     )
     .await
     .unwrap();
-    crate::backend::db::users::sessions::get_or_create_csrf_token(
+    codeyard_db_identity::users::sessions::get_or_create_csrf_token(
         &pool,
         &session,
         Some(user.id),

@@ -22,7 +22,7 @@ async fn contract(pg: bool) {
     let proj = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -31,7 +31,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .id;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,
         proj,

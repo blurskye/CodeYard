@@ -5,9 +5,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::oidc::Refusal;
-use crate::backend::db::oidc::Scope;
-use crate::backend::db::oidc::Settings;
 use axum::{
     extract::{Path, Request, State},
     http::{HeaderMap, Method, StatusCode},
@@ -15,6 +12,9 @@ use axum::{
     routing::{delete, get, post, put, MethodRouter},
     Json,
 };
+use codeyard_db_core::queries::oidc::Refusal;
+use codeyard_db_core::queries::oidc::Scope;
+use codeyard_db_core::queries::oidc::Settings;
 use serde::Deserialize;
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
@@ -46,7 +46,7 @@ async fn scope(
             authentication.require_write()?;
         }
         let org =
-            crate::backend::db::organizations::profiles::get_public_organization(&state.pool, org)
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, org)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -78,7 +78,7 @@ async fn template(
     let read = crate::backend::api::github::auth::read_method(request.method());
     let (actor, scope) = scope(&state, &headers, &params, !read).await?;
     if read {
-        let settings = crate::backend::db::oidc::settings(&state.pool, actor.user.id, scope)
+        let settings = codeyard_db_actions::oidc::settings(&state.pool, actor.user.id, scope)
             .await
             .map_err(error)?;
         let document = match scope {
@@ -112,7 +112,7 @@ async fn template(
             false
         }
     };
-    crate::backend::db::oidc::save_settings(
+    codeyard_db_actions::oidc::save_settings(
         &state.pool,
         actor.database_actor(),
         scope,
@@ -153,7 +153,7 @@ async fn properties(
     };
     if read {
         return Ok(Json(
-            crate::backend::db::oidc::inclusions(&state.pool, actor.user.id, org)
+            codeyard_db_actions::oidc::inclusions(&state.pool, actor.user.id, org)
                 .await
                 .map_err(error)?,
         )
@@ -170,7 +170,7 @@ async fn properties(
             .map_err(|_| Error::invalid("Invalid property inclusion"))?
             .custom_property_name
     };
-    crate::backend::db::oidc::change_inclusion(
+    codeyard_db_actions::oidc::change_inclusion(
         &state.pool,
         actor.database_actor(),
         org,

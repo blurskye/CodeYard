@@ -46,14 +46,11 @@ async fn read_value(
         .ok_or_else(auth::required)?
         .user;
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let watch = crate::backend::db::repositories::engagement::get_repo_watch(
-        &state.pool,
-        actor.id,
-        repo.id,
-    )
-    .await
-    .map_err(Error::unavailable)?
-    .ok_or_else(Error::missing)?;
+    let watch =
+        codeyard_db_repos::repositories::engagement::get_repo_watch(&state.pool, actor.id, repo.id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     Ok(Json(document(&owner, &name, &watch)))
 }
 #[derive(Default, Deserialize)]
@@ -102,7 +99,7 @@ async fn set_value(
     )
     .await
     .map_err(engagement_error)?;
-    let watch = crate::backend::db::repositories::engagement::get_repo_watch(
+    let watch = codeyard_db_repos::repositories::engagement::get_repo_watch(
         &state.pool,
         actor.user.id,
         repo.id,
@@ -139,7 +136,7 @@ async fn watchers(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let users = crate::backend::db::repositories::engagement::list_repo_watchers(
+    let users = codeyard_db_repos::repositories::engagement::list_repo_watchers(
         &state.pool,
         repo.id,
         (limit + 1) as i64,
@@ -164,14 +161,16 @@ async fn collection(
 ) -> Result<Response> {
     let viewer = auth::authenticate(&state, &headers, username.is_none()).await?;
     let user = match username {
-        Some(name) => crate::backend::db::users::accounts::get_user_by_username(&state.pool, &name)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?,
+        Some(name) => {
+            codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &name)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?
+        }
         None => viewer.as_ref().ok_or_else(auth::required)?.user.clone(),
     };
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::repositories::engagement::list_watched_repositories(
+    let rows = codeyard_db_repos::repositories::engagement::list_watched_repositories(
         &state.pool,
         user.id,
         viewer.as_ref().map(|a| a.user.id),

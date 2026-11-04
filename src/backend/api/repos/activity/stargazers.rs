@@ -18,7 +18,7 @@ pub async fn list_stargazers(
 ) -> Result<Json<Vec<UserResponse>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let (offset, limit) = json_page(query.page, query.per_page)?;
-    let users = crate::backend::db::repositories::engagement::list_repo_stargazers(
+    let users = codeyard_db_repos::repositories::engagement::list_repo_stargazers(
         &state.pool,
         repository.id,
         limit as i64,

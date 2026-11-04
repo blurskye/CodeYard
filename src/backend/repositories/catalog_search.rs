@@ -4,10 +4,10 @@ use crate::backend::repositories::store::BlobRange;
 
 use crate::backend::cluster::NodeContext;
 
-use crate::backend::db::catalog_search::Options;
-use crate::backend::db::catalog_search::Search;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
+use codeyard_db_repos::catalog_search::Options;
+use codeyard_db_repos::catalog_search::Search;
 use serde::Serialize;
 use std::time::Duration;
 use tokio::time::{timeout_at, Instant};
@@ -92,7 +92,7 @@ pub async fn prepare(
     query: Search,
 ) -> Result<(Search, bool)> {
     let deadline = Instant::now() + Duration::from_secs(8);
-    let candidates = crate::backend::db::catalog_search::search(
+    let candidates = codeyard_db_repos::catalog_search::search(
         pool,
         viewer,
         &query.git_candidates(),
@@ -112,7 +112,7 @@ pub async fn prepare(
         .filter_map(|hit| hit.repository_id)
         .collect::<Vec<_>>();
     let repos =
-        crate::backend::db::repositories::records::get_repositories_by_ids(pool, &ids).await?;
+        codeyard_db_repos::repositories::records::get_repositories_by_ids(pool, &ids).await?;
     let mut facts = Vec::new();
     let mut bytes = 0;
     let readme = query.needs_readme();

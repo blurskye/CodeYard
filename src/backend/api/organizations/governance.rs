@@ -5,13 +5,13 @@ use crate::backend::api::organizations::organization::Fields;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::organizations::INDEX;
 use crate::backend::app::AppState;
-use crate::backend::db::organizations::list_ownerless_organizations;
-use crate::backend::db::organizations::recover_suspended_organization_owner;
-use crate::backend::db::organizations::OrganizationOutcome;
 use axum::extract::rejection::FormRejection;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations::list_ownerless_organizations;
+use codeyard_db_orgs::organizations::recover_suspended_organization_owner;
 use std::sync::Arc;
 
 pub(super) const RECOVERY: &str = "/admin/organizations/recovery";
@@ -80,7 +80,7 @@ pub(super) async fn recover(
     let ownerless = match list_ownerless_organizations(
         &ctx.state.pool,
         actor,
-        crate::backend::db::organizations::OrganizationPage::new(org.saturating_sub(1), 1)
+        codeyard_db_orgs::organizations::OrganizationPage::new(org.saturating_sub(1), 1)
             .expect("positive organization id"),
     )
     .await

@@ -3,10 +3,10 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::organizations::INDEX;
 use crate::backend::app::AppState;
-use crate::backend::db::interactions::InteractionScope;
+use codeyard_db_identity::interactions::InteractionScope;
 
-use crate::backend::db::organizations::OrganizationOutcome::*;
-use crate::backend::db::organizations::*;
+use codeyard_db_core::queries::organizations::OrganizationOutcome::*;
+use codeyard_db_orgs::organizations::*;
 
 use axum::extract::rejection::FormRejection;
 use axum::extract::{Form, State};
@@ -274,7 +274,7 @@ pub(super) async fn selected(
     actor: i64,
     org: i64,
 ) -> Result<OrganizationMetadata, Response> {
-    match crate::backend::db::organizations::get_organization_metadata(&ctx.state.pool, actor, org)
+    match codeyard_db_orgs::organizations::get_organization_metadata(&ctx.state.pool, actor, org)
         .await
     {
         Ok(Applied(value)) => Ok(value),
@@ -352,7 +352,7 @@ pub(super) async fn respond_with_hook_draft(
     let can_recover = ctx.administrator().is_some();
     let (can_manage, is_owner) = match org {
         Some(org) => {
-            match crate::backend::db::organizations::get_organization_role(
+            match codeyard_db_orgs::organizations::get_organization_role(
                 &ctx.state.pool,
                 actor,
                 org,
@@ -406,7 +406,7 @@ pub(super) async fn respond_with_hook_draft(
     // Only the overview offers organization deletion.
     let owned_repositories = match org {
         Some(org) if is_owner && tab == "overview" => {
-            match crate::backend::db::organizations::count_organization_repositories(
+            match codeyard_db_orgs::organizations::count_organization_repositories(
                 &ctx.state.pool,
                 actor,
                 org,
@@ -435,7 +435,7 @@ pub(super) async fn respond_with_hook_draft(
     // The picker needs names only, so profile text stays out of refusal pages.
     let mut ownerless_next = None;
     let ownerless_organizations = if org.is_none() && can_recover {
-        match crate::backend::db::organizations::list_ownerless_organizations(
+        match codeyard_db_orgs::organizations::list_ownerless_organizations(
             &ctx.state.pool,
             actor,
             ownerless_page,
@@ -487,7 +487,7 @@ pub(super) async fn respond_with_hook_draft(
         None
     };
     let membership_public = if let Some(org) = org {
-        match crate::backend::db::organizations::discovery::list_organizations(
+        match codeyard_db_orgs::organizations::discovery::list_organizations(
             &ctx.state.pool,
             Some(actor),
             false,
@@ -566,7 +566,7 @@ pub(super) async fn respond_with_hook_draft(
         model.members_cursor = member_after;
         model.teams_cursor = team_after;
         if model.tab == "members" {
-            model.members = match crate::backend::db::organizations::list_organization_members(
+            model.members = match codeyard_db_orgs::organizations::list_organization_members(
                 &ctx.state.pool,
                 actor,
                 org,
@@ -597,7 +597,7 @@ pub(super) async fn respond_with_hook_draft(
                     Ok(value) => value,
                     Err(response) => return response,
                 };
-            model.teams = match crate::backend::db::organizations::list_organization_teams(
+            model.teams = match codeyard_db_orgs::organizations::list_organization_teams(
                 &ctx.state.pool,
                 actor,
                 org,
@@ -634,7 +634,7 @@ pub(super) async fn respond_with_hook_draft(
                 .unwrap_or(1)
                 .clamp(1, 10_000);
             let (default_level, mut repositories) =
-                match crate::backend::db::dependabot::repository_access(
+                match codeyard_db_security::dependabot::repository_access(
                     &ctx.state.pool,
                     ctx.database_actor(actor),
                     org,
@@ -644,8 +644,8 @@ pub(super) async fn respond_with_hook_draft(
                 {
                     Ok(access) => access,
                     Err(
-                        crate::backend::db::secrets::SecretsError::Denied
-                        | crate::backend::db::secrets::SecretsError::NotFound,
+                        codeyard_db_core::queries::secrets::SecretsError::Denied
+                        | codeyard_db_core::queries::secrets::SecretsError::NotFound,
                     ) => return not_found(ctx),
                     Err(_) => return unavailable(ctx),
                 };
@@ -666,7 +666,7 @@ pub(super) async fn respond_with_hook_draft(
             }));
         }
         if model.tab == "private-registries" {
-            let registries = match crate::backend::db::private_registries::list(
+            let registries = match codeyard_db_actions::private_registries::list(
                 &ctx.state.pool,
                 actor,
                 org,
@@ -677,9 +677,9 @@ pub(super) async fn respond_with_hook_draft(
             .await
             {
                 Ok((_, registries)) => registries,
-                Err(crate::backend::db::private_registries::RegistryError::Secret(
-                    crate::backend::db::secrets::SecretsError::Denied
-                    | crate::backend::db::secrets::SecretsError::NotFound,
+                Err(codeyard_db_actions::private_registries::RegistryError::Secret(
+                    codeyard_db_core::queries::secrets::SecretsError::Denied
+                    | codeyard_db_core::queries::secrets::SecretsError::NotFound,
                 )) => return not_found(ctx),
                 Err(_) => return unavailable(ctx),
             };
@@ -722,8 +722,8 @@ pub(super) async fn respond_with_hook_draft(
             match crate::backend::api::organizations::action_values::build(ctx, actor, org).await {
                 Ok(panel) => model.actions = Some(Box::new(panel)),
                 Err(
-                    crate::backend::db::organization_values::ValueError::Denied
-                    | crate::backend::db::organization_values::ValueError::NotFound,
+                    codeyard_db_orgs::organization_values::ValueError::Denied
+                    | codeyard_db_orgs::organization_values::ValueError::NotFound,
                 ) => return not_found(ctx),
                 Err(_) => return unavailable(ctx),
             }
@@ -763,7 +763,7 @@ pub(super) async fn respond_with_hook_draft(
             let base = format!("{INDEX}/{org}?tab=webhooks");
             let action_base = format!("{INDEX}/{org}/webhooks?tab=webhooks");
             let place = crate::backend::webhooks::panel::Place {
-                owner: crate::backend::db::webhooks::HookOwner::Organization(org),
+                owner: codeyard_db_repos::webhooks::HookOwner::Organization(org),
                 base: &base,
                 action_base: &action_base,
                 csrf_token: &ctx.csrf_token,
@@ -775,7 +775,7 @@ pub(super) async fn respond_with_hook_draft(
                     crate::backend::webhooks::panel::build(
                         &ctx.state.pool,
                         viewer,
-                        &crate::backend::db::users::accounts::AccountCredential::Session(
+                        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                                 .unwrap_or_default(),
                         ),
@@ -815,7 +815,7 @@ pub(super) async fn respond_with_hook_draft(
                 return invalid(ctx);
             };
             model.pending_invitations =
-                match crate::backend::db::organizations::list_organization_invitations(
+                match codeyard_db_orgs::organizations::list_organization_invitations(
                     &ctx.state.pool,
                     actor,
                     org,
@@ -842,7 +842,7 @@ pub(super) async fn respond_with_hook_draft(
                 let Some((blocks_after, _)) = cursor(ctx, "blocks_after") else {
                     return invalid(ctx);
                 };
-                model.blocked_users = match crate::backend::db::organizations::blocks::list(
+                model.blocked_users = match codeyard_db_orgs::organizations::blocks::list(
                     &ctx.state.pool,
                     actor,
                     org,
@@ -865,38 +865,37 @@ pub(super) async fn respond_with_hook_draft(
                     }
                     _ => return unavailable(ctx),
                 };
-                model.outside_collaborators =
-                    match crate::backend::db::organizations::outside::list(
-                        &ctx.state.pool,
-                        actor,
-                        org,
-                        "all",
-                        outside_after,
-                        (0, PAGE_LIMIT),
-                    )
-                    .await
-                    {
-                        Ok(Applied(users)) => {
-                            if users.len() as i64 == PAGE_LIMIT {
-                                model.outside_next = users.last().map(|user| format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={failed_after}&outside_after={}",user.id));
-                            }
-                            users
-                                .into_iter()
-                                .map(|user| view::OutsideCollaborator {
-                                    user_id: user.id,
-                                    username: user.username,
-                                })
-                                .collect()
+                model.outside_collaborators = match codeyard_db_orgs::organizations::outside::list(
+                    &ctx.state.pool,
+                    actor,
+                    org,
+                    "all",
+                    outside_after,
+                    (0, PAGE_LIMIT),
+                )
+                .await
+                {
+                    Ok(Applied(users)) => {
+                        if users.len() as i64 == PAGE_LIMIT {
+                            model.outside_next = users.last().map(|user| format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={failed_after}&outside_after={}",user.id));
                         }
-                        _ => return unavailable(ctx),
-                    };
+                        users
+                            .into_iter()
+                            .map(|user| view::OutsideCollaborator {
+                                user_id: user.id,
+                                username: user.username,
+                            })
+                            .collect()
+                    }
+                    _ => return unavailable(ctx),
+                };
             }
-            let filter = crate::backend::db::organizations::InvitationFilter {
+            let filter = codeyard_db_orgs::organizations::InvitationFilter {
                 failed: true,
                 after: failed_after,
                 ..Default::default()
             };
-            model.failed_invitations = match crate::backend::db::organizations::invitation_page(
+            model.failed_invitations = match codeyard_db_orgs::organizations::invitation_page(
                 &ctx.state.pool,
                 actor,
                 org,
@@ -923,7 +922,7 @@ pub(super) async fn respond_with_hook_draft(
         }
     } else {
         model.invitations =
-            match crate::backend::db::organizations::list_received_organization_invitations(
+            match codeyard_db_orgs::organizations::list_received_organization_invitations(
                 &ctx.state.pool,
                 actor,
                 invitations_page,
@@ -953,7 +952,7 @@ pub(super) async fn respond_with_hook_draft(
         {
             return invalid(ctx);
         }
-        model.organizations = match crate::backend::db::organizations::list_actor_organizations(
+        model.organizations = match codeyard_db_orgs::organizations::list_actor_organizations(
             &ctx.state.pool,
             actor,
             page,
@@ -1055,11 +1054,9 @@ pub(super) fn destination(ctx: &PageContext, org: Option<i64>, keep_team: bool) 
     }
     let tab = requested_tab(ctx);
     if tab == "properties" {
-        if let Some(property) = ctx
-            .query
-            .get("property")
-            .filter(|property| crate::backend::db::organizations::properties::valid_name(property))
-        {
+        if let Some(property) = ctx.query.get("property").filter(|property| {
+            codeyard_db_core::queries::organizations::properties::valid_name(property)
+        }) {
             query.append_pair("property", property);
         }
     }
@@ -1131,10 +1128,10 @@ async fn apply(
         Command::Create(_) => return Err(invalid(ctx)),
         Command::Delete => return delete_with_repositories(ctx, actor, org).await,
         Command::Profile(profile) => {
-            let credential = crate::backend::db::users::accounts::AccountCredential::Session(
+            let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 ctx.session_id.as_deref().unwrap_or(""),
             );
-            crate::backend::db::organizations::update_organization_profile(
+            codeyard_db_orgs::organizations::update_organization_profile(
                 pool,
                 actor,
                 &credential,
@@ -1276,7 +1273,7 @@ pub(super) async fn mutate(
     };
     if let Some(user) = removed {
         let name =
-            match crate::backend::db::users::accounts::get_users_by_ids(&ctx.state.pool, &[user])
+            match codeyard_db_identity::users::accounts::get_users_by_ids(&ctx.state.pool, &[user])
                 .await
             {
                 Ok(users) => users.into_iter().next().map(|user| user.username),
@@ -1314,7 +1311,7 @@ pub(super) async fn mutate(
     let organization_deleted = matches!(&command, Command::Delete);
     let outcome = match command {
         Command::Create(input) => {
-            crate::backend::db::organizations::create_organization(&ctx.state.pool, actor, &input)
+            codeyard_db_orgs::organizations::create_organization(&ctx.state.pool, actor, &input)
                 .await
                 .map(unit)
                 .map_err(|_| unavailable(&ctx))

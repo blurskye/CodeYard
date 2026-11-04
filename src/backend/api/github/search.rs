@@ -3,9 +3,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::assignees::AssignedItem;
-use crate::backend::db::discussion_search::Search;
-use crate::backend::db::discussion_search::Sort;
 use axum::{
     extract::{OriginalUri, Query, State},
     http::{HeaderMap, StatusCode},
@@ -13,6 +10,9 @@ use axum::{
     routing::{get, MethodRouter},
     Json,
 };
+use codeyard_db_repos::assignees::AssignedItem;
+use codeyard_db_repos::discussion_search::Search;
+use codeyard_db_repos::discussion_search::Sort;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
@@ -61,7 +61,7 @@ async fn search_issues(
                 "Search is busy. Try again shortly.",
             )
         })?;
-    let results = crate::backend::db::discussion_search::search(
+    let results = codeyard_db_repos::discussion_search::search(
         &state.pool,
         viewer,
         &query,
@@ -88,14 +88,14 @@ async fn search_issues(
     )
     .await?;
     let repos =
-        crate::backend::db::repositories::records::get_repositories_by_ids(&state.pool, &repo_ids)
+        codeyard_db_repos::repositories::records::get_repositories_by_ids(&state.pool, &repo_ids)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
             .map(|repo| (repo.id, repo))
             .collect::<HashMap<_, _>>();
     let owners =
-        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &repo_ids)
+        codeyard_db_repos::repositories::records::repository_owner_names(&state.pool, &repo_ids)
             .await
             .map_err(Error::unavailable)?;
     let mut selected = Vec::new();

@@ -75,7 +75,7 @@ pub async fn notify_mentions(
         return Vec::new();
     }
     let users =
-        match crate::backend::db::users::accounts::get_users_by_usernames(pool, &names).await {
+        match codeyard_db_identity::users::accounts::get_users_by_usernames(pool, &names).await {
             Ok(users) => users,
             Err(error) => {
                 tracing::warn!(%error, "Mention notifications were not sent: user lookup failed");

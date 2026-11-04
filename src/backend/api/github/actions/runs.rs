@@ -6,8 +6,8 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::action_runs::RunQuery;
 use crate::backend::repositories::store::repo_store;
+use codeyard_db_actions::action_runs::RunQuery;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -88,7 +88,7 @@ fn created(value: &str, q: &mut RunQuery) -> Result<()> {
 }
 
 struct Documents {
-    metadata: HashMap<i64, crate::backend::db::action_runs::RunMetadata>,
+    metadata: HashMap<i64, codeyard_db_actions::action_runs::RunMetadata>,
     actors: HashMap<i64, Value>,
     commits: HashMap<String, Value>,
     workflows: HashMap<String, HashMap<String, String>>,
@@ -101,7 +101,7 @@ impl Documents {
         runs: &[codeyard_db_core::models::CiRun],
     ) -> Result<Self> {
         let ids: Vec<_> = runs.iter().map(|run| run.id).collect();
-        let metadata = crate::backend::db::action_runs::metadata(&state.pool, repo, &ids)
+        let metadata = codeyard_db_actions::action_runs::metadata(&state.pool, repo, &ids)
             .await
             .map_err(Error::unavailable)?;
         let mut actors: Vec<_> = metadata
@@ -111,7 +111,7 @@ impl Documents {
             .collect();
         actors.sort_unstable();
         actors.dedup();
-        let actors = crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &actors)
+        let actors = codeyard_db_identity::users::accounts::get_users_by_ids(&state.pool, &actors)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
@@ -137,7 +137,7 @@ async fn referenced_document(
         return Ok(Value::Null);
     };
     let owner =
-        crate::backend::db::repositories::records::repository_owner_name(&state.pool, head.id)
+        codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, head.id)
             .await
             .map_err(Error::unavailable)?;
     Ok(owner
@@ -166,7 +166,7 @@ async fn document(
     }
     let repository = crate::backend::webhooks::payloads::repository(repo, owner);
     let pr = if let Some(id) = run.pull_request_id {
-        crate::backend::db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .filter(|pr| pr.repo_id == repo.id)
@@ -304,11 +304,15 @@ pub(super) async fn get_one(
     } else {
         None
     };
-    let run =
-        crate::backend::db::action_runs::get(&state.pool, repo.id, id(&params, "run_id")?, attempt)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+    let run = codeyard_db_actions::action_runs::get(
+        &state.pool,
+        repo.id,
+        id(&params, "run_id")?,
+        attempt,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(Error::missing)?;
     let mut documents = Documents::load(&state, repo.id, std::slice::from_ref(&run)).await?;
     Ok(Json(
         document(
@@ -368,7 +372,7 @@ pub(super) async fn list(
         ) {
             return Err(Error::invalid("Invalid workflow run status"));
         }
-        q.statuses = crate::backend::db::action_runs::native_statuses(status);
+        q.statuses = codeyard_db_actions::action_runs::native_statuses(status);
         if q.statuses.is_empty() {
             q.statuses.push("__no_native_status__".into());
         }
@@ -388,7 +392,7 @@ pub(super) async fn list(
     }
     q.sha.make_ascii_lowercase();
     let (offset, limit) = page_parameters.window()?;
-    let page = crate::backend::db::action_runs::list(
+    let page = codeyard_db_actions::action_runs::list(
         &state.pool,
         auth.as_ref().map(|auth| auth.user.id),
         repo.id,

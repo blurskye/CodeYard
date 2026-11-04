@@ -11,12 +11,12 @@ use crate::backend::identity::passwords::PasswordError;
 
 use crate::backend::identity::sessions::AccountAuthorityError;
 
-use crate::backend::db::users::signup_requests::ReviewError;
+use codeyard_db_identity::users::signup_requests::ReviewError;
 
-use crate::backend::db::users::transitions::AccountAdmission;
-use crate::backend::db::users::transitions::BanChange;
-use crate::backend::db::users::transitions::EmailChange;
-use crate::backend::db::users::transitions::RoleChange;
+use codeyard_db_identity::users::transitions::AccountAdmission;
+use codeyard_db_identity::users::transitions::BanChange;
+use codeyard_db_identity::users::transitions::EmailChange;
+use codeyard_db_identity::users::transitions::RoleChange;
 
 use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
@@ -70,7 +70,7 @@ pub async fn change_password(
         .map_err(PasswordChangeError::Password)?;
     // Hash replacement, must-change clearance and every session's revocation are
     // one existing transaction. Failure leaves all three prior facts intact.
-    crate::backend::db::users::transitions::compare_exchange_password(
+    codeyard_db_identity::users::transitions::compare_exchange_password(
         pool, user.id, expected, &hash, true, true, session_id,
     )
     .await
@@ -157,7 +157,7 @@ pub async fn change_email(
             CurrentPasswordError::Password(error) => EmailChangeError::Password(error),
             CurrentPasswordError::Invalid => EmailChangeError::InvalidCredentials,
         })?;
-    match crate::backend::db::users::transitions::change_email(
+    match codeyard_db_identity::users::transitions::change_email(
         pool,
         user.id,
         email,
@@ -219,7 +219,7 @@ pub async fn create_managed_account(
         .map_err(ManagedAccountError::Password)?;
     // The transaction revalidates the actor, original session and private mode,
     // and sets the temporary credential's must-change flag.
-    let user = match crate::backend::db::users::transitions::register_password(
+    let user = match codeyard_db_identity::users::transitions::register_password(
         pool,
         input.username,
         input.email.filter(|email| !email.trim().is_empty()),
@@ -282,7 +282,7 @@ pub async fn review_signup(
     // decision mail with the decision.
     match decision {
         SignupDecision::Approve => {
-            let user = crate::backend::db::users::signup_requests::approve_signup_request(
+            let user = codeyard_db_identity::users::signup_requests::approve_signup_request(
                 pool,
                 request_id,
                 (
@@ -296,7 +296,7 @@ pub async fn review_signup(
             Ok(SignupReviewOutcome::Approved(Box::new(user)))
         }
         SignupDecision::Reject => {
-            crate::backend::db::users::signup_requests::reject_signup_request(
+            codeyard_db_identity::users::signup_requests::reject_signup_request(
                 pool,
                 request_id,
                 (
@@ -330,7 +330,7 @@ pub async fn set_ban(
     let admin = crate::backend::identity::sessions::administrator(pool, administrator_session)
         .await
         .map_err(BanError::Authority)?;
-    match crate::backend::db::users::transitions::change_ban(
+    match codeyard_db_identity::users::transitions::change_ban(
         pool,
         (
             admin.id,
@@ -368,7 +368,7 @@ pub async fn set_admin_role(
     let actor = crate::backend::identity::sessions::administrator(pool, administrator_session)
         .await
         .map_err(RoleError::Authority)?;
-    match crate::backend::db::users::transitions::change_admin_role(
+    match codeyard_db_identity::users::transitions::change_admin_role(
         pool,
         (
             actor.id,

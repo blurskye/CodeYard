@@ -4,8 +4,8 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::issue_attributes::Refusal;
-use crate::backend::db::issue_attributes::ValueInput;
+use codeyard_db_repos::issue_attributes::Refusal;
+use codeyard_db_repos::issue_attributes::ValueInput;
 
 use axum::{
     body::Bytes,
@@ -41,7 +41,7 @@ async fn types(
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let attributes = crate::backend::db::issue_attributes::catalog(
+    let attributes = codeyard_db_repos::issue_attributes::catalog(
         &state.pool,
         repo.id,
         auth.as_ref().map(|a| a.user.id),
@@ -71,7 +71,7 @@ async fn list(
         &p["issue_number"],
     )
     .await?;
-    let values = crate::backend::db::issue_attributes::values(
+    let values = codeyard_db_repos::issue_attributes::values(
         &state.pool,
         repo.id,
         issue,
@@ -113,7 +113,7 @@ async fn save(
     .await?;
     let input: Input = serde_json::from_slice(&body)
         .map_err(|_| Error::validation("IssueFieldValue", "issue_field_values", "invalid"))?;
-    crate::backend::db::issue_attributes::set_values(
+    codeyard_db_repos::issue_attributes::set_values(
         &state.pool,
         repo.id,
         actor.database_actor(),
@@ -123,7 +123,7 @@ async fn save(
     )
     .await
     .map_err(error)?;
-    let values = crate::backend::db::issue_attributes::values(
+    let values = codeyard_db_repos::issue_attributes::values(
         &state.pool,
         repo.id,
         issue,
@@ -152,7 +152,7 @@ async fn remove(
     )
     .await?;
     let field = p["issue_field_id"].parse().map_err(|_| Error::missing())?;
-    crate::backend::db::issue_attributes::delete_value(
+    codeyard_db_repos::issue_attributes::delete_value(
         &state.pool,
         repo.id,
         actor.database_actor(),

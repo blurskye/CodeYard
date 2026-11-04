@@ -1,8 +1,8 @@
 use super::*;
-use crate::backend::db::discussion_search::Search;
-use crate::backend::db::discussion_search::Sort;
-use crate::backend::db::relationships::Kind;
-use crate::backend::db::relationships::Order;
+use codeyard_db_identity::relationships::Kind;
+use codeyard_db_identity::relationships::Order;
+use codeyard_db_repos::discussion_search::Search;
+use codeyard_db_repos::discussion_search::Sort;
 
 pub(in crate::backend::api::graphql::issue::super) fn issue_type(
     item: &db::issue_attributes::Attribute,

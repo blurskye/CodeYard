@@ -6,8 +6,6 @@ use crate::backend::api::github::orgs::AppState;
 use crate::backend::api::github::orgs::Error;
 use crate::backend::api::github::orgs::Result;
 use crate::backend::api::github::pagination::Pagination;
-use crate::backend::db::organizations::immutable_releases as data;
-use crate::backend::db::organizations::immutable_releases::Change;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -15,6 +13,8 @@ use axum::{
     routing::{delete, get, put, MethodRouter},
     Json,
 };
+use codeyard_db_orgs::organizations::immutable_releases as data;
+use codeyard_db_orgs::organizations::immutable_releases::Change;
 use codeyard_model::urls::api_url;
 use serde::Deserialize;
 use serde_json::{json, Value};

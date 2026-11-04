@@ -3,11 +3,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::environment_values as values;
-use crate::backend::db::environment_values::EnvironmentValue;
-use crate::backend::db::environment_values::Kind;
-use crate::backend::db::environment_values::Save;
-use crate::backend::db::environment_values::ValueError;
 use axum::{
     extract::{rejection::JsonRejection, MatchedPath, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -15,6 +10,11 @@ use axum::{
     routing::{delete, get, patch, post, put, MethodRouter},
     Json, Router,
 };
+use codeyard_db_actions::environment_values as values;
+use codeyard_db_actions::environment_values::EnvironmentValue;
+use codeyard_db_actions::environment_values::Save;
+use codeyard_db_actions::environment_values::ValueError;
+use codeyard_db_orgs::organization_values::Kind;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -91,12 +91,12 @@ async fn target(
 )> {
     let (owner, name) = if let Some(id) = params.get("repository_id") {
         let id = id.parse::<i64>().map_err(|_| Error::missing())?;
-        let repo = crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
+        let repo = codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
         let owner =
-            crate::backend::db::repositories::records::repository_owner_name(&state.pool, id)
+            codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -230,9 +230,9 @@ async fn public_key(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (key_id, key) = crate::backend::db::secrets::repository_secret_key_for(
+    let (key_id, key) = codeyard_db_actions::secrets::repository_secret_key_for(
         &state.pool,
-        crate::backend::db::secrets::SecretKind::Actions,
+        codeyard_db_actions::secrets::SecretKind::Actions,
         encryptor,
         auth.user.id,
         repo.id,
@@ -262,9 +262,9 @@ async fn save_secret(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (id, key) = crate::backend::db::secrets::repository_secret_key_for(
+    let (id, key) = codeyard_db_actions::secrets::repository_secret_key_for(
         &state.pool,
-        crate::backend::db::secrets::SecretKind::Actions,
+        codeyard_db_actions::secrets::SecretKind::Actions,
         encryptor,
         auth.user.id,
         repo.id,

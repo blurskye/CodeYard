@@ -128,7 +128,7 @@ async fn contract(pg: bool) {
     let actor = f.actor("editor_boundary").await;
     let session = native::token();
     let csrf = native::token();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         f.pool(),
         &session,
         actor,
@@ -139,7 +139,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             f.pool(),
             &session,
             Some(actor),
@@ -154,7 +154,7 @@ async fn contract(pg: bool) {
     let repository = codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
         "save",
         None,
         true,
@@ -215,7 +215,7 @@ async fn contract(pg: bool) {
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{reply}");
     }
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         outsider_id,
         repository.id,
@@ -227,20 +227,20 @@ async fn contract(pg: bool) {
         outsider.expect(method, "/api/repos/editor_boundary/save/contents/probe.txt",
             json!({"branch":"main", "content":"YQ==", "message":"probe", "expected_revision":"a".repeat(40)}), StatusCode::FORBIDDEN).await;
     }
-    codeyard::backend::db::repositories::access::revoke_repo_access(
+    codeyard_db_repos::repositories::access::revoke_repo_access(
         f.pool(),
         outsider_id,
         repository.id,
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::records::update_repository(
+    codeyard_db_repos::repositories::records::update_repository(
         f.pool(),
         actor,
         repository.id,
         None,
         false,
-        codeyard::backend::db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None,
@@ -252,13 +252,13 @@ async fn contract(pg: bool) {
         outsider.expect(method, "/api/repos/editor_boundary/save/contents/probe.txt",
             json!({"branch":"main", "content":"YQ==", "message":"probe", "expected_revision":"a".repeat(40)}), StatusCode::FORBIDDEN).await;
     }
-    codeyard::backend::db::repositories::records::update_repository(
+    codeyard_db_repos::repositories::records::update_repository(
         f.pool(),
         actor,
         repository.id,
         None,
         true,
-        codeyard::backend::db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None,
@@ -711,7 +711,7 @@ async fn stale_repository_contract(pg: bool) {
             .await;
         }
         let repository =
-            codeyard::backend::db::repositories::records::get_repository(f.pool(), owner, "save")
+            codeyard_db_repos::repositories::records::get_repository(f.pool(), owner, "save")
                 .await
                 .unwrap()
                 .unwrap();
@@ -734,7 +734,7 @@ async fn stale_repository_contract(pg: bool) {
         let replacement = codeyard::backend::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
-            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(actor),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
             "save",
             None,
             true,
@@ -796,7 +796,7 @@ async fn long_name_client(f: &Database, owner: i64) -> (http::Client, tempfile::
     codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "save",
         None,
         true,
@@ -1003,14 +1003,11 @@ async fn default_branch_contract(pg: bool) {
     let (client, _root) = long_name_client(&f, actor).await;
     let api = "/api/repos/default_owner/save";
     let tip = save_file(&client, api, "topic", "README.md", "first", "unborn", true).await;
-    let repository = codeyard::backend::db::repositories::records::get_repository(
-        f.pool(),
-        "default_owner",
-        "save",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let repository =
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "default_owner", "save")
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(repository.default_branch, "topic");
     let bare = git2::Repository::open_bare(&repository.disk_path).unwrap();
     assert_eq!(bare.head().unwrap().name(), Some("refs/heads/topic"));
@@ -1069,7 +1066,7 @@ async fn default_branch_contract(pg: bool) {
     // A later write repairs an existing mismatch without changing the advertised default.
     let tip = save_file(&client, api, "topic", "README.md", "repair", &tip, false).await;
     let stored =
-        codeyard::backend::db::repositories::records::get_repository_by_id(f.pool(), repository.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repository.id)
             .await
             .unwrap()
             .unwrap();
@@ -1099,7 +1096,7 @@ async fn default_branch_contract(pg: bool) {
         )
         .await;
     let stored =
-        codeyard::backend::db::repositories::records::get_repository_by_id(f.pool(), repository.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repository.id)
             .await
             .unwrap()
             .unwrap();
@@ -1185,7 +1182,7 @@ async fn missing_branch_contract(pg: bool) {
     f.complete_setup().await;
     let actor = f.actor("missing_branch").await;
     let (client, _root) = long_name_client(&f, actor).await;
-    let repository = codeyard::backend::db::repositories::records::get_repository(
+    let repository = codeyard_db_repos::repositories::records::get_repository(
         f.pool(),
         "missing_branch",
         "save",
@@ -1319,7 +1316,7 @@ async fn protected_branch_contract(pg: bool) {
     let (session, csrf) = (client.session.clone(), client.csrf.clone());
     let api = "/api/repos/protected_editor/save";
     let tip = save_file(&client, api, "main", "README.md", "first", "unborn", true).await;
-    let repository = codeyard::backend::db::repositories::records::get_repository(
+    let repository = codeyard_db_repos::repositories::records::get_repository(
         f.pool(),
         "protected_editor",
         "save",
@@ -1327,9 +1324,9 @@ async fn protected_branch_contract(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    codeyard::backend::db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        codeyard::backend::db::repositories::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::BranchProtectionRuleUpsert {
             actor_id: owner,
             repo_id: repository.id,
             pattern: "main",
@@ -1467,14 +1464,11 @@ async fn commit_target_contract(pg: bool) {
         true,
     )
     .await;
-    let repository = codeyard::backend::db::repositories::records::get_repository(
-        f.pool(),
-        "commit_target",
-        "save",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let repository =
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "commit_target", "save")
+            .await
+            .unwrap()
+            .unwrap();
     let repository_id = repository.id.to_string();
     let repo = git2::Repository::open_bare(&repository.disk_path).unwrap();
     let save = "/commit_target/save/_forms/write-file";
@@ -1694,14 +1688,11 @@ async fn delete_file_contract(pg: bool) {
     )
     .await;
     let tip = save_file(&client, api, "main", "keep.md", "second", &first, true).await;
-    let repository = codeyard::backend::db::repositories::records::get_repository(
-        f.pool(),
-        "delete_editor",
-        "save",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let repository =
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "delete_editor", "save")
+            .await
+            .unwrap()
+            .unwrap();
     let repository_id = repository.id.to_string();
 
     let (status, html) = request(
@@ -1749,9 +1740,9 @@ async fn delete_file_contract(pg: bool) {
     );
 
     // Protection applies to the API and to the form exactly as it does to a save.
-    codeyard::backend::db::repositories::protection::upsert_branch_protection_rule(
+    codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         f.pool(),
-        codeyard::backend::db::repositories::BranchProtectionRuleUpsert {
+        codeyard_db_repos::repositories::BranchProtectionRuleUpsert {
             actor_id: owner,
             repo_id: repository.id,
             pattern: "main",

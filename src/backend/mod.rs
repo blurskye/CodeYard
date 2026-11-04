@@ -12,7 +12,6 @@ pub mod cluster;
 pub mod code_scanning;
 
 pub mod dashboard;
-pub mod db;
 
 pub mod email;
 pub mod files;

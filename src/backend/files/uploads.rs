@@ -69,9 +69,9 @@ async fn reserve(
     actor_id: i64,
     input: &UploadDeclaration<'_>,
 ) -> Result<File, UploadError> {
-    crate::backend::db::files::reserve_upload(
+    codeyard_db_repos::files::reserve_upload(
         pool,
-        crate::backend::db::files::ReserveUpload {
+        codeyard_db_repos::files::ReserveUpload {
             user_id: actor_id,
             filename: input.filename,
             content_type: input.content_type,
@@ -83,10 +83,10 @@ async fn reserve(
     )
     .await
     .map_err(|error| match error {
-        crate::backend::db::files::AdmissionError::Invalid => UploadError::Invalid,
-        crate::backend::db::files::AdmissionError::Quota => UploadError::Quota,
-        crate::backend::db::files::AdmissionError::PolicyUnavailable
-        | crate::backend::db::files::AdmissionError::Database(_) => {
+        codeyard_db_repos::files::AdmissionError::Invalid => UploadError::Invalid,
+        codeyard_db_repos::files::AdmissionError::Quota => UploadError::Quota,
+        codeyard_db_repos::files::AdmissionError::PolicyUnavailable
+        | codeyard_db_repos::files::AdmissionError::Database(_) => {
             UploadError::AdmissionUnavailable
         }
     })
@@ -101,7 +101,7 @@ pub async fn reserve_and_sign_upload(
     input: UploadDeclaration<'_>,
 ) -> Result<UploadReservation, UploadError> {
     let file = reserve(pool, actor_id, &input).await?;
-    let seconds = crate::backend::db::files::PUT_LIFETIME_SECONDS as u64;
+    let seconds = codeyard_db_core::queries::files::PUT_LIFETIME_SECONDS as u64;
     let target = store
         .upload_target(
             &upload(&file),
@@ -111,11 +111,11 @@ pub async fn reserve_and_sign_upload(
         .await
         .map_err(|_| UploadError::SigningUnavailable { file_id: file.id })?;
     if target.direct
-        && !crate::backend::db::files::extend_direct_upload(
+        && !codeyard_db_repos::files::extend_direct_upload(
             pool,
             file.id,
             actor_id,
-            crate::backend::db::files::PUT_LIFETIME_SECONDS,
+            codeyard_db_core::queries::files::PUT_LIFETIME_SECONDS,
         )
         .await
         .map_err(|_| UploadError::SigningUnavailable { file_id: file.id })?
@@ -166,7 +166,7 @@ pub async fn store_upload(
         verify_upload(store, &file)
             .await
             .map_err(|_| UploadError::StorageUnavailable)?;
-        if !crate::backend::db::files::verify_pending_upload(pool, file.id, actor_id)
+        if !codeyard_db_repos::files::verify_pending_upload(pool, file.id, actor_id)
             .await
             .map_err(|_| UploadError::StorageUnavailable)?
         {
@@ -206,12 +206,12 @@ pub enum ConfirmationError {
 pub async fn confirm_upload(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: impl Into<crate::backend::db::files::FileAuthority>,
+    actor: impl Into<codeyard_db_repos::files::FileAuthority>,
     file_id: Uuid,
 ) -> Result<(), ConfirmationError> {
     let actor = actor.into();
     let actor_id = actor.user_id.ok_or(ConfirmationError::NotFound)?;
-    let first = crate::backend::db::files::get_owned_file(pool, file_id, actor_id)
+    let first = codeyard_db_repos::files::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| ConfirmationError::MetadataUnavailable)?
         .ok_or(ConfirmationError::NotFound)?;
@@ -222,7 +222,7 @@ pub async fn confirm_upload(
     .await
     .map_err(|_| ConfirmationError::StorageUnavailable)?
     .map_err(|_| ConfirmationError::StorageUnavailable)?;
-    let file = crate::backend::db::files::get_owned_file(pool, file_id, actor_id)
+    let file = codeyard_db_repos::files::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| ConfirmationError::MetadataUnavailable)?
         .ok_or(ConfirmationError::NotFound)?;
@@ -233,7 +233,7 @@ pub async fn confirm_upload(
         .try_acquire_io()
         .map_err(|_| ConfirmationError::StorageUnavailable)?;
     verify_upload(store, &file).await?;
-    if !crate::backend::db::files::activate_upload(pool, file_id, actor)
+    if !codeyard_db_repos::files::activate_upload(pool, file_id, actor)
         .await
         .map_err(|_| ConfirmationError::MetadataUnavailable)?
     {

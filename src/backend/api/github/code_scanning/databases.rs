@@ -38,12 +38,12 @@ pub(crate) const HOST_UPLOAD_ROUTE: &str =
 
 async fn document(
     state: &AppState,
-    row: &crate::backend::db::codeql::Database,
+    row: &codeyard_db_security::codeql::Database,
     owner: &str,
     name: &str,
 ) -> Result<Value> {
     let uploader = match row.uploader_id {
-        Some(id) => crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+        Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .as_ref()
@@ -69,7 +69,7 @@ async fn readable(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
-) -> Result<(i64, crate::backend::db::credentials::Actor)> {
+) -> Result<(i64, codeyard_db_core::queries::credentials::Actor)> {
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     Ok((repo.id, auth.database_actor()))
@@ -81,7 +81,7 @@ pub(super) async fn list(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<axum::Json<Value>> {
     let (repo, actor) = readable(&state, &headers, &owner, &name).await?;
-    let rows = crate::backend::db::codeql::list(&state.pool, actor, repo)
+    let rows = codeyard_db_security::codeql::list(&state.pool, actor, repo)
         .await
         .map_err(failure)?;
     let mut values = Vec::new();
@@ -98,7 +98,7 @@ pub(super) async fn get(
     method: axum::http::Method,
 ) -> Result<Response> {
     let (repo, actor) = readable(&state, &headers, &owner, &name).await?;
-    let row = crate::backend::db::codeql::get(&state.pool, actor, repo, &language)
+    let row = codeyard_db_security::codeql::get(&state.pool, actor, repo, &language)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -246,25 +246,25 @@ pub(in crate::backend::api::github) async fn upload(
     let actor = auth.database_actor();
     let size = bytes.len() as i64;
     // Every upload counts, including one that replaces an earlier database.
-    let charge = crate::backend::db::files::charge_upload(
+    let charge = codeyard_db_repos::files::charge_upload(
         &state.pool,
         auth.user.id,
-        crate::backend::db::codeql::UPLOAD_QUOTA,
+        codeyard_db_security::codeql::UPLOAD_QUOTA,
         size,
     )
     .await
     .map_err(|error| match error {
-        crate::backend::db::files::AdmissionError::Quota => {
+        codeyard_db_repos::files::AdmissionError::Quota => {
             Error::new(StatusCode::TOO_MANY_REQUESTS, "Upload quota exhausted")
         }
-        crate::backend::db::files::AdmissionError::Invalid => {
+        codeyard_db_repos::files::AdmissionError::Invalid => {
             Error::validation("CodeqlDatabase", "file", "invalid")
         }
         other => Error::unavailable(other),
     })?;
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     let key = format!("codeql/{}", uuid::Uuid::new_v4());
-    crate::backend::db::codeql::stage(&state.pool, actor.clone(), repo.id, &key)
+    codeyard_db_security::codeql::stage(&state.pool, actor.clone(), repo.id, &key)
         .await
         .map_err(failure)?;
     state
@@ -281,9 +281,9 @@ pub(in crate::backend::api::github) async fn upload(
         )
         .await
         .map_err(Error::unavailable)?;
-    let row = crate::backend::db::codeql::publish(
+    let row = codeyard_db_security::codeql::publish(
         &state.pool,
-        &crate::backend::db::codeql::NewDatabase {
+        &codeyard_db_security::codeql::NewDatabase {
             charge,
             repo: repo.id,
             actor,
@@ -308,7 +308,7 @@ pub(super) async fn delete(
     Path((owner, name, language)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, false).await?;
-    crate::backend::db::codeql::delete(&state.pool, auth.database_actor(), repo.id, &language)
+    codeyard_db_security::codeql::delete(&state.pool, auth.database_actor(), repo.id, &language)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)

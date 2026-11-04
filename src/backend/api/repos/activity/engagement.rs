@@ -42,7 +42,7 @@ async fn set_engagement(
     change(
         &state.pool,
         &state.notification_broadcaster,
-        crate::backend::db::credentials::Actor::from((
+        codeyard_db_core::queries::credentials::Actor::from((
             actor.id,
             crate::backend::api::http::session::extract_session_id(headers).unwrap_or_default(),
         )),
@@ -68,7 +68,7 @@ async fn viewer_engagement(
     };
     let engaged = match kind {
         Engagement::Star => {
-            crate::backend::db::repositories::engagement::is_repo_starred(
+            codeyard_db_repos::repositories::engagement::is_repo_starred(
                 &state.pool,
                 user.id,
                 repository.id,
@@ -76,7 +76,7 @@ async fn viewer_engagement(
             .await
         }
         Engagement::Watch => {
-            crate::backend::db::repositories::engagement::is_repo_watched(
+            codeyard_db_repos::repositories::engagement::is_repo_watched(
                 &state.pool,
                 user.id,
                 repository.id,

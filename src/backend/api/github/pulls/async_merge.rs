@@ -99,13 +99,11 @@ async fn start(
         )
         .await
         .map_err(Error::unavailable)?;
-        pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
-            &state.pool,
-            pull.id,
-        )
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+        pull =
+            codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&state.pool, pull.id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
     }
     if input
         .sha
@@ -173,7 +171,7 @@ async fn result(
         .to_string();
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let request =
-        crate::backend::db::pull_requests::async_merge::get(&state.pool, repo.id, pull.id, &uuid)
+        codeyard_db_repos::pull_requests::async_merge::get(&state.pool, repo.id, pull.id, &uuid)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;

@@ -24,7 +24,7 @@ impl NodeContext {
     where
         F: std::future::Future<Output = anyhow::Result<()>>,
     {
-        use crate::backend::db::cluster::writes as journal;
+        use codeyard_db_cluster::cluster::writes as journal;
         let pool = self.database()?;
         let limits = crate::backend::cluster::rpc::git_session::WriteLimits::load(pool).await?;
         let id = Uuid::new_v4().to_string();
@@ -174,7 +174,7 @@ impl NodeContext {
         &self,
         write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<i64> {
-        let view = crate::backend::db::cluster::writes::recovery_view(
+        let view = codeyard_db_cluster::cluster::writes::recovery_view(
             self.database()?,
             write.repository_id,
         )
@@ -356,7 +356,7 @@ impl NodeContext {
                 return Err(unavailable());
             }
             let (node, address) = if let Some(pool) = &self.pool {
-                let node = crate::backend::db::cluster::get_node_by_id(pool, node_id)
+                let node = codeyard_db_cluster::cluster::get_node_by_id(pool, node_id)
                     .await
                     .map_err(|_| unavailable())?
                     .filter(|node| {
@@ -407,7 +407,7 @@ impl NodeContext {
                 .map(|id| (id, false))
                 .collect();
         };
-        crate::backend::db::cluster::read_candidates(pool, &repository.to_string(), primary)
+        codeyard_db_cluster::cluster::read_candidates(pool, &repository.to_string(), primary)
             .await
             .unwrap_or_default()
     }

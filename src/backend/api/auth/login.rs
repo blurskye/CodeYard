@@ -417,7 +417,7 @@ mod tests {
         let page = account::Page::Profile {
             profile: profile_model(
                 &user,
-                &crate::backend::db::users::profiles::ProfileSettings::default(),
+                &codeyard_db_identity::users::profiles::ProfileSettings::default(),
                 vec![],
             ),
             repositories: vec![],

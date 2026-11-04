@@ -1,6 +1,6 @@
 use crate::backend::notifications::NotificationEvent;
 
-use crate::backend::db::notifications::events::EventCursor;
+use codeyard_db_repos::notifications::events::EventCursor;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -122,7 +122,7 @@ impl NotificationBroadcaster {
     /// as ordinary creation delivers its own: the announcement and the email.
     pub async fn send_created(&self, notifications: &[(i64, i64)]) {
         for &(user_id, notification_id) in notifications {
-            match crate::backend::db::notifications::records::get_notification(
+            match codeyard_db_repos::notifications::records::get_notification(
                 &self.pool,
                 user_id,
                 notification_id,
@@ -156,7 +156,7 @@ impl NotificationBroadcaster {
         if !matches!(
             tokio::time::timeout(
                 ANNOUNCE_TIMEOUT,
-                crate::backend::db::notifications::events::announce(&self.pool, &payload)
+                codeyard_db_repos::notifications::events::announce(&self.pool, &payload)
             )
             .await,
             Ok(Ok(()))
@@ -212,7 +212,7 @@ async fn poll(
         };
         let full = match received {
             Ok(Ok(payloads)) => {
-                let full = payloads.len() == crate::backend::db::notifications::events::BATCH_SIZE;
+                let full = payloads.len() == codeyard_db_repos::notifications::events::BATCH_SIZE;
                 wait = if payloads.is_empty() {
                     (wait * 2).min(Duration::from_millis(500))
                 } else {
@@ -259,7 +259,7 @@ async fn poll(
         if tokio::time::Instant::now() >= prune_at {
             tokio::select! {
                 _ = stop.changed() => return,
-                result = tokio::time::timeout(Duration::from_secs(5), crate::backend::db::notifications::events::prune(&pool)) => {
+                result = tokio::time::timeout(Duration::from_secs(5), codeyard_db_repos::notifications::events::prune(&pool)) => {
                     prune_at = match result {
                         Ok(Ok(1024)) => tokio::time::Instant::now(),
                         result => {

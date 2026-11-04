@@ -491,7 +491,7 @@ async fn discussions(pg: bool) {
         issue.id,
         bob,
         "Needle comment",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
     )

@@ -53,13 +53,13 @@ pub async fn queue_pull_request_ci(
     if pull.state != "open" || pull.is_draft {
         return Ok(());
     }
-    let owner = crate::backend::db::ci::ci_repository_owner(pool, repository.id)
+    let owner = codeyard_db_actions::ci::ci_repository_owner(pool, repository.id)
         .await?
         .ok_or(AdmissionError::Unavailable)?;
-    let author = crate::backend::db::users::accounts::get_user_by_id(pool, pull.author_id)
+    let author = codeyard_db_identity::users::accounts::get_user_by_id(pool, pull.author_id)
         .await?
         .ok_or(AdmissionError::Unavailable)?;
-    let sender = crate::backend::db::users::accounts::get_user_by_id(pool, actor_id)
+    let sender = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor_id)
         .await?
         .ok_or(AdmissionError::Unavailable)?;
 
@@ -140,13 +140,9 @@ async fn queue_pull_request_workflow_event(
         && pull.head_repo_id != Some(repository.id)
         && pull.workflows_approved_sha.as_deref() != Some(&pull.head_sha);
     let may_discover = if awaiting_approval {
-        crate::backend::db::repositories::access::get_user_repo_access(
-            pool,
-            actor_id,
-            repository.id,
-        )
-        .await
-        .map(|access| access.can_read())
+        codeyard_db_repos::repositories::access::get_user_repo_access(pool, actor_id, repository.id)
+            .await
+            .map(|access| access.can_read())
     } else {
         ci.actor_may_discover_workflows(repository.id, actor_id)
             .await
@@ -294,7 +290,7 @@ async fn queue_pull_request_workflow_event(
     if matched.is_empty() {
         return first_failure.map_or(Ok(()), Err);
     }
-    let owner = match crate::backend::db::ci::ci_repository_owner(pool, repository.id)
+    let owner = match codeyard_db_actions::ci::ci_repository_owner(pool, repository.id)
         .await
         .context("CI owner unavailable")
     {
@@ -395,7 +391,7 @@ pub async fn run_pull_request_workflows(
         });
     }
     let pull =
-        crate::backend::db::pull_requests::records::get_pull_request(pool, repository.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
             .map_err(crate::backend::repositories::pull_requests::write_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -411,14 +407,14 @@ pub async fn run_pull_request_workflows(
         message: "Pull request revisions could not be refreshed; workflows were not approved."
             .into(),
     })?;
-    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
         .map_err(crate::backend::repositories::pull_requests::write_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
         })?;
-    if !crate::backend::db::pull_requests::records::approve_pull_request_workflows(
+    if !codeyard_db_repos::pull_requests::records::approve_pull_request_workflows(
         pool,
         pull.id,
         user.id,
@@ -433,7 +429,7 @@ pub async fn run_pull_request_workflows(
                 .to_owned(),
         });
     }
-    let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, pull.id)
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
         .map_err(|_| OperationError::Updated { number })?
         .ok_or(OperationError::Updated { number })?;
@@ -472,7 +468,7 @@ async fn release_awaiting_runs(
         crate::backend::repositories::pull_requests::stacks::merge_target(pool, pull)
             .await
             .map_err(|_| AdmissionError::Unavailable)?;
-    let runs = crate::backend::db::ci::latest_ci_runs_for_commit(
+    let runs = codeyard_db_actions::ci::latest_ci_runs_for_commit(
         pool,
         repository.id,
         &pull.head_sha,

@@ -5,15 +5,15 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::actions::CacheLimit;
-use crate::backend::db::actions::CachePolicyError;
-use crate::backend::db::organizations::OrganizationOutcome;
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     routing::{get, put, MethodRouter},
     Json,
 };
+use codeyard_db_core::queries::actions::CacheLimit;
+use codeyard_db_core::queries::actions::CachePolicyError;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -43,11 +43,11 @@ async fn get_policy(
         .user
         .id;
     let own = outcome(
-        crate::backend::db::actions::get_org_cache_settings(&state.pool, actor, name)
+        codeyard_db_actions::actions::get_org_cache_settings(&state.pool, actor, name)
             .await
             .map_err(Error::unavailable)?,
     )?;
-    let site = crate::backend::db::actions::get_actions_settings(&state.pool)
+    let site = codeyard_db_actions::actions::get_actions_settings(&state.pool)
         .await
         .map_err(Error::unavailable)?;
     Ok(Json(match kind {
@@ -73,7 +73,7 @@ async fn set_policy(
     authentication.require_write()?;
     let value = input.value(kind)?;
     outcome(
-        crate::backend::db::actions::set_org_cache_limit(
+        codeyard_db_actions::actions::set_org_cache_limit(
             &state.pool,
             authentication.user.id,
             name,

@@ -3,14 +3,14 @@ use crate::backend::api::organizations::organization::Fields;
 use crate::backend::api::organizations::INDEX;
 use crate::backend::app::AppState;
 
-use crate::backend::db::private_registries::Configuration;
-use crate::backend::db::private_registries::RegistryError;
-use crate::backend::db::secrets::SecretsError;
 use axum::{
     extract::{rejection::FormRejection, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_db_actions::private_registries::Configuration;
+use codeyard_db_actions::private_registries::RegistryError;
+use codeyard_db_core::queries::secrets::SecretsError;
 use codeyard_webui::pages::orgs::private_registries as view;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
@@ -20,7 +20,7 @@ use std::{collections::BTreeMap, sync::Arc};
 pub(super) const BODY_LIMIT: usize = 512 * 1024;
 
 pub(super) fn project(
-    registry: crate::backend::db::private_registries::Registry,
+    registry: codeyard_db_actions::private_registries::Registry,
 ) -> Result<view::Registry, RegistryError> {
     let config: Configuration = serde_json::from_str(&registry.configuration)?;
     let value = serde_json::to_value(&config)?;
@@ -159,13 +159,14 @@ pub(super) async fn post(
         });
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
     let result = if !bounded {
         Err(RegistryError::Invalid("configuration"))
     } else {
         match crate::backend::api::organizations::organization::field(&form, "action") {
             "registry-delete" => {
-                crate::backend::db::private_registries::delete(
+                codeyard_db_actions::private_registries::delete(
                     &ctx.state.pool,
                     actor,
                     &credential,
@@ -180,7 +181,7 @@ pub(super) async fn post(
                         .get("value")
                         .filter(|v| !v.is_empty())
                         .map(String::as_str);
-                    crate::backend::db::private_registries::save(
+                    codeyard_db_actions::private_registries::save(
                         &ctx.state.pool,
                         ctx.state.secret_encryptor.as_deref(),
                         actor,

@@ -16,7 +16,7 @@ use std::sync::Arc;
 /// live on other nodes, so the checks refuse to report success for repositories they did not read.
 async fn refuse_cluster(pool: &codeyard_db_core::DbPool, command: &str) -> Result<()> {
     ensure!(
-        !crate::backend::db::cluster::cluster_enabled(pool).await?,
+        !codeyard_db_cluster::cluster::cluster_enabled(pool).await?,
         "codeyard repo {command} covers a single-node installation; this one is in cluster mode"
     );
     Ok(())
@@ -36,14 +36,14 @@ fn pull_number(reference: &str) -> Option<i64> {
 /// lease through the SQL CAS, and accept its retained commit only while that live branch matches.
 async fn retain_matching_head(
     pool: &codeyard_db_core::DbPool,
-    pull: &crate::backend::db::backups::PullRequestHead,
+    pull: &codeyard_db_cluster::backups::PullRequestHead,
     candidate: &str,
 ) -> Result<Option<Arc<git::locks::PublicationGuard>>> {
     let Some(head_id) = pull.head_repo_id else {
         return Ok(None);
     };
     let Some(head) =
-        crate::backend::db::repositories::records::get_repository_by_id(pool, head_id).await?
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, head_id).await?
     else {
         return Ok(None);
     };
@@ -74,7 +74,7 @@ pub async fn verify(pool: &codeyard_db_core::DbPool, repair: bool) -> Result<usi
         problems += 1;
     };
     let mut deleted = HashMap::new();
-    for repository in crate::backend::db::backups::list_repositories(pool).await? {
+    for repository in codeyard_db_cluster::backups::list_repositories(pool).await? {
         if repository.storage_node_id.is_some() {
             continue;
         }
@@ -120,7 +120,7 @@ pub async fn verify(pool: &codeyard_db_core::DbPool, repair: bool) -> Result<usi
                         "{label}: the default branch is recorded as {}, Git HEAD names {head}",
                         repository.default_branch
                     ));
-                } else if crate::backend::db::repositories::records::restore_repository_default_branch(
+                } else if codeyard_db_repos::repositories::records::restore_repository_default_branch(
                     pool,
                     repository.id,
                     &repository.default_branch,
@@ -142,9 +142,9 @@ pub async fn verify(pool: &codeyard_db_core::DbPool, repair: bool) -> Result<usi
         let mut known = HashSet::new();
         let mut updates = String::new();
         let pulls =
-            crate::backend::db::backups::list_pull_request_heads(pool, repository.id).await?;
+            codeyard_db_cluster::backups::list_pull_request_heads(pool, repository.id).await?;
         let ci_revisions =
-            crate::backend::db::backups::list_ci_revisions(pool, repository.id).await?;
+            codeyard_db_cluster::backups::list_ci_revisions(pool, repository.id).await?;
         let branches: HashMap<String, String> = mirror::refs(path, "refs/heads/")
             .await?
             .into_iter()
@@ -173,7 +173,7 @@ pub async fn verify(pool: &codeyard_db_core::DbPool, repair: bool) -> Result<usi
                                 "{label}: pull request #{number} records {}, its live head branch has {sha}",
                                 pull.head_sha
                             ));
-                        } else if crate::backend::db::pull_requests::records::move_open_pull_request_head(
+                        } else if codeyard_db_repos::pull_requests::records::move_open_pull_request_head(
                             pool,
                             pull.id,
                             &pull.head_sha,
@@ -230,7 +230,7 @@ pub async fn verify(pool: &codeyard_db_core::DbPool, repair: bool) -> Result<usi
                             "{label}: pull request #{number} records base {}, Git has {base}",
                             pull.base_sha
                         ));
-                    } else if crate::backend::db::pull_requests::records::move_open_pull_request_base(
+                    } else if codeyard_db_repos::pull_requests::records::move_open_pull_request_base(
                         pool,
                         pull.id,
                         &pull.base_sha,
@@ -305,15 +305,12 @@ pub async fn verify(pool: &codeyard_db_core::DbPool, repair: bool) -> Result<usi
 pub async fn rebuild(pool: &codeyard_db_core::DbPool) -> Result<()> {
     refuse_cluster(pool, "rebuild").await?;
     let mut rebuilt = 0;
-    for repository in crate::backend::db::backups::list_repositories(pool).await? {
+    for repository in codeyard_db_cluster::backups::list_repositories(pool).await? {
         if repository.storage_node_id.is_some() {
             continue;
         }
-        crate::backend::db::repositories::records::advance_contribution_version(
-            pool,
-            repository.id,
-        )
-        .await?;
+        codeyard_db_repos::repositories::records::advance_contribution_version(pool, repository.id)
+            .await?;
         let path = Path::new(&repository.disk_path);
         if !path.join("HEAD").is_file() {
             continue;
@@ -323,7 +320,7 @@ pub async fn rebuild(pool: &codeyard_db_core::DbPool) -> Result<()> {
             .with_context(|| format!("rebuild {} (id {})", repository.name, repository.id))?;
         // The language rows are derived from Git. Forget the cache marker first, or the scan
         // returns the rows that were lost.
-        crate::backend::db::repository_stats::forget_languages(pool, repository.id).await?;
+        codeyard_db_repos::repository_stats::forget_languages(pool, repository.id).await?;
         let store = crate::backend::repositories::store::repo_store(&repository, None);
         crate::backend::repositories::languages::compute_and_store(
             pool,
@@ -334,7 +331,7 @@ pub async fn rebuild(pool: &codeyard_db_core::DbPool) -> Result<()> {
         .await
         .map_err(|error| anyhow::anyhow!("languages of {}: {error}", repository.name))?;
         let size = i64::try_from(store.size_bytes().await?)?;
-        crate::backend::db::repositories::records::update_repo_size(pool, repository.id, size)
+        codeyard_db_repos::repositories::records::update_repo_size(pool, repository.id, size)
             .await?;
         rebuilt += 1;
     }

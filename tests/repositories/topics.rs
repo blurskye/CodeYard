@@ -37,7 +37,7 @@ async fn topics_save_validate_and_filter(pg: bool) {
     codeyard::backend::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -103,7 +103,7 @@ async fn topics_save_validate_and_filter(pg: bool) {
     assert_eq!(reply.status, StatusCode::FORBIDDEN, "{}", reply.text());
 
     // A collaborator with write access saves the About text, through JSON and the native form.
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         database.pool(),
         bob_id,
         id,
@@ -197,10 +197,9 @@ async fn topics_save_validate_and_filter(pg: bool) {
     database
         .execute(&format!("DELETE FROM repositories WHERE id={id}"), &[])
         .await;
-    let topics =
-        codeyard::backend::db::repositories::topics::repository_topics(database.pool(), &[id])
-            .await
-            .unwrap();
+    let topics = codeyard_db_repos::repositories::topics::repository_topics(database.pool(), &[id])
+        .await
+        .unwrap();
     assert!(topics.is_empty());
     database.finish().await;
 }

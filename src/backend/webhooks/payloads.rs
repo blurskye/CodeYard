@@ -57,7 +57,7 @@ fn optional_time(value: Option<chrono::DateTime<chrono::Utc>>) -> Value {
     value.map_or(Value::Null, time)
 }
 
-pub fn team(access: &crate::backend::db::repositories::push_teams::TeamAccess) -> Value {
+pub fn team(access: &codeyard_db_repos::repositories::push_teams::TeamAccess) -> Value {
     team_document(&access.team, &access.org_slug, access.permission)
 }
 
@@ -82,7 +82,7 @@ pub fn team_document(team: &codeyard_db_core::models::Team, org: &str, permissio
 }
 
 pub fn repository_property(
-    definition: &crate::backend::db::organizations::properties::Definition,
+    definition: &codeyard_db_core::queries::organizations::properties::Definition,
     org: &str,
 ) -> Value {
     let mut value = json!(definition.fields);
@@ -95,15 +95,13 @@ pub fn repository_property(
     value
 }
 pub fn repository_property_values(
-    values: &crate::backend::db::organizations::properties::RepositoryValues,
+    values: &codeyard_db_orgs::organizations::properties::RepositoryValues,
     org: &str,
 ) -> Value {
     json!({"repository_id":values.repository.id,"repository_name":values.repository.name,"repository_full_name":format!("{org}/{}",values.repository.name),"properties":values.properties})
 }
 
-pub fn organization_role(
-    role: &crate::backend::db::organizations::roles::OrganizationRole,
-) -> Value {
+pub fn organization_role(role: &codeyard_db_orgs::organizations::roles::OrganizationRole) -> Value {
     let base = match role.base_level {
         1 => Some("read"),
         2 => Some("triage"),
@@ -113,7 +111,7 @@ pub fn organization_role(
         _ => None,
     };
     let permissions = if role.id
-        == crate::backend::db::organizations::roles::SECURITY_MANAGER_ROLE_ID
+        == codeyard_db_core::queries::organizations::roles::SECURITY_MANAGER_ROLE_ID
         && role.base_level == 1
     {
         vec!["manage_security"]
@@ -123,7 +121,7 @@ pub fn organization_role(
     json!({"id":role.id,"name":role.name,"description":role.description,"base_role":base,"source":"Predefined","permissions":permissions,"organization":null,"created_at":time(role.created_at),"updated_at":time(role.updated_at)})
 }
 pub fn organization_role_user(
-    assignment: &crate::backend::db::organizations::roles::UserAssignment,
+    assignment: &codeyard_db_orgs::organizations::roles::UserAssignment,
     org: &str,
     level: i16,
 ) -> Value {
@@ -139,7 +137,7 @@ pub fn organization_role_user(
         .inherited_from
         .iter()
         .map(
-            |t| team(&crate::backend::db::repositories::push_teams::TeamAccess {
+            |t| team(&codeyard_db_repos::repositories::push_teams::TeamAccess {
                 team: t.clone(),
                 org_slug: org.into(),
                 permission: level
@@ -218,7 +216,7 @@ pub fn referrer_traffic(
 }
 
 pub fn repository_activity(
-    activity: &crate::backend::db::repositories::activity::Activity,
+    activity: &codeyard_db_repos::repositories::activity::Activity,
 ) -> Value {
     let actor = activity
         .actor_id
@@ -237,7 +235,7 @@ pub fn release_notes(notes: &crate::backend::repositories::releases::ReleaseNote
     json!({"name":notes.name,"body":notes.body})
 }
 
-pub fn autolink(link: &crate::backend::db::repositories::autolinks::Autolink) -> Value {
+pub fn autolink(link: &codeyard_db_repos::repositories::autolinks::Autolink) -> Value {
     json!({"id":link.id,"key_prefix":link.key_prefix,"url_template":link.url_template,"is_alphanumeric":link.is_alphanumeric})
 }
 
@@ -282,7 +280,7 @@ pub fn collaborator(user: &User, level: codeyard_db_core::models::AccessLevel) -
 }
 
 pub fn repository_invitation(
-    invitation: &crate::backend::db::repositories::collaborators::Invitation,
+    invitation: &codeyard_db_repos::repositories::collaborators::Invitation,
     repo: Value,
     inviter: &Person,
     invitee: &Person,
@@ -370,7 +368,7 @@ pub fn webhook_delivery(
 }
 
 pub fn deployment(
-    deployment: &crate::backend::db::deployments::Deployment,
+    deployment: &codeyard_db_actions::deployments::Deployment,
     creator: Option<Value>,
     payload: Value,
     owner: &str,
@@ -388,7 +386,7 @@ pub fn deployment(
 }
 
 pub fn deployment_status(
-    status: &crate::backend::db::deployments::Status,
+    status: &codeyard_db_actions::deployments::Status,
     creator: Option<Value>,
     owner: &str,
     repo: &str,
@@ -434,7 +432,7 @@ pub fn team_organization(
 }
 
 pub fn environment(
-    environment: &crate::backend::db::environments::Environment,
+    environment: &codeyard_db_actions::environments::Environment,
     owner: &str,
     repo: &str,
     reviewers: Vec<Value>,
@@ -447,7 +445,7 @@ pub fn environment(
         value["wait_timer"] = json!(environment.wait_timer);
         rules.push(value);
     }
-    if serde_json::from_str::<Vec<crate::backend::db::environments::Reviewer>>(
+    if serde_json::from_str::<Vec<codeyard_db_actions::environments::Reviewer>>(
         &environment.reviewers,
     )
     .is_ok_and(|stored| !stored.is_empty())
@@ -480,8 +478,8 @@ pub fn user(user: &User) -> Value {
 
 /// Certified OpenPGP material; email confirmation is live account state, never a key claim.
 pub fn gpg_key(
-    key: &crate::backend::db::users::gpg_keys::GpgKey,
-    subkeys: &[crate::backend::db::users::gpg_keys::GpgKey],
+    key: &codeyard_db_identity::users::gpg_keys::GpgKey,
+    subkeys: &[codeyard_db_identity::users::gpg_keys::GpgKey],
     verified_emails: &[String],
 ) -> Value {
     let material = &key.material;
@@ -499,12 +497,12 @@ pub fn gpg_key(
 /// Public account fields; contact email is not published without an explicit visibility choice.
 pub fn public_user(
     user: &User,
-    profile: &crate::backend::db::users::profiles::ProfileSettings,
+    profile: &codeyard_db_identity::users::profiles::ProfileSettings,
     public_repos: i64,
     followers: i64,
     following: i64,
     public_gists: i64,
-    statistics: Option<&crate::backend::db::users::profiles::AccountStatistics>,
+    statistics: Option<&codeyard_db_identity::users::profiles::AccountStatistics>,
 ) -> Value {
     let mut value = crate::backend::webhooks::payloads::user(user);
     value["name"] = json!(user.display_name);
@@ -533,8 +531,8 @@ pub fn public_user(
 }
 
 pub fn package_url(
-    owner: &crate::backend::db::packages::Owner,
-    package: &crate::backend::db::packages::Package,
+    owner: &codeyard_db_repos::packages::Owner,
+    package: &codeyard_db_repos::packages::Package,
 ) -> String {
     let namespace = if owner.kind == "org" { "orgs" } else { "users" };
     format!(
@@ -546,8 +544,8 @@ pub fn package_url(
 }
 
 pub fn package(
-    owner: &crate::backend::db::packages::Owner,
-    package: &crate::backend::db::packages::Package,
+    owner: &codeyard_db_repos::packages::Owner,
+    package: &codeyard_db_repos::packages::Package,
     version_count: i64,
     repository: Option<Value>,
 ) -> Value {
@@ -574,9 +572,9 @@ fn package_time(seconds: i64) -> String {
 }
 
 pub fn package_version(
-    owner: &crate::backend::db::packages::Owner,
-    package: &crate::backend::db::packages::Package,
-    version: &crate::backend::db::packages::Version,
+    owner: &codeyard_db_repos::packages::Owner,
+    package: &codeyard_db_repos::packages::Package,
+    version: &codeyard_db_repos::packages::Version,
     tags: &[String],
 ) -> Value {
     let path = package_url(owner, package);
@@ -633,7 +631,7 @@ pub fn simple_person(person: &Person) -> Value {
 
 /// Project documents are shared by REST and project events.
 pub fn project(
-    project: &crate::backend::db::projects::Project,
+    project: &codeyard_db_repos::projects::Project,
     owner: Value,
     creator: Value,
 ) -> Value {
@@ -650,10 +648,10 @@ pub fn project(
 }
 
 pub fn project_field(
-    field: &crate::backend::db::projects::Field,
+    field: &codeyard_db_repos::projects::Field,
     project_url: &str,
 ) -> anyhow::Result<Value> {
-    let config = crate::backend::db::projects::field_configuration(field)?;
+    let config = codeyard_db_repos::projects::field_configuration(field)?;
     let prefix = match field.data_type.as_str() {
         "single_select" => "PVTSSF",
         "iteration" => "PVTIF",
@@ -685,7 +683,7 @@ pub fn project_field(
 }
 
 pub fn project_item(
-    item: &crate::backend::db::projects::Item,
+    item: &codeyard_db_repos::projects::Item,
     project_url: &str,
     creator: Value,
     content: Value,
@@ -697,18 +695,18 @@ pub fn project_item(
         "is_archived": item.archived, "archived_at": optional_time(item.archived_at)})
 }
 
-pub fn project_draft(item: &crate::backend::db::projects::Item, creator: Value) -> Value {
+pub fn project_draft(item: &codeyard_db_repos::projects::Item, creator: Value) -> Value {
     json!({"id": item.id, "node_id": crate::backend::api::github::node_id::encode("DI",item.id), "title": item.draft_title,
         "body": item.draft_body, "user": creator, "created_at": time(item.created_at), "updated_at": time(item.updated_at)})
 }
 
 pub fn project_view(
-    view: &crate::backend::db::projects::View,
+    view: &codeyard_db_repos::projects::View,
     project_url: &str,
     html_url: &str,
     creator: Value,
 ) -> anyhow::Result<Value> {
-    let config: crate::backend::db::projects::NewView = serde_json::from_str(&view.configuration)?;
+    let config: codeyard_db_repos::projects::NewView = serde_json::from_str(&view.configuration)?;
     let mut value = serde_json::to_value(config)?;
     let map = value.as_object_mut().expect("view configuration object");
     map.extend(
@@ -736,7 +734,7 @@ pub fn organization_person(id: i64, name: &str) -> Value {
     )));
     value
 }
-pub fn topic(topic: &crate::backend::db::catalog_search::Topic) -> Value {
+pub fn topic(topic: &codeyard_db_repos::catalog_search::Topic) -> Value {
     json!({"name":topic.name,"display_name":topic.display_name,"short_description":topic.short_description,"description":topic.description,"created_by":topic.created_by,"released":topic.released,"featured":topic.featured,"curated":topic.curated,"created_at":time(topic.created_at),"updated_at":time(topic.updated_at),"repository_count":topic.repository_count})
 }
 pub fn repository_owner(repo: &Repository, owner: &str) -> Value {
@@ -751,7 +749,7 @@ pub fn repository_owner(repo: &Repository, owner: &str) -> Value {
 }
 
 pub fn repository_snapshot(
-    snapshot: &crate::backend::db::repository_stats::RepositorySnapshot,
+    snapshot: &codeyard_db_core::queries::repository_stats::RepositorySnapshot,
 ) -> Value {
     let mut value = repository(&snapshot.repository, &snapshot.owner);
     value["open_issues"] = json!(snapshot.facts.open_items);
@@ -775,7 +773,7 @@ pub fn set_fork_counts(repository: &mut Value, count: i32) {
 /// GitHub's repository switches, as REST documents and webhook payloads report them.
 pub fn set_features(
     repository: &mut serde_json::Map<String, Value>,
-    features: &crate::backend::db::repositories::records::RepositoryFeatures,
+    features: &codeyard_db_repos::repositories::records::RepositoryFeatures,
 ) {
     for (key, value) in [
         ("has_wiki", json!(features.wiki)),
@@ -906,7 +904,7 @@ pub fn commit_comment(
     association: &str,
     repo: &Repository,
     owner: &str,
-    reactions: &[crate::backend::db::reactions::ReactionCount],
+    reactions: &[codeyard_db_repos::reactions::ReactionCount],
 ) -> Value {
     let url = repo_url(owner, &repo.name);
     json!({
@@ -1058,13 +1056,10 @@ pub fn status(
     })
 }
 
-pub fn reaction_rollup(
-    url: &str,
-    counts: &[crate::backend::db::reactions::ReactionCount],
-) -> Value {
+pub fn reaction_rollup(url: &str, counts: &[codeyard_db_repos::reactions::ReactionCount]) -> Value {
     let mut value =
         json!({"url":url,"total_count":counts.iter().map(|count|count.count).sum::<i64>()});
-    for content in crate::backend::db::reactions::CONTENTS {
+    for content in codeyard_db_repos::reactions::CONTENTS {
         value[content] = json!(counts
             .iter()
             .find(|count| count.content == content)
@@ -1073,10 +1068,7 @@ pub fn reaction_rollup(
     value
 }
 
-pub fn reaction(
-    reaction: &crate::backend::db::reactions::Reaction,
-    author: Option<&User>,
-) -> Value {
+pub fn reaction(reaction: &codeyard_db_repos::reactions::Reaction, author: Option<&User>) -> Value {
     json!({
         "id": reaction.id,
         "node_id": crate::backend::api::github::node_id::encode("REA", reaction.id),
@@ -1150,7 +1142,7 @@ pub fn issues(action: &str, issue: &Issue, author: &Person, scope: Scope) -> Val
 }
 
 pub fn issue_suggestion(
-    s: &crate::backend::db::suggestions::Suggestion,
+    s: &codeyard_db_repos::suggestions::Suggestion,
 ) -> serde_json::Result<Value> {
     let target_value: Value = serde_json::from_str(&s.value_json)?;
     Ok(
@@ -1158,14 +1150,14 @@ pub fn issue_suggestion(
     )
 }
 
-pub fn issue_type(attribute: &crate::backend::db::issue_attributes::Attribute) -> Value {
+pub fn issue_type(attribute: &codeyard_db_repos::issue_attributes::Attribute) -> Value {
     json!({"id":attribute.id,"node_id":node_id::encode("IT",attribute.id),"name":attribute.name,"description":attribute.description,"color":attribute.color,"is_enabled":attribute.is_enabled,"created_at":time(attribute.created_at),"updated_at":time(attribute.updated_at)})
 }
-pub fn issue_field(attribute: &crate::backend::db::issue_attributes::Attribute) -> Value {
+pub fn issue_field(attribute: &codeyard_db_repos::issue_attributes::Attribute) -> Value {
     let options=matches!(attribute.data_type.as_deref(),Some("single_select"|"multi_select")).then(||attribute.options.iter().map(|option|json!({"id":option.id,"name":option.name,"description":option.description,"color":option.color,"priority":option.priority})).collect::<Vec<_>>());
     json!({"id":attribute.id,"node_id":node_id::encode("IF",attribute.id),"name":attribute.name,"description":attribute.description,"data_type":attribute.data_type,"visibility":attribute.visibility,"options":options,"created_at":time(attribute.created_at),"updated_at":time(attribute.updated_at)})
 }
-pub fn issue_field_value(field: &crate::backend::db::issue_attributes::FieldValue) -> Value {
+pub fn issue_field_value(field: &codeyard_db_repos::issue_attributes::FieldValue) -> Value {
     let attribute = &field.attribute;
     let option = |id: i64| {
         attribute
@@ -1203,7 +1195,7 @@ pub fn issue_field_value(field: &crate::backend::db::issue_attributes::FieldValu
 }
 
 pub fn issue_event(
-    event: &crate::backend::db::timeline::Event,
+    event: &codeyard_db_repos::timeline::Event,
     actor: Option<&User>,
     repo: &Repository,
     owner: &str,
@@ -1359,7 +1351,7 @@ pub fn pull_request(action: &str, pull: &PullRequest, author: &Person, scope: Sc
     })
 }
 
-pub fn comment_pin(pin: &crate::backend::db::pins::Pin, pinner: Option<&User>) -> Value {
+pub fn comment_pin(pin: &codeyard_db_repos::pins::Pin, pinner: Option<&User>) -> Value {
     json!({"pinned_at":time(pin.pinned_at),"pinned_by":pinner.map(user)})
 }
 
@@ -1446,7 +1438,7 @@ pub fn pull_request_json(
 
 /// GitHub's `auto_merge` object for a pull request's saved auto-merge request.
 pub fn auto_merge(
-    request: &crate::backend::db::pull_requests::auto_merge::AutoMergeRequest,
+    request: &codeyard_db_repos::pull_requests::auto_merge::AutoMergeRequest,
     enabled_by: Option<&User>,
 ) -> Value {
     json!({
@@ -1802,14 +1794,14 @@ pub fn release(action: &str, release: &Release, author: &Person, scope: Scope) -
 
 /// Repository-scoped native inbox subjects use the same repository document as hooks.
 pub fn notification_thread_json(
-    view: &crate::backend::db::notifications::threads::ThreadView,
+    view: &codeyard_db_repos::notifications::threads::ThreadView,
 ) -> Value {
     let url = codeyard_model::urls::api_url(&format!("/notifications/threads/{}", view.thread.id));
     json!({"id":view.thread.id.to_string(),"repository":repository(&view.repository,&view.owner),"subject":{"title":view.title,"url":view.subject_url,"latest_comment_url":view.latest_comment_url,"type":view.subject_type},"reason":view.reason,"unread":view.unread,"updated_at":view.updated_at,"last_read_at":view.last_read_at,"url":url,"subscription_url":format!("{url}/subscription")})
 }
 pub fn notification_subscription_json(
-    thread: &crate::backend::db::notifications::threads::NotificationThread,
-    subscription: &crate::backend::db::notifications::threads::ThreadSubscription,
+    thread: &codeyard_db_repos::notifications::threads::NotificationThread,
+    subscription: &codeyard_db_repos::notifications::threads::ThreadSubscription,
 ) -> Value {
     let url = codeyard_model::urls::api_url(&format!("/notifications/threads/{}", thread.id));
     json!({"subscribed":subscription.subscribed,"ignored":subscription.ignored,"reason":null,"created_at":subscription.created_at,"url":format!("{url}/subscription"),"thread_url":url})
@@ -1817,7 +1809,7 @@ pub fn notification_subscription_json(
 
 /// Persisted activity uses the current repository and actor documents.
 pub fn event_json(
-    event: &crate::backend::db::events::Event,
+    event: &codeyard_db_repos::events::Event,
     repo: &Repository,
     owner: &str,
     actor: Value,
@@ -2187,7 +2179,7 @@ pub fn push(
 }
 
 pub fn action_workflow(
-    workflow: &crate::backend::db::action_workflows::Workflow,
+    workflow: &codeyard_db_actions::action_workflows::Workflow,
     owner: &str,
     repo: &str,
 ) -> Value {
@@ -2259,7 +2251,7 @@ pub fn action_run(
     repository: Value,
     head_repository: Value,
     head_commit: Value,
-    metadata: &crate::backend::db::action_runs::RunMetadata,
+    metadata: &codeyard_db_actions::action_runs::RunMetadata,
     pull_requests: Value,
 ) -> Value {
     let workflow_id = metadata.workflow_id;
@@ -2280,7 +2272,7 @@ pub fn action_run(
         })
         .unwrap_or(&run.workflow_path);
     let title = bounded_text(title, 1024);
-    let (status, conclusion) = crate::backend::db::action_runs::run_state(run);
+    let (status, conclusion) = codeyard_db_actions::action_runs::run_state(run);
     let mut value = json!({
         "id":id,"node_id":node_id::encode("WR",id),"head_branch":(!branch.is_empty()).then_some(branch),
         "run_number":run.workflow_run_number,"run_attempt":run.workflow_run_attempt.unwrap_or(1),"display_title":title,
@@ -2308,8 +2300,8 @@ pub fn action_run(
 }
 
 pub fn action_job(
-    job: &crate::backend::db::action_jobs::Job,
-    steps: &[crate::backend::db::action_jobs::Step],
+    job: &codeyard_db_actions::action_jobs::Job,
+    steps: &[codeyard_db_actions::action_jobs::Step],
     run: &codeyard_db_core::models::CiRun,
     owner: &str,
     repo: &str,
@@ -2333,7 +2325,7 @@ pub fn action_job(
 }
 
 pub fn action_artifact(
-    object: &crate::backend::db::action_objects::ActionObject,
+    object: &codeyard_db_actions::action_objects::ActionObject,
     run: Option<&codeyard_db_core::models::CiRun>,
     owner: &str,
     repo: &str,
@@ -2351,12 +2343,12 @@ pub fn action_artifact(
 
 /// Secret alert documents are shared with the REST API; only authorized callers open the value.
 pub fn secret_scanning_alert(
-    alert: &crate::backend::db::secret_scanning::Alert,
+    alert: &codeyard_db_security::secret_scanning::Alert,
     secret: &str,
     owner: &str,
     repo: &str,
     resolved_by: Option<&User>,
-    bypass: Option<&crate::backend::db::secret_scanning::Bypass>,
+    bypass: Option<&codeyard_db_security::secret_scanning::Bypass>,
     bypassed_by: Option<&User>,
 ) -> Value {
     let base = codeyard_model::urls::repo_url(owner, repo);

@@ -11,14 +11,14 @@ use crate::backend::api::repos::pulls::diff::render_diff;
 use crate::backend::api::repos::pulls::operation_error;
 use crate::backend::app::AppState;
 
-use crate::backend::db::pull_requests::reviews::PullRequestCommentEntry;
-use crate::backend::db::pull_requests::reviews::PullRequestReviewEntry;
 use crate::backend::issues::discussion_link;
 use crate::backend::issues::discussion_link_at;
 use crate::backend::issues::discussion_page;
 use crate::backend::issues::MAX_REVIEW_COMMENT_OFFSET;
 use crate::backend::repositories::code_owners::load_rules;
 use crate::backend::repositories::code_owners::resolve_owners;
+use codeyard_db_repos::pull_requests::reviews::PullRequestCommentEntry;
+use codeyard_db_repos::pull_requests::reviews::PullRequestReviewEntry;
 
 use crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
 
@@ -195,7 +195,7 @@ pub(crate) async fn page_reviews(
         0,
         0..=MAX_REVIEW_COMMENT_OFFSET,
     )?;
-    let comments = crate::backend::db::pull_requests::reviews::list_review_comments_page(
+    let comments = codeyard_db_repos::pull_requests::reviews::list_review_comments_page(
         &ctx.state.pool,
         &ids,
         offset as i64,
@@ -260,13 +260,13 @@ pub(crate) async fn reviewers(
     pull_id: i64,
     (base, head): (&str, &str),
 ) -> ResultPage<Vec<pulls::Reviewer>> {
-    let decisions = crate::backend::db::pull_requests::reviews::list_pull_request_review_decisions(
+    let decisions = codeyard_db_repos::pull_requests::reviews::list_pull_request_review_decisions(
         &ctx.state.pool,
         pull_id,
     )
     .await
     .map_err(|_| unavailable(ctx))?;
-    let requested = crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+    let requested = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
         &ctx.state.pool,
         pull_id,
     )
@@ -341,7 +341,7 @@ pub(crate) async fn reviewers(
             });
         }
     }
-    let teams = crate::backend::db::pull_requests::team_reviewers::list(
+    let teams = codeyard_db_repos::pull_requests::team_reviewers::list(
         &ctx.state.pool,
         repo.record.id,
         Some(pull_id),
@@ -350,7 +350,7 @@ pub(crate) async fn reviewers(
     .await
     .map_err(|_| unavailable(ctx))?;
     if let Some(owner) =
-        crate::backend::db::ci::ci_repository_owner(&ctx.state.pool, repo.record.id)
+        codeyard_db_actions::ci::ci_repository_owner(&ctx.state.pool, repo.record.id)
             .await
             .map_err(|_| unavailable(ctx))?
     {
@@ -376,10 +376,10 @@ async fn review_location(
     number: i32,
     review: &codeyard_db_core::models::PullRequestReview,
 ) -> String {
-    let position = crate::backend::db::pull_requests::reviews::count_discussion_items_through(
+    let position = codeyard_db_repos::pull_requests::reviews::count_discussion_items_through(
         &ctx.state.pool,
         review.pull_request_id,
-        crate::backend::db::pull_requests::reviews::DiscussionRef::Review(review.id),
+        codeyard_db_repos::pull_requests::reviews::DiscussionRef::Review(review.id),
     )
     .await;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
@@ -492,7 +492,7 @@ pub(crate) async fn native_review(
         ctx.state.cluster.as_ref(),
         &ctx.state.notification_broadcaster,
         user,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -896,7 +896,7 @@ pub(crate) async fn native_set_viewed(
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
     let user = ctx.require_user()?.id;
-    let pull = crate::backend::db::pull_requests::records::get_pull_request(
+    let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
         &ctx.state.pool,
         repo.record.id,
         number,
@@ -914,7 +914,7 @@ pub(crate) async fn native_set_viewed(
     }
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
     let path = submitted_path(&ctx, &form)?;
-    if path.len() > crate::backend::db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES
+    if path.len() > codeyard_db_repos::pull_requests::reviews::MAX_COMMENT_PATH_BYTES
         || path.contains('\0')
     {
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid diff path."));
@@ -936,7 +936,7 @@ pub(crate) async fn native_set_viewed(
         None
     };
     let blob = blob_sha.as_deref();
-    crate::backend::db::pull_requests::viewed::set_pull_request_file_viewed(
+    codeyard_db_repos::pull_requests::viewed::set_pull_request_file_viewed(
         &ctx.state.pool,
         pull.id,
         user,

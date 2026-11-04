@@ -157,7 +157,7 @@ impl Gateway {
     ) -> Result<()> {
         use crate::backend::repositories::git_sessions::protocol::TransactionPhase;
 
-        use crate::backend::db::cluster::writes as journal;
+        use codeyard_db_cluster::cluster::writes as journal;
         crate::backend::repositories::git_sessions::validation::validate_transaction_updates(
             updates,
         )?;
@@ -396,7 +396,7 @@ impl Gateway {
         for write in writes {
             let current = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
-                crate::backend::db::cluster::writes::load_write(&self.pool, &write.id),
+                codeyard_db_cluster::cluster::writes::load_write(&self.pool, &write.id),
             )
             .await??
             .context("write disappeared")?;
@@ -431,7 +431,7 @@ impl Gateway {
 
     /// The operation's repository, still at the location it was admitted at.
     async fn operation_repository(&self, operation: &Operation) -> Result<(Repository, PathBuf)> {
-        let repo = crate::backend::db::repositories::records::get_repository_by_id(
+        let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
             &self.pool,
             operation.repo_id,
         )
@@ -450,12 +450,12 @@ impl Gateway {
             // It may finish only in its original serving term, never in a successor's path.
             let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
             let view =
-                crate::backend::db::cluster::writes::recovery_view(&self.pool, repo.id).await?;
+                codeyard_db_cluster::cluster::writes::recovery_view(&self.pool, repo.id).await?;
             ensure!(
                 view.serving && view.term == term && view.primary_id == cluster.node_id,
                 "repository term changed"
             );
-            let node = crate::backend::db::cluster::get_node_by_id(&self.pool, cluster.node_id)
+            let node = codeyard_db_cluster::cluster::get_node_by_id(&self.pool, cluster.node_id)
                 .await?
                 .context("storage node unavailable")?;
             ensure!(
@@ -710,7 +710,7 @@ impl Gateway {
         if !publications.is_empty() {
             let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
             let uuid = crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
-            let term = crate::backend::db::cluster::writes::recovery_view(&self.pool, repo.id)
+            let term = codeyard_db_cluster::cluster::writes::recovery_view(&self.pool, repo.id)
                 .await?
                 .term;
             let changes = publications
@@ -759,7 +759,7 @@ impl Gateway {
             .await?;
         // A failed creation deletes its repository only while no write has reached it, so the
         // version moves before Git takes the push.
-        crate::backend::db::repositories::records::advance_contribution_version(
+        codeyard_db_repos::repositories::records::advance_contribution_version(
             &self.pool, current.id,
         )
         .await?;
@@ -777,12 +777,10 @@ impl Gateway {
         let (repo, path) = self.operation_repository(operation).await?;
         // Proofs made while this push was in flight saw the old history under the new version.
         // This comes first, so no later bookkeeping failure can leave them current.
-        crate::backend::db::repositories::records::advance_contribution_version(
-            &self.pool, repo.id,
-        )
-        .await?;
+        codeyard_db_repos::repositories::records::advance_contribution_version(&self.pool, repo.id)
+            .await?;
         if let Some(actor) =
-            crate::backend::db::users::accounts::get_user_by_id(&self.pool, operation.actor_id)
+            codeyard_db_identity::users::accounts::get_user_by_id(&self.pool, operation.actor_id)
                 .await?
         {
             // Git has moved the pushed objects out of quarantine by now.
@@ -823,7 +821,7 @@ impl Gateway {
             if !accepted || !consumed.insert(bypass.hash.clone()) {
                 continue;
             }
-            crate::backend::db::secret_scanning::use_bypass(
+            codeyard_db_security::secret_scanning::use_bypass(
                 &self.pool,
                 repo.id,
                 operation.actor_id,
@@ -871,7 +869,7 @@ impl Gateway {
             if !scan_heads.insert(commit.sha.clone()) {
                 continue;
             }
-            if crate::backend::db::secret_scanning::enqueue(
+            if codeyard_db_security::secret_scanning::enqueue(
                 &self.pool,
                 repo.id,
                 &commit.sha,
@@ -888,7 +886,7 @@ impl Gateway {
             }
         }
         if repo.is_gist {
-            if crate::backend::db::gists::pushed(&self.pool, repo.id, Some(repo.storage_node_id))
+            if codeyard_db_repos::gists::pushed(&self.pool, repo.id, Some(repo.storage_node_id))
                 .await
                 .is_err()
             {
@@ -913,7 +911,7 @@ impl Gateway {
             _ => AccessLevel::None,
         };
         let repo =
-            crate::backend::db::repositories::records::get_repository_by_id(&self.pool, repo.id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(&self.pool, repo.id)
                 .await?
                 .context("repository unavailable")?;
         // Webhooks follow the refs Git has just accepted. They never fail the push.
@@ -1002,7 +1000,7 @@ impl Gateway {
                     counts.insert(range, count);
                     count
                 };
-                crate::backend::db::activity::record_repository_push(
+                codeyard_db_repos::activity::record_repository_push(
                     &self.pool, repo.id, actor_id, branch, count,
                 )
                 .await?;
@@ -1023,7 +1021,7 @@ impl Gateway {
         for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
             match store.commit(&update.new).await {
                 Ok(commit) => {
-                    crate::backend::db::ci::record_ci_accepted_push(
+                    codeyard_db_actions::ci::record_ci_accepted_push(
                         &self.pool,
                         repo.id,
                         actor_id,
@@ -1038,7 +1036,7 @@ impl Gateway {
         }
         // Accepted-push facts above are independent of credential liveness.
         let current_repo =
-            crate::backend::db::repositories::records::get_repository_by_id(&self.pool, repo.id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(&self.pool, repo.id)
                 .await?
                 .context("repository unavailable")?;
         let current_identity = match operation
@@ -1164,7 +1162,7 @@ impl Gateway {
                     crate::backend::ci::infer_pipeline_from_workflow_path(&workflow.path);
                 // Recheck live identity/access for each dispatch, in particular
                 // CD/full. Neither event=push nor the prior pre-hook is a bypass.
-                let fresh_repo = crate::backend::db::repositories::records::get_repository_by_id(
+                let fresh_repo = codeyard_db_repos::repositories::records::get_repository_by_id(
                     &self.pool, repo.id,
                 )
                 .await?
@@ -1296,8 +1294,8 @@ impl Gateway {
                 head_change.filter(|change| change.old_target != change.new_target)
             {
                 let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
-                let view =
-                    crate::backend::db::cluster::writes::recovery_view(&self.pool, repo.id).await?;
+                let view = codeyard_db_cluster::cluster::writes::recovery_view(&self.pool, repo.id)
+                    .await?;
                 let uuid = crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
                 publication
                     .as_ref()
@@ -1315,7 +1313,7 @@ impl Gateway {
                     ))
                     .await?;
             }
-            crate::backend::db::repositories::records::update_repo_default_branch(
+            codeyard_db_repos::repositories::records::update_repo_default_branch(
                 &self.pool, repo.id, &branch,
             )
             .await?;

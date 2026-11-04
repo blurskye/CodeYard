@@ -1,10 +1,10 @@
 use super::*;
-use crate::backend::db::projects::Content;
-use crate::backend::db::projects::Field;
-use crate::backend::db::projects::FieldUpdate;
-use crate::backend::db::projects::Item;
-use crate::backend::db::projects::NewView;
 use axum::routing::{delete, patch};
+use codeyard_db_repos::projects::Content;
+use codeyard_db_repos::projects::Field;
+use codeyard_db_repos::projects::FieldUpdate;
+use codeyard_db_repos::projects::Item;
+use codeyard_db_repos::projects::NewView;
 use serde_json::json;
 
 /// The items among `items` whose linked issue or pull request this request may read: the

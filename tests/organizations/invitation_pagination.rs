@@ -5,7 +5,8 @@ use crate::support::{
     http_client::Client,
 };
 use axum::http::StatusCode;
-use codeyard::backend::db::{self, organizations::*};
+
+use codeyard_db_orgs::organizations::*;
 use codeyard_webui::app::Page;
 
 async fn organization(f: &Database, owner: i64, name: &str) -> i64 {
@@ -167,12 +168,14 @@ async fn deletion_removes_release_uploads(pg: bool) {
     let mut f = Database::new(pg).await;
     let owner = f.actor("release_org_owner").await;
     let org = organization(&f, owner, "release_org").await;
-    let repository = db::repositories::creation::insert_repository(
+    let repository = codeyard_db_repos::repositories::creation::insert_repository(
         f.pool(),
-        db::repositories::creation::NewRepository {
-            owner: db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::NewRepository {
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
                 actor_id: owner,
-                target: db::repositories::creation::RepositoryTarget::Organization(org),
+                target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                    org,
+                ),
             },
             name: "assets",
             description: None,
@@ -185,7 +188,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    let release = db::releases::create_release(
+    let release = codeyard_db_repos::releases::create_release(
         f.pool(),
         owner,
         repository.id,
@@ -195,9 +198,9 @@ async fn deletion_removes_release_uploads(pg: bool) {
     )
     .await
     .unwrap();
-    let file = db::files::reserve_upload(
+    let file = codeyard_db_repos::files::reserve_upload(
         f.pool(),
-        db::files::ReserveUpload {
+        codeyard_db_repos::files::ReserveUpload {
             user_id: owner,
             filename: "tool.bin",
             content_type: "application/octet-stream",
@@ -209,18 +212,18 @@ async fn deletion_removes_release_uploads(pg: bool) {
     )
     .await
     .unwrap();
-    db::files::verify_pending_upload(f.pool(), file.id, owner)
+    codeyard_db_repos::files::verify_pending_upload(f.pool(), file.id, owner)
         .await
         .unwrap();
-    db::releases::add_release_asset(
+    codeyard_db_repos::releases::add_release_asset(
         f.pool(),
         owner,
-        &db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), owner).await,
         ),
         repository.id,
         release.id,
-        &db::releases::NewReleaseAsset {
+        &codeyard_db_repos::releases::NewReleaseAsset {
             file_id: file.id,
             name: "tool.bin",
             label: None,
@@ -231,7 +234,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
     .await
     .unwrap();
     assert!(
-        db::files::get_file_by_id(f.pool(), file.id)
+        codeyard_db_repos::files::get_file_by_id(f.pool(), file.id)
             .await
             .unwrap()
             .unwrap()
@@ -250,7 +253,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
             .unwrap();
         let pool = f.pool().clone();
         let id = repository.id;
-        let deletion_session = db::users::sessions::create_session(
+        let deletion_session = codeyard_db_identity::users::sessions::create_session(
             &pool,
             &uuid::Uuid::new_v4().simple().to_string().repeat(2),
             owner,
@@ -265,7 +268,9 @@ async fn deletion_removes_release_uploads(pg: bool) {
                 &pool,
                 (
                     owner,
-                    &db::users::accounts::AccountCredential::Session(&deletion_session.id),
+                    &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                        &deletion_session.id,
+                    ),
                 ),
                 org,
                 id,
@@ -281,7 +286,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
         reader.rollback().await.unwrap();
         applied(deleting.await.unwrap().unwrap());
     } else {
-        let deletion_session = db::users::sessions::create_session(
+        let deletion_session = codeyard_db_identity::users::sessions::create_session(
             f.pool(),
             &uuid::Uuid::new_v4().simple().to_string().repeat(2),
             owner,
@@ -296,7 +301,9 @@ async fn deletion_removes_release_uploads(pg: bool) {
                 f.pool(),
                 (
                     owner,
-                    &db::users::accounts::AccountCredential::Session(&deletion_session.id),
+                    &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+                        &deletion_session.id,
+                    ),
                 ),
                 org,
                 repository.id,
@@ -305,7 +312,7 @@ async fn deletion_removes_release_uploads(pg: bool) {
             .unwrap(),
         );
     }
-    assert!(db::files::get_file_by_id(f.pool(), file.id)
+    assert!(codeyard_db_repos::files::get_file_by_id(f.pool(), file.id)
         .await
         .unwrap()
         .is_none());
@@ -314,10 +321,12 @@ async fn deletion_removes_release_uploads(pg: bool) {
         &[],
     )
     .await;
-    assert!(db::files::due_object_deletions(f.pool(), 100)
-        .await
-        .unwrap()
-        .contains(&file.object_key));
+    assert!(
+        codeyard_db_repos::files::due_object_deletions(f.pool(), 100)
+            .await
+            .unwrap()
+            .contains(&file.object_key)
+    );
     f.finish().await;
 }
 

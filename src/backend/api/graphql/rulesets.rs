@@ -9,14 +9,14 @@ use crate::backend::api::graphql::Arguments;
 use crate::backend::api::graphql::RequestContext;
 use crate::backend::api::graphql::Result;
 use crate::backend::api::graphql::Value;
-use crate::backend::db::organizations::OrganizationOutcome;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
 
-use crate::backend::db::rulesets::ListFilter;
-use crate::backend::db::rulesets::Owner;
-use crate::backend::db::rulesets::Page;
-use crate::backend::db::rulesets::Ruleset;
-use crate::backend::db::rulesets::Target;
 use async_graphql::Error;
+use codeyard_db_core::queries::rulesets::records::ListFilter;
+use codeyard_db_core::queries::rulesets::records::Owner;
+use codeyard_db_core::queries::rulesets::records::Page;
+use codeyard_db_core::queries::rulesets::records::Ruleset;
+use codeyard_db_core::queries::rulesets::Target;
 use serde_json::json;
 
 fn upper(value: impl serde::Serialize) -> Result<String> {
@@ -71,7 +71,7 @@ pub(super) async fn list(
     let mut rows = Vec::new();
     loop {
         let page = Page::new(rows.len() as i64, 100).map_err(unavailable)?;
-        let found = match crate::backend::db::rulesets::list_rulesets(
+        let found = match codeyard_db_repos::rulesets::list_rulesets(
             &request.state.pool,
             Some(request.auth.user.id),
             owner,
@@ -116,7 +116,7 @@ pub(super) async fn node(id: i64, request: &RequestContext) -> Result<Value> {
         }
         _ => return Err(missing()),
     };
-    match crate::backend::db::rulesets::get_ruleset(
+    match codeyard_db_repos::rulesets::get_ruleset(
         &request.state.pool,
         Some(request.auth.user.id),
         owner,

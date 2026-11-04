@@ -3,9 +3,6 @@ use crate::backend::api::http::context::PageContext;
 
 use crate::backend::app::AppState;
 
-use crate::backend::db::attestations::Filter;
-use crate::backend::db::attestations::Owner;
-use crate::backend::db::attestations::Refusal;
 use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -13,6 +10,9 @@ use axum::{
     routing::get,
     Form, Json, Router,
 };
+use codeyard_db_security::attestations::Filter;
+use codeyard_db_security::attestations::Owner;
+use codeyard_db_security::attestations::Refusal;
 use codeyard_webui::{app::Page as AppPage, encode_component, pages::attestations as view};
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
@@ -46,7 +46,7 @@ fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
 
 async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Response> {
     let (org, repo, repo_chrome, title, base) = if let Some(name) = params.get("org") {
-        let org = crate::backend::db::organizations::get_public_organization(&ctx.state.pool, name)
+        let org = codeyard_db_orgs::organizations::get_public_organization(&ctx.state.pool, name)
             .await
             .map_err(|error| failure(ctx, error))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Organization not found."))?;
@@ -59,7 +59,7 @@ async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Respons
         )
     } else if let Some(username) = params.get("username") {
         let user =
-            crate::backend::db::users::accounts::get_user_by_username(&ctx.state.pool, username)
+            codeyard_db_identity::users::accounts::get_user_by_username(&ctx.state.pool, username)
                 .await
                 .map_err(|error| failure(ctx, error))?
                 .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "User not found."))?;
@@ -93,13 +93,13 @@ async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Respons
     };
     let digest = ctx.query.get("digest").cloned().unwrap_or_default();
     let predicate = ctx.query.get("predicate").cloned().unwrap_or_default();
-    if !digest.is_empty() && !crate::backend::db::attestations::valid_digest(&digest) {
+    if !digest.is_empty() && !codeyard_db_core::queries::attestations::valid_digest(&digest) {
         return Err(ctx.error(
             StatusCode::BAD_REQUEST,
             "Enter a complete lowercase SHA-256 or SHA-512 subject digest.",
         ));
     }
-    if !predicate.is_empty() && !crate::backend::db::attestations::valid_predicate(&predicate) {
+    if !predicate.is_empty() && !codeyard_db_security::attestations::valid_predicate(&predicate) {
         return Err(ctx.error(
             StatusCode::BAD_REQUEST,
             "Predicate type is invalid or too long.",
@@ -126,7 +126,7 @@ async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Respons
         before: i64::MAX,
         limit: 31,
     };
-    let mut rows = crate::backend::db::attestations::summaries(&ctx.state.pool, &filter)
+    let mut rows = codeyard_db_security::attestations::summaries(&ctx.state.pool, &filter)
         .await
         .map_err(|error| failure(ctx, error))?;
     let more = rows.len() > 30;
@@ -236,7 +236,7 @@ async fn bundle(
         before: id + 1,
         limit: 1,
     };
-    match crate::backend::db::attestations::list(&ctx.state.pool, &filter).await {
+    match codeyard_db_security::attestations::list(&ctx.state.pool, &filter).await {
         Ok(rows) => match rows
             .first()
             .and_then(|row| serde_json::from_str::<serde_json::Value>(&row.bundle).ok())
@@ -285,14 +285,13 @@ async fn remove(
     };
     // Recheck the exact route scope, not just whether the actor can write some other repository.
     let org = if let Some(org) = params.get("org") {
-        match crate::backend::db::organizations::get_public_organization(&ctx.state.pool, org).await
-        {
+        match codeyard_db_orgs::organizations::get_public_organization(&ctx.state.pool, org).await {
             Ok(Some(org)) => Owner::Organization(org.id),
             Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
             Err(error) => return failure(&ctx, error),
         }
     } else if let Some(username) = params.get("username") {
-        match crate::backend::db::users::accounts::get_user_by_username(&ctx.state.pool, username)
+        match codeyard_db_identity::users::accounts::get_user_by_username(&ctx.state.pool, username)
             .await
         {
             Ok(Some(user)) => Owner::User(user.id),
@@ -322,7 +321,7 @@ async fn remove(
             before: id.saturating_add(1),
             limit: 1,
         };
-        match crate::backend::db::attestations::list(&ctx.state.pool, &filter).await {
+        match codeyard_db_security::attestations::list(&ctx.state.pool, &filter).await {
             Ok(rows) if !rows.is_empty() => {}
             Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "Attestation not found."),
             Err(error) => return failure(&ctx, error),
@@ -335,7 +334,7 @@ async fn remove(
             return ctx.error(StatusCode::NOT_FOUND, "Repository owner not found.");
         }
     };
-    match crate::backend::db::attestations::delete(
+    match codeyard_db_security::attestations::delete(
         &ctx.state.pool,
         ctx.database_actor(actor),
         org,

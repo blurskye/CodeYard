@@ -34,24 +34,24 @@ pub async fn status(
     viewer: Option<i64>,
 ) -> Result<FollowStatus, FollowError> {
     let following = match viewer.filter(|viewer| *viewer != target) {
-        Some(viewer) => crate::backend::db::following::is_user_following(pool, viewer, target)
+        Some(viewer) => codeyard_db_identity::following::is_user_following(pool, viewer, target)
             .await
             .map_err(|_| FollowError::Unavailable)?,
         None => false,
     };
     Ok(FollowStatus {
         following,
-        followers_count: crate::backend::db::following::count_user_followers(pool, target)
+        followers_count: codeyard_db_identity::following::count_user_followers(pool, target)
             .await
             .map_err(|_| FollowError::Unavailable)?,
-        following_count: crate::backend::db::following::count_user_following(pool, target)
+        following_count: codeyard_db_identity::following::count_user_following(pool, target)
             .await
             .map_err(|_| FollowError::Unavailable)?,
     })
 }
 
 fn mutation_error(error: anyhow::Error) -> FollowError {
-    if error.is::<crate::backend::db::following::FollowRestricted>()
+    if error.is::<codeyard_db_identity::following::FollowRestricted>()
         || error.is::<codeyard_support::credentials::AccountRestricted>()
     {
         FollowError::Restricted
@@ -64,15 +64,15 @@ pub async fn change(
     pool: &DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     username: &str,
     follow: bool,
 ) -> Result<FollowStatus, FollowError> {
-    let current = crate::backend::db::users::accounts::get_user_by_id(pool, actor)
+    let current = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| FollowError::Unavailable)?
         .ok_or(FollowError::Missing)?;
-    let target = crate::backend::db::users::accounts::get_user_by_username(pool, username)
+    let target = codeyard_db_identity::users::accounts::get_user_by_username(pool, username)
         .await
         .map_err(|_| FollowError::Unavailable)?
         .ok_or(FollowError::Missing)?;
@@ -88,7 +88,7 @@ pub async fn change(
     }
     if follow {
         let created =
-            crate::backend::db::following::follow_user(pool, actor, target.id, credential)
+            codeyard_db_identity::following::follow_user(pool, actor, target.id, credential)
                 .await
                 .map_err(mutation_error)?;
         if created {
@@ -126,7 +126,7 @@ pub async fn change(
             }
         }
     } else {
-        crate::backend::db::following::unfollow_user(pool, actor, target.id, credential)
+        codeyard_db_identity::following::unfollow_user(pool, actor, target.id, credential)
             .await
             .map_err(mutation_error)?;
     }

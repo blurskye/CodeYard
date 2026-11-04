@@ -11,7 +11,7 @@ async fn fake_s3_is_only_started_for_cluster_databases() {
     sqlite.close().await;
     let mut postgres = native_database::PostgresDatabase::new().await;
     assert!(FakeS3::for_database(&postgres.pool).await.is_none());
-    codeyard::backend::db::cluster::enable_cluster(&postgres.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&postgres.pool)
         .await
         .unwrap();
     let s3 = FakeS3::for_database(&postgres.pool).await.unwrap();

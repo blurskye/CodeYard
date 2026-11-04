@@ -1,0 +1,55 @@
+use codeyard_db_core::native_operation;
+use codeyard_db_core::queries::credentials::Actor;
+
+#[derive(Debug, thiserror::Error)]
+pub enum Refusal {
+    #[error("Write access is required")]
+    Denied,
+    #[error("Issue not found")]
+    Missing,
+    #[error("A repository can pin at most three issues")]
+    PinLimit,
+    #[error("Choose another repository of the same owner")]
+    Destination,
+    #[error("An issue cannot duplicate itself")]
+    Duplicate,
+}
+
+native_operation!(crate::postgres::issues::management::closing_candidates,
+    crate::sqlite::issues::management::closing_candidates,
+    fn closing_candidates(pool: &DbPool, viewer: Option<i64>, repo: i64, scope: &str, number: i32, before: i64) -> Result<Vec<codeyard_db_core::models::PullRequest>>);
+
+#[derive(Clone, Debug, sqlx::FromRow)]
+pub struct LinkedBranch {
+    pub id: i64,
+    pub repo_id: i64,
+    pub name: String,
+}
+
+native_operation!(crate::postgres::issues::management::duplicate,
+    crate::sqlite::issues::management::duplicate,
+    fn duplicate(pool: &DbPool, issue: i64) -> Result<Option<Issue>>);
+native_operation!(crate::postgres::issues::management::pinned,
+    crate::sqlite::issues::management::pinned,
+    fn pinned(pool: &DbPool, repo: i64) -> Result<Vec<Issue>>);
+native_operation!(crate::postgres::issues::management::pin,
+    crate::sqlite::issues::management::pin,
+    fn pin(pool: &DbPool, actor: impl Into<Actor>, repo: i64, issue: i64, pinned: bool) -> Result<()>);
+native_operation!(crate::postgres::issues::management::delete,
+    crate::sqlite::issues::management::delete,
+    fn delete(pool: &DbPool, actor: impl Into<Actor>, repo: i64, issue: i64) -> Result<()>);
+native_operation!(crate::postgres::issues::management::transfer,
+    crate::sqlite::issues::management::transfer,
+    fn transfer(pool: &DbPool, actor: impl Into<Actor>, repo: i64, issue: i64, destination: i64) -> Result<Issue>);
+native_operation!(crate::postgres::issues::management::redirect,
+    crate::sqlite::issues::management::redirect,
+    fn redirect(pool: &DbPool, repo: i64, number: i32) -> Result<Option<Issue>>);
+native_operation!(crate::postgres::issues::management::close_duplicate_with_previous,
+    crate::sqlite::issues::management::close_duplicate_with_previous,
+    fn close_duplicate_with_previous(pool: &DbPool, actor: impl Into<Actor>, repo: i64, issue: i64, duplicate: i64) -> Result<(Issue, Issue)>);
+native_operation!(crate::postgres::issues::management::linked_branches,
+    crate::sqlite::issues::management::linked_branches,
+    fn linked_branches(pool: &DbPool, issue: i64) -> Result<Vec<LinkedBranch>>);
+native_operation!(crate::postgres::issues::management::link_branch,
+    crate::sqlite::issues::management::link_branch,
+    fn link_branch(pool: &DbPool, actor: impl Into<Actor>, repo: i64, issue: i64, branch_repo: i64, name: &str) -> Result<LinkedBranch>);

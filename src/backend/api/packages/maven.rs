@@ -4,8 +4,8 @@ use crate::backend::api::packages::Error;
 use crate::backend::api::packages::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::packages::MavenFile;
-use crate::backend::db::packages::Permission;
+use codeyard_db_repos::packages::MavenFile;
+use codeyard_db_repos::packages::Permission;
 
 use axum::{
     body::to_bytes,
@@ -189,7 +189,7 @@ fn dispatch(
         let write = request.method() == Method::PUT;
         let auth = authenticate(state, request.headers(), write).await?;
         let owner = crate::backend::api::packages::owner(state, &artifact.owner).await?;
-        let repo = crate::backend::db::repositories::records::get_repository(
+        let repo = codeyard_db_repos::repositories::records::get_repository(
             &state.pool,
             &artifact.owner,
             &artifact.repo,
@@ -199,7 +199,7 @@ fn dispatch(
         .ok_or_else(Error::missing)?;
         let token = auth.as_ref().map(|a| a.token.id.into());
         if !write {
-            let (_, blob) = crate::backend::db::packages::maven_file(
+            let (_, blob) = codeyard_db_repos::packages::maven_file(
                 &state.pool,
                 repo.id,
                 token,
@@ -283,7 +283,7 @@ fn dispatch(
             )
         })?;
         if let Some(algorithm) = artifact.checksum {
-            let (package, blob) = crate::backend::db::packages::maven_file(
+            let (package, blob) = codeyard_db_repos::packages::maven_file(
                 &state.pool,
                 repo.id,
                 Some(auth.token.id.into()),
@@ -291,7 +291,7 @@ fn dispatch(
             )
             .await
             .map_err(Error::db)?;
-            crate::backend::db::packages::find(
+            codeyard_db_repos::packages::find(
                 &state.pool,
                 &owner,
                 "maven",
@@ -376,7 +376,7 @@ fn dispatch(
             return Err(Error::invalid());
         }
         let package = if plugin_metadata {
-            crate::backend::db::packages::find(
+            codeyard_db_repos::packages::find(
                 &state.pool,
                 &owner,
                 "maven",
@@ -388,7 +388,7 @@ fn dispatch(
             .await
             .map_err(Error::db)?
         } else {
-            crate::backend::db::packages::create(
+            codeyard_db_repos::packages::create(
                 &state.pool,
                 &owner,
                 "maven",
@@ -408,13 +408,13 @@ fn dispatch(
             package.id,
             auth.token.id,
             bytes.to_vec(),
-            crate::backend::db::packages::Charge::Upload,
+            codeyard_db_repos::packages::Charge::Upload,
         )
         .await
         .map_err(Error::db)?;
         let (group, name) = artifact.name.split_once(':').ok_or_else(Error::invalid)?;
         let metadata = serde_json::json!({"groupId":group,"artifactId":name}).to_string();
-        crate::backend::db::packages::put_maven_file(
+        codeyard_db_repos::packages::put_maven_file(
             &state.pool,
             auth.token.id,
             MavenFile {

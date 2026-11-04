@@ -1,9 +1,9 @@
 use super::fixture::{applied, Fixture};
 use axum::http::StatusCode;
 
-use codeyard::backend::db::organizations::OrganizationOutcome;
-use codeyard::backend::db::organizations::OrganizationPage;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations::OrganizationPage;
 
 pub async fn contracts(f: &Fixture) {
     let pool = f.database.pool();
@@ -39,7 +39,7 @@ pub async fn contracts(f: &Fixture) {
         (f.owner.id, allowed, OrgRole::Admin),
     ] {
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 pool, owner, org, f.admin.id, role,
             )
             .await
@@ -59,7 +59,7 @@ pub async fn contracts(f: &Fixture) {
         )
         .await;
     let rows = applied(
-        codeyard::backend::db::organizations::list_repository_creation_organizations(
+        codeyard_db_orgs::organizations::list_repository_creation_organizations(
             pool,
             f.admin.id,
             OrganizationPage::new(f.org, 1).unwrap(),
@@ -133,7 +133,7 @@ pub async fn contracts(f: &Fixture) {
             )
             .await;
         assert!(matches!(
-            codeyard::backend::db::organizations::list_repository_creation_organizations(
+            codeyard_db_orgs::organizations::list_repository_creation_organizations(
                 pool,
                 f.admin.id,
                 OrganizationPage::new(0, 100).unwrap()

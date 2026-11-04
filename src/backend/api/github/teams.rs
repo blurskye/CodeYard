@@ -28,15 +28,17 @@ type Params = HashMap<String, String>;
 /// Native team lists are read in keyset batches of this size.
 const BATCH: i64 = 100;
 
-fn batch(after: i64) -> Result<crate::backend::db::organizations::OrganizationPage> {
-    crate::backend::db::organizations::OrganizationPage::new(after, BATCH)
+fn batch(after: i64) -> Result<codeyard_db_orgs::organizations::OrganizationPage> {
+    codeyard_db_orgs::organizations::OrganizationPage::new(after, BATCH)
         .map_err(|_| Error::unavailable(()))
 }
 
-fn outcome<T>(value: crate::backend::db::organizations::OrganizationOutcome<T>) -> Result<T> {
+fn outcome<T>(
+    value: codeyard_db_core::queries::organizations::OrganizationOutcome<T>,
+) -> Result<T> {
     match value {
-        crate::backend::db::organizations::OrganizationOutcome::Denied => Err(denied()),
-        crate::backend::db::organizations::OrganizationOutcome::Conflict => {
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Denied => Err(denied()),
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Conflict => {
             Err(Error::validation("Team", "name", "already_exists"))
         }
         other => crate::backend::api::github::orgs::outcome(other),
@@ -49,7 +51,7 @@ fn denied() -> Error {
 
 fn writer(
     auth: &crate::backend::api::github::auth::Authentication,
-) -> crate::backend::db::credentials::Actor {
+) -> codeyard_db_core::queries::credentials::Actor {
     auth.database_actor()
 }
 
@@ -68,7 +70,7 @@ async fn actor(
 }
 
 async fn organization(state: &AppState, name: &str) -> Result<Organization> {
-    crate::backend::db::organizations::get_public_organization(&state.pool, name)
+    codeyard_db_orgs::organizations::get_public_organization(&state.pool, name)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)
@@ -78,7 +80,7 @@ async fn selected(
     state: &AppState,
     auth: &crate::backend::api::github::auth::Authentication,
     params: &Params,
-) -> Result<(Organization, crate::backend::db::organizations::PublicTeam)> {
+) -> Result<(Organization, codeyard_db_orgs::organizations::PublicTeam)> {
     let actor = auth.user.id;
     if let Some(id) = params.get("team_id") {
         let id = id
@@ -86,11 +88,11 @@ async fn selected(
             .ok()
             .filter(|id| *id > 0)
             .ok_or_else(Error::missing)?;
-        let team = crate::backend::db::organizations::get_public_team_by_id(&state.pool, actor, id)
+        let team = codeyard_db_orgs::organizations::get_public_team_by_id(&state.pool, actor, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        let org = crate::backend::db::organizations::get_public_organization_by_id(
+        let org = codeyard_db_orgs::organizations::get_public_organization_by_id(
             &state.pool,
             team.team.org_id,
         )
@@ -103,7 +105,7 @@ async fn selected(
         Ok((org, team))
     } else {
         let org = organization(state, &params["org"]).await?;
-        let team = crate::backend::db::organizations::get_public_team(
+        let team = codeyard_db_orgs::organizations::get_public_team(
             &state.pool,
             actor,
             org.id,
@@ -117,7 +119,7 @@ async fn selected(
 }
 
 fn team_error(error: anyhow::Error) -> Error {
-    if error.is::<crate::backend::db::organizations::InvalidTeamParent>() {
+    if error.is::<codeyard_db_orgs::organizations::InvalidTeamParent>() {
         Error::validation("Team", "parent_team_id", "invalid")
     } else {
         Error::unavailable(error)
@@ -143,7 +145,7 @@ pub(super) async fn summary(
     org: &str,
     permission: i16,
 ) -> Result<Value> {
-    let parent = crate::backend::db::organizations::get_team_parent(&state.pool, team.id)
+    let parent = codeyard_db_orgs::organizations::get_team_parent(&state.pool, team.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(team_value(team, org, permission, parent.as_ref()))
@@ -174,7 +176,7 @@ async fn parent(
             .as_str()
             .ok_or_else(|| Error::validation("Team", "parent_team_slug", "invalid"))?;
         let parent =
-            crate::backend::db::organizations::get_public_team(&state.pool, actor, org, slug)
+            codeyard_db_orgs::organizations::get_public_team(&state.pool, actor, org, slug)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(|| Error::validation("Team", "parent_team_slug", "invalid"))?;
@@ -186,7 +188,7 @@ async fn parent(
 async fn document(
     state: &AppState,
     org: &Organization,
-    public: &crate::backend::db::organizations::PublicTeam,
+    public: &codeyard_db_orgs::organizations::PublicTeam,
 ) -> Result<Value> {
     let team = &public.team;
     let mut value = team_value(
@@ -199,7 +201,7 @@ async fn document(
     value["repos_count"] = json!(public.repository_count);
     value["created_at"] = json!(team.created_at);
     value["updated_at"] = json!(team.updated_at);
-    let public_repos = crate::backend::db::organizations::count_organization_profile_repositories(
+    let public_repos = codeyard_db_orgs::organizations::count_organization_profile_repositories(
         &state.pool,
         org.id,
         None,
@@ -207,7 +209,7 @@ async fn document(
     .await
     .map_err(Error::unavailable)?;
     let has_organization_projects =
-        crate::backend::db::organizations::settings::get(&state.pool, org.id)
+        codeyard_db_orgs::organizations::settings::get(&state.pool, org.id)
             .await
             .map_err(Error::unavailable)?
             .is_none_or(|settings| settings.has_organization_projects);
@@ -244,8 +246,8 @@ fn string<'a>(input: &'a Map<String, Value>, field: &str) -> Result<Option<&'a s
         .transpose()
 }
 
-fn permission(value: &str) -> Result<crate::backend::db::organizations::TeamRepositoryPermission> {
-    crate::backend::db::organizations::TeamRepositoryPermission::new(match value {
+fn permission(value: &str) -> Result<codeyard_db_orgs::organizations::TeamRepositoryPermission> {
+    codeyard_db_orgs::organizations::TeamRepositoryPermission::new(match value {
         "pull" => 1,
         "triage" => 2,
         "push" => 3,
@@ -287,11 +289,11 @@ fn profile(
     input: &Map<String, Value>,
     creating: bool,
     parent: Option<Option<i64>>,
-) -> Result<crate::backend::db::organizations::TeamProfile> {
-    let refused = |error: crate::backend::db::organizations::OrganizationInputError| {
+) -> Result<codeyard_db_orgs::organizations::TeamProfile> {
+    let refused = |error: codeyard_db_orgs::organizations::OrganizationInputError| {
         Error::validation(
             "Team",
-            if error == crate::backend::db::organizations::OrganizationInputError::Description {
+            if error == codeyard_db_orgs::organizations::OrganizationInputError::Description {
                 "description"
             } else {
                 "name"
@@ -299,7 +301,7 @@ fn profile(
             "invalid",
         )
     };
-    let mut profile = crate::backend::db::organizations::TeamProfile::default();
+    let mut profile = codeyard_db_orgs::organizations::TeamProfile::default();
     let name = string(input, "name")?;
     match name {
         Some(name) => profile = profile.with_name(name).map_err(refused)?,
@@ -319,14 +321,14 @@ fn profile(
         }
     }
     let privacy = match string(input, "privacy")? {
-        Some("secret") => Some(crate::backend::db::organizations::TeamPrivacy::Secret),
-        Some("closed") => Some(crate::backend::db::organizations::TeamPrivacy::Visible),
+        Some("secret") => Some(codeyard_db_orgs::organizations::TeamPrivacy::Secret),
+        Some("closed") => Some(codeyard_db_orgs::organizations::TeamPrivacy::Visible),
         Some(_) => return Err(Error::validation("Team", "privacy", "invalid")),
         // A new team is secret unless it has a parent: nested teams must be visible.
         None if creating && parent.flatten().is_some() => {
-            Some(crate::backend::db::organizations::TeamPrivacy::Visible)
+            Some(codeyard_db_orgs::organizations::TeamPrivacy::Visible)
         }
-        None if creating => Some(crate::backend::db::organizations::TeamPrivacy::Secret),
+        None if creating => Some(codeyard_db_orgs::organizations::TeamPrivacy::Secret),
         None => None,
     };
     if let Some(privacy) = privacy {
@@ -383,17 +385,13 @@ async fn create(
     // Only owners and admins create teams. Checking first keeps the maintainer and repository
     // names below from telling anyone else which accounts and private repositories exist; the
     // creation checks again.
-    match crate::backend::db::organizations::get_organization_role(
-        &state.pool,
-        auth.user.id,
-        org.id,
-    )
-    .await
-    .map_err(Error::unavailable)?
+    match codeyard_db_orgs::organizations::get_organization_role(&state.pool, auth.user.id, org.id)
+        .await
+        .map_err(Error::unavailable)?
     {
-        crate::backend::db::organizations::OrganizationOutcome::Applied(role)
-            if crate::backend::db::organizations::administers(role) => {}
-        crate::backend::db::organizations::OrganizationOutcome::Missing => {
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(role)
+            if codeyard_db_core::queries::organizations::administers(role) => {}
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Missing => {
             return Err(Error::missing())
         }
         _ => return Err(denied()),
@@ -406,7 +404,7 @@ async fn create(
     let mut maintainers = vec![auth.user.id];
     for username in strings(&input, "maintainers")? {
         maintainers.push(
-            crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
+            codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(|| Error::validation("Team", "maintainers", "invalid"))?
@@ -421,7 +419,7 @@ async fn create(
             .split_once('/')
             .ok_or_else(|| Error::validation("Team", "repo_names", "invalid"))?;
         let repo =
-            crate::backend::db::repositories::records::get_repository(&state.pool, owner, name)
+            codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, name)
                 .await
                 .map_err(Error::unavailable)?
                 .filter(|repo| repo.owner_org_id == Some(org.id))
@@ -431,11 +429,11 @@ async fn create(
             .map_err(crate::backend::api::github::auth::scope_error)?;
         repositories.push(repo.id);
     }
-    let new = crate::backend::db::organizations::NewTeam::new(&slug(name), profile)
+    let new = codeyard_db_orgs::organizations::NewTeam::new(&slug(name), profile)
         .map_err(|_| Error::validation("Team", "name", "invalid"))?
         .with_members_and_repositories(maintainers, repositories);
     let team = outcome(
-        crate::backend::db::organizations::create_organization_team(
+        codeyard_db_orgs::organizations::create_organization_team(
             &state.pool,
             writer(&auth),
             org.id,
@@ -444,14 +442,11 @@ async fn create(
         .await
         .map_err(team_error)?,
     )?;
-    let public = crate::backend::db::organizations::get_public_team_by_id(
-        &state.pool,
-        auth.user.id,
-        team.id,
-    )
-    .await
-    .map_err(Error::unavailable)?
-    .ok_or_else(Error::missing)?;
+    let public =
+        codeyard_db_orgs::organizations::get_public_team_by_id(&state.pool, auth.user.id, team.id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     Ok((
         StatusCode::CREATED,
         Json(document(&state, &org, &public).await?),
@@ -470,7 +465,7 @@ async fn team(
     let (org, mut public) = selected(&state, &auth, &params).await?;
     if method == Method::DELETE {
         outcome(
-            crate::backend::db::organizations::delete_organization_team(
+            codeyard_db_orgs::organizations::delete_organization_team(
                 &state.pool,
                 writer(&auth),
                 org.id,
@@ -489,7 +484,7 @@ async fn team(
         let parent = parent(&state, auth.user.id, org.id, &input).await?;
         let profile = profile(&input, false, parent)?;
         let team = outcome(
-            crate::backend::db::organizations::update_organization_team(
+            codeyard_db_orgs::organizations::update_organization_team(
                 &state.pool,
                 writer(&auth),
                 org.id,
@@ -500,7 +495,7 @@ async fn team(
             .map_err(team_error)?,
         )?;
         // The counts and the parent follow a new parent, so the whole team is read again.
-        public = crate::backend::db::organizations::get_public_team_by_id(
+        public = codeyard_db_orgs::organizations::get_public_team_by_id(
             &state.pool,
             auth.user.id,
             team.id,
@@ -524,7 +519,7 @@ async fn list(
     let (state, actor, org_id) = (&*state, auth.user.id, org.id);
     let (rows, more) = page
         .collect(move |after| async move {
-            let rows = match crate::backend::db::organizations::list_organization_teams(
+            let rows = match codeyard_db_orgs::organizations::list_organization_teams(
                 &state.pool,
                 actor,
                 org_id,
@@ -533,7 +528,9 @@ async fn list(
             .await
             .map_err(Error::unavailable)?
             {
-                crate::backend::db::organizations::OrganizationOutcome::Applied(rows) => rows,
+                codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(rows) => {
+                    rows
+                }
                 _ => return Err(Error::missing()),
             };
             let next = next_after(&rows, BATCH, |row| row.team.id);
@@ -566,7 +563,7 @@ async fn children(
     let (state, actor, org_id, team) = (&*state, auth.user.id, org.id, public.team.id);
     let (rows, more) = page
         .collect(move |after| async move {
-            let rows = crate::backend::db::organizations::list_child_teams(
+            let rows = codeyard_db_orgs::organizations::list_child_teams(
                 &state.pool,
                 actor,
                 org_id,
@@ -595,7 +592,7 @@ async fn user_teams(
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::GET).await?;
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::organizations::list_user_teams(
+    let rows = codeyard_db_orgs::organizations::list_user_teams(
         &state.pool,
         auth.user.id,
         offset as i64,
@@ -607,7 +604,7 @@ async fn user_teams(
     let mut items = Vec::new();
     for team in rows.into_iter().take(limit) {
         // An organization that forbids classic tokens keeps its teams out of their lists too.
-        if crate::backend::db::fine_grained_tokens::classic_refused(
+        if codeyard_db_identity::fine_grained_tokens::classic_refused(
             &state.pool,
             auth.token.id,
             team.org_id,
@@ -617,7 +614,7 @@ async fn user_teams(
         {
             continue;
         }
-        let Some(org) = crate::backend::db::organizations::get_public_organization_by_id(
+        let Some(org) = codeyard_db_orgs::organizations::get_public_organization_by_id(
             &state.pool,
             team.org_id,
         )
@@ -627,7 +624,7 @@ async fn user_teams(
             continue;
         };
         // A team hidden or deleted since the list was read is left out.
-        let Some(public) = crate::backend::db::organizations::get_public_team_by_id(
+        let Some(public) = codeyard_db_orgs::organizations::get_public_team_by_id(
             &state.pool,
             auth.user.id,
             team.id,
@@ -647,7 +644,7 @@ async fn user_teams(
 async fn users(state: &AppState, ids: impl IntoIterator<Item = i64>) -> Result<HashMap<i64, User>> {
     let ids: Vec<i64> = ids.into_iter().collect();
     Ok(
-        crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &ids)
+        codeyard_db_identity::users::accounts::get_users_by_ids(&state.pool, &ids)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
@@ -674,14 +671,14 @@ async fn members(
     let role = match query.role.as_deref().unwrap_or("all") {
         "all" => None,
         value => Some(
-            crate::backend::db::organizations::TeamRole::parse(value)
+            codeyard_db_orgs::organizations::TeamRole::parse(value)
                 .map_err(|_| Error::validation("Team", "role", "invalid"))?,
         ),
     };
     let (state, actor, org_id, team) = (&*state, auth.user.id, org.id, public.team.id);
     let (rows, more) = page
         .collect(move |after| async move {
-            let rows = crate::backend::db::organizations::list_team_members_by_role(
+            let rows = codeyard_db_orgs::organizations::list_team_members_by_role(
                 &state.pool,
                 actor,
                 org_id,
@@ -740,7 +737,7 @@ async fn team_member(
     let auth = actor(state, headers, method).await?;
     let (org, public) = selected(state, &auth, params).await?;
     let username = &params["username"];
-    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(|| {
@@ -751,7 +748,7 @@ async fn team_member(
             }
         })?;
     if method == Method::DELETE {
-        match crate::backend::db::organizations::remove_organization_team_member(
+        match codeyard_db_orgs::organizations::remove_organization_team_member(
             &state.pool,
             writer(&auth),
             org.id,
@@ -761,30 +758,30 @@ async fn team_member(
         .await
         .map_err(Error::unavailable)?
         {
-            crate::backend::db::organizations::OrganizationOutcome::Applied(())
-            | crate::backend::db::organizations::OrganizationOutcome::Missing => {}
+            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(())
+            | codeyard_db_core::queries::organizations::OrganizationOutcome::Missing => {}
             value => outcome(value)?,
         }
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     let (role, membership_state) = if method == Method::PUT {
         let target_role =
-            crate::backend::db::organizations::get_organization_role(&state.pool, user.id, org.id)
+            codeyard_db_orgs::organizations::get_organization_role(&state.pool, user.id, org.id)
                 .await
                 .map_err(Error::unavailable)?;
         let input = input(request).await?;
-        let mut role = crate::backend::db::organizations::TeamRole::parse(
+        let mut role = codeyard_db_orgs::organizations::TeamRole::parse(
             string(&input, "role")?.unwrap_or("member"),
         )
         .map_err(|_| Error::validation("Team", "role", "invalid"))?;
-        let crate::backend::db::organizations::OrganizationOutcome::Applied(target_role) =
+        let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(target_role) =
             target_role
         else {
             if legacy_member {
                 return Err(Error::missing());
             }
             let invitation = outcome(
-                crate::backend::db::organizations::invite_team_member(
+                codeyard_db_orgs::organizations::invite_team_member(
                     &state.pool,
                     writer(&auth),
                     org.id,
@@ -812,10 +809,10 @@ async fn team_member(
         };
         // Organization owners maintain every team they are on.
         if matches!(target_role, codeyard_db_core::models::OrgRole::Owner) {
-            role = crate::backend::db::organizations::TeamRole::Maintainer;
+            role = codeyard_db_orgs::organizations::TeamRole::Maintainer;
         }
         let row = outcome(
-            crate::backend::db::organizations::add_organization_team_member(
+            codeyard_db_orgs::organizations::add_organization_team_member(
                 &state.pool,
                 writer(&auth),
                 org.id,
@@ -831,7 +828,7 @@ async fn team_member(
         let pending = if legacy_member {
             None
         } else {
-            crate::backend::db::organizations::pending_team_membership(
+            codeyard_db_orgs::organizations::pending_team_membership(
                 &state.pool,
                 auth.user.id,
                 org.id,
@@ -844,7 +841,7 @@ async fn team_member(
         match pending {
             Some(role) => (role, "pending"),
             None => {
-                let member = crate::backend::db::organizations::get_team_member(
+                let member = codeyard_db_orgs::organizations::get_team_member(
                     &state.pool,
                     auth.user.id,
                     org.id,
@@ -888,7 +885,7 @@ async fn invitations(
     let (rows, more) = page
         .collect(move |after| async move {
             let rows = outcome(
-                crate::backend::db::organizations::list_team_invitations(
+                codeyard_db_orgs::organizations::list_team_invitations(
                     &state.pool,
                     actor,
                     org_id,
@@ -937,10 +934,10 @@ async fn repository_document(
     state: &AppState,
     auth: &crate::backend::api::github::auth::Authentication,
     org: i64,
-    grant: &crate::backend::db::organizations::TeamRepositoryGrant,
+    grant: &codeyard_db_orgs::organizations::TeamRepositoryGrant,
 ) -> Result<Option<Value>> {
     let Some(repo) =
-        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, grant.repo_id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, grant.repo_id)
             .await
             .map_err(Error::unavailable)?
             .filter(|repo| repo.owner_org_id == Some(org))
@@ -972,7 +969,7 @@ async fn repositories(
     let (state, credential, org_id, team) = (&*state, &auth, org.id, public.team.id);
     let (rows, more) = page
         .collect(move |after| async move {
-            let rows = crate::backend::db::organizations::list_public_team_repositories(
+            let rows = codeyard_db_orgs::organizations::list_public_team_repositories(
                 &state.pool,
                 credential.user.id,
                 org_id,
@@ -1044,13 +1041,13 @@ async fn repository(
         let input = input(request).await?;
         let permission = match string(&input, "permission")? {
             Some(value) => permission(value)?,
-            None => crate::backend::db::organizations::TeamRepositoryPermission::new(
+            None => codeyard_db_orgs::organizations::TeamRepositoryPermission::new(
                 public.team.default_permission,
             )
             .map_err(|_| Error::unavailable(()))?,
         };
         outcome(
-            crate::backend::db::organizations::grant_organization_team_repository(
+            codeyard_db_orgs::organizations::grant_organization_team_repository(
                 &state.pool,
                 writer(&auth),
                 org.id,
@@ -1064,7 +1061,7 @@ async fn repository(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     if method == Method::DELETE {
-        match crate::backend::db::organizations::revoke_organization_team_repository(
+        match codeyard_db_orgs::organizations::revoke_organization_team_repository(
             &state.pool,
             writer(&auth),
             org.id,
@@ -1074,13 +1071,13 @@ async fn repository(
         .await
         .map_err(Error::unavailable)?
         {
-            crate::backend::db::organizations::OrganizationOutcome::Applied(())
-            | crate::backend::db::organizations::OrganizationOutcome::Missing => {}
+            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(())
+            | codeyard_db_core::queries::organizations::OrganizationOutcome::Missing => {}
             value => outcome(value)?,
         }
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let grant = crate::backend::db::organizations::get_public_team_repository(
+    let grant = codeyard_db_orgs::organizations::get_public_team_repository(
         &state.pool,
         auth.user.id,
         org.id,

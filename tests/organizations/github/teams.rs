@@ -71,12 +71,12 @@ async fn contract(pg: bool) {
     let eve = f.actor("eve").await;
     let charlie = f.actor("charlie").await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             alice,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 "team-org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -84,7 +84,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             f.pool(),
             alice,
             org.id,
@@ -95,7 +95,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             f.pool(),
             alice,
             org.id,
@@ -619,13 +619,12 @@ async fn contract(pg: bool) {
         ] {
             assert_eq!(repo["permissions"][field], level >= minimum);
         }
-        let row =
-            codeyard::backend::db::repositories::records::get_repository_by_id(f.pool(), repo_id)
-                .await
-                .unwrap()
-                .unwrap();
+        let row = codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repo_id)
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            codeyard::backend::db::organizations::get_organization_repo_access(f.pool(), bob, &row)
+            codeyard_db_orgs::organizations::get_organization_repo_access(f.pool(), bob, &row)
                 .await
                 .unwrap(),
             codeyard_db_core::models::AccessLevel::from(level)
@@ -663,7 +662,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap();
-        codeyard::backend::db::fine_grained_tokens::review(
+        codeyard_db_identity::fine_grained_tokens::review(
             f.pool(),
             org.id,
             alice,
@@ -1023,7 +1022,7 @@ async fn contract(pg: bool) {
     );
     // Deleting a team never deletes the organization's repository or membership.
     assert!(
-        codeyard::backend::db::repositories::records::get_repository_by_id(f.pool(), repo_id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(f.pool(), repo_id)
             .await
             .unwrap()
             .is_some()

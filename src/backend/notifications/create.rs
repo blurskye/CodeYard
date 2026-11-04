@@ -11,14 +11,14 @@ pub async fn organization_invitation(
     let Some(user_id) = invitation.user_id else {
         return;
     };
-    let name = match crate::backend::db::organizations::get_organization_metadata(
+    let name = match codeyard_db_orgs::organizations::get_organization_metadata(
         pool,
         actor,
         invitation.org_id,
     )
     .await
     {
-        Ok(crate::backend::db::organizations::OrganizationOutcome::Applied(metadata)) => {
+        Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata)) => {
             metadata.name
         }
         _ => return,
@@ -51,8 +51,8 @@ pub struct NotificationRequest<'a> {
 }
 
 impl NotificationRequest<'_> {
-    fn as_native(&self) -> crate::backend::db::notifications::records::NewNotification<'_> {
-        crate::backend::db::notifications::records::NewNotification {
+    fn as_native(&self) -> codeyard_db_core::queries::notifications::records::NewNotification<'_> {
+        codeyard_db_core::queries::notifications::records::NewNotification {
             user_id: self.user_id,
             actor_id: self.actor_id,
             repo_id: self.repo_id,
@@ -75,14 +75,14 @@ pub async fn notify_subscribers(
     notified: &[i64],
 ) -> Vec<i64> {
     let Some((kind, key)) =
-        crate::backend::db::notifications::threads::subject(&request.as_native())
+        codeyard_db_core::queries::notifications::threads::subject(&request.as_native())
     else {
         return Vec::new();
     };
     let Some(repo) = request.repo_id else {
         return Vec::new();
     };
-    let recipients = match crate::backend::db::notifications::threads::subscribers(
+    let recipients = match codeyard_db_repos::notifications::threads::subscribers(
         pool, repo, kind, &key,
     )
     .await
@@ -138,17 +138,18 @@ pub async fn create_and_broadcast_notification(
         }
     }
     // The insert rechecks Read, the fork's Read and repository ignores in its transaction.
-    let notification =
-        crate::backend::db::notifications::records::create_notification(pool, request.as_native())
-            .await
-            .map_err(|error| {
-                if error.is::<crate::backend::db::notifications::records::NotificationSuppressed>()
-                {
-                    CreateError::Suppressed
-                } else {
-                    CreateError::Unavailable
-                }
-            })?;
+    let notification = codeyard_db_repos::notifications::records::create_notification(
+        pool,
+        request.as_native(),
+    )
+    .await
+    .map_err(|error| {
+        if error.is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>() {
+            CreateError::Suppressed
+        } else {
+            CreateError::Unavailable
+        }
+    })?;
     deliver(pool, broadcaster, &notification).await;
     Ok(notification)
 }

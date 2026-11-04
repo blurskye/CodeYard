@@ -89,7 +89,7 @@ fn order_open_layers(members: Vec<PullRequest>) -> Vec<PullRequest> {
     };
     let mut order = vec![bottom];
     let mut seen = HashSet::from([bottom]);
-    while order.len() < crate::backend::db::pull_requests::records::MAX_STACK_LAYERS {
+    while order.len() < codeyard_db_repos::pull_requests::records::MAX_STACK_LAYERS {
         let head = members[order[order.len() - 1]].head_branch.as_str();
         let above: Vec<usize> = (0..members.len())
             .filter(|&index| members[index].base_branch == head)
@@ -115,7 +115,7 @@ pub async fn stack_of(pool: &DbPool, pull: &PullRequest) -> anyhow::Result<Optio
         return Ok(None);
     };
     let members =
-        crate::backend::db::pull_requests::records::list_stack_members(pool, pull.repo_id, id)
+        codeyard_db_repos::pull_requests::records::list_stack_members(pool, pull.repo_id, id)
             .await?;
     if members.len() < 2 {
         return Ok(None);
@@ -184,7 +184,7 @@ fn chain_in(pull: &PullRequest, members: &[PullRequest]) -> Chain {
 pub async fn chain_below(pool: &DbPool, pull: &PullRequest) -> anyhow::Result<Chain> {
     let members = match pull.stack_id {
         Some(id) => {
-            crate::backend::db::pull_requests::records::list_stack_members(pool, pull.repo_id, id)
+            codeyard_db_repos::pull_requests::records::list_stack_members(pool, pull.repo_id, id)
                 .await?
         }
         None => Vec::new(),
@@ -219,7 +219,7 @@ pub async fn merge_target(
 /// The number of the open pull request that this pull request could join right now. The pull
 /// request page offers the join only when this is set; the join applies the same rules.
 pub async fn join_candidate(pool: &DbPool, pull: &PullRequest) -> anyhow::Result<Option<i32>> {
-    crate::backend::db::pull_requests::records::join_pull_request_stack_candidate(pool, pull.id)
+    codeyard_db_repos::pull_requests::records::join_pull_request_stack_candidate(pool, pull.id)
         .await
 }
 
@@ -241,7 +241,7 @@ pub async fn retarget_after_merge(
     if merged.head_repo_id != Some(merged.repo_id) {
         return Vec::new();
     }
-    match crate::backend::db::pull_requests::records::retarget_stacked_pull_requests(
+    match codeyard_db_repos::pull_requests::records::retarget_stacked_pull_requests(
         pool,
         actor_id,
         merged.repo_id,

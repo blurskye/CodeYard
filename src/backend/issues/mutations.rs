@@ -87,7 +87,7 @@ async fn emit_issue_event(
 pub async fn close_duplicate(
     pool: &codeyard_db_core::DbPool,
     broadcaster: &Arc<NotificationBroadcaster>,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo: i64,
     issue: i64,
     duplicate: i64,
@@ -97,12 +97,12 @@ pub async fn close_duplicate(
         let user = crate::backend::issues::actor(&pool, actor.user_id).await?;
         let (repository, owner) = crate::backend::issues::repository(&pool, repo).await?;
         let (previous, saved) =
-            crate::backend::db::issues::management::close_duplicate_with_previous(
+            codeyard_db_repos::issues::management::close_duplicate_with_previous(
                 &pool, actor, repo, issue, duplicate,
             )
             .await
             .map_err(|error| {
-                use crate::backend::db::issues::management::Refusal;
+                use codeyard_db_repos::issues::management::Refusal;
                 match error.downcast_ref::<Refusal>() {
                     Some(Refusal::Missing) => OperationError::Missing {
                         code: "not_found",
@@ -145,7 +145,7 @@ pub async fn close_duplicate(
 pub async fn create_issue(
     pool: &codeyard_db_core::DbPool,
     broadcaster: &Arc<NotificationBroadcaster>,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     owner: String,
     repo: String,
     req: CreateIssueRequest,
@@ -157,7 +157,7 @@ pub async fn create_issue(
         owner,
         repo,
         req,
-        crate::backend::db::issues::OwnedIssueMetadata::default(),
+        codeyard_db_repos::issues::OwnedIssueMetadata::default(),
     )
     .await
 }
@@ -165,11 +165,11 @@ pub async fn create_issue(
 pub async fn create_issue_with_metadata(
     pool: &codeyard_db_core::DbPool,
     broadcaster: &Arc<NotificationBroadcaster>,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     owner: String,
     repo: String,
     req: CreateIssueRequest,
-    metadata: crate::backend::db::issues::OwnedIssueMetadata,
+    metadata: codeyard_db_repos::issues::OwnedIssueMetadata,
 ) -> Result<codeyard_db_core::models::Issue, OperationError> {
     let (pool, broadcaster, actor) = (pool.clone(), broadcaster.clone(), actor.into());
     tokio::spawn(async move {
@@ -196,15 +196,15 @@ pub async fn create_issue_with_metadata(
 async fn create_issue_owned(
     pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
-    actor: crate::backend::db::credentials::Actor,
+    actor: codeyard_db_core::queries::credentials::Actor,
     owner: String,
     repo: String,
     req: CreateIssueRequest,
-    mut metadata: crate::backend::db::issues::IssueMetadata<'_>,
+    mut metadata: codeyard_db_repos::issues::IssueMetadata<'_>,
 ) -> Result<codeyard_db_core::models::Issue, OperationError> {
     let user = crate::backend::issues::actor(pool, actor.user_id).await?;
 
-    let repository = crate::backend::db::repositories::records::get_repository(pool, &owner, &repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -234,7 +234,7 @@ async fn create_issue_owned(
     let body = req.body.as_deref().unwrap_or("");
     metadata.parent = req.parent_issue_id.or(metadata.parent);
     metadata.parent_repository = req.parent_repository_id.or(metadata.parent_repository);
-    let issue = crate::backend::db::issues::create_issue_with_metadata(
+    let issue = codeyard_db_repos::issues::create_issue_with_metadata(
         pool,
         repository.id,
         actor,
@@ -248,7 +248,8 @@ async fn create_issue_owned(
     // Persistence has committed. Assignment effects are best-effort and cannot turn a successful
     // create into a metadata error that invites the caller to create the same issue again.
     if !metadata.assignees.is_empty() {
-        match crate::backend::db::users::accounts::get_users_by_ids(pool, metadata.assignees).await
+        match codeyard_db_identity::users::accounts::get_users_by_ids(pool, metadata.assignees)
+            .await
         {
             Ok(users) => {
                 let users: Vec<_> = users.iter().collect();
@@ -259,7 +260,7 @@ async fn create_issue_owned(
                         actor: &user,
                         repository: &repository,
                         owner: &owner,
-                        item: crate::backend::db::assignees::AssignedItem::Issue(issue.id),
+                        item: codeyard_db_repos::assignees::AssignedItem::Issue(issue.id),
                         number: issue.number,
                         title: &issue.title,
                     },
@@ -326,7 +327,7 @@ pub async fn update_issue(
     let (repository, owner) = crate::backend::issues::repository(pool, repository_id).await?;
     crate::backend::issues::require_read(pool, &user, &repository).await?;
 
-    let existing = crate::backend::db::issues::get_issue(pool, repository.id, number)
+    let existing = codeyard_db_repos::issues::get_issue(pool, repository.id, number)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -348,7 +349,7 @@ pub async fn update_issue(
         }
         None => None,
     };
-    if !crate::backend::db::issues::valid_state_reason(
+    if !codeyard_db_repos::issues::valid_state_reason(
         requested_state.unwrap_or(&existing.state),
         req.state_reason.as_deref(),
     ) {
@@ -381,10 +382,10 @@ pub async fn update_issue(
             message: "Invalid title, body, or expected state".to_owned(),
         });
     }
-    let issue = crate::backend::db::issues::update_issue_with_reason(
+    let issue = codeyard_db_repos::issues::update_issue_with_reason(
         pool,
         existing.id,
-        crate::backend::db::discussions::DiscussionEdit {
+        codeyard_db_repos::discussions::DiscussionEdit {
             actor_id: user.id,
             expected_state: &req.expected_state,
             expected_updated,
@@ -536,7 +537,7 @@ pub async fn update_issue_latest(
             Err(error @ OperationError::Conflict { .. }) => error,
             result => return result,
         };
-        let latest = crate::backend::db::issues::get_issue(pool, repository_id, number)
+        let latest = codeyard_db_repos::issues::get_issue(pool, repository_id, number)
             .await
             .map_err(database_error)?;
         match latest {

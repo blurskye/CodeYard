@@ -52,13 +52,13 @@ fn refusal(error: &anyhow::Error) -> (StatusCode, String) {
     if let Some(error) = error.downcast_ref::<InvalidInput>() {
         return (StatusCode::UNPROCESSABLE_ENTITY, error.to_string());
     }
-    if let Some(error) = error.downcast_ref::<crate::backend::db::gists::GistRefusal>() {
+    if let Some(error) = error.downcast_ref::<codeyard_db_repos::gists::GistRefusal>() {
         return (
             match error {
-                crate::backend::db::gists::GistRefusal::Missing => StatusCode::NOT_FOUND,
-                crate::backend::db::gists::GistRefusal::Denied => StatusCode::FORBIDDEN,
-                crate::backend::db::gists::GistRefusal::Conflict => StatusCode::CONFLICT,
-                crate::backend::db::gists::GistRefusal::Invalid => StatusCode::UNPROCESSABLE_ENTITY,
+                codeyard_db_repos::gists::GistRefusal::Missing => StatusCode::NOT_FOUND,
+                codeyard_db_repos::gists::GistRefusal::Denied => StatusCode::FORBIDDEN,
+                codeyard_db_repos::gists::GistRefusal::Conflict => StatusCode::CONFLICT,
+                codeyard_db_repos::gists::GistRefusal::Invalid => StatusCode::UNPROCESSABLE_ENTITY,
             },
             error.to_string(),
         );

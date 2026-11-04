@@ -4,9 +4,9 @@ use crate::backend::api::repos::collection::NewRepositoryForm;
 use crate::backend::api::repos::collection::PageContext;
 use crate::backend::api::repos::collection::RepositoryCreationChoices;
 
-use crate::backend::db::organizations::OrganizationOutcome::Applied;
 use axum::http::StatusCode;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::queries::organizations::OrganizationOutcome::Applied;
 use codeyard_webui::components::repository_properties::RepositoryPropertyField;
 use std::collections::HashMap;
 
@@ -19,27 +19,27 @@ pub(super) fn drafts(
     for (key, value) in form {
         if let Some(name) = key
             .strip_prefix("property_value_")
-            .filter(|name| crate::backend::db::organizations::properties::valid_name(name))
+            .filter(|name| codeyard_db_core::queries::organizations::properties::valid_name(name))
         {
             if values.property_values.len()
-                < crate::backend::db::organizations::properties::MAX_DEFINITIONS
+                < codeyard_db_orgs::organizations::properties::MAX_DEFINITIONS
             {
                 values.property_values.insert(
                     name.to_owned(),
                     crate::backend::api::repos::collection::draft_value(
                         form,
                         key,
-                        crate::backend::db::organizations::properties::MAX_FORM_VALUE_BYTES,
+                        codeyard_db_orgs::organizations::properties::MAX_FORM_VALUE_BYTES,
                     ),
                 );
             }
         }
         if let Some(name) = key
             .strip_prefix("property_set_")
-            .filter(|name| crate::backend::db::organizations::properties::valid_name(name))
+            .filter(|name| codeyard_db_core::queries::organizations::properties::valid_name(name))
         {
             if values.property_set.len()
-                < crate::backend::db::organizations::properties::MAX_DEFINITIONS
+                < codeyard_db_orgs::organizations::properties::MAX_DEFINITIONS
                 && matches!(value.as_str(), "true" | "on")
             {
                 values.property_set.insert(name.to_owned());
@@ -50,26 +50,26 @@ pub(super) fn drafts(
     for (key, value) in form {
         if let Some(name) = key.strip_prefix("property_value_") {
             count += 1;
-            if !crate::backend::db::organizations::properties::valid_name(name)
-                || value.len() > crate::backend::db::organizations::properties::MAX_FORM_VALUE_BYTES
+            if !codeyard_db_core::queries::organizations::properties::valid_name(name)
+                || value.len() > codeyard_db_orgs::organizations::properties::MAX_FORM_VALUE_BYTES
             {
                 return Err((None, "Invalid repository property input."));
             }
         }
         if let Some(name) = key.strip_prefix("property_set_") {
-            if !crate::backend::db::organizations::properties::valid_name(name)
+            if !codeyard_db_core::queries::organizations::properties::valid_name(name)
                 || !matches!(value.as_str(), "true" | "on")
             {
                 return Err((None, "Invalid repository property selection."));
             }
         }
     }
-    if count > crate::backend::db::organizations::properties::MAX_DEFINITIONS
+    if count > codeyard_db_orgs::organizations::properties::MAX_DEFINITIONS
         || form
             .keys()
             .filter(|key| key.starts_with("property_set_"))
             .count()
-            > crate::backend::db::organizations::properties::MAX_DEFINITIONS
+            > codeyard_db_orgs::organizations::properties::MAX_DEFINITIONS
     {
         return Err((None, "Too many repository properties."));
     }
@@ -110,19 +110,19 @@ pub(super) async fn populate(
         return Err(StatusCode::UNAUTHORIZED);
     };
     let definitions =
-        match crate::backend::db::organizations::properties::catalog(&ctx.state.pool, actor, org)
+        match codeyard_db_orgs::organizations::properties::catalog(&ctx.state.pool, actor, org)
             .await
         {
             Ok(Applied(rows)) => rows,
             Ok(_) => return Ok(()),
             Err(_) => return Err(StatusCode::SERVICE_UNAVAILABLE),
         };
-    crate::backend::db::organizations::properties::checked_catalog_bytes(
+    codeyard_db_orgs::organizations::properties::checked_catalog_bytes(
         definitions.iter().map(|definition| &definition.fields),
     )
     .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
     let owner = matches!(
-        crate::backend::db::organizations::get_organization_role(&ctx.state.pool, actor, org)
+        codeyard_db_orgs::organizations::get_organization_role(&ctx.state.pool, actor, org)
             .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
         Applied(OrgRole::Owner)
@@ -148,7 +148,7 @@ pub(super) async fn populate(
                 description: fields.description.clone().unwrap_or_default(),
                 allowed_values: fields.allowed_values.clone().unwrap_or_default(),
                 required: fields.needs_explicit_value(),
-                editable: owner || fields.values_editable_by == crate::backend::db::organizations::properties::EditableBy::OrgAndRepoActors,
+                editable: owner || fields.values_editable_by == codeyard_db_core::queries::organizations::properties::EditableBy::OrgAndRepoActors,
                 default_preview: fields
                     .default_value
                     .as_ref()
@@ -172,7 +172,7 @@ pub(super) async fn values(
     target: Option<i64>,
     form: &NewRepositoryForm,
 ) -> Result<
-    Vec<crate::backend::db::organizations::properties::ValueInput>,
+    Vec<codeyard_db_core::queries::organizations::properties::ValueInput>,
     (StatusCode, &'static str),
 > {
     let invalid = |message| (StatusCode::BAD_REQUEST, message);
@@ -193,7 +193,7 @@ pub(super) async fn values(
     let org = target
         .ok_or_else(|| invalid("Personal repositories cannot have organization properties."))?;
     let definitions =
-        match crate::backend::db::organizations::properties::catalog(&ctx.state.pool, actor, org)
+        match codeyard_db_orgs::organizations::properties::catalog(&ctx.state.pool, actor, org)
             .await
         {
             Ok(Applied(rows)) => rows,
@@ -218,10 +218,10 @@ pub(super) async fn values(
                 .property_values
                 .get(name)
                 .ok_or_else(|| invalid("Provide a value for each selected property."))?;
-            Ok(crate::backend::db::organizations::properties::ValueInput {
+            Ok(codeyard_db_core::queries::organizations::properties::ValueInput {
                 property_name: name.clone(),
                 value: Some(
-                    crate::backend::db::organizations::properties::PropertyValue::from_form(
+                    codeyard_db_core::queries::organizations::properties::PropertyValue::from_form(
                         definition.fields.value_type,
                         value,
                     ),

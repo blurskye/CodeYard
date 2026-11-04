@@ -36,7 +36,7 @@ pub(super) async fn side(
     let source = if source_owner == owner {
         base.clone()
     } else {
-        let mut candidates = crate::backend::db::repositories::discovery::comparison_forks(
+        let mut candidates = codeyard_db_repos::repositories::discovery::comparison_forks(
             &state.pool,
             base.id,
             source_owner,

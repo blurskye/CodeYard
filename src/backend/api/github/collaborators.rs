@@ -36,7 +36,7 @@ async fn invitation_document(
     state: &AppState,
     invitation: &crate::backend::repositories::collaborators::Invitation,
 ) -> Result<Value> {
-    let repo = crate::backend::db::repositories::records::get_repository_by_id(
+    let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
         &state.pool,
         invitation.repo_id,
     )
@@ -44,17 +44,17 @@ async fn invitation_document(
     .map_err(Error::unavailable)?
     .ok_or_else(Error::missing)?;
     let owner =
-        crate::backend::db::repositories::records::repository_owner_name(&state.pool, repo.id)
+        codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, repo.id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
     let inviter =
-        crate::backend::db::users::accounts::get_user_by_id(&state.pool, invitation.inviter_id)
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, invitation.inviter_id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
     let invitee =
-        crate::backend::db::users::accounts::get_user_by_id(&state.pool, invitation.invitee_id)
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, invitation.invitee_id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -162,7 +162,7 @@ async fn permission(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     auth.ok_or_else(crate::backend::api::github::auth::required)?;
-    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;

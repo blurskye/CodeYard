@@ -7,7 +7,7 @@ use codeyard_model::http_config::link_origin;
 use codeyard_model::release_integrity::Attestation;
 use codeyard_model::release_integrity::Statement;
 
-use crate::backend::db::repositories::immutable_releases::Refusal;
+use codeyard_db_repos::repositories::immutable_releases::Refusal;
 
 use crate::backend::repositories::git_sessions::validation::RefUpdate;
 use crate::backend::repositories::git_sessions::validation::ZERO_SHA;
@@ -61,26 +61,26 @@ pub async fn enabled(
     repository: &Repository,
 ) -> Result<bool> {
     let actor = viewer.ok_or(Refusal::Denied)?;
-    let actor = crate::backend::db::users::accounts::get_user_by_id(pool, actor.id)
+    let actor = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor.id)
         .await?
         .ok_or(Refusal::Denied)?;
     let repository =
-        crate::backend::db::repositories::records::get_repository_by_id(pool, repository.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository.id)
             .await?
             .ok_or(Refusal::Denied)?;
     ensure!(
         crate::backend::repositories::access::can_admin(pool, &actor, &repository).await?,
         Refusal::Denied
     );
-    crate::backend::db::repositories::immutable_releases::enabled(pool, repository.id).await
+    codeyard_db_repos::repositories::immutable_releases::enabled(pool, repository.id).await
 }
 pub async fn set_enabled(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo: i64,
     enabled: bool,
 ) -> Result<()> {
-    crate::backend::db::repositories::immutable_releases::set_enabled(pool, actor, repo, enabled)
+    codeyard_db_repos::repositories::immutable_releases::set_enabled(pool, actor, repo, enabled)
         .await
 }
 
@@ -101,7 +101,7 @@ pub(crate) async fn check_tag_updates(
                 .map(str::to_owned)
         })
         .collect();
-    let reservations = crate::backend::db::repositories::immutable_releases::reservations(
+    let reservations = codeyard_db_repos::repositories::immutable_releases::reservations(
         pool, repo.id, owner, name, &tags,
     )
     .await
@@ -133,7 +133,7 @@ pub(crate) async fn check_current_tag_updates(
     {
         return Ok(());
     }
-    let owner = crate::backend::db::repositories::records::repository_owner_names(pool, &[repo.id])
+    let owner = codeyard_db_repos::repositories::records::repository_owner_names(pool, &[repo.id])
         .await
         .map_err(|_| RepoError::new(ErrorKind::Unavailable, "Repository owner unavailable"))?
         .remove(&repo.id)
@@ -153,7 +153,7 @@ pub(crate) async fn check_namespace(
         .keys()
         .filter_map(|reference| reference.strip_prefix("refs/tags/").map(str::to_owned))
         .collect();
-    let reserved = crate::backend::db::repositories::immutable_releases::reservations(
+    let reserved = codeyard_db_repos::repositories::immutable_releases::reservations(
         pool, repo.id, owner, name, &tags,
     )
     .await
@@ -216,7 +216,7 @@ async fn local_key(
 pub(crate) async fn verify_local(
     attestation: &Attestation,
     path: &std::path::Path,
-) -> Result<crate::backend::db::repositories::immutable_releases::Publication, RepoError> {
+) -> Result<codeyard_db_repos::repositories::immutable_releases::Publication, RepoError> {
     let key = local_key(path)
         .await
         .map_err(|_| RepoError::new(ErrorKind::Unavailable, "Release identity unavailable"))?;
@@ -226,8 +226,8 @@ pub(crate) async fn verify_local(
 fn verify_with_key(
     attestation: &Attestation,
     key: &codeyard_support::node_identity::NodeKey,
-) -> Result<crate::backend::db::repositories::immutable_releases::Publication, RepoError> {
-    crate::backend::db::repositories::immutable_releases::Publication::verify(
+) -> Result<codeyard_db_repos::repositories::immutable_releases::Publication, RepoError> {
+    codeyard_db_repos::repositories::immutable_releases::Publication::verify(
         attestation,
         &key.public_hex(),
     )
@@ -248,7 +248,7 @@ pub(crate) async fn candidate(
     publishing: bool,
 ) -> Result<Option<Attestation>, ReleaseError> {
     if !publishing
-        || !crate::backend::db::repositories::immutable_releases::enabled(pool, repository.id)
+        || !codeyard_db_repos::repositories::immutable_releases::enabled(pool, repository.id)
             .await
             .map_err(crate::backend::repositories::releases::unavailable)?
     {
@@ -270,13 +270,13 @@ pub(crate) async fn candidate(
         .await
         .map_err(ReleaseError::Git)?;
     let assets = match release {
-        Some(id) => crate::backend::db::repositories::immutable_releases::assets(pool, id)
+        Some(id) => codeyard_db_repos::repositories::immutable_releases::assets(pool, id)
             .await
             .map_err(crate::backend::repositories::releases::unavailable)?,
         None => vec![],
     };
     let owner =
-        crate::backend::db::repositories::records::repository_owner_names(pool, &[repository.id])
+        codeyard_db_repos::repositories::records::repository_owner_names(pool, &[repository.id])
             .await
             .map_err(crate::backend::repositories::releases::unavailable)?
             .remove(&repository.id)

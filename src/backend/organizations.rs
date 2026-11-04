@@ -1,7 +1,7 @@
 //! Shared organization lifecycle effects for native settings and REST.
 use crate::backend::app::AppState;
 
-use crate::backend::db::organizations::OrganizationOutcome::{self, Applied};
+use codeyard_db_core::queries::organizations::OrganizationOutcome::{self, Applied};
 use codeyard_db_core::DbPool;
 use tokio::sync::Semaphore;
 
@@ -10,27 +10,26 @@ static CONVERSION_SLOTS: Semaphore = Semaphore::const_new(16);
 /// Acknowledgement follows the authoritative transaction, including for asynchronous REST requests.
 pub async fn convert_to_outside(
     pool: &DbPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
     let _permit = CONVERSION_SLOTS
         .try_acquire()
         .map_err(|_| anyhow::anyhow!("Organization conversion admission is full"))?;
-    crate::backend::db::organizations::convert_to_outside_collaborator(pool, actor, org, target)
-        .await
+    codeyard_db_orgs::organizations::convert_to_outside_collaborator(pool, actor, org, target).await
 }
 
 /// Deletes repositories first, then the organization. A partial failure leaves the remaining
 /// repositories and organization available for a retry; concurrent creation refuses the final delete.
 pub async fn delete(
     state: &AppState,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     org: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
     let actor = actor.into();
     let repositories =
-        match crate::backend::db::organizations::list_organization_deletion_repositories(
+        match codeyard_db_orgs::organizations::list_organization_deletion_repositories(
             &state.pool,
             actor.clone(),
             org,
@@ -41,7 +40,7 @@ pub async fn delete(
             other => return Ok(other.map(|_| ())),
         };
     for repository in repositories {
-        let deleted = match crate::backend::db::organizations::delete_organization_repository(
+        let deleted = match codeyard_db_orgs::organizations::delete_organization_repository(
             &state.pool,
             actor.clone(),
             org,
@@ -58,5 +57,5 @@ pub async fn delete(
         )
         .await?;
     }
-    crate::backend::db::organizations::delete_organization(&state.pool, actor, org).await
+    codeyard_db_orgs::organizations::delete_organization(&state.pool, actor, org).await
 }

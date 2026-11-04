@@ -62,17 +62,17 @@ async fn forks() -> Forks {
         .await
         .unwrap();
     codeyard_db_core::run_migrations(&pool).await.unwrap();
-    let alice = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
+    let alice = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
         .await
         .unwrap();
-    let bob = crate::backend::db::users::accounts::create_user(&pool, "bob", None)
+    let bob = codeyard_db_identity::users::accounts::create_user(&pool, "bob", None)
         .await
         .unwrap();
     let repos = root.path().join("repos");
     let base = crate::backend::repositories::lifecycle::provision(
         (&pool, None),
         &repos,
-        crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice.id),
         "proj",
         None,
         false,
@@ -124,7 +124,7 @@ fn pull_head(base: &Repository, number: i32) -> git2::Oid {
 }
 
 async fn row(forks: &Forks, id: i64) -> PullRequest {
-    crate::backend::db::pull_requests::records::get_pull_request_by_id(&forks.pool, id)
+    codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&forks.pool, id)
         .await
         .unwrap()
         .unwrap()
@@ -295,7 +295,7 @@ async fn creation_catches_a_head_push_that_finished_after_the_initial_ref_read()
     let create = open(&forks, "feature");
     let push = async {
         loop {
-            if crate::backend::db::pull_requests::records::get_pull_request(
+            if codeyard_db_repos::pull_requests::records::get_pull_request(
                 &forks.pool,
                 forks.base.id,
                 1,
@@ -324,7 +324,7 @@ async fn creation_catches_a_head_push_that_finished_after_the_initial_ref_read()
 #[tokio::test]
 async fn existing_owner_requests_do_not_take_a_write_lock() {
     let forks = forks().await;
-    crate::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         &forks.pool,
         forks.bob,
         forks.base.id,
@@ -379,7 +379,7 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
     .await
     .unwrap();
     assert_eq!(
-        crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+        codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
             &forks.pool,
             pull.id
         )

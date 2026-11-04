@@ -52,7 +52,7 @@ pub(super) async fn field(field: &str, parent: &Value, request: &RequestContext)
     )
     .await?;
     request.authorize(repo.id, "contents", false).await?;
-    let row = crate::backend::db::repositories::commit_comments::get_comment(
+    let row = codeyard_db_repos::repositories::commit_comments::get_comment(
         &request.state.pool,
         repo.id,
         parent["databaseId"].as_i64().ok_or_else(missing)?,
@@ -78,7 +78,7 @@ pub(super) async fn list(
 ) -> Result<Value> {
     let repository = crate::backend::api::graphql::repository::by_id(repo, request).await?;
     request.authorize(repo, "contents", false).await?;
-    let total = crate::backend::db::repositories::commit_comments::count_comments(
+    let total = codeyard_db_repos::repositories::commit_comments::count_comments(
         &request.state.pool,
         repo,
         oid,
@@ -90,7 +90,7 @@ pub(super) async fn list(
     let rows = if page.limit == 0 {
         vec![]
     } else {
-        crate::backend::db::repositories::commit_comments::list_comments(
+        codeyard_db_repos::repositories::commit_comments::list_comments(
             &request.state.pool,
             repo,
             Some(oid),

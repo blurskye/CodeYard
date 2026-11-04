@@ -21,8 +21,8 @@ async fn metadata(
     state: &AppState,
     repo: i64,
     number: i32,
-) -> Result<crate::backend::db::pull_requests::records::StackMetadata> {
-    crate::backend::db::pull_requests::records::get_pull_request_stack(&state.pool, repo, number)
+) -> Result<codeyard_db_repos::pull_requests::records::StackMetadata> {
+    codeyard_db_repos::pull_requests::records::get_pull_request_stack(&state.pool, repo, number)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)
@@ -32,11 +32,11 @@ async fn document(
     headers: &HeaderMap,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
-    meta: &crate::backend::db::pull_requests::records::StackMetadata,
+    meta: &codeyard_db_repos::pull_requests::records::StackMetadata,
     detail: bool,
 ) -> Result<Value> {
     let members = crate::backend::repositories::pull_requests::stacks::order_layers(
-        crate::backend::db::pull_requests::records::list_stack_members(
+        codeyard_db_repos::pull_requests::records::list_stack_members(
             &state.pool,
             repo.id,
             meta.id,
@@ -74,7 +74,7 @@ async fn list(
         per_page: query.per_page,
     };
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::pull_requests::records::list_pull_request_stacks(
+    let rows = codeyard_db_repos::pull_requests::records::list_pull_request_stacks(
         &state.pool,
         repo.id,
         query.pull_request,
@@ -133,7 +133,7 @@ async fn change(
     let mut pulls = Vec::new();
     for n in input.pull_requests {
         pulls.push(
-            crate::backend::db::pull_requests::records::get_pull_request(&state.pool, repo.id, n)
+            codeyard_db_repos::pull_requests::records::get_pull_request(&state.pool, repo.id, n)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(|| Error::invalid("Pull request not found in this repository"))?,
@@ -155,11 +155,10 @@ async fn change(
     )
     .await
     .map_err(crate::backend::api::github::pulls::mutations::operation_error)?;
-    let root =
-        crate::backend::db::pull_requests::records::get_pull_request_by_id(&state.pool, root)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+    let root = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&state.pool, root)
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
     let meta = metadata(&state, repo.id, root.number).await?;
     let value = document(&state, &headers, &repo, &owner, &meta, true).await?;
     let location = value["url"]
@@ -215,7 +214,7 @@ async fn unstack(
     if count == 0 {
         return Err(Error::invalid("Every pull request in this stack is locked"));
     }
-    match crate::backend::db::pull_requests::records::get_pull_request_stack(
+    match codeyard_db_repos::pull_requests::records::get_pull_request_stack(
         &state.pool,
         repo.id,
         number,

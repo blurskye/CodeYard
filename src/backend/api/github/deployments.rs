@@ -8,12 +8,12 @@ use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use codeyard_model::urls::repo_url;
 
-use crate::backend::db::deployments::Deployment;
-use crate::backend::db::deployments::Filter;
-use crate::backend::db::deployments::NewDeployment;
-use crate::backend::db::deployments::NewStatus;
-use crate::backend::db::deployments::Refusal;
-use crate::backend::db::deployments::Status;
+use codeyard_db_actions::deployments::Deployment;
+use codeyard_db_actions::deployments::Filter;
+use codeyard_db_actions::deployments::NewDeployment;
+use codeyard_db_actions::deployments::NewStatus;
+use codeyard_db_actions::deployments::Refusal;
+use codeyard_db_actions::deployments::Status;
 
 use crate::backend::repositories::merges::BranchMerge;
 use crate::backend::repositories::store::repo_store;
@@ -46,7 +46,7 @@ fn write_error(error: anyhow::Error) -> Error {
 async fn creator(state: &AppState, id: Option<i64>) -> Result<Option<Value>> {
     match id {
         Some(id) => Ok(
-            crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+            codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .map(|user| crate::backend::webhooks::payloads::user(&user)),
@@ -94,7 +94,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::deployments::list(
+    let rows = codeyard_db_actions::deployments::list(
         &state.pool,
         auth.as_ref().map(|actor| actor.user.id),
         repo.id,
@@ -220,7 +220,7 @@ async fn create(
             }
         }
     }
-    let saved = crate::backend::db::deployments::create(&state.pool, new)
+    let saved = codeyard_db_actions::deployments::create(&state.pool, new)
         .await
         .map_err(write_error)?;
     let value = document(&state, &saved, &owner, &name).await?;
@@ -248,7 +248,7 @@ async fn deployment(
     let write = !crate::backend::api::github::auth::read_method(&method);
     let (repo, auth) = repository(&state, &headers, &owner, &name, write).await?;
     if write {
-        crate::backend::db::deployments::delete(
+        codeyard_db_actions::deployments::delete(
             &state.pool,
             auth.ok_or_else(crate::backend::api::github::auth::required)?
                 .database_actor(),
@@ -259,7 +259,7 @@ async fn deployment(
         .map_err(write_error)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let saved = crate::backend::db::deployments::get(
+    let saved = codeyard_db_actions::deployments::get(
         &state.pool,
         auth.as_ref().map(|actor| actor.user.id),
         repo.id,
@@ -286,13 +286,13 @@ async fn statuses(
     let id = params["deployment_id"]
         .parse()
         .map_err(|_| Error::missing())?;
-    let saved = crate::backend::db::deployments::get(&state.pool, viewer, repo.id, id)
+    let saved = codeyard_db_actions::deployments::get(&state.pool, viewer, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     if read {
         if let Some(status) = params.get("status_id") {
-            let row = crate::backend::db::deployments::get_status(
+            let row = codeyard_db_actions::deployments::get_status(
                 &state.pool,
                 viewer,
                 id,
@@ -304,7 +304,7 @@ async fn statuses(
             return Ok(Json(status_document(&state, &row, owner, name).await?).into_response());
         }
         let (offset, limit) = page.window()?;
-        let rows = crate::backend::db::deployments::statuses(
+        let rows = codeyard_db_actions::deployments::statuses(
             &state.pool,
             viewer,
             id,
@@ -326,7 +326,7 @@ async fn statuses(
     let Json(input) = Json::<NewStatus>::from_request(request, &state)
         .await
         .map_err(|_| Error::validation("DeploymentStatus", "state", "invalid"))?;
-    let statuses = crate::backend::db::deployments::create_status(
+    let statuses = codeyard_db_actions::deployments::create_status(
         &state.pool,
         credential,
         repo.id,

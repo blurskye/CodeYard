@@ -151,7 +151,7 @@ pub async fn associated_pulls(
         let mut pulls = Vec::new();
         loop {
             let candidates =
-                crate::backend::db::pull_requests::records::commit_association_candidates(
+                codeyard_db_repos::pull_requests::records::commit_association_candidates(
                     pool,
                     repository.id,
                     before,

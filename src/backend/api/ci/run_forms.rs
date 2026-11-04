@@ -46,7 +46,7 @@ async fn readable_run(
         )
     };
     let repository =
-        crate::backend::db::repositories::records::get_repository(&ctx.state.pool, owner, name)
+        codeyard_db_repos::repositories::records::get_repository(&ctx.state.pool, owner, name)
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
@@ -56,7 +56,7 @@ async fn readable_run(
     {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository not found."));
     }
-    let run = crate::backend::db::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id)
+    let run = codeyard_db_actions::ci::get_ci_run_by_run_id(&ctx.state.pool, run_id)
         .await
         .map_err(|_| unavailable())?
         .filter(|run| run.repo_id == repository.id)
@@ -83,7 +83,7 @@ pub(crate) async fn download_artifact(
         return ctx.error(StatusCode::UNAUTHORIZED, "A live session is required.");
     };
     let actor = ctx.user.as_ref().expect("readable run").id;
-    let object = match crate::backend::db::action_objects::artifact_for_reader(
+    let object = match codeyard_db_actions::action_objects::artifact_for_reader(
         &state.pool,
         actor,
         &session,
@@ -123,8 +123,8 @@ pub(crate) async fn delete_artifact(
     }
     let actor = ctx.user.as_ref().expect("readable run").id;
     let credential = crate::backend::api::http::session::extract_session_id(&ctx.headers)
-        .map(crate::backend::db::ci::CiCredential::Session);
-    match crate::backend::db::action_objects::delete_artifact(
+        .map(codeyard_db_core::queries::ci::CiCredential::Session);
+    match codeyard_db_actions::action_objects::delete_artifact(
         &ctx.state.pool,
         artifact,
         run.id,
@@ -179,7 +179,7 @@ pub(crate) async fn cancel_run(
             run.run_id,
             actor,
             crate::backend::api::http::session::extract_session_id(&ctx.headers)
-                .map(crate::backend::db::ci::CiCredential::Session),
+                .map(codeyard_db_core::queries::ci::CiCredential::Session),
         )
         .await
     {
@@ -223,7 +223,7 @@ pub(crate) async fn rerun_run(
             run.run_id,
             actor,
             crate::backend::api::http::session::extract_session_id(&ctx.headers)
-                .map(crate::backend::db::ci::CiCredential::Session),
+                .map(codeyard_db_core::queries::ci::CiCredential::Session),
         )
         .await
     {

@@ -20,7 +20,7 @@ async fn contract(pg: bool) {
     codeyard::backend::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -94,16 +94,16 @@ async fn contract(pg: bool) {
     assert_eq!(private["is_private"], true, "{private}");
 
     // An unconfirmed save based on the earlier public row must not reopen it.
-    let refused = codeyard::backend::db::repositories::records::update_repository(
+    let refused = codeyard_db_repos::repositories::records::update_repository(
         f.pool(),
         alice_id,
         repo.parse().unwrap(),
         Some("stale description"),
-        codeyard::backend::db::repositories::records::VisibilityUpdate {
+        codeyard_db_repos::repositories::records::VisibilityUpdate {
             is_private: false,
             expected: Some(false),
         },
-        codeyard::backend::db::repositories::records::MergeMethodUpdate {
+        codeyard_db_repos::repositories::records::MergeMethodUpdate {
             merge: None,
             squash: None,
             rebase: None,
@@ -111,7 +111,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(refused.is_err());
-    let kept = codeyard::backend::db::repositories::records::get_repository_by_id(
+    let kept = codeyard_db_repos::repositories::records::get_repository_by_id(
         f.pool(),
         repo.parse().unwrap(),
     )

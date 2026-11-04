@@ -16,11 +16,11 @@ use codeyard::backend::cluster::ALPN_PAIR;
 use codeyard::backend::cluster::ALPN_RPC;
 use codeyard_support::node_identity::NodeKey;
 
-use codeyard::backend::db::cluster::Authority;
-use codeyard::backend::db::cluster::DeclaredMember;
-use codeyard::backend::db::cluster::JoinRequest;
-use codeyard::backend::db::cluster::NewJoinToken;
 use codeyard::backend::node::NodeRoles;
+use codeyard_db_cluster::cluster::Authority;
+use codeyard_db_cluster::cluster::DeclaredMember;
+use codeyard_db_cluster::cluster::JoinRequest;
+use codeyard_db_cluster::cluster::NewJoinToken;
 use codeyard_db_core::models::JoinOutcome;
 use codeyard_db_core::models::NodeStatusChange;
 use codeyard_db_core::DbPool;
@@ -182,7 +182,7 @@ async fn token_uses(pool: &DbPool, ticket: &JoinTicket) -> i32 {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_one_time_invite_adds_one_active_node() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -197,11 +197,10 @@ async fn a_one_time_invite_adds_one_active_node() {
     assert_eq!(membership.status, "active");
     assert!(membership.newly_joined);
 
-    let row =
-        codeyard::backend::db::cluster::get_node_by_public_key(&db.pool, &worker.public_hex())
-            .await
-            .unwrap()
-            .expect("the node is registered");
+    let row = codeyard_db_cluster::cluster::get_node_by_public_key(&db.pool, &worker.public_hex())
+        .await
+        .unwrap()
+        .expect("the node is registered");
     assert_eq!(row.status, "active");
     assert_eq!(row.roles, ["storage"]);
     // Joining does not make a node live; its first heartbeat does.
@@ -223,7 +222,7 @@ async fn a_one_time_invite_adds_one_active_node() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("not valid"), "{error}");
-    assert!(codeyard::backend::db::cluster::get_node_by_public_key(
+    assert!(codeyard_db_cluster::cluster::get_node_by_public_key(
         &db.pool,
         &latecomer.public_hex()
     )
@@ -258,13 +257,13 @@ async fn single_node_mode_admits_only_runners_until_cluster_mode_is_enabled() {
     assert_eq!(try_echo(&runner, &core.address).await.unwrap(), b"hello");
     assert_refused(try_echo(&storage, &core.address).await);
 
-    assert!(codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    assert!(codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap());
-    assert!(!codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    assert!(!codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap());
-    assert!(codeyard::backend::db::cluster::cluster_enabled(&db.pool)
+    assert!(codeyard_db_cluster::cluster::cluster_enabled(&db.pool)
         .await
         .unwrap());
     assert_eq!(try_echo(&storage, &core.address).await.unwrap(), b"hello");
@@ -275,10 +274,10 @@ async fn single_node_mode_admits_only_runners_until_cluster_mode_is_enabled() {
 #[tokio::test]
 async fn adopting_takes_only_the_repositories_whose_directories_are_here() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
-    let node = codeyard::backend::db::cluster::register_own_node(
+    let node = codeyard_db_cluster::cluster::register_own_node(
         &db.pool,
         &NodeKey::generate().public_hex(),
         "core",
@@ -287,7 +286,7 @@ async fn adopting_takes_only_the_repositories_whose_directories_are_here() {
     )
     .await
     .unwrap();
-    let owner = codeyard::backend::db::users::accounts::create_user(&db.pool, "adopter", None)
+    let owner = codeyard_db_identity::users::accounts::create_user(&db.pool, "adopter", None)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -299,7 +298,7 @@ async fn adopting_takes_only_the_repositories_whose_directories_are_here() {
         let pool = db.pool.clone();
         let (name, path) = (name.to_owned(), path.to_str().unwrap().to_owned());
         async move {
-            codeyard::backend::db::repositories::records::create_repository(
+            codeyard_db_repos::repositories::records::create_repository(
                 &pool, owner.id, &name, None, false, &path,
             )
             .await
@@ -318,7 +317,7 @@ async fn adopting_takes_only_the_repositories_whose_directories_are_here() {
     let placed = |id| {
         let pool = db.pool.clone();
         async move {
-            codeyard::backend::db::repositories::records::get_repository_by_id(&pool, id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(&pool, id)
                 .await
                 .unwrap()
                 .unwrap()
@@ -338,14 +337,14 @@ async fn adopting_takes_only_the_repositories_whose_directories_are_here() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn open_invites_are_listed_and_a_cancelled_one_admits_nobody() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
     let one_time = core.invite(&db.pool, "storage", false, false).await;
     let reusable = core.invite(&db.pool, "web,ssh", true, true).await;
 
-    let open = codeyard::backend::db::cluster::list_join_tokens(&db.pool)
+    let open = codeyard_db_cluster::cluster::list_join_tokens(&db.pool)
         .await
         .unwrap();
     assert_eq!(open.len(), 2);
@@ -358,7 +357,7 @@ async fn open_invites_are_listed_and_a_cancelled_one_admits_nobody() {
     join(&one_time, &NodeKey::generate(), "store-1", None)
         .await
         .unwrap();
-    let open = codeyard::backend::db::cluster::list_join_tokens(&db.pool)
+    let open = codeyard_db_cluster::cluster::list_join_tokens(&db.pool)
         .await
         .unwrap();
     assert_eq!(open.len(), 1);
@@ -366,12 +365,12 @@ async fn open_invites_are_listed_and_a_cancelled_one_admits_nobody() {
 
     // Cancelling the other one stops new joins; the nodes that joined stay.
     assert!(
-        codeyard::backend::db::cluster::delete_join_token(&db.pool, open[0].id)
+        codeyard_db_cluster::cluster::delete_join_token(&db.pool, open[0].id)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::cluster::delete_join_token(&db.pool, open[0].id)
+        !codeyard_db_cluster::cluster::delete_join_token(&db.pool, open[0].id)
             .await
             .unwrap()
     );
@@ -379,12 +378,12 @@ async fn open_invites_are_listed_and_a_cancelled_one_admits_nobody() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("not valid"), "{error}");
-    assert!(codeyard::backend::db::cluster::list_join_tokens(&db.pool)
+    assert!(codeyard_db_cluster::cluster::list_join_tokens(&db.pool)
         .await
         .unwrap()
         .is_empty());
     assert!(
-        codeyard::backend::db::cluster::get_node_by_name(&db.pool, "store-1")
+        codeyard_db_cluster::cluster::get_node_by_name(&db.pool, "store-1")
             .await
             .unwrap()
             .is_some()
@@ -395,7 +394,7 @@ async fn open_invites_are_listed_and_a_cancelled_one_admits_nobody() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reusable_invite_admits_many_nodes_within_its_roles() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -429,7 +428,7 @@ async fn a_reusable_invite_admits_many_nodes_within_its_roles() {
 
     // An invite is only good until it expires.
     let expired = JoinTicket::new(core.key.public_key(), NodeAddress::of(&core.address)).unwrap();
-    codeyard::backend::db::cluster::create_join_token(
+    codeyard_db_cluster::cluster::create_join_token(
         &db.pool,
         NewJoinToken {
             token_hash: &expired.secret_hash(),
@@ -451,7 +450,7 @@ async fn a_reusable_invite_admits_many_nodes_within_its_roles() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_node_that_needs_approval_waits_as_pending_until_approved() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -487,7 +486,7 @@ async fn a_node_that_needs_approval_waits_as_pending_until_approved() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn revoking_a_node_refuses_its_next_connection() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -531,7 +530,7 @@ async fn revoking_a_node_refuses_its_next_connection() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unknown_keys_are_refused_everywhere_but_can_only_pair() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -544,7 +543,7 @@ async fn unknown_keys_are_refused_everywhere_but_can_only_pair() {
         .await
         .unwrap_err();
     assert!(error.to_string().contains("not valid"), "{error}");
-    assert!(codeyard::backend::db::cluster::list_nodes(&db.pool)
+    assert!(codeyard_db_cluster::cluster::list_nodes(&db.pool)
         .await
         .unwrap()
         .is_empty());
@@ -570,7 +569,7 @@ async fn unknown_keys_are_refused_everywhere_but_can_only_pair() {
         "unexpected refusal: {error}"
     );
     client.close().await;
-    assert!(codeyard::backend::db::cluster::list_nodes(&db.pool)
+    assert!(codeyard_db_cluster::cluster::list_nodes(&db.pool)
         .await
         .unwrap()
         .is_empty());
@@ -583,7 +582,7 @@ async fn unknown_keys_are_refused_everywhere_but_can_only_pair() {
 #[tokio::test]
 async fn idle_pairing_peers_hold_their_slots_and_free_them_when_they_drop() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -680,7 +679,7 @@ async fn raw_pairing(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn declared_nodes_are_members_without_a_join_step() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -692,7 +691,7 @@ async fn declared_nodes_are_members_without_a_join_step() {
         .await
         .unwrap();
     assert_eq!((summary.applied, summary.kept_revoked.len()), (1, 0));
-    let row = codeyard::backend::db::cluster::get_node_by_name(&db.pool, "store-9")
+    let row = codeyard_db_cluster::cluster::get_node_by_name(&db.pool, "store-9")
         .await
         .unwrap()
         .unwrap();
@@ -713,7 +712,7 @@ async fn declared_nodes_are_members_without_a_join_step() {
     codeyard::backend::cluster::apply_declared_nodes(&db.pool, &edited)
         .await
         .unwrap();
-    let nodes = codeyard::backend::db::cluster::list_nodes(&db.pool)
+    let nodes = codeyard_db_cluster::cluster::list_nodes(&db.pool)
         .await
         .unwrap();
     assert_eq!(nodes.len(), 1);
@@ -760,7 +759,7 @@ async fn declared_nodes_are_members_without_a_join_step() {
         .await
         .unwrap_err();
     assert!(
-        codeyard::backend::db::cluster::get_node_by_public_key(&db.pool, &fresh.public_hex())
+        codeyard_db_cluster::cluster::get_node_by_public_key(&db.pool, &fresh.public_hex())
             .await
             .unwrap()
             .is_none()
@@ -797,7 +796,7 @@ fn settings(name: &str, ticket: Option<JoinTicket>) -> Settings {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let state_a = tempfile::tempdir().unwrap();
@@ -816,7 +815,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     let key_a = codeyard::backend::cluster::load_existing(state_a.path())
         .unwrap()
         .expect("the key was saved");
-    let row = codeyard::backend::db::cluster::get_node_by_public_key(&db.pool, &key_a.public_hex())
+    let row = codeyard_db_cluster::cluster::get_node_by_public_key(&db.pool, &key_a.public_hex())
         .await
         .unwrap()
         .unwrap();
@@ -828,7 +827,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     // Registering is not publishing: the node is not live until its services are up.
     assert!(row.last_seen.is_none() && row.addr_hint.is_none());
     core.publish().await.unwrap();
-    let row = codeyard::backend::db::cluster::get_node_by_public_key(&db.pool, &key_a.public_hex())
+    let row = codeyard_db_cluster::cluster::get_node_by_public_key(&db.pool, &key_a.public_hex())
         .await
         .unwrap()
         .unwrap();
@@ -849,7 +848,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     assert_eq!(placed, Some(row.id));
     // Shutdown withdraws it: placement stops choosing it at once.
     core.withdraw().await;
-    let row = codeyard::backend::db::cluster::get_node_by_public_key(&db.pool, &key_a.public_hex())
+    let row = codeyard_db_cluster::cluster::get_node_by_public_key(&db.pool, &key_a.public_hex())
         .await
         .unwrap()
         .unwrap();
@@ -888,7 +887,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     let key_b = codeyard::backend::cluster::load_existing(state_b.path())
         .unwrap()
         .unwrap();
-    let row = codeyard::backend::db::cluster::get_node_by_public_key(&db.pool, &key_b.public_hex())
+    let row = codeyard_db_cluster::cluster::get_node_by_public_key(&db.pool, &key_b.public_hex())
         .await
         .unwrap()
         .unwrap();
@@ -914,7 +913,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     .unwrap();
     assert_eq!(token_uses(&db.pool, &ticket).await, 1);
     assert_eq!(
-        codeyard::backend::db::cluster::list_nodes(&db.pool)
+        codeyard_db_cluster::cluster::list_nodes(&db.pool)
             .await
             .unwrap()
             .len(),
@@ -967,7 +966,7 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     )
     .await
     .unwrap();
-    let pending = codeyard::backend::db::cluster::get_node_by_name(&db.pool, "web-c")
+    let pending = codeyard_db_cluster::cluster::get_node_by_name(&db.pool, "web-c")
         .await
         .unwrap()
         .unwrap();
@@ -1110,7 +1109,7 @@ async fn membership_contract(pool: &DbPool) {
         let hash = hash.to_owned();
         let roles = roles.to_vec();
         async move {
-            codeyard::backend::db::cluster::create_join_token(
+            codeyard_db_cluster::cluster::create_join_token(
                 pool,
                 NewJoinToken {
                     token_hash: &hash,
@@ -1138,7 +1137,7 @@ async fn membership_contract(pool: &DbPool) {
             wanted.map(<[String]>::to_vec),
         );
         async move {
-            codeyard::backend::db::cluster::join_with_token(
+            codeyard_db_cluster::cluster::join_with_token(
                 pool,
                 JoinRequest {
                     token_hash: &token,
@@ -1220,22 +1219,20 @@ async fn membership_contract(pool: &DbPool) {
     );
 
     // Lookups, the member check, approve and revoke.
-    assert!(codeyard::backend::db::cluster::is_active_node(pool, &key_a)
+    assert!(codeyard_db_cluster::cluster::is_active_node(pool, &key_a)
         .await
         .unwrap());
     assert!(
-        !codeyard::backend::db::cluster::is_active_node(pool, &key_b)
+        !codeyard_db_cluster::cluster::is_active_node(pool, &key_b)
             .await
             .unwrap(),
         "pending is not active"
     );
-    assert!(
-        !codeyard::backend::db::cluster::is_active_node(pool, &key(5))
-            .await
-            .unwrap()
-    );
+    assert!(!codeyard_db_cluster::cluster::is_active_node(pool, &key(5))
+        .await
+        .unwrap());
     // Membership changes check the acting administrator where they are written.
-    let plain = codeyard::backend::db::users::accounts::create_user_with_password_and_flags(
+    let plain = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         pool,
         "node_plain",
         None,
@@ -1245,7 +1242,7 @@ async fn membership_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         "node-plain-session",
         plain.id,
@@ -1256,7 +1253,7 @@ async fn membership_contract(pool: &DbPool) {
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::cluster::set_node_status(
+        codeyard_db_cluster::cluster::set_node_status(
             pool,
             Authority::Administrator {
                 user_id: plain.id,
@@ -1269,12 +1266,10 @@ async fn membership_contract(pool: &DbPool) {
         .unwrap(),
         NodeStatusChange::Denied
     );
-    assert!(
-        !codeyard::backend::db::cluster::is_active_node(pool, &key_b)
-            .await
-            .unwrap()
-    );
-    let admin = codeyard::backend::db::users::accounts::create_user_with_password_and_flags(
+    assert!(!codeyard_db_cluster::cluster::is_active_node(pool, &key_b)
+        .await
+        .unwrap());
+    let admin = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         pool,
         "node_admin",
         None,
@@ -1284,7 +1279,7 @@ async fn membership_contract(pool: &DbPool) {
     )
     .await
     .unwrap();
-    let banned = codeyard::backend::db::users::accounts::create_user_with_password_and_flags(
+    let banned = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         pool,
         "node_banned",
         None,
@@ -1295,12 +1290,12 @@ async fn membership_contract(pool: &DbPool) {
     .await
     .unwrap();
     assert!(matches!(
-        codeyard::backend::db::users::transitions::change_ban(pool, admin.id, banned.id, true)
+        codeyard_db_identity::users::transitions::change_ban(pool, admin.id, banned.id, true)
             .await
             .unwrap(),
-        codeyard::backend::db::users::transitions::BanChange::Updated(_)
+        codeyard_db_identity::users::transitions::BanChange::Updated(_)
     ));
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         "node-banned-session",
         banned.id,
@@ -1311,7 +1306,7 @@ async fn membership_contract(pool: &DbPool) {
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::cluster::set_node_status(
+        codeyard_db_cluster::cluster::set_node_status(
             pool,
             Authority::Administrator {
                 user_id: banned.id,
@@ -1324,14 +1319,12 @@ async fn membership_contract(pool: &DbPool) {
         .unwrap(),
         NodeStatusChange::Denied
     );
-    assert!(
-        !codeyard::backend::db::cluster::is_active_node(pool, &key_b)
-            .await
-            .unwrap()
-    );
+    assert!(!codeyard_db_cluster::cluster::is_active_node(pool, &key_b)
+        .await
+        .unwrap());
 
     let admin_session = uuid::Uuid::new_v4().simple().to_string();
-    codeyard::backend::db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         pool,
         &admin_session,
         admin.id,
@@ -1344,7 +1337,7 @@ async fn membership_contract(pool: &DbPool) {
     let NodeStatusChange::Changed {
         before,
         node: approved,
-    } = codeyard::backend::db::cluster::set_node_status(
+    } = codeyard_db_cluster::cluster::set_node_status(
         pool,
         Authority::Administrator {
             user_id: admin.id,
@@ -1362,24 +1355,22 @@ async fn membership_contract(pool: &DbPool) {
         (before.as_str(), approved.status.as_str()),
         ("pending", "active")
     );
-    assert!(codeyard::backend::db::cluster::is_active_node(pool, &key_b)
+    assert!(codeyard_db_cluster::cluster::is_active_node(pool, &key_b)
         .await
         .unwrap());
     let NodeStatusChange::Changed { node: revoked, .. } =
-        codeyard::backend::db::cluster::set_node_status(pool, Authority::Operator, "b", "revoked")
+        codeyard_db_cluster::cluster::set_node_status(pool, Authority::Operator, "b", "revoked")
             .await
             .unwrap()
     else {
         panic!("the operator may revoke");
     };
     assert_eq!(revoked.status, "revoked");
-    assert!(
-        !codeyard::backend::db::cluster::is_active_node(pool, &key_b)
-            .await
-            .unwrap()
-    );
+    assert!(!codeyard_db_cluster::cluster::is_active_node(pool, &key_b)
+        .await
+        .unwrap());
     assert_eq!(
-        codeyard::backend::db::cluster::set_node_status(
+        codeyard_db_cluster::cluster::set_node_status(
             pool,
             Authority::Operator,
             "missing",
@@ -1389,7 +1380,7 @@ async fn membership_contract(pool: &DbPool) {
         .unwrap(),
         NodeStatusChange::Missing
     );
-    let names: Vec<String> = codeyard::backend::db::cluster::list_nodes(pool)
+    let names: Vec<String> = codeyard_db_cluster::cluster::list_nodes(pool)
         .await
         .unwrap()
         .into_iter()
@@ -1398,7 +1389,7 @@ async fn membership_contract(pool: &DbPool) {
     assert_eq!(names, ["a", "b", "c"]);
 
     // Heartbeat: only a known key, and it records the address.
-    assert!(codeyard::backend::db::cluster::record_node_heartbeat(
+    assert!(codeyard_db_cluster::cluster::record_node_heartbeat(
         pool,
         &key_a,
         "2.0.0",
@@ -1407,7 +1398,7 @@ async fn membership_contract(pool: &DbPool) {
     )
     .await
     .unwrap());
-    assert!(!codeyard::backend::db::cluster::record_node_heartbeat(
+    assert!(!codeyard_db_cluster::cluster::record_node_heartbeat(
         pool,
         &key(6),
         "2.0.0",
@@ -1416,7 +1407,7 @@ async fn membership_contract(pool: &DbPool) {
     )
     .await
     .unwrap());
-    let beat = codeyard::backend::db::cluster::get_node_by_name(pool, "a")
+    let beat = codeyard_db_cluster::cluster::get_node_by_name(pool, "a")
         .await
         .unwrap()
         .unwrap();
@@ -1426,10 +1417,10 @@ async fn membership_contract(pool: &DbPool) {
     );
     assert!(beat.is_online());
     // Withdrawing clears the sign of life and keeps the last address.
-    codeyard::backend::db::cluster::clear_node_heartbeat(pool, &key_a)
+    codeyard_db_cluster::cluster::clear_node_heartbeat(pool, &key_a)
         .await
         .unwrap();
-    let cleared = codeyard::backend::db::cluster::get_node_by_name(pool, "a")
+    let cleared = codeyard_db_cluster::cluster::get_node_by_name(pool, "a")
         .await
         .unwrap()
         .unwrap();
@@ -1438,7 +1429,7 @@ async fn membership_contract(pool: &DbPool) {
 
     // A node with database access registers itself once and keeps what it has.
     let own = key(7);
-    let first = codeyard::backend::db::cluster::register_own_node(
+    let first = codeyard_db_cluster::cluster::register_own_node(
         pool,
         &own,
         "core",
@@ -1452,11 +1443,11 @@ async fn membership_contract(pool: &DbPool) {
         ("active", ["web".to_owned(), "ssh".to_owned()].as_slice())
     );
     assert!(first.last_seen.is_none(), "registering is not publishing");
-    codeyard::backend::db::cluster::set_node_status(pool, Authority::Operator, "core", "revoked")
+    codeyard_db_cluster::cluster::set_node_status(pool, Authority::Operator, "core", "revoked")
         .await
         .unwrap();
     let second =
-        codeyard::backend::db::cluster::register_own_node(pool, &own, "renamed", &storage, "2")
+        codeyard_db_cluster::cluster::register_own_node(pool, &own, "renamed", &storage, "2")
             .await
             .unwrap();
     assert_eq!(
@@ -1469,7 +1460,7 @@ async fn membership_contract(pool: &DbPool) {
     );
     assert_eq!(second.roles, first.roles);
     let error =
-        codeyard::backend::db::cluster::register_own_node(pool, &key(8), "core", &storage, "1")
+        codeyard_db_cluster::cluster::register_own_node(pool, &key(8), "core", &storage, "1")
             .await
             .unwrap_err();
     assert!(
@@ -1479,7 +1470,7 @@ async fn membership_contract(pool: &DbPool) {
 
     // The declared list sets name and roles, activates, and never undoes a revoke.
     let declared = key(9);
-    let node = codeyard::backend::db::cluster::upsert_declared_nodes(
+    let node = codeyard_db_cluster::cluster::upsert_declared_nodes(
         pool,
         &[member(&declared, "decl", &storage)],
     )
@@ -1488,7 +1479,7 @@ async fn membership_contract(pool: &DbPool) {
     .remove(0);
     assert_eq!(node.status, "active");
     let web = ["web".to_owned()];
-    let node = codeyard::backend::db::cluster::upsert_declared_nodes(
+    let node = codeyard_db_cluster::cluster::upsert_declared_nodes(
         pool,
         &[member(&declared, "decl2", &web)],
     )
@@ -1499,10 +1490,10 @@ async fn membership_contract(pool: &DbPool) {
         (node.name.as_str(), node.roles.as_slice()),
         ("decl2", web.as_slice())
     );
-    codeyard::backend::db::cluster::set_node_status(pool, Authority::Operator, "decl2", "revoked")
+    codeyard_db_cluster::cluster::set_node_status(pool, Authority::Operator, "decl2", "revoked")
         .await
         .unwrap();
-    let node = codeyard::backend::db::cluster::upsert_declared_nodes(
+    let node = codeyard_db_cluster::cluster::upsert_declared_nodes(
         pool,
         &[member(&declared, "decl2", &web)],
     )
@@ -1510,7 +1501,7 @@ async fn membership_contract(pool: &DbPool) {
     .unwrap()
     .remove(0);
     assert_eq!(node.status, "revoked");
-    assert!(codeyard::backend::db::cluster::upsert_declared_nodes(
+    assert!(codeyard_db_cluster::cluster::upsert_declared_nodes(
         pool,
         &[member(&key(10), "decl2", &storage)]
     )
@@ -1524,12 +1515,12 @@ async fn membership_contract(pool: &DbPool) {
         member(&key(12), "decl2", &storage),
     ];
     assert!(
-        codeyard::backend::db::cluster::upsert_declared_nodes(pool, &batch)
+        codeyard_db_cluster::cluster::upsert_declared_nodes(pool, &batch)
             .await
             .is_err()
     );
     assert!(
-        codeyard::backend::db::cluster::get_node_by_public_key(pool, &fresh)
+        codeyard_db_cluster::cluster::get_node_by_public_key(pool, &fresh)
             .await
             .unwrap()
             .is_none()
@@ -1542,7 +1533,7 @@ async fn membership_queries_agree_on_sqlite_and_postgresql() {
     membership_contract(&sqlite.pool).await;
     sqlite.close().await;
     let postgres = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&postgres.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&postgres.pool)
         .await
         .unwrap();
     membership_contract(&postgres.pool).await;
@@ -1551,7 +1542,7 @@ async fn membership_queries_agree_on_sqlite_and_postgresql() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn withdrawing_gives_up_when_the_node_row_is_locked() {
     let db = PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&db.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
         .await
         .unwrap();
     let state = tempfile::tempdir().unwrap();

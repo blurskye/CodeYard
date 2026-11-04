@@ -29,7 +29,7 @@ pub(crate) async fn repository_owners(
             )),
         )
     };
-    let owners = crate::backend::db::repositories::records::repository_owner_names(pool, ids)
+    let owners = codeyard_db_repos::repositories::records::repository_owner_names(pool, ids)
         .await
         .map_err(|_| unavailable())?;
     if ids.iter().any(|id| !owners.contains_key(id)) {
@@ -43,7 +43,7 @@ pub(crate) async fn repository_topics(
     pool: &codeyard_db_core::DbPool,
     ids: &[i64],
 ) -> Result<std::collections::BTreeMap<i64, Vec<String>>, (StatusCode, Json<ApiError>)> {
-    crate::backend::db::repositories::topics::repository_topics(pool, ids)
+    codeyard_db_repos::repositories::topics::repository_topics(pool, ids)
         .await
         .map_err(|_| {
             (
@@ -93,7 +93,7 @@ pub(crate) async fn repository_fork_counts(
     let mut counts = std::collections::HashMap::new();
     for ids in ids.chunks(100) {
         counts.extend(
-            crate::backend::db::repositories::discovery::visible_fork_counts(
+            codeyard_db_repos::repositories::discovery::visible_fork_counts(
                 pool,
                 viewer,
                 session.as_deref(),

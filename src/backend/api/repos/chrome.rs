@@ -104,7 +104,7 @@ pub(crate) async fn load_database(
     name: &str,
 ) -> Result<Loaded, Response> {
     let repository =
-        crate::backend::db::repositories::records::get_repository(&ctx.state.pool, owner, name)
+        codeyard_db_repos::repositories::records::get_repository(&ctx.state.pool, owner, name)
             .await
             .map_err(|_| unavailable(ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
@@ -112,7 +112,7 @@ pub(crate) async fn load_database(
         ctx,
         check_repo_read_access(&ctx.state.pool, &repository, &ctx.headers).await,
     )?;
-    let topics = crate::backend::db::repositories::topics::repository_topics(
+    let topics = codeyard_db_repos::repositories::topics::repository_topics(
         &ctx.state.pool,
         &[repository.id],
     )
@@ -160,17 +160,17 @@ pub(crate) async fn load_database(
         .user
         .as_ref()
         .and_then(|_| crate::backend::api::http::session::extract_session_id(&ctx.headers));
-    chrome.packages = crate::backend::db::packages::count_linked(
+    chrome.packages = codeyard_db_repos::packages::count_linked(
         &ctx.state.pool,
         package_session
             .as_deref()
-            .map(crate::backend::db::packages::Credential::Session),
+            .map(codeyard_db_repos::packages::Credential::Session),
         repository.id,
     )
     .await
     .map_err(|_| unavailable(ctx))?;
     // The Issues and Pull requests tabs show open counts, and every reader of the repository sees them.
-    chrome.open_issues = crate::backend::db::issues::count_repo_issues(
+    chrome.open_issues = codeyard_db_repos::issues::count_repo_issues(
         &ctx.state.pool,
         repository.id,
         &Default::default(),
@@ -178,7 +178,7 @@ pub(crate) async fn load_database(
     .await
     .map_err(|_| unavailable(ctx))?
     .open;
-    chrome.open_pulls = crate::backend::db::pull_requests::records::count_repo_pull_requests(
+    chrome.open_pulls = codeyard_db_repos::pull_requests::records::count_repo_pull_requests(
         &ctx.state.pool,
         repository.id,
         &Default::default(),
@@ -193,7 +193,7 @@ pub(crate) async fn load_database(
             crate::backend::repositories::lifecycle::fork_refusal(&repository, user.id)
                 .map(|error| error.message.to_owned());
         if !chrome.is_owner {
-            chrome.is_owner = crate::backend::db::repositories::access::get_user_repo_access(
+            chrome.is_owner = codeyard_db_repos::repositories::access::get_user_repo_access(
                 &ctx.state.pool,
                 user.id,
                 repository.id,
@@ -213,26 +213,25 @@ pub(crate) async fn load_database(
         chrome.can_admin = effective_access.can_admin();
         chrome.can_view_traffic = effective_access.can_write();
         chrome.can_manage_invitations = chrome.can_admin;
-        chrome.starred = crate::backend::db::repositories::engagement::is_repo_starred(
+        chrome.starred = codeyard_db_repos::repositories::engagement::is_repo_starred(
             &ctx.state.pool,
             user.id,
             repository.id,
         )
         .await
         .map_err(|_| unavailable(ctx))?;
-        if let Some((level, events)) =
-            crate::backend::db::repositories::engagement::get_watch_level(
-                &ctx.state.pool,
-                user.id,
-                repository.id,
-            )
-            .await
-            .map_err(|_| unavailable(ctx))?
+        if let Some((level, events)) = codeyard_db_repos::repositories::engagement::get_watch_level(
+            &ctx.state.pool,
+            user.id,
+            repository.id,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
         {
             chrome.watch_level = level;
             chrome.watch_events = events;
         }
-        if let Some(fork) = crate::backend::db::repositories::discovery::get_user_fork(
+        if let Some(fork) = codeyard_db_repos::repositories::discovery::get_user_fork(
             &ctx.state.pool,
             user.id,
             repository.id,
@@ -245,7 +244,7 @@ pub(crate) async fn load_database(
         }
     }
     if let Some(parent_id) = repository.forked_from_id {
-        if let Some(parent) = crate::backend::db::repositories::records::get_repository_by_id(
+        if let Some(parent) = codeyard_db_repos::repositories::records::get_repository_by_id(
             &ctx.state.pool,
             parent_id,
         )
@@ -255,7 +254,7 @@ pub(crate) async fn load_database(
             match check_repo_read_access(&ctx.state.pool, &parent, &ctx.headers).await {
                 Ok(()) => {
                     let parent_owner =
-                        crate::backend::db::repositories::records::repository_owner_name(
+                        codeyard_db_repos::repositories::records::repository_owner_name(
                             &ctx.state.pool,
                             parent.id,
                         )

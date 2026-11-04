@@ -6,15 +6,6 @@ use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use crate::backend::cluster::JoinTicket;
 
-use crate::backend::db::runners as native;
-use crate::backend::db::runners::Group;
-use crate::backend::db::runners::GroupInput;
-use crate::backend::db::runners::Labels;
-use crate::backend::db::runners::Refusal;
-use crate::backend::db::runners::Registration;
-use crate::backend::db::runners::Runner;
-use crate::backend::db::runners::Scope;
-use crate::backend::db::runners::Selection;
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -23,6 +14,15 @@ use axum::{
     Json,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_db_actions::runners as native;
+use codeyard_db_actions::runners::GroupInput;
+use codeyard_db_actions::runners::Labels;
+use codeyard_db_actions::runners::Registration;
+use codeyard_db_actions::runners::Selection;
+use codeyard_db_core::queries::runners::Group;
+use codeyard_db_core::queries::runners::Refusal;
+use codeyard_db_core::queries::runners::Runner;
+use codeyard_db_core::queries::runners::Scope;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -201,7 +201,7 @@ async fn scope(
         auth.require_write()?;
     }
     let scope = if let Some(org) = p.get("org") {
-        let org = crate::backend::db::organizations::get_public_organization(&state.pool, org)
+        let org = codeyard_db_orgs::organizations::get_public_organization(&state.pool, org)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -337,7 +337,7 @@ async fn groups(
             .strip_prefix(&format!("{}/", p["org"]))
             .unwrap_or(&name);
         let repo =
-            crate::backend::db::repositories::records::get_repository(&s.pool, &p["org"], name)
+            codeyard_db_repos::repositories::records::get_repository(&s.pool, &p["org"], name)
                 .await
                 .map_err(Error::unavailable)?
                 .filter(|r| {
@@ -467,7 +467,7 @@ async fn repositories(
         .skip(offset)
         .take(limit)
         .collect();
-    let rows = crate::backend::db::repositories::records::get_repositories_by_ids(&s.pool, &ids)
+    let rows = codeyard_db_repos::repositories::records::get_repositories_by_ids(&s.pool, &ids)
         .await
         .map_err(Error::unavailable)?;
     let organization = org(scope)?;

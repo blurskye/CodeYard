@@ -11,12 +11,12 @@ pub async fn resolve(
     pool: &codeyard_db_core::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: &User,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     (repo, owner): (&Repository, &str),
     (issue_id, suggestion_id): (i64, i64),
     approve: bool,
-) -> Result<crate::backend::db::suggestions::Suggestion> {
-    let outcome = crate::backend::db::suggestions::resolve(
+) -> Result<codeyard_db_repos::suggestions::Suggestion> {
+    let outcome = codeyard_db_repos::suggestions::resolve(
         pool,
         repo.id,
         actor.id,
@@ -27,7 +27,7 @@ pub async fn resolve(
     )
     .await?;
     if outcome.invalidated {
-        return Err(crate::backend::db::suggestions::Refusal::Invalidated.into());
+        return Err(codeyard_db_repos::suggestions::Refusal::Invalidated.into());
     }
     if let Some(assignee) = outcome.assignment {
         let issue = &outcome.issue;

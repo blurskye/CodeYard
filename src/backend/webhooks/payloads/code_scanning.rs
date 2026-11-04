@@ -1,5 +1,5 @@
-use crate::backend::db::code_scanning::Alert;
-use crate::backend::db::code_scanning::Instance;
+use codeyard_db_security::code_scanning::Alert;
+use codeyard_db_security::code_scanning::Instance;
 use codeyard_model::http_config::link_origin;
 use codeyard_model::urls::repo_url;
 use serde_json::{json, Value};

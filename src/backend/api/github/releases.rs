@@ -80,7 +80,7 @@ pub(super) async fn document(
         name,
         Some(assets),
     );
-    if let Some(number) = crate::backend::db::releases::release_discussion(&state.pool, release.id)
+    if let Some(number) = codeyard_db_repos::releases::release_discussion(&state.pool, release.id)
         .await
         .map_err(Error::unavailable)?
         .and_then(|discussion| discussion.number)
@@ -93,7 +93,7 @@ pub(super) async fn document(
         ));
     }
     let counts =
-        crate::backend::db::reactions::reaction_counts(&state.pool, "release", &[release.id], 0)
+        codeyard_db_repos::reactions::reaction_counts(&state.pool, "release", &[release.id], 0)
             .await
             .map_err(Error::unavailable)?;
     value["reactions"] = crate::backend::webhooks::payloads::reaction_rollup(
@@ -159,7 +159,7 @@ async fn get_one(
         let id = match params.get("release_id") {
             Some(id) => id.parse().map_err(|_| Error::missing())?,
             None => {
-                crate::backend::db::releases::latest_release(&state.pool, repo.id)
+                codeyard_db_repos::releases::latest_release(&state.pool, repo.id)
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?
@@ -248,11 +248,11 @@ async fn discussion_category(
         return Ok(None);
     };
     let pool = &state.pool;
-    let category = if crate::backend::db::repository_discussions::enabled(pool, repo_id)
+    let category = if codeyard_db_repos::repository_discussions::enabled(pool, repo_id)
         .await
         .map_err(Error::unavailable)?
     {
-        crate::backend::db::repository_discussions::categories(pool, repo_id)
+        codeyard_db_repos::repository_discussions::categories(pool, repo_id)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
@@ -276,14 +276,14 @@ async fn start_discussion(
 ) -> Result<()> {
     let pool = &state.pool;
     if let Some(category) = category {
-        crate::backend::db::releases::set_release_discussion_category(pool, release.id, category)
+        codeyard_db_repos::releases::set_release_discussion_category(pool, release.id, category)
             .await
             .map_err(Error::unavailable)?;
     }
     if release.is_draft {
         return Ok(());
     }
-    let Some(pending) = crate::backend::db::releases::release_discussion(pool, release.id)
+    let Some(pending) = codeyard_db_repos::releases::release_discussion(pool, release.id)
         .await
         .map_err(Error::unavailable)?
         .filter(|pending| pending.number.is_none())
@@ -295,13 +295,13 @@ async fn start_discussion(
         .as_deref()
         .filter(|name| !name.trim().is_empty())
         .unwrap_or(&release.tag_name);
-    let id = crate::backend::db::repository_discussions::write(
+    let id = codeyard_db_repos::repository_discussions::write(
         pool,
         auth.user.id,
         &auth.credential(),
         release.repo_id,
         None,
-        &crate::backend::db::repository_discussions::Write::Create {
+        &codeyard_db_repos::repository_discussions::Write::Create {
             category: pending.category_id,
             title,
             body: release.body.as_deref().unwrap_or_default(),
@@ -309,7 +309,7 @@ async fn start_discussion(
     )
     .await
     .map_err(|error| {
-        use crate::backend::db::repository_discussions::Refusal;
+        use codeyard_db_repos::repository_discussions::Refusal;
         match error.downcast_ref::<Refusal>() {
             Some(Refusal::Denied) => Error::new(StatusCode::FORBIDDEN, "Discussion write denied"),
             Some(Refusal::Invalid | Refusal::Missing) => {
@@ -318,7 +318,7 @@ async fn start_discussion(
             None => Error::unavailable(error),
         }
     })?;
-    crate::backend::db::releases::link_release_discussion(pool, release.id, id)
+    codeyard_db_repos::releases::link_release_discussion(pool, release.id, id)
         .await
         .map_err(Error::unavailable)?;
     Ok(())
@@ -577,14 +577,14 @@ async fn update_asset(
         &owner,
         &name,
         id,
-        &crate::backend::db::releases::AssetChanges {
+        &codeyard_db_repos::releases::AssetChanges {
             name: input.name,
             label: value.get("label").map(|_| input.label),
         },
     )
     .await
     .map_err(release_error)?;
-    let release = crate::backend::db::releases::get_release(&state.pool, repo.id, asset.release_id)
+    let release = codeyard_db_repos::releases::get_release(&state.pool, repo.id, asset.release_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -647,11 +647,10 @@ async fn asset(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
-    let asset =
-        crate::backend::db::releases::get_repository_release_asset(&state.pool, repo.id, id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+    let asset = codeyard_db_repos::releases::get_repository_release_asset(&state.pool, repo.id, id)
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
     let detail = crate::backend::repositories::releases::detail_by_id(
         &state.pool,
         viewer,
@@ -699,11 +698,10 @@ async fn remove_asset(
         .ok_or_else(crate::backend::api::github::auth::required)?
         .user
         .id;
-    let asset =
-        crate::backend::db::releases::get_repository_release_asset(&state.pool, repo.id, id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+    let asset = codeyard_db_repos::releases::get_repository_release_asset(&state.pool, repo.id, id)
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
     crate::backend::repositories::releases::delete_asset(
         &state.pool,
         &state.storage,

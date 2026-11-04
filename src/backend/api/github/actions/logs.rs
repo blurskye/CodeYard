@@ -8,13 +8,13 @@ use crate::backend::api::github::Result;
 
 use crate::backend::app::AppState;
 
-use crate::backend::db::action_logs::Target;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, MethodRouter},
 };
+use codeyard_db_actions::action_logs::Target;
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 
@@ -41,7 +41,7 @@ async fn live_logs(
     }
     let limit = limit.unwrap_or(500).clamp(1, 1000) as usize;
     let mut rows =
-        crate::backend::db::ci::list_ci_log_history(&state.pool, run.id, after, limit as i64 + 1)
+        codeyard_db_actions::ci::list_ci_log_history(&state.pool, run.id, after, limit as i64 + 1)
             .await
             .map_err(Error::unavailable)?;
     let mut has_more = rows.len() > limit;
@@ -60,7 +60,7 @@ async fn live_logs(
     has_more |= count < rows.len();
     rows.truncate(count);
     let next_cursor = rows.last().map_or(after, |row| row.id);
-    let deployment = crate::backend::db::ci::get_ci_deployment_by_run_id(&state.pool, run.id)
+    let deployment = codeyard_db_actions::ci::get_ci_deployment_by_run_id(&state.pool, run.id)
         .await
         .map_err(Error::unavailable)?
         .map(|row| Deployment {
@@ -112,7 +112,7 @@ async fn download(
             crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
                 .await
                 .ok_or_else(|| Error::unavailable(()))?;
-        let snapshot = crate::backend::db::action_logs::read(
+        let snapshot = codeyard_db_actions::action_logs::read(
             &state.pool,
             &crate::backend::ci::runtime::token_hash(&token),
             resource,
@@ -149,7 +149,7 @@ async fn download(
             .await
             .map_err(|(status, axum::Json(error))| Error::new(status, error.message))?;
         let repo =
-            crate::backend::db::repositories::records::get_repository(&state.pool, owner, name)
+            codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, name)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -161,7 +161,7 @@ async fn download(
         }
         (
             repo,
-            crate::backend::db::credentials::Actor::from((
+            codeyard_db_core::queries::credentials::Actor::from((
                 user.id,
                 crate::backend::api::http::session::extract_session_id(&headers)
                     .unwrap_or_default(),
@@ -181,7 +181,7 @@ async fn download(
         return Err(Error::invalid("Live logs require a workflow run"));
     }
     let target = if params.contains_key("job_id") {
-        let job = crate::backend::db::action_jobs::get(
+        let job = codeyard_db_actions::action_jobs::get(
             &state.pool,
             repo.id,
             id(&params, "job_id")?,
@@ -194,7 +194,7 @@ async fn download(
             let position: usize = params["step_number"]
                 .parse()
                 .map_err(|_| Error::missing())?;
-            let steps = crate::backend::db::action_jobs::steps(&state.pool, repo.id, job.id)
+            let steps = codeyard_db_actions::action_jobs::steps(&state.pool, repo.id, job.id)
                 .await
                 .map_err(Error::unavailable)?;
             Some(steps.get(position).ok_or_else(Error::missing)?.number)
@@ -212,7 +212,7 @@ async fn download(
         } else {
             None
         };
-        let run = crate::backend::db::action_runs::get(
+        let run = codeyard_db_actions::action_runs::get(
             &state.pool,
             repo.id,
             id(&params, "run_id")?,
@@ -231,7 +231,7 @@ async fn download(
         }
     };
     let token = crate::backend::ci::runtime::secret();
-    if !crate::backend::db::action_logs::issue(
+    if !codeyard_db_actions::action_logs::issue(
         &state.pool,
         actor,
         repo.id,

@@ -2,12 +2,6 @@ use crate::backend::api::http::context::PageContext;
 
 use crate::backend::app::AppState;
 
-use crate::backend::db::packages::Credential;
-use crate::backend::db::packages::Listing;
-use crate::backend::db::packages::Owner;
-use crate::backend::db::packages::Package;
-use crate::backend::db::packages::Permission;
-use crate::backend::db::packages::Refusal;
 use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -15,6 +9,12 @@ use axum::{
     routing::get,
     Form, Router,
 };
+use codeyard_db_repos::packages::Credential;
+use codeyard_db_repos::packages::Listing;
+use codeyard_db_repos::packages::Owner;
+use codeyard_db_repos::packages::Package;
+use codeyard_db_repos::packages::Permission;
+use codeyard_db_repos::packages::Refusal;
 use codeyard_webui::{app::Page as AppPage, pages::packages as view};
 use std::{collections::HashMap, sync::Arc};
 
@@ -76,7 +76,7 @@ async fn scope(
     } else {
         return Ok(None);
     };
-    crate::backend::db::packages::owner(&ctx.state.pool, name, kind)
+    codeyard_db_repos::packages::owner(&ctx.state.pool, name, kind)
         .await
         .map_err(|error| failure(ctx, error))?
         .map(Some)
@@ -85,12 +85,12 @@ async fn scope(
 
 async fn record_owner(ctx: &PageContext, package: &Package) -> Result<Owner, Response> {
     let name = if let Some(user) = package.owner_user_id {
-        crate::backend::db::users::accounts::get_user_by_id(&ctx.state.pool, user)
+        codeyard_db_identity::users::accounts::get_user_by_id(&ctx.state.pool, user)
             .await
             .map_err(|error| failure(ctx, error))?
             .map(|user| user.username)
     } else if let Some(org) = package.owner_org_id {
-        crate::backend::db::organizations::get_public_organization_by_id(&ctx.state.pool, org)
+        codeyard_db_orgs::organizations::get_public_organization_by_id(&ctx.state.pool, org)
             .await
             .map_err(|error| failure(ctx, error))?
             .map(|org| org.name)
@@ -117,7 +117,7 @@ async fn card(
         .user
         .as_ref()
         .and_then(|_| crate::backend::api::http::session::extract_session_id(&ctx.headers));
-    let versions = crate::backend::db::packages::version_count(
+    let versions = codeyard_db_repos::packages::version_count(
         &ctx.state.pool,
         package.id,
         session.as_deref().map(Credential::Session),
@@ -142,7 +142,7 @@ async fn card(
 
 fn version_card(
     base: &str,
-    version: &crate::backend::db::packages::Version,
+    version: &codeyard_db_repos::packages::Version,
     tags: Vec<String>,
 ) -> view::Version {
     view::Version {
@@ -203,7 +203,7 @@ async fn model(
         if !crate::backend::packages::valid_kind(kind) {
             return Err(ctx.error(StatusCode::NOT_FOUND, "Package type not found."));
         }
-        let package = crate::backend::db::packages::find(
+        let package = codeyard_db_repos::packages::find(
             &ctx.state.pool,
             owner,
             kind,
@@ -214,7 +214,7 @@ async fn model(
         )
         .await
         .map_err(|error| failure(ctx, error))?;
-        let can_admin = match crate::backend::db::packages::find(
+        let can_admin = match codeyard_db_repos::packages::find(
             &ctx.state.pool,
             owner,
             kind,
@@ -240,7 +240,7 @@ async fn model(
         if settings && !can_admin {
             return Err(ctx.error(StatusCode::NOT_FOUND, "Package settings not found."));
         }
-        let mut versions = crate::backend::db::packages::versions(
+        let mut versions = codeyard_db_repos::packages::versions(
             &ctx.state.pool,
             package.id,
             credential,
@@ -262,7 +262,7 @@ async fn model(
         };
         let selected = match selected {
             Some(id) => Some(
-                crate::backend::db::packages::version_by_id(
+                codeyard_db_repos::packages::version_by_id(
                     &ctx.state.pool,
                     package.id,
                     credential,
@@ -274,7 +274,7 @@ async fn model(
             None => None,
         };
         if settings {
-            let mut deleted = crate::backend::db::packages::versions(
+            let mut deleted = codeyard_db_repos::packages::versions(
                 &ctx.state.pool,
                 package.id,
                 credential,
@@ -291,7 +291,7 @@ async fn model(
         let card = card(ctx, owner, &package).await?;
         let mut rows = Vec::new();
         for version in versions {
-            let tags = crate::backend::db::packages::tags(
+            let tags = codeyard_db_repos::packages::tags(
                 &ctx.state.pool,
                 package.id,
                 credential,
@@ -303,7 +303,7 @@ async fn model(
         }
         let selected_view = if params.contains_key("version") {
             if let Some(version) = &selected {
-                let tags = crate::backend::db::packages::tags(
+                let tags = codeyard_db_repos::packages::tags(
                     &ctx.state.pool,
                     package.id,
                     credential,
@@ -325,7 +325,7 @@ async fn model(
             .unwrap_or(&origin);
         let (command, registry) = if package.package_type == "container" {
             let namespace =
-                crate::backend::db::packages::container_namespace(&ctx.state.pool, owner)
+                codeyard_db_repos::packages::container_namespace(&ctx.state.pool, owner)
                     .await
                     .map_err(|error| failure(ctx, error))?;
             let reference = selected
@@ -377,7 +377,7 @@ async fn model(
         };
         let repository = match package.repo_id {
             Some(id) => {
-                crate::backend::db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
+                codeyard_db_repos::repositories::records::get_repository_by_id(&ctx.state.pool, id)
                     .await
                     .map_err(|error| failure(ctx, error))?
             }
@@ -485,7 +485,7 @@ async fn model(
         None
     };
     let explore = owner.is_none();
-    let mut packages = crate::backend::db::packages::list(
+    let mut packages = codeyard_db_repos::packages::list(
         &ctx.state.pool,
         credential,
         Listing {
@@ -509,7 +509,7 @@ async fn model(
     let base = ctx.path.clone();
     let container_namespace = match owner.as_ref() {
         Some(owner) => Some(
-            crate::backend::db::packages::container_namespace(&ctx.state.pool, owner)
+            codeyard_db_repos::packages::container_namespace(&ctx.state.pool, owner)
                 .await
                 .map_err(|error| failure(ctx, error))?,
         ),
@@ -577,7 +577,7 @@ async fn mutate(
     let kind = params
         .get("kind")
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Package type not found."))?;
-    let package = crate::backend::db::packages::find(
+    let package = codeyard_db_repos::packages::find(
         &ctx.state.pool,
         &owner,
         kind,
@@ -611,7 +611,7 @@ async fn mutate(
                 .filter(|name| !name.is_empty())
             {
                 Some(name) => Some(
-                    crate::backend::db::repositories::records::get_repository(
+                    codeyard_db_repos::repositories::records::get_repository(
                         &ctx.state.pool,
                         &owner.name,
                         name,
@@ -623,7 +623,7 @@ async fn mutate(
                 ),
                 None => None,
             };
-            crate::backend::db::packages::settings(
+            codeyard_db_repos::packages::settings(
                 &ctx.state.pool,
                 package.id,
                 credential,
@@ -640,7 +640,7 @@ async fn mutate(
                     "Enter the package name to confirm deletion.",
                 ));
             }
-            crate::backend::db::packages::set_deleted(
+            codeyard_db_repos::packages::set_deleted(
                 &ctx.state.pool,
                 package.id,
                 None,
@@ -661,7 +661,7 @@ async fn mutate(
                         "Choose a package version.",
                     )
                 })?;
-            crate::backend::db::packages::set_deleted(
+            codeyard_db_repos::packages::set_deleted(
                 &ctx.state.pool,
                 package.id,
                 Some(id),

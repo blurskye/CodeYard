@@ -4,8 +4,8 @@ use crate::backend::api::github::activity::Error;
 use crate::backend::api::github::activity::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::events::EventScope;
-use crate::backend::db::events::EventViewer;
+use codeyard_db_repos::events::EventScope;
+use codeyard_db_repos::events::EventViewer;
 
 use axum::{
     extract::{Path, Query, State},
@@ -70,10 +70,10 @@ async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
         let mut after = 0;
         loop {
             let rows = crate::backend::api::github::orgs::outcome(
-                crate::backend::db::organizations::profiles::list_actor_organizations(
+                codeyard_db_orgs::organizations::profiles::list_actor_organizations(
                     &state.pool,
                     viewer.user.id,
-                    crate::backend::db::organizations::OrganizationPage::new(after, 100)
+                    codeyard_db_orgs::organizations::OrganizationPage::new(after, 100)
                         .map_err(Error::unavailable)?,
                 )
                 .await
@@ -163,7 +163,7 @@ async fn feed(
     Query(query): Query<FeedQuery>,
 ) -> Result<Response> {
     let params = params.map(|Path(p)| p).unwrap_or_default();
-    let config = crate::backend::db::node_config::get_node_configuration(&state.pool)
+    let config = codeyard_db_cluster::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(Error::unavailable)?
         .filter(|c| c.setup_completed)
@@ -186,7 +186,7 @@ async fn feed(
             return Err(Error::missing());
         }
         let scope = if let Some(org) = params.get("org") {
-            let org = crate::backend::db::organizations::profiles::get_public_organization(
+            let org = codeyard_db_orgs::organizations::profiles::get_public_organization(
                 &state.pool,
                 org,
             )
@@ -194,14 +194,14 @@ async fn feed(
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
             if !matches!(
-                crate::backend::db::organizations::profiles::get_organization_metadata(
+                codeyard_db_orgs::organizations::profiles::get_organization_metadata(
                     &state.pool,
                     user.id,
                     org.id
                 )
                 .await
                 .map_err(Error::unavailable)?,
-                crate::backend::db::organizations::OrganizationOutcome::Applied(_)
+                codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
             ) {
                 return Err(Error::missing());
             }
@@ -241,7 +241,7 @@ async fn feed(
                 });
         if let Some(username) = params.get("username") {
             let user =
-                crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
+                codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)
                     .await
                     .map_err(Error::unavailable)?
                     .filter(|u| !u.is_banned)

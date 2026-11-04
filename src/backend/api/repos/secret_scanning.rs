@@ -37,18 +37,18 @@ fn failure(
     loaded: &crate::backend::api::repos::chrome::Loaded,
     error: anyhow::Error,
 ) -> Response {
-    match error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>() {
-        Some(crate::backend::db::secret_scanning::Refusal::Missing) => ctx.repo_error(
+    match error.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>() {
+        Some(codeyard_db_core::queries::secret_scanning::Refusal::Missing) => ctx.repo_error(
             &loaded.chrome,
             StatusCode::NOT_FOUND,
             "Secret scanning resource not found",
         ),
-        Some(crate::backend::db::secret_scanning::Refusal::Denied) => ctx.repo_error(
+        Some(codeyard_db_core::queries::secret_scanning::Refusal::Denied) => ctx.repo_error(
             &loaded.chrome,
             StatusCode::FORBIDDEN,
             "Repository administration required",
         ),
-        Some(crate::backend::db::secret_scanning::Refusal::Invalid) => ctx.repo_error(
+        Some(codeyard_db_core::queries::secret_scanning::Refusal::Invalid) => ctx.repo_error(
             &loaded.chrome,
             StatusCode::UNPROCESSABLE_ENTITY,
             "Invalid secret scanning submission",
@@ -85,7 +85,7 @@ fn show(
     )
 }
 
-fn summary(alert: crate::backend::db::secret_scanning::Alert) -> view::Alert {
+fn summary(alert: codeyard_db_security::secret_scanning::Alert) -> view::Alert {
     view::Alert {
         number: alert.number,
         name: alert.display_name,
@@ -118,14 +118,14 @@ async fn list(
         .and_then(|page| page.parse::<i64>().ok())
         .unwrap_or(1)
         .clamp(1, MAX_PAGE);
-    let filter = crate::backend::db::secret_scanning::Filter {
+    let filter = codeyard_db_security::secret_scanning::Filter {
         state: Some(state.clone()),
         secret_type: (!secret_type.is_empty()).then_some(secret_type.clone()),
         offset: (page - 1) * 30,
         limit: 31,
         ..Default::default()
     };
-    let mut rows = match crate::backend::db::secret_scanning::alerts(
+    let mut rows = match codeyard_db_security::secret_scanning::alerts(
         &ctx.state.pool,
         ctx.user.as_ref().expect("signed in").id,
         loaded.repository.id,
@@ -136,8 +136,8 @@ async fn list(
         Ok(rows) => rows,
         Err(error)
             if matches!(
-                error.downcast_ref::<crate::backend::db::secret_scanning::Refusal>(),
-                Some(crate::backend::db::secret_scanning::Refusal::Missing)
+                error.downcast_ref::<codeyard_db_core::queries::secret_scanning::Refusal>(),
+                Some(codeyard_db_core::queries::secret_scanning::Refusal::Missing)
             ) =>
         {
             return show(&ctx, loaded, view::Page::Disabled)
@@ -177,11 +177,11 @@ async fn alert(
     };
     let number = params["number"].parse().unwrap_or(0);
     let actor = ctx.user.as_ref().expect("signed in").id;
-    let alert = match crate::backend::db::secret_scanning::alerts(
+    let alert = match codeyard_db_security::secret_scanning::alerts(
         &ctx.state.pool,
         actor,
         loaded.repository.id,
-        &crate::backend::db::secret_scanning::Filter {
+        &codeyard_db_security::secret_scanning::Filter {
             number: Some(number),
             limit: 1,
             ..Default::default()
@@ -194,7 +194,7 @@ async fn alert(
             return failure(
                 &ctx,
                 &loaded,
-                crate::backend::db::secret_scanning::Refusal::Missing.into(),
+                codeyard_db_core::queries::secret_scanning::Refusal::Missing.into(),
             )
         }
         Err(error) => return failure(&ctx, &loaded, error),
@@ -205,7 +205,7 @@ async fn alert(
         .and_then(|page| page.parse::<i64>().ok())
         .unwrap_or(1)
         .clamp(1, MAX_PAGE);
-    let mut locations = match crate::backend::db::secret_scanning::locations(
+    let mut locations = match codeyard_db_security::secret_scanning::locations(
         &ctx.state.pool,
         actor,
         loaded.repository.id,
@@ -266,17 +266,17 @@ async fn resolve(
         return failure(
             &ctx,
             &loaded,
-            crate::backend::db::secret_scanning::Refusal::Missing.into(),
+            codeyard_db_core::queries::secret_scanning::Refusal::Missing.into(),
         );
     }
     let number = params["number"].parse().unwrap_or(0);
     let state = crate::backend::api::repos::forms::field(&form, "state");
-    let input = crate::backend::db::secret_scanning::AlertUpdate {
+    let input = codeyard_db_security::secret_scanning::AlertUpdate {
         state: Some(&state),
         reason: form.get("resolution").map(String::as_str),
         ..Default::default()
     };
-    let alert = match crate::backend::db::secret_scanning::update_alert(
+    let alert = match codeyard_db_security::secret_scanning::update_alert(
         &ctx.state.pool,
         ctx.user.as_ref().expect("signed in").id,
         loaded.repository.id,
@@ -320,7 +320,7 @@ async fn bypass_page(
         Ok(open) => open,
         Err(response) => return response,
     };
-    let placeholder = match crate::backend::db::secret_scanning::bypass(
+    let placeholder = match codeyard_db_security::secret_scanning::bypass(
         &ctx.state.pool,
         ctx.user.as_ref().expect("signed in").id,
         loaded.repository.id,
@@ -365,11 +365,11 @@ async fn bypass_form(
         return failure(
             &ctx,
             &loaded,
-            crate::backend::db::secret_scanning::Refusal::Missing.into(),
+            codeyard_db_core::queries::secret_scanning::Refusal::Missing.into(),
         );
     }
     let reason = crate::backend::api::repos::forms::field(&form, "reason");
-    match crate::backend::db::secret_scanning::bypass(
+    match codeyard_db_security::secret_scanning::bypass(
         &ctx.state.pool,
         ctx.user.as_ref().expect("signed in").id,
         loaded.repository.id,

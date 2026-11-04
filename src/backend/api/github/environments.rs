@@ -7,11 +7,11 @@ use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use codeyard_model::urls::repo_url;
 
-use crate::backend::db::environments::Branch;
-use crate::backend::db::environments::Environment;
-use crate::backend::db::environments::Refusal;
-use crate::backend::db::environments::Reviewer;
-use crate::backend::db::environments::Update;
+use codeyard_db_actions::environments::Branch;
+use codeyard_db_actions::environments::Environment;
+use codeyard_db_actions::environments::Refusal;
+use codeyard_db_actions::environments::Reviewer;
+use codeyard_db_actions::environments::Update;
 
 use axum::{
     extract::{OriginalUri, Path, Query, Request, State},
@@ -53,12 +53,12 @@ pub(super) async fn document(
     let mut reviewers = Vec::new();
     for reviewer in selected {
         let value = if reviewer.kind == "User" {
-            crate::backend::db::users::accounts::get_user_by_id(&state.pool, reviewer.id)
+            codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, reviewer.id)
                 .await
                 .map_err(Error::unavailable)?
                 .map(|user| crate::backend::webhooks::payloads::user(&user))
         } else {
-            let team = crate::backend::db::repositories::push_teams::by_ids(
+            let team = codeyard_db_repos::repositories::push_teams::by_ids(
                 &state.pool,
                 env.repo_id,
                 &[reviewer.id],
@@ -73,7 +73,7 @@ pub(super) async fn document(
                 }
                 Some(team) => {
                     let can_see = match viewer {
-                        Some(viewer) => crate::backend::db::organizations::get_team_by_id(
+                        Some(viewer) => codeyard_db_orgs::organizations::get_team_by_id(
                             &state.pool,
                             viewer,
                             team.team.id,
@@ -106,7 +106,7 @@ async fn list(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::environments::list(
+    let rows = codeyard_db_actions::environments::list(
         &state.pool,
         repo.id,
         offset as i64,
@@ -128,7 +128,7 @@ async fn list(
             .await?,
         );
     }
-    let total = crate::backend::db::environments::count(&state.pool, repo.id)
+    let total = codeyard_db_actions::environments::count(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?;
     Ok((
@@ -169,7 +169,7 @@ async fn environment(
     let (env, viewer) = if crate::backend::api::github::auth::read_method(&method) {
         let (repo, auth) =
             repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
-        let env = crate::backend::db::environments::get(&state.pool, repo.id, name)
+        let env = codeyard_db_actions::environments::get(&state.pool, repo.id, name)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -177,7 +177,7 @@ async fn environment(
     } else {
         let (repo, auth) = administer(&state, &headers, &params, true).await?;
         if method == Method::DELETE {
-            crate::backend::db::environments::delete(
+            codeyard_db_actions::environments::delete(
                 &state.pool,
                 auth.database_actor(),
                 repo.id,
@@ -197,7 +197,7 @@ async fn environment(
                 .map_err(|_| Error::validation("Environment", "configuration", "invalid"))?
                 .unwrap_or_default()
         };
-        let env = crate::backend::db::environments::upsert(
+        let env = codeyard_db_actions::environments::upsert(
             &state.pool,
             auth.database_actor(),
             repo.id,
@@ -244,7 +244,7 @@ async fn policies(
         (repo, Some(auth))
     };
     let env =
-        crate::backend::db::environments::get(&state.pool, repo.id, &params["environment_name"])
+        codeyard_db_actions::environments::get(&state.pool, repo.id, &params["environment_name"])
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -254,14 +254,14 @@ async fn policies(
         .transpose()?;
     if read {
         if let Some(id) = id {
-            let branch = crate::backend::db::environments::branch(&state.pool, env.id, id)
+            let branch = codeyard_db_actions::environments::branch(&state.pool, env.id, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
             return Ok(Json(branch_document(&branch)).into_response());
         }
         let (offset, limit) = page.window()?;
-        let rows = crate::backend::db::environments::branches(
+        let rows = codeyard_db_actions::environments::branches(
             &state.pool,
             env.id,
             offset as i64,
@@ -269,14 +269,14 @@ async fn policies(
         )
         .await
         .map_err(Error::unavailable)?;
-        let total = crate::backend::db::environments::branch_count(&state.pool, env.id)
+        let total = codeyard_db_actions::environments::branch_count(&state.pool, env.id)
             .await
             .map_err(Error::unavailable)?;
         return Ok((page.headers(&uri, rows.len() > limit)?, Json(json!({"total_count": total, "branch_policies": rows.iter().take(limit).map(branch_document).collect::<Vec<_>>()}))).into_response());
     }
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     if method == Method::DELETE {
-        crate::backend::db::environments::delete_branch(
+        codeyard_db_actions::environments::delete_branch(
             &state.pool,
             auth.database_actor(),
             repo.id,
@@ -293,7 +293,7 @@ async fn policies(
     let input: BranchInput = serde_json::from_slice(&bytes)
         .map_err(|_| Error::validation("DeploymentBranchPolicy", "name", "invalid"))?;
     let kind = if let Some(id) = id {
-        crate::backend::db::environments::branch(&state.pool, env.id, id)
+        codeyard_db_actions::environments::branch(&state.pool, env.id, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?
@@ -301,7 +301,7 @@ async fn policies(
     } else {
         input.kind.unwrap_or_else(|| "branch".into())
     };
-    let (branch, duplicate) = crate::backend::db::environments::save_branch(
+    let (branch, duplicate) = codeyard_db_actions::environments::save_branch(
         &state.pool,
         auth.database_actor(),
         repo.id,

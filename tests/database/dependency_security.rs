@@ -1,17 +1,16 @@
 use crate::support::database::Database;
-use codeyard::backend::db::{
-    self,
-    repositories::{
-        creation::{NewRepository, RepositoryCreationOwner},
-        dependencies::{self as records, AlertState, Feature},
-    },
-};
+
+use codeyard_db_repos::repositories::creation::NewRepository;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::dependencies as records;
+use codeyard_db_repos::repositories::dependencies::AlertState;
+use codeyard_db_repos::repositories::dependencies::Feature;
 async fn contract(postgres: bool) {
     let f = Database::new(postgres).await;
     f.complete_setup().await;
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
-    let repo = db::repositories::creation::insert_repository(
+    let repo = codeyard_db_repos::repositories::creation::insert_repository(
         f.pool(),
         NewRepository {
             owner: RepositoryCreationOwner::personal(alice),
@@ -29,7 +28,7 @@ async fn contract(postgres: bool) {
     let alice_session = uuid::Uuid::new_v4().to_string();
     let bob_session = uuid::Uuid::new_v4().to_string();
     for (actor, session) in [(alice, &alice_session), (bob, &bob_session)] {
-        db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             f.pool(),
             session,
             actor,
@@ -40,8 +39,10 @@ async fn contract(postgres: bool) {
         .await
         .unwrap();
     }
-    let alice_credential = db::users::accounts::OwnedAccountCredential::from(&alice_session);
-    let bob_credential = db::users::accounts::OwnedAccountCredential::from(&bob_session);
+    let alice_credential =
+        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::from(&alice_session);
+    let bob_credential =
+        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::from(&bob_session);
     let configure = |actor, feature, enabled, consent| {
         let credential = if actor == alice {
             &alice_credential
@@ -94,13 +95,13 @@ async fn contract(postgres: bool) {
             scope: "runtime".into(),
         }],
     );
-    db::dependency_graph::submit(f.pool(), alice, repo.id, &inventory)
+    codeyard_db_security::dependency_graph::submit(f.pool(), alice, repo.id, &inventory)
         .await
         .unwrap();
     records::complete_scan(f.pool(), &job, &sha).await.unwrap();
     let snapshot = records::snapshot(f.pool(), alice, repo.id).await.unwrap();
     let key = snapshot.alerts.keys().next().unwrap().clone();
-    let alert = db::dependabot_alerts::alerts(f.pool(), alice, repo.id)
+    let alert = codeyard_db_security::dependabot_alerts::alerts(f.pool(), alice, repo.id)
         .await
         .unwrap()
         .remove(0);
@@ -113,12 +114,12 @@ async fn contract(postgres: bool) {
             .len(),
         1
     );
-    db::dependabot_alerts::update(
+    codeyard_db_security::dependabot_alerts::update(
         f.pool(),
         alice,
         repo.id,
         alert.number,
-        &db::dependabot_alerts::Update {
+        &codeyard_db_security::dependabot_alerts::Update {
             state: "dismissed".into(),
             dismissed_reason: Some("tolerable_risk".into()),
             dismissed_comment: Some("Test-only use reviewed by an administrator".into()),
@@ -135,12 +136,12 @@ async fn contract(postgres: bool) {
             .state,
         AlertState::Dismissed
     );
-    assert!(db::dependabot_alerts::update(
+    assert!(codeyard_db_security::dependabot_alerts::update(
         f.pool(),
         bob,
         repo.id,
         alert.number,
-        &db::dependabot_alerts::Update {
+        &codeyard_db_security::dependabot_alerts::Update {
             state: "open".into(),
             dismissed_reason: None,
             dismissed_comment: None,

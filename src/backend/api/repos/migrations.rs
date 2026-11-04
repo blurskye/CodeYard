@@ -163,10 +163,10 @@ pub(super) async fn create(
         .await;
     }
     let target = match field(&input, "owner_org_id") {
-        "" => crate::backend::db::repositories::creation::RepositoryTarget::Personal(user.id),
+        "" => codeyard_db_repos::repositories::creation::RepositoryTarget::Personal(user.id),
         value => match value.parse::<i64>().ok().filter(|id| *id > 0) {
             Some(id) => {
-                crate::backend::db::repositories::creation::RepositoryTarget::Organization(id)
+                codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(id)
             }
             None => {
                 return render(
@@ -184,7 +184,7 @@ pub(super) async fn create(
     let repo = match crate::backend::repositories::lifecycle::provision(
         (&ctx.state.pool, ctx.state.cluster.as_ref()),
         &ctx.state.repos_path,
-        crate::backend::db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
             actor_id: user.id,
             target,
         },
@@ -208,7 +208,7 @@ pub(super) async fn create(
             .await
         }
     };
-    let owner = match crate::backend::db::repositories::records::repository_owner_name(
+    let owner = match codeyard_db_repos::repositories::records::repository_owner_name(
         &ctx.state.pool,
         repo.id,
     )
@@ -266,20 +266,16 @@ pub(super) async fn page(
     if !loaded.chrome.can_admin {
         return ctx.error(StatusCode::FORBIDDEN, "Repository administration required.");
     }
-    let import = match crate::backend::db::source_imports::get(
-        &ctx.state.pool,
-        loaded.repository.id,
-    )
-    .await
-    {
-        Ok(import) => import,
-        Err(_) => {
-            return ctx.error(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Import status unavailable.",
-            )
-        }
-    };
+    let import =
+        match codeyard_db_repos::source_imports::get(&ctx.state.pool, loaded.repository.id).await {
+            Ok(import) => import,
+            Err(_) => {
+                return ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Import status unavailable.",
+                )
+            }
+        };
     let form = MigrationForm {
         repository_id: Some(loaded.repository.id),
         name: name.clone(),

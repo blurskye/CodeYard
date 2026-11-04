@@ -13,7 +13,7 @@ use crate::backend::files::DownloadError;
 use crate::backend::files::UploadError;
 use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::refs::RefError;
-use crate::backend::repositories::releases as releases;
+use crate::backend::repositories::releases;
 use crate::backend::repositories::releases::ReleaseError;
 use crate::backend::repositories::releases::ReleaseFields;
 use crate::backend::repositories::releases::ReleaseInput;
@@ -268,7 +268,7 @@ async fn edit_form(
     let base = repo.base();
     let tag = found.release.release.tag_name.clone();
     let mut draft = draft.unwrap_or_else(|| ReleaseDraft {
-        revision: crate::backend::db::releases::release_revision(&found.release.release),
+        revision: codeyard_db_repos::releases::release_revision(&found.release.release),
         tag: tag.clone(),
         target: found.release.release.target_commitish.clone(),
         title: found.release.release.name.clone().unwrap_or_default(),
@@ -283,7 +283,7 @@ async fn edit_form(
     draft.tag = tag.clone();
     draft.target = found.release.release.target_commitish.clone();
     if conflict {
-        draft.revision = crate::backend::db::releases::release_revision(&found.release.release);
+        draft.revision = codeyard_db_repos::releases::release_revision(&found.release.release);
     }
     let assets = found
         .assets
@@ -378,7 +378,7 @@ pub(crate) async fn detail(
                 .iter()
                 .map(|asset| asset_item(&base, &release.tag, asset))
                 .collect();
-            let counts = match crate::backend::db::reactions::reaction_counts(
+            let counts = match codeyard_db_repos::reactions::reaction_counts(
                 &ctx.state.pool,
                 "release",
                 &[release.id],
@@ -763,7 +763,7 @@ pub(crate) async fn upload_asset(
         &ctx.state.pool,
         &ctx.state.storage,
         actor,
-        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
         &owner,
         &name,
         id,
@@ -800,7 +800,7 @@ pub(crate) async fn update_asset(
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to edit an asset.");
     };
-    match crate::backend::db::releases::get_repository_release_asset(
+    match codeyard_db_repos::releases::get_repository_release_asset(
         &ctx.state.pool,
         loaded.repository.id,
         asset,
@@ -813,7 +813,7 @@ pub(crate) async fn update_asset(
     }
     let label = field(&form, "label");
     let label = label.trim();
-    let changes = crate::backend::db::releases::AssetChanges {
+    let changes = codeyard_db_repos::releases::AssetChanges {
         name: Some(field(&form, "name").to_owned()),
         label: Some((!label.is_empty()).then(|| label.to_owned())),
     };

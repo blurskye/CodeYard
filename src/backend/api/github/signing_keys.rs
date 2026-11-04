@@ -4,7 +4,7 @@ use crate::backend::api::github::pagination::Pagination;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 
 use crate::backend::identity::keys::KeyError;
 use axum::{
@@ -68,7 +68,7 @@ async fn list(
     uri: axum::http::Uri,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let keys = crate::backend::db::users::signing_keys::list_signing_keys(
+    let keys = codeyard_db_identity::users::signing_keys::list_signing_keys(
         &state.pool,
         user,
         (limit + 1) as i64,
@@ -83,12 +83,12 @@ async fn get_key(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
-) -> Result<Json<crate::backend::db::users::signing_keys::SigningKey>> {
+) -> Result<Json<codeyard_db_identity::users::signing_keys::SigningKey>> {
     let actor = crate::backend::api::github::auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
     Ok(Json(
-        crate::backend::db::users::signing_keys::get_signing_key(&state.pool, actor.user.id, id)
+        codeyard_db_identity::users::signing_keys::get_signing_key(&state.pool, actor.user.id, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?,

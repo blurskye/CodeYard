@@ -24,16 +24,13 @@ pub async fn contracts(f: &Fixture) {
     assert_eq!(orgs_repo.status, StatusCode::OK);
     assert!(matches!(orgs_repo.envelope().page, Page::Repositories(_)));
     // Repository forms name the repository they were rendered for.
-    let repo_id = codeyard::backend::db::repositories::records::get_repository(
-        f.database.pool(),
-        "orgs",
-        "repo",
-    )
-    .await
-    .unwrap()
-    .unwrap()
-    .id
-    .to_string();
+    let repo_id =
+        codeyard_db_repos::repositories::records::get_repository(f.database.pool(), "orgs", "repo")
+            .await
+            .unwrap()
+            .unwrap()
+            .id
+            .to_string();
     f.form(
         &f.member,
         "/orgs/repo/_forms/star",
@@ -257,7 +254,7 @@ fn tab_links(source: &str) -> Vec<&str> {
 pub async fn teams(f: &Fixture) {
     use super::{fixture::applied, profile::html};
 
-    use codeyard::backend::db::organizations::*;
+    use codeyard_db_orgs::organizations::*;
 
     let pool = f.database.pool();
     for slug in ["api", "admin", "search"] {
@@ -689,7 +686,7 @@ pub async fn teams(f: &Fixture) {
         grants.iter().map(|grant| grant.repo_id).collect::<Vec<_>>(),
         vec![public]
     );
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         pool,
         f.member.id,
         private,
@@ -707,7 +704,7 @@ pub async fn teams(f: &Fixture) {
             .len(),
         2
     );
-    codeyard::backend::db::repositories::access::revoke_repo_access(pool, f.member.id, private)
+    codeyard_db_repos::repositories::access::revoke_repo_access(pool, f.member.id, private)
         .await
         .unwrap();
     f.form(

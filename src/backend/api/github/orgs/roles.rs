@@ -7,9 +7,9 @@ use crate::backend::api::github::orgs::Error;
 use crate::backend::api::github::orgs::Result;
 use crate::backend::api::github::pagination::Pagination;
 
-use crate::backend::db::organizations::roles::OrganizationRole;
-use crate::backend::db::organizations::roles::RoleTarget;
-use crate::backend::db::repositories::push_teams::TeamAccess;
+use codeyard_db_orgs::organizations::roles::OrganizationRole;
+use codeyard_db_orgs::organizations::roles::RoleTarget;
+use codeyard_db_repos::repositories::push_teams::TeamAccess;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -43,7 +43,7 @@ async fn required_role(
     id: i64,
 ) -> Result<OrganizationRole> {
     outcome(
-        crate::backend::db::organizations::roles::catalog(&state.pool, actor, org)
+        codeyard_db_orgs::organizations::roles::catalog(&state.pool, actor, org)
             .await
             .map_err(Error::unavailable)?,
     )?
@@ -61,7 +61,7 @@ async fn list(
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
     let roles = outcome(
-        crate::backend::db::organizations::roles::catalog(&state.pool, actor.user.id, org.id)
+        codeyard_db_orgs::organizations::roles::catalog(&state.pool, actor.user.id, org.id)
             .await
             .map_err(Error::unavailable)?,
     )?;
@@ -97,7 +97,7 @@ async fn users(
     let role = required_role(&state, actor.user.id, org.id, id).await?;
     let (offset, limit) = page.window()?;
     let mut users = outcome(
-        crate::backend::db::organizations::roles::users(
+        codeyard_db_orgs::organizations::roles::users(
             &state.pool,
             actor.user.id,
             org.id,
@@ -139,7 +139,7 @@ async fn teams(
     let role = required_role(&state, actor.user.id, org.id, id).await?;
     let (offset, limit) = page.window()?;
     let mut teams = outcome(
-        crate::backend::db::organizations::roles::teams(
+        codeyard_db_orgs::organizations::roles::teams(
             &state.pool,
             actor.user.id,
             org.id,
@@ -189,7 +189,7 @@ async fn change(
     } else {
         RoleTarget::Team(params["team_slug"].clone())
     };
-    let result = crate::backend::db::organizations::roles::change(
+    let result = codeyard_db_orgs::organizations::roles::change(
         &state.pool,
         actor.database_actor(),
         org.id,
@@ -201,7 +201,7 @@ async fn change(
     .map_err(Error::unavailable)?;
     if matches!(
         result,
-        crate::backend::db::organizations::OrganizationOutcome::Conflict
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Conflict
     ) {
         return Err(Error::invalid(
             "Only organization members can be assigned organization roles",

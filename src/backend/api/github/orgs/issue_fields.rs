@@ -5,8 +5,8 @@ use crate::backend::api::github::orgs::AppState;
 use crate::backend::api::github::orgs::Error;
 use crate::backend::api::github::orgs::Result;
 
-use crate::backend::db::issue_attributes::Definition;
-use crate::backend::db::issue_attributes::FieldChanges;
+use codeyard_db_repos::issue_attributes::Definition;
+use codeyard_db_repos::issue_attributes::FieldChanges;
 
 use axum::{
     extract::{Path, State},
@@ -50,7 +50,7 @@ struct SelectOption {
     color: String,
     priority: i64,
 }
-impl From<SelectOption> for crate::backend::db::issue_attributes::OptionInput {
+impl From<SelectOption> for codeyard_db_repos::issue_attributes::OptionInput {
     fn from(option: SelectOption) -> Self {
         Self {
             id: option.id,
@@ -76,7 +76,7 @@ struct Update {
     name: Option<String>,
     #[serde(
         default,
-        deserialize_with = "crate::backend::db::repositories::records::nullable_change"
+        deserialize_with = "codeyard_db_repos::repositories::records::nullable_change"
     )]
     description: Option<Option<String>>,
     #[serde(default, deserialize_with = "supplied")]
@@ -93,7 +93,7 @@ async fn list(
         .await?
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
-    let fields = crate::backend::db::issue_attributes::organization_catalog(
+    let fields = codeyard_db_repos::issue_attributes::organization_catalog(
         &state.pool,
         org.id,
         actor.user.id,
@@ -126,7 +126,7 @@ async fn create(
     {
         return Err(Error::invalid_simple("Select fields require options"));
     }
-    let field = crate::backend::db::issue_attributes::create_organization_field(
+    let field = codeyard_db_repos::issue_attributes::create_organization_field(
         &state.pool,
         org.id,
         actor.database_actor(),
@@ -172,7 +172,7 @@ async fn update(
         .map_err(|_| Error::missing())?;
     let Json(input) =
         input.map_err(|error| crate::backend::api::github::json_error(error).simple())?;
-    let field = crate::backend::db::issue_attributes::patch_organization_field(
+    let field = codeyard_db_repos::issue_attributes::patch_organization_field(
         &state.pool,
         org.id,
         actor.database_actor(),
@@ -202,7 +202,7 @@ async fn remove(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    crate::backend::db::issue_attributes::delete_organization_definition(
+    codeyard_db_repos::issue_attributes::delete_organization_definition(
         &state.pool,
         org.id,
         actor.database_actor(),

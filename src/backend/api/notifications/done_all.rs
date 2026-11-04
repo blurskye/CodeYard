@@ -5,7 +5,6 @@ use crate::backend::api::notifications::inbox::native_action;
 use crate::backend::api::notifications::inbox::BulkUpdateResponse;
 use crate::backend::api::notifications::inbox::ListParams;
 use crate::backend::app::AppState;
-use crate::backend::db::notifications::records::NotificationInboxAction;
 use axum::extract::OriginalUri;
 use axum::extract::Query;
 use axum::extract::State;
@@ -14,6 +13,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::Form;
 use axum::Json;
+use codeyard_db_repos::notifications::records::NotificationInboxAction;
 use std::collections::HashMap;
 use std::sync::Arc;
 

@@ -104,7 +104,7 @@ impl CiRuns {
         &self,
         actor_id: i64,
         request: DispatchRequest,
-        credential: Option<crate::backend::db::ci::CiCredential>,
+        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         use crate::backend::ci::admission::is_safe_owner;
         use crate::backend::ci::admission::is_safe_ref;
@@ -144,7 +144,7 @@ impl CiRuns {
                 "head_sha must be a full 40-character hexadecimal commit id",
             ));
         }
-        let repository = crate::backend::db::repositories::records::get_repository(
+        let repository = codeyard_db_repos::repositories::records::get_repository(
             &self.pool,
             &request.repo_owner,
             &request.repo_name,
@@ -156,7 +156,7 @@ impl CiRuns {
                 "This form belongs to another repository; reload the page",
             ));
         }
-        let user = crate::backend::db::users::accounts::get_user_by_id(&self.pool, actor_id)
+        let user = codeyard_db_identity::users::accounts::get_user_by_id(&self.pool, actor_id)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
         if !crate::backend::repositories::access::can_read(&self.pool, Some(&user), &repository)
@@ -228,13 +228,13 @@ impl CiRuns {
         &self,
         run_id: Uuid,
         actor_id: i64,
-        credential: Option<crate::backend::db::ci::CiCredential>,
+        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         self.rerun_run_options(
             run_id,
             actor_id,
             false,
-            crate::backend::db::ci::CiReplaySelection::All,
+            codeyard_db_actions::ci::CiReplaySelection::All,
             credential,
             true,
         )
@@ -248,7 +248,7 @@ impl CiRuns {
         id: i64,
         actor: i64,
         debug: bool,
-        credential: Option<crate::backend::db::ci::CiCredential>,
+        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         self.rerun_selected_workflow(
             repo,
@@ -256,7 +256,7 @@ impl CiRuns {
             actor,
             debug,
             credential,
-            crate::backend::db::ci::CiReplaySelection::All,
+            codeyard_db_actions::ci::CiReplaySelection::All,
         )
         .await
     }
@@ -266,7 +266,7 @@ impl CiRuns {
         id: i64,
         actor: i64,
         debug: bool,
-        credential: Option<crate::backend::db::ci::CiCredential>,
+        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         self.rerun_selected_workflow(
             repo,
@@ -274,7 +274,7 @@ impl CiRuns {
             actor,
             debug,
             credential,
-            crate::backend::db::ci::CiReplaySelection::Failed,
+            codeyard_db_actions::ci::CiReplaySelection::Failed,
         )
         .await
     }
@@ -284,12 +284,12 @@ impl CiRuns {
         id: i64,
         actor: i64,
         debug: bool,
-        credential: Option<crate::backend::db::ci::CiCredential>,
+        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
-        let job = crate::backend::db::action_jobs::get(&self.pool, repo, id, false)
+        let job = codeyard_db_actions::action_jobs::get(&self.pool, repo, id, false)
             .await?
             .ok_or(AdmissionError::Missing("Job not found"))?;
-        let source = crate::backend::db::ci::get_ci_run_by_id(&self.pool, repo, job.run_id)
+        let source = codeyard_db_actions::ci::get_ci_run_by_id(&self.pool, repo, job.run_id)
             .await?
             .ok_or(AdmissionError::Missing("Run not found"))?;
         self.rerun_selected_workflow(
@@ -298,7 +298,7 @@ impl CiRuns {
             actor,
             debug,
             credential,
-            crate::backend::db::ci::CiReplaySelection::Job(id),
+            codeyard_db_actions::ci::CiReplaySelection::Job(id),
         )
         .await
     }
@@ -308,10 +308,10 @@ impl CiRuns {
         id: i64,
         actor: i64,
         debug: bool,
-        credential: Option<crate::backend::db::ci::CiCredential>,
-        selection: crate::backend::db::ci::CiReplaySelection,
+        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
+        selection: codeyard_db_actions::ci::CiReplaySelection,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
-        let source = crate::backend::db::action_runs::get(&self.pool, repo, id, None)
+        let source = codeyard_db_actions::action_runs::get(&self.pool, repo, id, None)
             .await?
             .ok_or(AdmissionError::Missing("Run not found"))?;
         if !source.workflow_run_number.is_some_and(|number| number > 0) {
@@ -328,17 +328,17 @@ impl CiRuns {
         run_id: Uuid,
         actor_id: i64,
         debug: bool,
-        selection: crate::backend::db::ci::CiReplaySelection,
-        credential: Option<crate::backend::db::ci::CiCredential>,
+        selection: codeyard_db_actions::ci::CiReplaySelection,
+        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
         allow_active: bool,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
-        let run = crate::backend::db::ci::get_ci_run_by_run_id(&self.pool, run_id)
+        let run = codeyard_db_actions::ci::get_ci_run_by_run_id(&self.pool, run_id)
             .await?
             .ok_or(AdmissionError::Missing("Run not found"))?;
         let attempt = run
             .workflow_run_number
             .filter(|number| *number > 0)
-            .map(|_| crate::backend::db::ci::NewCiAttempt {
+            .map(|_| codeyard_db_actions::ci::NewCiAttempt {
                 source: run.id,
                 source_uuid: run.run_id,
                 credential: credential.clone(),
@@ -388,21 +388,21 @@ impl CiRuns {
         repo_id: i64,
         actor_id: i64,
     ) -> Result<bool> {
-        if !crate::backend::db::action_settings::actions_enabled(&self.pool, repo_id).await? {
+        if !codeyard_db_actions::action_settings::actions_enabled(&self.pool, repo_id).await? {
             return Ok(false);
         }
         let Some(actor) =
-            crate::backend::db::users::accounts::get_user_by_id(&self.pool, actor_id).await?
+            codeyard_db_identity::users::accounts::get_user_by_id(&self.pool, actor_id).await?
         else {
             return Ok(false);
         };
         let Some(repository) =
-            crate::backend::db::repositories::records::get_repository_by_id(&self.pool, repo_id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(&self.pool, repo_id)
                 .await?
         else {
             return Ok(false);
         };
-        let access = crate::backend::db::repositories::access::get_user_repo_access(
+        let access = codeyard_db_repos::repositories::access::get_user_repo_access(
             &self.pool,
             actor.id,
             repository.id,
@@ -442,7 +442,7 @@ impl CiRuns {
         request: CiRunRequest,
         access: codeyard_db_core::models::AccessLevel,
         payload: serde_json::Value,
-        credential: Option<crate::backend::db::ci::CiCredential>,
+        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         self.enqueue_run(
             request,
@@ -465,10 +465,10 @@ impl CiRuns {
         request: CiRunRequest,
         rerun: bool,
         access: codeyard_db_core::models::AccessLevel,
-        mut attempt: Option<crate::backend::db::ci::NewCiAttempt>,
+        mut attempt: Option<codeyard_db_actions::ci::NewCiAttempt>,
         event_payload: Option<serde_json::Value>,
         source_blobs: Option<serde_json::Value>,
-        credential: Option<crate::backend::db::ci::CiCredential>,
+        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         let revision = crate::backend::ci::admission::resolve(
             &self.pool,
@@ -482,13 +482,13 @@ impl CiRuns {
         .await?;
         let request = revision.request;
         let event_payload = if event_payload.is_none() && request.event == "workflow_dispatch" {
-            let repository = crate::backend::db::repositories::records::get_repository_by_id(
+            let repository = codeyard_db_repos::repositories::records::get_repository_by_id(
                 &self.pool,
                 request.repo_id,
             )
             .await?
             .ok_or(AdmissionError::Missing("CI repository missing"))?;
-            let sender = crate::backend::db::users::accounts::get_user_by_id(
+            let sender = codeyard_db_identity::users::accounts::get_user_by_id(
                 &self.pool,
                 request.triggered_by_id,
             )
@@ -505,7 +505,7 @@ impl CiRuns {
         };
         if let Some(attempt) = attempt
             .as_mut()
-            .filter(|attempt| attempt.selection != crate::backend::db::ci::CiReplaySelection::All)
+            .filter(|attempt| attempt.selection != codeyard_db_actions::ci::CiReplaySelection::All)
         {
             if request.workflow_paths.len() != 1 {
                 return Err(AdmissionError::Conflict(
@@ -541,7 +541,7 @@ impl CiRuns {
             .transpose()
             .map_err(|_| AdmissionError::Unavailable)?;
         let trusted: Vec<i64> = self.config.trusted_actor_ids.iter().copied().collect();
-        let input = crate::backend::db::ci::NewCiRun {
+        let input = codeyard_db_actions::ci::NewCiRun {
             repo_id: request.repo_id,
             triggered_by_id: request.triggered_by_id,
             pipeline: request.pipeline.as_str(),
@@ -564,7 +564,7 @@ impl CiRuns {
         };
         let (run, inserted) = match attempt {
             Some(attempt) => {
-                crate::backend::db::ci::enqueue_ci_run_attempt(
+                codeyard_db_actions::ci::enqueue_ci_run_attempt(
                     &self.pool,
                     input,
                     &trusted,
@@ -575,7 +575,7 @@ impl CiRuns {
                 .await?
             }
             None => {
-                crate::backend::db::ci::enqueue_ci_run_for_runners(
+                codeyard_db_actions::ci::enqueue_ci_run_for_runners(
                     &self.pool,
                     input,
                     &trusted,
@@ -604,17 +604,17 @@ impl CiRuns {
         &self,
         run_id: Uuid,
         actor_id: i64,
-        credential: Option<crate::backend::db::ci::CiCredential>,
+        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<bool, AdmissionError> {
         let (changed, notifications, completed) = match credential {
             Some(proof) => {
-                crate::backend::db::ci::request_ci_cancellation_with_credential(
+                codeyard_db_actions::ci::request_ci_cancellation_with_credential(
                     &self.pool, run_id, actor_id, &proof,
                 )
                 .await?
             }
             None => {
-                crate::backend::db::ci::request_ci_cancellation(&self.pool, run_id, actor_id)
+                codeyard_db_actions::ci::request_ci_cancellation(&self.pool, run_id, actor_id)
                     .await?
             }
         };
@@ -640,14 +640,14 @@ mod tests {
         let pool = DbPool::from(native.clone());
         codeyard_db_core::run_migrations(&pool).await.unwrap();
         let owner =
-            crate::backend::db::users::accounts::create_user(&pool, "preflight_owner", None)
+            codeyard_db_identity::users::accounts::create_user(&pool, "preflight_owner", None)
                 .await
                 .unwrap();
         let actor =
-            crate::backend::db::users::accounts::create_user(&pool, "preflight_actor", None)
+            codeyard_db_identity::users::accounts::create_user(&pool, "preflight_actor", None)
                 .await
                 .unwrap();
-        let repository = crate::backend::db::repositories::records::create_repository(
+        let repository = codeyard_db_repos::repositories::records::create_repository(
             &pool,
             owner.id,
             "preflight",
@@ -671,7 +671,7 @@ mod tests {
             .actor_may_discover_workflows(repository.id, actor.id)
             .await
             .unwrap());
-        crate::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             &pool,
             actor.id,
             repository.id,

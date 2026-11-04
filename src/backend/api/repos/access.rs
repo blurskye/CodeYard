@@ -62,7 +62,7 @@ pub(crate) async fn find_repository(
     owner: &str,
     repo: &str,
 ) -> ApiResult<Repository> {
-    crate::backend::db::repositories::records::get_repository(pool, owner, repo)
+    codeyard_db_repos::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
         .ok_or_else(|| access_error(AccessError::NotFound))

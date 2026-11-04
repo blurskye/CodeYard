@@ -36,15 +36,15 @@ pub struct PullRequestEvent {
 /// The variables a run sees: its repository's, then inherited organization values that the
 /// repository does not set. Admission and claiming both read them, so they agree.
 pub(super) async fn run_variables(pool: &DbPool, repo: i64) -> Result<Vec<(String, String)>> {
-    let variables = crate::backend::db::variables::for_run(pool, repo).await?;
-    crate::backend::db::variables::validate_all(&variables)?;
+    let variables = codeyard_db_actions::variables::for_run(pool, repo).await?;
+    codeyard_db_actions::variables::validate_all(&variables)?;
     let mut variables: std::collections::BTreeMap<_, _> = variables.into_iter().collect();
     let mut bytes: usize = variables
         .iter()
         .map(|(name, value)| name.len() + value.len())
         .sum();
     for (name, value) in
-        crate::backend::db::organization_values::variables_for_run(pool, repo).await?
+        codeyard_db_orgs::organization_values::variables_for_run(pool, repo).await?
     {
         if variables.contains_key(&name) {
             continue;
@@ -223,7 +223,7 @@ impl RunQueue {
             return Ok(());
         };
         let (finished, created, jobs) =
-            crate::backend::db::ci::fail_stale_ci_runs(pool, stale_seconds).await?;
+            codeyard_db_actions::ci::fail_stale_ci_runs(pool, stale_seconds).await?;
         notifications.send_created(&created).await;
         if let Some(ci) = self.events() {
             for (run, job) in jobs {
@@ -283,7 +283,7 @@ impl RunQueue {
             .context("the run has no commit")?;
         if let Err(error) = store.checkout(destination, sha).await {
             if let Self::Database { pool, context, .. } = self {
-                let repository = crate::backend::db::repositories::records::get_repository_by_id(
+                let repository = codeyard_db_repos::repositories::records::get_repository_by_id(
                     pool,
                     claim.run.repo_id,
                 )
@@ -356,7 +356,7 @@ impl RunQueue {
         let prepare = Box::pin(self.claim_prepared(worker, mode, platforms, stop));
         match self {
             Self::Database { pool, .. } => {
-                crate::backend::db::ci::prepare_claim(pool, worker, prepare).await
+                codeyard_db_actions::ci::prepare_claim(pool, worker, prepare).await
             }
             Self::Remote { .. } => prepare.await,
         }
@@ -393,7 +393,7 @@ impl RunQueue {
                     // Cluster worker ids start with the node's public key, then `/`.
                     Some(_) => {
                         let node_key = worker.split_once('/').map_or(worker, |(key, _)| key);
-                        crate::backend::db::ci::claim_ci_run_on_node(
+                        codeyard_db_actions::ci::claim_ci_run_on_node(
                             pool,
                             node_key,
                             worker,
@@ -405,7 +405,7 @@ impl RunQueue {
                     }
                     // A database without cluster membership has no node rows to check.
                     None => {
-                        crate::backend::db::ci::claim_ci_run(
+                        codeyard_db_actions::ci::claim_ci_run(
                             pool,
                             worker,
                             mode.as_str(),
@@ -422,7 +422,7 @@ impl RunQueue {
                 let run_id = run.id;
                 let loaded = async {
                     let repository =
-                        crate::backend::db::repositories::records::get_repository_by_id(
+                        codeyard_db_repos::repositories::records::get_repository_by_id(
                             pool,
                             run.repo_id,
                         )
@@ -430,11 +430,11 @@ impl RunQueue {
                         .context("the repository no longer exists")?;
                     let uuid =
                         crate::backend::cluster::rpc::repository_uuid(&repository.disk_path)?;
-                    let owner = crate::backend::db::ci::ci_repository_owner(pool, run.repo_id)
+                    let owner = codeyard_db_actions::ci::ci_repository_owner(pool, run.repo_id)
                         .await?
                         .unwrap_or_default();
                     let actor = match run.triggered_by_id {
-                        Some(id) => crate::backend::db::users::accounts::get_user_by_id(pool, id)
+                        Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
                             .await?
                             .map(|user| user.username)
                             .unwrap_or_default(),
@@ -443,12 +443,12 @@ impl RunQueue {
                     let original_actor =
                         if let Some(root) = run.workflow_run_id.filter(|root| *root != run.id) {
                             let source =
-                                crate::backend::db::ci::get_ci_run_by_id(pool, run.repo_id, root)
+                                codeyard_db_actions::ci::get_ci_run_by_id(pool, run.repo_id, root)
                                     .await?
                                     .context("original workflow run is unavailable")?;
                             Some(match source.triggered_by_id {
                                 Some(id) => {
-                                    crate::backend::db::users::accounts::get_user_by_id(pool, id)
+                                    codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
                                         .await?
                                         .map(|user| RunActor {
                                             id: user.id,
@@ -470,7 +470,7 @@ impl RunQueue {
                                 login: actor.clone(),
                             })
                         };
-                    let options = crate::backend::db::ci::ci_run_options(pool, run.id)
+                    let options = codeyard_db_actions::ci::ci_run_options(pool, run.id)
                         .await?
                         .unwrap_or_default();
                     let pull_request = run
@@ -482,14 +482,14 @@ impl RunQueue {
                     let secrets = match secrets {
                         Some(encryptor) if !run.is_fork => {
                             let mut values =
-                                crate::backend::db::organization_values::secrets_for_run(
+                                codeyard_db_orgs::organization_values::secrets_for_run(
                                     pool,
                                     encryptor,
                                     run.repo_id,
                                 )
                                 .await?;
                             let repository =
-                                crate::backend::db::secrets::decrypt_repository_secrets(
+                                codeyard_db_actions::secrets::decrypt_repository_secrets(
                                     pool,
                                     encryptor,
                                     run.repo_id,
@@ -505,15 +505,15 @@ impl RunQueue {
                         }
                         None if !run.is_fork => {
                             ensure!(
-                                !crate::backend::db::secrets::repository_has_secrets(
+                                !codeyard_db_actions::secrets::repository_has_secrets(
                                     pool,
                                     run.repo_id
                                 )
                                 .await?
-                                    && crate::backend::db::organization_values::workflow_values(
+                                    && codeyard_db_orgs::organization_values::workflow_values(
                                         pool,
                                         run.repo_id,
-                                        crate::backend::db::organization_values::Kind::Secret
+                                        codeyard_db_orgs::organization_values::Kind::Secret
                                     )
                                     .await?
                                     .is_empty(),
@@ -525,9 +525,9 @@ impl RunQueue {
                     };
                     // The whole set goes out in one RPC reply and into one secret file, so it
                     // is bounded before the run is handed out.
-                    crate::backend::db::secrets::validate_workflow_secrets(&secrets)?;
+                    codeyard_db_actions::secrets::validate_workflow_secrets(&secrets)?;
                     let variables = run_variables(pool, run.repo_id).await?;
-                    crate::backend::db::variables::validate_workflow_variables(&variables)?;
+                    codeyard_db_actions::variables::validate_workflow_variables(&variables)?;
                     let primary = repository
                         .storage_node_id
                         .or_else(|| context.as_ref().map(|c| c.node_id));
@@ -544,7 +544,7 @@ impl RunQueue {
                             );
                         }
                         for id in candidates {
-                            let Some(node) = crate::backend::db::cluster::get_node_by_id(pool, id)
+                            let Some(node) = codeyard_db_cluster::cluster::get_node_by_id(pool, id)
                                 .await?
                                 .filter(|node| {
                                     node.status == "active"
@@ -587,32 +587,31 @@ impl RunQueue {
                         .as_object()
                         .context("the run has no workflow files")?
                     {
-                        let bytes = if let Some(content) =
-                            crate::backend::ci::reusable::content(sha)
-                        {
-                            let called_id = sha
-                                .get("repository_id")
-                                .and_then(serde_json::Value::as_i64)
-                                .context("invalid called workflow repository")?;
-                            let called =
-                                crate::backend::db::repositories::records::get_repository_by_id(
-                                    pool, called_id,
+                        let bytes =
+                            if let Some(content) = crate::backend::ci::reusable::content(sha) {
+                                let called_id = sha
+                                    .get("repository_id")
+                                    .and_then(serde_json::Value::as_i64)
+                                    .context("invalid called workflow repository")?;
+                                let called =
+                                    codeyard_db_repos::repositories::records::get_repository_by_id(
+                                        pool, called_id,
+                                    )
+                                    .await?
+                                    .context("called workflow repository unavailable")?;
+                                crate::backend::ci::reusable::authorize(
+                                    pool,
+                                    &repository,
+                                    run.triggered_by_id.context("run has no actor")?,
+                                    &called,
                                 )
-                                .await?
-                                .context("called workflow repository unavailable")?;
-                            crate::backend::ci::reusable::authorize(
-                                pool,
-                                &repository,
-                                run.triggered_by_id.context("run has no actor")?,
-                                &called,
-                            )
-                            .await?;
-                            content.as_bytes().to_vec()
-                        } else {
-                            store
-                                .blob_by_id(sha.as_str().context("invalid workflow blob")?)
-                                .await?
-                        };
+                                .await?;
+                                content.as_bytes().to_vec()
+                            } else {
+                                store
+                                    .blob_by_id(sha.as_str().context("invalid workflow blob")?)
+                                    .await?
+                            };
                         definitions.insert(path.clone(), bytes);
                     }
                     let environment_values = crate::backend::ci::environment_values::load(
@@ -622,9 +621,9 @@ impl RunQueue {
                         &definitions,
                     )
                     .await?;
-                    let site = crate::backend::db::actions::get_actions_settings(pool).await?;
+                    let site = codeyard_db_actions::actions::get_actions_settings(pool).await?;
                     run.engine = Some(
-                        crate::backend::db::actions::record_ci_engine(
+                        codeyard_db_actions::actions::record_ci_engine(
                             pool,
                             run.id,
                             worker,
@@ -633,12 +632,12 @@ impl RunQueue {
                         .await?,
                     );
                     let (repo_policy, org_policy) =
-                        crate::backend::db::action_settings::effective(pool, run.repo_id).await?;
+                        codeyard_db_actions::action_settings::effective(pool, run.repo_id).await?;
                     let github_tokens = crate::backend::ci::tokens::issue_selected(
                         pool,
                         &run,
                         &definitions,
-                        crate::backend::db::action_settings::workflow_write(
+                        codeyard_db_actions::action_settings::workflow_write(
                             &repo_policy,
                             &org_policy,
                             site.default_workflow_permissions == "permissive",
@@ -649,7 +648,7 @@ impl RunQueue {
                     let runtime = crate::backend::ci::runtime::issue(pool, &run, &site).await?;
                     if run.engine.as_deref() == Some("codeyard-actions") {
                         for workflow in run.workflow_path.split(',') {
-                            crate::backend::db::action_jobs::save_state(
+                            codeyard_db_actions::action_jobs::save_state(
                                 pool,
                                 worker,
                                 run.id,
@@ -662,7 +661,7 @@ impl RunQueue {
                     }
                     let limits = RunLimits::new(
                         &site,
-                        &crate::backend::db::actions::get_repo_actions_settings(pool, run.repo_id)
+                        &codeyard_db_actions::actions::get_repo_actions_settings(pool, run.repo_id)
                             .await?,
                     );
                     let store = Some(store);
@@ -745,7 +744,7 @@ impl RunQueue {
         match self {
             Self::Database { pool, .. } => {
                 use codeyard_actions::progress::Update;
-                let job = crate::backend::db::action_jobs::apply(
+                let job = codeyard_db_actions::action_jobs::apply(
                     pool, worker, id, generation, workflow, event,
                 )
                 .await?;
@@ -788,7 +787,7 @@ impl RunQueue {
         state.validate()?;
         match self {
             Self::Database { pool, .. } => {
-                crate::backend::db::action_jobs::save_state(
+                codeyard_db_actions::action_jobs::save_state(
                     pool, worker, id, generation, workflow, state,
                 )
                 .await
@@ -821,7 +820,7 @@ impl RunQueue {
     ) -> Result<Option<bool>> {
         match self {
             Self::Database { pool, .. } => {
-                crate::backend::db::action_jobs::admit(pool, worker, id, generation, workflow, job)
+                codeyard_db_actions::action_jobs::admit(pool, worker, id, generation, workflow, job)
                     .await
             }
             Self::Remote { .. } => {
@@ -844,7 +843,7 @@ impl RunQueue {
         ensure!(job.len() <= 1024, "invalid job id");
         match self {
             Self::Database { pool, .. } => {
-                crate::backend::db::ci_tokens::finish_job(pool, id, worker, job).await
+                codeyard_db_actions::ci_tokens::finish_job(pool, id, worker, job).await
             }
             Self::Remote { .. } => {
                 self.call(
@@ -864,7 +863,7 @@ impl RunQueue {
         match self {
             Self::Database { pool, context, .. } => match context {
                 Some(_) => {
-                    crate::backend::db::ci::heartbeat_ci_run_on_node(
+                    codeyard_db_actions::ci::heartbeat_ci_run_on_node(
                         pool,
                         id,
                         worker,
@@ -872,7 +871,7 @@ impl RunQueue {
                     )
                     .await
                 }
-                None => crate::backend::db::ci::heartbeat_ci_run(pool, id, worker).await,
+                None => codeyard_db_actions::ci::heartbeat_ci_run(pool, id, worker).await,
             },
             Self::Remote { .. } => self.call(worker, Operation::Heartbeat { id }, None).await,
         }
@@ -889,7 +888,7 @@ impl RunQueue {
         let lines = prepare_logs(lines)?;
         match self {
             Self::Database { pool, .. } => {
-                crate::backend::db::ci::append_ci_logs(pool, id, worker, sequence, &lines).await
+                codeyard_db_actions::ci::append_ci_logs(pool, id, worker, sequence, &lines).await
             }
             Self::Remote { .. } => {
                 self.call(
@@ -928,7 +927,7 @@ impl RunQueue {
                 ..
             } => {
                 let finished =
-                    crate::backend::db::ci::finish_ci_run(pool, id, worker, status, message)
+                    codeyard_db_actions::ci::finish_ci_run(pool, id, worker, status, message)
                         .await?;
                 if let Some((run, created, jobs)) = &finished {
                     notifications.send_created(created).await;

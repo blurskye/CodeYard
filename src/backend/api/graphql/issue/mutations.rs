@@ -1,6 +1,6 @@
 use super::*;
-use crate::backend::db::relationships::Kind;
-use crate::backend::db::relationships::Mutation;
+use codeyard_db_identity::relationships::Kind;
+use codeyard_db_identity::relationships::Mutation;
 
 pub(super) fn id(input: &Value, name: &str, expected: &str) -> Result<i64> {
     crate::backend::api::graphql::mutations::target(input, name, expected)

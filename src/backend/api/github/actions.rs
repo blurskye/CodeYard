@@ -34,7 +34,7 @@ fn id(params: &HashMap<String, String>, key: &str) -> Result<i64> {
 }
 
 async fn run(state: &AppState, repo: i64, id: i64) -> Result<codeyard_db_core::models::CiRun> {
-    crate::backend::db::action_runs::get(&state.pool, repo, id, None)
+    codeyard_db_actions::action_runs::get(&state.pool, repo, id, None)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)

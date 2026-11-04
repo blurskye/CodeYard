@@ -8,9 +8,9 @@ mod fixture;
 
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard::backend::db::secrets::SecretsError;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::queries::secrets::SecretsError;
 use database::Database;
 
 const NAME: &str = "SENSITIVE_DEPLOY_TOKEN";
@@ -29,14 +29,14 @@ async fn put(
     repo: i64,
     actor: Option<i64>,
 ) -> Result<(), SecretsError> {
-    codeyard::backend::db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         pool,
         &encryptor(),
         repo,
         NAME,
         VALUE,
         actor,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{:064x}",
             actor.unwrap_or(-1)
         )),
@@ -46,44 +46,44 @@ async fn put(
 }
 async fn refuse(d: &Database, repo: i64, actor: i64) {
     refuse_writes(d, repo, actor).await;
-    denied(codeyard::backend::db::secrets::list_secrets(d.pool(), actor, repo).await);
+    denied(codeyard_db_actions::secrets::list_secrets(d.pool(), actor, repo).await);
 }
 async fn refuse_writes(d: &Database, repo: i64, actor: i64) {
     let before = d.snapshot(repo).await;
     denied(put(d.pool(), repo, Some(actor)).await);
     denied(
-        codeyard::backend::db::secrets::create_or_update_secret(
+        codeyard_db_actions::secrets::create_or_update_secret(
             d.pool(),
             &encryptor(),
             repo,
             "DENIED_NEW_NAME",
             "denied replacement",
             Some(actor),
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
                 "{actor:064x}"
             )),
         )
         .await,
     );
     denied(
-        codeyard::backend::db::secrets::delete_secret(
+        codeyard_db_actions::secrets::delete_secret(
             d.pool(),
             actor,
             repo,
             NAME,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
                 "{actor:064x}"
             )),
         )
         .await,
     );
     denied(
-        codeyard::backend::db::secrets::delete_secret(
+        codeyard_db_actions::secrets::delete_secret(
             d.pool(),
             actor,
             repo,
             "UNKNOWN_NAME",
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
                 "{actor:064x}"
             )),
         )
@@ -97,7 +97,7 @@ async fn refuse_writes(d: &Database, repo: i64, actor: i64) {
 }
 async fn allow(d: &Database, repo: i64, actor: i64) {
     put(d.pool(), repo, Some(actor)).await.unwrap();
-    let rows = codeyard::backend::db::secrets::list_secrets(d.pool(), actor, repo)
+    let rows = codeyard_db_actions::secrets::list_secrets(d.pool(), actor, repo)
         .await
         .unwrap();
     assert_eq!(rows.len(), 1);
@@ -111,30 +111,30 @@ async fn allow(d: &Database, repo: i64, actor: i64) {
         .collect();
     assert_eq!(keys, ["created_at", "name", "updated_at"]);
     assert!(!meta.to_string().contains(VALUE));
-    assert!(codeyard::backend::db::secrets::delete_secret(
+    assert!(codeyard_db_actions::secrets::delete_secret(
         d.pool(),
         actor,
         repo,
         NAME,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{actor:064x}"
         ))
     )
     .await
     .unwrap());
-    assert!(!codeyard::backend::db::secrets::delete_secret(
+    assert!(!codeyard_db_actions::secrets::delete_secret(
         d.pool(),
         actor,
         repo,
         NAME,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{actor:064x}"
         ))
     )
     .await
     .unwrap());
     assert!(
-        codeyard::backend::db::secrets::list_secrets(d.pool(), actor, repo)
+        codeyard_db_actions::secrets::list_secrets(d.pool(), actor, repo)
             .await
             .unwrap()
             .is_empty()
@@ -152,14 +152,14 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         "BAD\nINJECTED_NAME",
         "TÖKEN",
     ] {
-        let error = codeyard::backend::db::secrets::create_or_update_secret(
+        let error = codeyard_db_actions::secrets::create_or_update_secret(
             d.pool(),
             &encryptor(),
             repo,
             name,
             "private hostile value",
             Some(owner),
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
                 "{owner:064x}"
             )),
         )
@@ -168,14 +168,14 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         assert!(matches!(error, SecretsError::InvalidName), "{name:?}");
     }
     for name in ["GITHUB_TOKEN", "github_token", "GitHub_OIDC"] {
-        let error = codeyard::backend::db::secrets::create_or_update_secret(
+        let error = codeyard_db_actions::secrets::create_or_update_secret(
             d.pool(),
             &encryptor(),
             repo,
             name,
             "private reserved value",
             Some(owner),
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
                 "{owner:064x}"
             )),
         )
@@ -183,28 +183,28 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         .unwrap_err();
         assert!(matches!(error, SecretsError::ReservedName), "{name}");
     }
-    let error = codeyard::backend::db::secrets::create_or_update_secret(
+    let error = codeyard_db_actions::secrets::create_or_update_secret(
         d.pool(),
         &encryptor(),
         repo,
         "VALID_NAME",
         "private\0value",
         Some(owner),
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
     .await
     .unwrap_err();
     assert!(matches!(error, SecretsError::ValueContainsNul));
-    let error = codeyard::backend::db::secrets::create_or_update_secret(
+    let error = codeyard_db_actions::secrets::create_or_update_secret(
         d.pool(),
         &encryptor(),
         repo,
         "VALID_NAME",
-        &"x".repeat(codeyard::backend::db::secrets::MAX_SECRET_VALUE_BYTES + 1),
+        &"x".repeat(codeyard_actions::values::MAX_VALUE_BYTES + 1),
         Some(owner),
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -215,37 +215,37 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
 
     let longest_name = format!(
         "A{}",
-        "Z".repeat(codeyard::backend::db::secrets::MAX_SECRET_NAME_BYTES - 1)
+        "Z".repeat(codeyard_actions::values::MAX_NAME_BYTES - 1)
     );
-    let largest_value = "v".repeat(codeyard::backend::db::secrets::MAX_SECRET_VALUE_BYTES);
-    codeyard::backend::db::secrets::create_or_update_secret(
+    let largest_value = "v".repeat(codeyard_actions::values::MAX_VALUE_BYTES);
+    codeyard_db_actions::secrets::create_or_update_secret(
         d.pool(),
         &encryptor(),
         repo,
         &longest_name,
         &largest_value,
         Some(owner),
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
     .await
     .unwrap();
-    codeyard::backend::db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         d.pool(),
         &encryptor(),
         repo,
         "_",
         "",
         Some(owner),
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
     .await
     .unwrap();
     let decrypted =
-        codeyard::backend::db::secrets::decrypt_repository_secrets(d.pool(), &encryptor(), repo)
+        codeyard_db_actions::secrets::decrypt_repository_secrets(d.pool(), &encryptor(), repo)
             .await
             .unwrap();
     assert!(decrypted
@@ -254,23 +254,23 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
     assert!(decrypted
         .iter()
         .any(|(name, value)| name == "_" && value.is_empty()));
-    assert!(codeyard::backend::db::secrets::delete_secret(
+    assert!(codeyard_db_actions::secrets::delete_secret(
         d.pool(),
         owner,
         repo,
         &longest_name,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         ))
     )
     .await
     .unwrap());
-    assert!(codeyard::backend::db::secrets::delete_secret(
+    assert!(codeyard_db_actions::secrets::delete_secret(
         d.pool(),
         owner,
         repo,
         "_",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         ))
     )
@@ -278,60 +278,60 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
     .unwrap());
 
     // A repository holds at most what one CI claim carries; replacing a value still works.
-    let held = codeyard::backend::db::secrets::list_secrets(d.pool(), owner, repo)
+    let held = codeyard_db_actions::secrets::list_secrets(d.pool(), owner, repo)
         .await
         .unwrap()
         .len();
     let fill = |index: usize| format!("FILL_{index}");
-    for index in held..codeyard::backend::db::secrets::MAX_REPOSITORY_SECRETS {
-        codeyard::backend::db::secrets::create_or_update_secret(
+    for index in held..codeyard_actions::values::MAX_SCOPE_VALUES {
+        codeyard_db_actions::secrets::create_or_update_secret(
             d.pool(),
             &encryptor(),
             repo,
             &fill(index),
             "v",
             Some(owner),
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
                 "{owner:064x}"
             )),
         )
         .await
         .unwrap();
     }
-    let error = codeyard::backend::db::secrets::create_or_update_secret(
+    let error = codeyard_db_actions::secrets::create_or_update_secret(
         d.pool(),
         &encryptor(),
         repo,
         "ONE_TOO_MANY",
         "v",
         Some(owner),
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
     .await
     .unwrap_err();
     assert!(matches!(error, SecretsError::TooManySecrets));
-    codeyard::backend::db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         d.pool(),
         &encryptor(),
         repo,
         &fill(held),
         "replaced",
         Some(owner),
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
     .await
     .unwrap();
-    for index in held..codeyard::backend::db::secrets::MAX_REPOSITORY_SECRETS {
-        assert!(codeyard::backend::db::secrets::delete_secret(
+    for index in held..codeyard_actions::values::MAX_SCOPE_VALUES {
+        assert!(codeyard_db_actions::secrets::delete_secret(
             d.pool(),
             owner,
             repo,
             &fill(index),
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
                 "{owner:064x}"
             ))
         )
@@ -342,14 +342,14 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
     // Reserved names are refused on create and replace. A secret already stored under one must
     // still be listed and deleted, so it can always be removed. The name is set directly in the
     // database because the create path refuses it.
-    codeyard::backend::db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         d.pool(),
         &encryptor(),
         repo,
         "DEPLOY_KEY",
         "deploy value",
         Some(owner),
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -360,7 +360,7 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         &[repo],
     )
     .await;
-    let rows = codeyard::backend::db::secrets::list_secrets(d.pool(), owner, repo)
+    let rows = codeyard_db_actions::secrets::list_secrets(d.pool(), owner, repo)
         .await
         .unwrap();
     assert_eq!(
@@ -370,14 +370,14 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         ["GITHUB_DEPLOY_KEY"]
     );
     let stored = d.snapshot(repo).await;
-    let error = codeyard::backend::db::secrets::create_or_update_secret(
+    let error = codeyard_db_actions::secrets::create_or_update_secret(
         d.pool(),
         &encryptor(),
         repo,
         "GITHUB_DEPLOY_KEY",
         "replacement must be refused",
         Some(owner),
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -385,12 +385,12 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
     .unwrap_err();
     assert!(matches!(error, SecretsError::ReservedName));
     assert_eq!(d.snapshot(repo).await, stored);
-    assert!(codeyard::backend::db::secrets::delete_secret(
+    assert!(codeyard_db_actions::secrets::delete_secret(
         d.pool(),
         owner,
         repo,
         "GITHUB_DEPLOY_KEY",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         ))
     )
@@ -411,12 +411,12 @@ async fn contract(pg: bool) {
     d.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[site])
         .await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             d.pool(),
             owner,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 "secret_org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -426,7 +426,7 @@ async fn contract(pg: bool) {
     .id;
     for (actor, role) in [(admin, OrgRole::Admin), (member, OrgRole::Member)] {
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 d.pool(),
                 owner,
                 org,
@@ -442,7 +442,7 @@ async fn contract(pg: bool) {
     let public = d.repo(owner, Some(org), "secret_public", false).await;
     validation_contract(&d, personal, owner).await;
     for repo in [personal, private, public] {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             d.pool(),
             writer,
             repo,
@@ -450,7 +450,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap();
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             d.pool(),
             collaborator,
             repo,
@@ -468,14 +468,14 @@ async fn contract(pg: bool) {
         let before = d.snapshot(repo).await;
         denied(put(d.pool(), repo, None).await);
         denied(
-            codeyard::backend::db::secrets::create_or_update_secret(
+            codeyard_db_actions::secrets::create_or_update_secret(
                 d.pool(),
                 &encryptor(),
                 repo,
                 "MISSING_ACTOR",
                 VALUE,
                 None,
-                &codeyard::backend::db::users::accounts::AccountCredential::Session(""),
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(""),
             )
             .await,
         );
@@ -487,12 +487,12 @@ async fn contract(pg: bool) {
         refuse(&d, repo, site).await; // No organization siteadmin bypass.
     }
     // Updating ciphertext does not erase or adopt the persisted creator.
-    codeyard::backend::db::secrets::delete_secret(
+    codeyard_db_actions::secrets::delete_secret(
         d.pool(),
         owner,
         private,
         NAME,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{owner:064x}"
         )),
     )
@@ -501,14 +501,14 @@ async fn contract(pg: bool) {
     put(d.pool(), private, Some(owner)).await.unwrap();
     let before = d.snapshot(private).await;
     assert_eq!(before[0].created_by_id, Some(owner));
-    codeyard::backend::db::secrets::create_or_update_secret(
+    codeyard_db_actions::secrets::create_or_update_secret(
         d.pool(),
         &encryptor(),
         private,
         NAME,
         "changed fixture value",
         Some(admin),
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&format!(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&format!(
             "{admin:064x}"
         )),
     )
@@ -521,15 +521,11 @@ async fn contract(pg: bool) {
     assert_ne!(after[0].nonce, before[0].nonce);
 
     // Cached grants do not survive revocation, demotion or tenant removal.
-    codeyard::backend::db::repositories::access::revoke_repo_access(
-        d.pool(),
-        collaborator,
-        private,
-    )
-    .await
-    .unwrap();
+    codeyard_db_repos::repositories::access::revoke_repo_access(d.pool(), collaborator, private)
+        .await
+        .unwrap();
     refuse(&d, private, collaborator).await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         d.pool(),
         collaborator,
         private,
@@ -538,7 +534,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     applied(
-        codeyard::backend::db::organizations::update_organization_member_role(
+        codeyard_db_orgs::organizations::update_organization_member_role(
             d.pool(),
             owner,
             org,
@@ -550,7 +546,7 @@ async fn contract(pg: bool) {
     );
     refuse(&d, private, admin).await;
     applied(
-        codeyard::backend::db::organizations::update_organization_member_role(
+        codeyard_db_orgs::organizations::update_organization_member_role(
             d.pool(),
             owner,
             org,
@@ -561,18 +557,13 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        codeyard::backend::db::organizations::remove_organization_member(
-            d.pool(),
-            owner,
-            org,
-            admin,
-        )
-        .await
-        .unwrap(),
+        codeyard_db_orgs::organizations::remove_organization_member(d.pool(), owner, org, admin)
+            .await
+            .unwrap(),
     );
     refuse(&d, private, admin).await;
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             d.pool(),
             owner,
             org,
@@ -633,7 +624,7 @@ async fn contract(pg: bool) {
             if administers {
                 refuse_writes(&d, repo, actor).await;
                 assert_eq!(
-                    codeyard::backend::db::secrets::list_secrets(d.pool(), actor, repo)
+                    codeyard_db_actions::secrets::list_secrets(d.pool(), actor, repo)
                         .await
                         .unwrap()
                         .len(),

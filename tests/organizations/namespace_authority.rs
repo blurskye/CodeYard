@@ -5,17 +5,15 @@
 
 use crate::support::production_ci;
 
-use codeyard::backend::db::{
-    self,
-    organizations::{
-        create_organization, NewOrganization, OrganizationMetadata, OrganizationOutcome,
-        OrganizationProfile,
-    },
-    users::{
-        signup_requests::ReviewError,
-        transitions::{self, AccountAdmission, SetupClaim},
-    },
-};
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_identity::users::signup_requests::ReviewError;
+use codeyard_db_identity::users::transitions;
+use codeyard_db_identity::users::transitions::AccountAdmission;
+use codeyard_db_identity::users::transitions::SetupClaim;
+use codeyard_db_orgs::organizations::create_organization;
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::OrganizationMetadata;
+use codeyard_db_orgs::organizations::OrganizationProfile;
 use futures_util::FutureExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::{panic::AssertUnwindSafe, str::FromStr, time::Duration};
@@ -165,7 +163,7 @@ fn review_denied(result: anyhow::Result<codeyard_db_core::models::User>) {
 
 async fn setup_namespace_and_exact_recovery(database: &Database) -> codeyard_db_core::models::User {
     assert_eq!(
-        db::users::accounts::count_users(&database.pool)
+        codeyard_db_identity::users::accounts::count_users(&database.pool)
             .await
             .unwrap(),
         0
@@ -231,7 +229,7 @@ async fn setup_namespace_and_exact_recovery(database: &Database) -> codeyard_db_
         SetupClaim::AlreadyCompleted
     ));
     assert_eq!(
-        db::users::accounts::count_users(&database.pool)
+        codeyard_db_identity::users::accounts::count_users(&database.pool)
             .await
             .unwrap(),
         1
@@ -242,10 +240,15 @@ async fn setup_namespace_and_exact_recovery(database: &Database) -> codeyard_db_
 async fn primitive_paths_and_case_policy(database: &Database, actor: i64) {
     database.org(actor, "primitive_occupied").await;
     namespace_refusal(
-        db::users::accounts::create_user(&database.pool, "primitive_occupied", None).await,
+        codeyard_db_identity::users::accounts::create_user(
+            &database.pool,
+            "primitive_occupied",
+            None,
+        )
+        .await,
     );
     namespace_refusal(
-        db::users::accounts::create_user_with_password(
+        codeyard_db_identity::users::accounts::create_user_with_password(
             &database.pool,
             "primitive_occupied",
             None,
@@ -254,7 +257,7 @@ async fn primitive_paths_and_case_policy(database: &Database, actor: i64) {
         .await,
     );
     namespace_refusal(
-        db::users::accounts::create_user_with_password_and_flags(
+        codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
             &database.pool,
             "primitive_occupied",
             None,
@@ -265,7 +268,7 @@ async fn primitive_paths_and_case_policy(database: &Database, actor: i64) {
         .await,
     );
     namespace_refusal(
-        db::users::accounts::create_user_from_oauth(
+        codeyard_db_identity::users::accounts::create_user_from_oauth(
             &database.pool,
             "primitive_occupied",
             Some("secret@example.test"),
@@ -284,7 +287,7 @@ async fn primitive_paths_and_case_policy(database: &Database, actor: i64) {
     );
 
     // The other sequential direction: user exists before organization admission.
-    db::users::accounts::create_user(&database.pool, "user_first", None)
+    codeyard_db_identity::users::accounts::create_user(&database.pool, "user_first", None)
         .await
         .unwrap();
     assert!(matches!(
@@ -301,9 +304,14 @@ async fn primitive_paths_and_case_policy(database: &Database, actor: i64) {
         OrganizationOutcome::Conflict
     ));
     namespace_refusal(
-        db::users::accounts::create_user(&database.pool, "Primitive_occupied", None).await,
+        codeyard_db_identity::users::accounts::create_user(
+            &database.pool,
+            "Primitive_occupied",
+            None,
+        )
+        .await,
     );
-    let password = db::users::accounts::create_user_with_password(
+    let password = codeyard_db_identity::users::accounts::create_user_with_password(
         &database.pool,
         "password_free",
         None,
@@ -312,7 +320,7 @@ async fn primitive_paths_and_case_policy(database: &Database, actor: i64) {
     .await
     .unwrap();
     assert_eq!(password.password_hash.as_deref(), Some("hash"));
-    let flags = db::users::accounts::create_user_with_password_and_flags(
+    let flags = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
         &database.pool,
         "flags_free",
         None,
@@ -323,7 +331,7 @@ async fn primitive_paths_and_case_policy(database: &Database, actor: i64) {
     .await
     .unwrap();
     assert!(flags.is_admin && flags.must_change_password);
-    let oauth = db::users::accounts::create_user_from_oauth(
+    let oauth = codeyard_db_identity::users::accounts::create_user_from_oauth(
         &database.pool,
         "direct_oauth_free",
         Some("direct@example.test"),
@@ -362,7 +370,7 @@ async fn account_admission_and_existing_identity(database: &Database, actor: i64
     ));
 
     database.org(actor, "oauth_base").await;
-    db::users::accounts::create_user(&database.pool, "oauth_base_1", None)
+    codeyard_db_identity::users::accounts::create_user(&database.pool, "oauth_base_1", None)
         .await
         .unwrap();
     database.org(actor, "oauth_base_2").await;
@@ -415,7 +423,7 @@ async fn account_admission_and_existing_identity(database: &Database, actor: i64
     // Existing verified-email account resolution is unchanged: a lookup never becomes
     // a new identity. The current OAuth operation uses verified subjects, NOT email
     // linking.
-    let verified = db::users::accounts::create_user_from_oauth(
+    let verified = codeyard_db_identity::users::accounts::create_user_from_oauth(
         &database.pool,
         "verified_user",
         Some("verified@example.test"),
@@ -424,19 +432,25 @@ async fn account_admission_and_existing_identity(database: &Database, actor: i64
     .await
     .unwrap();
     assert_eq!(
-        db::users::accounts::get_user_by_email(&database.pool, "verified@example.test")
-            .await
-            .unwrap()
-            .unwrap()
-            .id,
+        codeyard_db_identity::users::accounts::get_user_by_email(
+            &database.pool,
+            "verified@example.test"
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .id,
         verified.id
     );
     assert_eq!(
-        db::users::accounts::get_user_by_username(&database.pool, "verified_user")
-            .await
-            .unwrap()
-            .unwrap()
-            .id,
+        codeyard_db_identity::users::accounts::get_user_by_username(
+            &database.pool,
+            "verified_user"
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .id,
         verified.id
     );
     database
@@ -518,7 +532,7 @@ async fn signup_review_atomicity(database: &Database, admin: i64) {
         .execute("UPDATE node_configuration SET node_mode='private' WHERE id=1")
         .await;
     database.org(admin, "private_occupied").await;
-    db::users::sessions::create_session(
+    codeyard_db_identity::users::sessions::create_session(
         &database.pool,
         "namespace-admin",
         admin,
@@ -576,26 +590,33 @@ async fn signup_review_atomicity(database: &Database, admin: i64) {
             .unwrap(),
         AccountAdmission::Conflict
     ));
-    let request = db::users::signup_requests::get_pending_signup_request_by_identity(
-        &database.pool,
-        "pending_collision",
-        None,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let request =
+        codeyard_db_identity::users::signup_requests::get_pending_signup_request_by_identity(
+            &database.pool,
+            "pending_collision",
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
     database.org(admin, "pending_collision").await;
     review_denied(
-        db::users::signup_requests::approve_signup_request(&database.pool, request.id, admin).await,
+        codeyard_db_identity::users::signup_requests::approve_signup_request(
+            &database.pool,
+            request.id,
+            admin,
+        )
+        .await,
     );
-    let pending = db::users::signup_requests::get_pending_signup_request_by_identity(
-        &database.pool,
-        "pending_collision",
-        None,
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let pending =
+        codeyard_db_identity::users::signup_requests::get_pending_signup_request_by_identity(
+            &database.pool,
+            "pending_collision",
+            None,
+        )
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(pending.id, request.id);
     assert!(pending.reviewed_by.is_none() && pending.reviewed_at.is_none());
     assert_eq!(
@@ -609,7 +630,7 @@ async fn signup_review_atomicity(database: &Database, admin: i64) {
     );
 
     // Direct request creation is not namespace reservation. Approval rechecks it.
-    let direct = db::users::signup_requests::create_signup_request(
+    let direct = codeyard_db_identity::users::signup_requests::create_signup_request(
         &database.pool,
         "private_occupied",
         None,
@@ -618,12 +639,18 @@ async fn signup_review_atomicity(database: &Database, admin: i64) {
     .await
     .unwrap();
     review_denied(
-        db::users::signup_requests::approve_signup_request(&database.pool, direct.id, admin).await,
+        codeyard_db_identity::users::signup_requests::approve_signup_request(
+            &database.pool,
+            direct.id,
+            admin,
+        )
+        .await,
     );
-    let outsider = db::users::accounts::create_user(&database.pool, "review_outsider", None)
-        .await
-        .unwrap();
-    let valid = db::users::signup_requests::create_signup_request(
+    let outsider =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "review_outsider", None)
+            .await
+            .unwrap();
+    let valid = codeyard_db_identity::users::signup_requests::create_signup_request(
         &database.pool,
         "approval_free",
         None,
@@ -632,8 +659,12 @@ async fn signup_review_atomicity(database: &Database, admin: i64) {
     .await
     .unwrap();
     review_denied(
-        db::users::signup_requests::approve_signup_request(&database.pool, valid.id, outsider.id)
-            .await,
+        codeyard_db_identity::users::signup_requests::approve_signup_request(
+            &database.pool,
+            valid.id,
+            outsider.id,
+        )
+        .await,
     );
     for flag in ["is_banned", "must_change_password"] {
         database
@@ -642,11 +673,15 @@ async fn signup_review_atomicity(database: &Database, admin: i64) {
             ))
             .await;
         review_denied(
-            db::users::signup_requests::approve_signup_request(&database.pool, valid.id, admin)
-                .await,
+            codeyard_db_identity::users::signup_requests::approve_signup_request(
+                &database.pool,
+                valid.id,
+                admin,
+            )
+            .await,
         );
         assert!(
-            db::users::signup_requests::get_pending_signup_request_by_identity(
+            codeyard_db_identity::users::signup_requests::get_pending_signup_request_by_identity(
                 &database.pool,
                 "approval_free",
                 None
@@ -662,8 +697,16 @@ async fn signup_review_atomicity(database: &Database, admin: i64) {
             .await;
     }
     let (a, b) = tokio::join!(
-        db::users::signup_requests::approve_signup_request(&database.pool, valid.id, admin),
-        db::users::signup_requests::approve_signup_request(&database.pool, valid.id, admin),
+        codeyard_db_identity::users::signup_requests::approve_signup_request(
+            &database.pool,
+            valid.id,
+            admin
+        ),
+        codeyard_db_identity::users::signup_requests::approve_signup_request(
+            &database.pool,
+            valid.id,
+            admin
+        ),
     );
     assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
     let error = match (a, b) {
@@ -695,7 +738,7 @@ async fn concurrent_namespace_winners(database: &Database, actor: i64) {
         let input = organization(&name);
         // Directly joined futures, never spawned tasks/timeout-detached handles.
         let (user, org) = tokio::join!(
-            db::users::accounts::create_user(&database.pool, &name, None),
+            codeyard_db_identity::users::accounts::create_user(&database.pool, &name, None),
             create_organization(&database.pool, actor, &input),
         );
         let org = org.unwrap();
@@ -721,7 +764,7 @@ async fn concurrent_namespace_winners(database: &Database, actor: i64) {
     }
     let input = organization("separate_org");
     let (user, org) = tokio::join!(
-        db::users::accounts::create_user(&database.pool, "separate_user", None),
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "separate_user", None),
         create_organization(&database.pool, actor, &input),
     );
     user.expect("separate user namespace succeeds");
@@ -749,7 +792,7 @@ async fn wait_for_pg_blocked(raw: &sqlx::PgPool, holder: i32) -> i32 {
 }
 
 async fn managed_account_sessions(database: &Database) {
-    use db::users::{accounts, sessions};
+    use codeyard_db_identity::users::{accounts, sessions};
 
     let SetupClaim::Completed(admin) =
         transitions::complete_setup(&database.pool, "admin", None, "old-hash", "private", None)
@@ -979,10 +1022,16 @@ async fn managed_account_sessions(database: &Database) {
     }
     assert_eq!(accounts::count_users(&database.pool).await.unwrap(), 4);
     assert!(
-        db::users::signup_requests::list_signup_requests(&database.pool, "pending", 100, 0, 0)
-            .await
-            .unwrap()
-            .is_empty()
+        codeyard_db_identity::users::signup_requests::list_signup_requests(
+            &database.pool,
+            "pending",
+            100,
+            0,
+            0
+        )
+        .await
+        .unwrap()
+        .is_empty()
     );
 
     if let Raw::Postgres(raw) = &database.raw {

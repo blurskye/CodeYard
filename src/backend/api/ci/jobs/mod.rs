@@ -46,12 +46,12 @@ async fn authorized_run(
     job_id: &str,
 ) -> Result<codeyard_db_core::models::CiRun, CiReadError> {
     let user = get_current_user(&state.pool, headers).await?;
-    let run = crate::backend::db::ci::get_ci_run_by_run_id(&state.pool, parse_job_id(job_id)?)
+    let run = codeyard_db_actions::ci::get_ci_run_by_run_id(&state.pool, parse_job_id(job_id)?)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
     let repo =
-        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, run.repo_id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, run.repo_id)
             .await
             .map_err(unavailable)?
             .ok_or_else(missing)?;

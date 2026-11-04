@@ -4,7 +4,7 @@
 mod contention;
 use crate::support::database::Database as Fixture;
 
-use codeyard::backend::db::{self, labels::LabelWriteRefusal};
+use codeyard_db_repos::labels::LabelWriteRefusal;
 use serde_json::{json, Value};
 
 impl Fixture {
@@ -39,7 +39,7 @@ const MUTATIONS: [Mutation; 7] = [
 
 async fn mutate(
     pool: &codeyard_db_core::DbPool,
-    actor: impl Into<db::credentials::Actor>,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo: i64,
     issue: i64,
     label: i64,
@@ -47,25 +47,36 @@ async fn mutate(
 ) -> anyhow::Result<()> {
     match mutation {
         Mutation::Create => {
-            db::labels::create_label(pool, actor, repo, "attempt", "#123456", None).await?;
+            codeyard_db_repos::labels::create_label(pool, actor, repo, "attempt", "#123456", None)
+                .await?;
         }
         Mutation::Update => {
-            db::labels::update_label(pool, actor, repo, label, Some("attempt"), None, None).await?;
+            codeyard_db_repos::labels::update_label(
+                pool,
+                actor,
+                repo,
+                label,
+                Some("attempt"),
+                None,
+                None,
+            )
+            .await?;
         }
         Mutation::Delete => {
-            db::labels::delete_label(pool, actor, repo, label).await?;
+            codeyard_db_repos::labels::delete_label(pool, actor, repo, label).await?;
         }
         Mutation::AddSingle => {
-            db::labels::add_issue_label(pool, actor, repo, issue, label).await?;
+            codeyard_db_repos::labels::add_issue_label(pool, actor, repo, issue, label).await?;
         }
         Mutation::AddBatch => {
-            db::labels::add_issue_labels(pool, actor, repo, issue, &[label, label]).await?;
+            codeyard_db_repos::labels::add_issue_labels(pool, actor, repo, issue, &[label, label])
+                .await?;
         }
         Mutation::Remove => {
-            db::labels::remove_issue_label(pool, actor, repo, issue, label).await?;
+            codeyard_db_repos::labels::remove_issue_label(pool, actor, repo, issue, label).await?;
         }
         Mutation::Replace => {
-            db::labels::set_issue_labels(pool, actor, repo, issue, &[label]).await?;
+            codeyard_db_repos::labels::set_issue_labels(pool, actor, repo, issue, &[label]).await?;
         }
     }
     Ok(())
@@ -88,7 +99,7 @@ fn refusal<T: std::fmt::Debug>(result: anyhow::Result<T>, expected: LabelWriteRe
 async fn snapshot(pool: &codeyard_db_core::DbPool, repos: &[i64]) -> Value {
     let mut rows = Vec::new();
     for repo in repos {
-        let issue = db::issues::get_issue(pool, *repo, 1)
+        let issue = codeyard_db_repos::issues::get_issue(pool, *repo, 1)
             .await
             .unwrap()
             .unwrap();
@@ -96,15 +107,15 @@ async fn snapshot(pool: &codeyard_db_core::DbPool, repos: &[i64]) -> Value {
         let mut associations = Vec::new();
         for owner in repos {
             associations.extend(
-                db::labels::get_issue_labels(pool, *owner, issue.id)
+                codeyard_db_repos::labels::get_issue_labels(pool, *owner, issue.id)
                     .await
                     .unwrap(),
             );
         }
         rows.push(json!({
-            "repo": db::repositories::records::get_repository_by_id(pool, *repo).await.unwrap(),
+            "repo": codeyard_db_repos::repositories::records::get_repository_by_id(pool, *repo).await.unwrap(),
             "issue": &issue,
-            "labels": db::labels::list_repo_labels(pool, *repo).await.unwrap(),
+            "labels": codeyard_db_repos::labels::list_repo_labels(pool, *repo).await.unwrap(),
             "associations": associations,
         }));
     }
@@ -112,14 +123,20 @@ async fn snapshot(pool: &codeyard_db_core::DbPool, repos: &[i64]) -> Value {
 }
 
 async fn seed(pool: &codeyard_db_core::DbPool, owner: i64, repo: i64) -> (i64, i64) {
-    let issue = db::issues::create_issue(pool, repo, owner, "Labels", "Fixture")
+    let issue = codeyard_db_repos::issues::create_issue(pool, repo, owner, "Labels", "Fixture")
         .await
         .unwrap();
-    let label =
-        db::labels::create_label(pool, owner, repo, "baseline", "#123456", Some("preserved"))
-            .await
-            .unwrap();
-    db::labels::set_issue_labels(pool, owner, repo, issue.id, &[label.id])
+    let label = codeyard_db_repos::labels::create_label(
+        pool,
+        owner,
+        repo,
+        "baseline",
+        "#123456",
+        Some("preserved"),
+    )
+    .await
+    .unwrap();
+    codeyard_db_repos::labels::set_issue_labels(pool, owner, repo, issue.id, &[label.id])
         .await
         .unwrap();
     (issue.id, label.id)
@@ -142,47 +159,62 @@ async fn denied(f: &Fixture, actor: i64, repo: i64, issue: i64, label: i64) {
 
 async fn accepted(f: &Fixture, actor: i64, repo: i64, issue: i64, baseline: i64) {
     let pool = f.pool();
-    let label = db::labels::create_label(pool, actor, repo, "accepted", "#654321", None)
-        .await
-        .unwrap();
-    let updated =
-        db::labels::update_label(pool, actor, repo, label.id, Some("updated"), None, None)
+    let label =
+        codeyard_db_repos::labels::create_label(pool, actor, repo, "accepted", "#654321", None)
             .await
             .unwrap();
+    let updated = codeyard_db_repos::labels::update_label(
+        pool,
+        actor,
+        repo,
+        label.id,
+        Some("updated"),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
     assert_eq!(updated.name, "updated");
-    db::labels::add_issue_label(pool, actor, repo, issue, label.id)
+    codeyard_db_repos::labels::add_issue_label(pool, actor, repo, issue, label.id)
         .await
         .unwrap();
-    let labels =
-        db::labels::add_issue_labels(pool, actor, repo, issue, &[label.id, baseline, label.id])
-            .await
-            .unwrap();
+    let labels = codeyard_db_repos::labels::add_issue_labels(
+        pool,
+        actor,
+        repo,
+        issue,
+        &[label.id, baseline, label.id],
+    )
+    .await
+    .unwrap();
     assert_eq!(labels.len(), 2);
     assert!(labels.iter().all(|l| l.repo_id == repo));
-    db::labels::set_issue_labels(pool, actor, repo, issue, &[label.id, label.id])
+    codeyard_db_repos::labels::set_issue_labels(pool, actor, repo, issue, &[label.id, label.id])
         .await
         .unwrap();
     assert_eq!(
-        db::labels::get_issue_labels(pool, repo, issue)
+        codeyard_db_repos::labels::get_issue_labels(pool, repo, issue)
             .await
             .unwrap()
             .len(),
         1
     );
     assert!(
-        db::labels::remove_issue_label(pool, actor, repo, issue, label.id)
+        codeyard_db_repos::labels::remove_issue_label(pool, actor, repo, issue, label.id)
             .await
             .unwrap()
     );
     assert!(
-        !db::labels::remove_issue_label(pool, actor, repo, issue, label.id)
+        !codeyard_db_repos::labels::remove_issue_label(pool, actor, repo, issue, label.id)
             .await
             .unwrap()
     );
-    assert!(db::labels::delete_label(pool, actor, repo, label.id)
-        .await
-        .unwrap());
-    db::labels::set_issue_labels(pool, actor, repo, issue, &[baseline])
+    assert!(
+        codeyard_db_repos::labels::delete_label(pool, actor, repo, label.id)
+            .await
+            .unwrap()
+    );
+    codeyard_db_repos::labels::set_issue_labels(pool, actor, repo, issue, &[baseline])
         .await
         .unwrap();
 }
@@ -222,7 +254,7 @@ async fn authority_matrix(pg: bool) {
     let (personal_issue, personal_label) = seed(f.pool(), owner, personal).await;
     let (issue, label) = seed(f.pool(), owner, repo).await;
     for target in [personal, repo] {
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.pool(),
             direct_admin,
             target,
@@ -230,7 +262,7 @@ async fn authority_matrix(pg: bool) {
         )
         .await
         .unwrap();
-        db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.pool(),
             writer,
             target,
@@ -240,7 +272,7 @@ async fn authority_matrix(pg: bool) {
         .unwrap();
     }
     // Author status is not association authority: member authors a real issue.
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         member,
         repo,
@@ -248,17 +280,21 @@ async fn authority_matrix(pg: bool) {
     )
     .await
     .unwrap();
-    let authored = db::issues::create_issue(f.pool(), repo, member, "Authored", "Fixture")
-        .await
-        .unwrap();
+    let authored =
+        codeyard_db_repos::issues::create_issue(f.pool(), repo, member, "Authored", "Fixture")
+            .await
+            .unwrap();
     refusal(
-        db::labels::add_issue_label(f.pool(), member, repo, authored.id, label).await,
+        codeyard_db_repos::labels::add_issue_label(f.pool(), member, repo, authored.id, label)
+            .await,
         LabelWriteRefusal::Denied,
     );
-    assert!(db::labels::get_issue_labels(f.pool(), repo, authored.id)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard_db_repos::labels::get_issue_labels(f.pool(), repo, authored.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     for actor in [owner, direct_admin, site, writer] {
         accepted(&f, actor, personal, personal_issue, personal_label).await;
     }
@@ -304,7 +340,7 @@ async fn authority_matrix(pg: bool) {
     )
     .await;
     denied(&f, direct_admin, repo, issue, label).await;
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         direct_admin,
         repo,
@@ -410,14 +446,15 @@ async fn scope_and_batches(pg: bool) {
     let foreign = f.label_repo(foreign_owner, None).await;
     let (issue, label) = seed(f.pool(), owner, repo).await;
     let (foreign_issue, foreign_label) = seed(f.pool(), foreign_owner, foreign).await;
-    let valid = db::labels::create_label(f.pool(), owner, repo, "valid", "#123456", None)
-        .await
-        .unwrap()
-        .id;
+    let valid =
+        codeyard_db_repos::labels::create_label(f.pool(), owner, repo, "valid", "#123456", None)
+            .await
+            .unwrap()
+            .id;
     let before = snapshot(f.pool(), &[repo, foreign]).await;
     for bad in [foreign_label, -1] {
         refusal(
-            db::labels::update_label(
+            codeyard_db_repos::labels::update_label(
                 f.pool(),
                 owner,
                 repo,
@@ -430,20 +467,21 @@ async fn scope_and_batches(pg: bool) {
             LabelWriteRefusal::InvalidLabels,
         );
         refusal(
-            db::labels::delete_label(f.pool(), owner, repo, bad).await,
+            codeyard_db_repos::labels::delete_label(f.pool(), owner, repo, bad).await,
             LabelWriteRefusal::InvalidLabels,
         );
         refusal(
-            db::labels::add_issue_label(f.pool(), owner, repo, issue, bad).await,
+            codeyard_db_repos::labels::add_issue_label(f.pool(), owner, repo, issue, bad).await,
             LabelWriteRefusal::InvalidLabels,
         );
         refusal(
-            db::labels::remove_issue_label(f.pool(), owner, repo, issue, bad).await,
+            codeyard_db_repos::labels::remove_issue_label(f.pool(), owner, repo, issue, bad).await,
             LabelWriteRefusal::InvalidLabels,
         );
         for batch in [vec![valid, bad], vec![bad, valid]] {
             refusal(
-                db::labels::add_issue_labels(f.pool(), owner, repo, issue, &batch).await,
+                codeyard_db_repos::labels::add_issue_labels(f.pool(), owner, repo, issue, &batch)
+                    .await,
                 LabelWriteRefusal::InvalidLabels,
             );
             assert_eq!(
@@ -452,7 +490,8 @@ async fn scope_and_batches(pg: bool) {
                 "no partial add"
             );
             refusal(
-                db::labels::set_issue_labels(f.pool(), owner, repo, issue, &batch).await,
+                codeyard_db_repos::labels::set_issue_labels(f.pool(), owner, repo, issue, &batch)
+                    .await,
                 LabelWriteRefusal::InvalidLabels,
             );
             assert_eq!(
@@ -464,25 +503,35 @@ async fn scope_and_batches(pg: bool) {
     }
     for bad_issue in [foreign_issue, -1] {
         refusal(
-            db::labels::add_issue_label(f.pool(), owner, repo, bad_issue, label).await,
+            codeyard_db_repos::labels::add_issue_label(f.pool(), owner, repo, bad_issue, label)
+                .await,
             LabelWriteRefusal::InvalidLabels,
         );
         refusal(
-            db::labels::add_issue_labels(f.pool(), owner, repo, bad_issue, &[label, valid]).await,
+            codeyard_db_repos::labels::add_issue_labels(
+                f.pool(),
+                owner,
+                repo,
+                bad_issue,
+                &[label, valid],
+            )
+            .await,
             LabelWriteRefusal::InvalidLabels,
         );
         refusal(
-            db::labels::remove_issue_label(f.pool(), owner, repo, bad_issue, label).await,
+            codeyard_db_repos::labels::remove_issue_label(f.pool(), owner, repo, bad_issue, label)
+                .await,
             LabelWriteRefusal::InvalidLabels,
         );
         refusal(
-            db::labels::set_issue_labels(f.pool(), owner, repo, bad_issue, &[]).await,
+            codeyard_db_repos::labels::set_issue_labels(f.pool(), owner, repo, bad_issue, &[])
+                .await,
             LabelWriteRefusal::InvalidLabels,
         );
         assert_eq!(snapshot(f.pool(), &[repo, foreign]).await, before);
     }
     // Symmetric scope mismatch even if the actor administers both repositories.
-    db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         owner,
         foreign,
@@ -491,51 +540,67 @@ async fn scope_and_batches(pg: bool) {
     .await
     .unwrap();
     refusal(
-        db::labels::set_issue_labels(f.pool(), owner, foreign, issue, &[foreign_label]).await,
+        codeyard_db_repos::labels::set_issue_labels(
+            f.pool(),
+            owner,
+            foreign,
+            issue,
+            &[foreign_label],
+        )
+        .await,
         LabelWriteRefusal::InvalidLabels,
     );
     refusal(
-        db::labels::remove_issue_label(f.pool(), owner, foreign, foreign_issue, label).await,
+        codeyard_db_repos::labels::remove_issue_label(
+            f.pool(),
+            owner,
+            foreign,
+            foreign_issue,
+            label,
+        )
+        .await,
         LabelWriteRefusal::InvalidLabels,
     );
     assert_eq!(snapshot(f.pool(), &[repo, foreign]).await, before);
-    let oversized = vec![valid; db::labels::MAX_ISSUE_LABELS + 1];
+    let oversized = vec![valid; codeyard_db_repos::labels::MAX_ISSUE_LABELS + 1];
     refusal(
-        db::labels::add_issue_labels(f.pool(), owner, repo, issue, &oversized).await,
+        codeyard_db_repos::labels::add_issue_labels(f.pool(), owner, repo, issue, &oversized).await,
         LabelWriteRefusal::InvalidLabels,
     );
     refusal(
-        db::labels::set_issue_labels(f.pool(), owner, repo, issue, &oversized).await,
+        codeyard_db_repos::labels::set_issue_labels(f.pool(), owner, repo, issue, &oversized).await,
         LabelWriteRefusal::InvalidLabels,
     );
     assert_eq!(snapshot(f.pool(), &[repo, foreign]).await, before);
-    let labels = db::labels::add_issue_labels(
+    let labels = codeyard_db_repos::labels::add_issue_labels(
         f.pool(),
         owner,
         repo,
         issue,
-        &vec![valid; db::labels::MAX_ISSUE_LABELS],
+        &vec![valid; codeyard_db_repos::labels::MAX_ISSUE_LABELS],
     )
     .await
     .unwrap();
     assert_eq!(labels.len(), 2);
-    db::labels::set_issue_labels(f.pool(), owner, repo, issue, &[valid, valid])
+    codeyard_db_repos::labels::set_issue_labels(f.pool(), owner, repo, issue, &[valid, valid])
         .await
         .unwrap();
     assert_eq!(
-        db::labels::get_issue_labels(f.pool(), repo, issue)
+        codeyard_db_repos::labels::get_issue_labels(f.pool(), repo, issue)
             .await
             .unwrap()
             .len(),
         1
     );
-    db::labels::set_issue_labels(f.pool(), owner, repo, issue, &[])
+    codeyard_db_repos::labels::set_issue_labels(f.pool(), owner, repo, issue, &[])
         .await
         .unwrap();
-    assert!(db::labels::get_issue_labels(f.pool(), repo, issue)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        codeyard_db_repos::labels::get_issue_labels(f.pool(), repo, issue)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert_eq!(
         snapshot(f.pool(), &[foreign]).await,
         json!([before[1].clone()])
@@ -551,7 +616,7 @@ async fn revoked_session(pg: bool) {
     let repo = f.label_repo(owner, None).await;
     let (issue, label) = seed(f.pool(), owner, repo).await;
     let session = crate::support::live_session(f.pool(), owner).await;
-    db::labels::create_label(
+    codeyard_db_repos::labels::create_label(
         f.pool(),
         (owner, session.clone()),
         repo,
@@ -561,10 +626,17 @@ async fn revoked_session(pg: bool) {
     )
     .await
     .unwrap();
-    db::milestones::create_milestone(f.pool(), (owner, session.clone()), repo, "live", None, None)
-        .await
-        .unwrap();
-    db::users::sessions::delete_session(f.pool(), &session)
+    codeyard_db_repos::milestones::create_milestone(
+        f.pool(),
+        (owner, session.clone()),
+        repo,
+        "live",
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    codeyard_db_identity::users::sessions::delete_session(f.pool(), &session)
         .await
         .unwrap();
     let before = snapshot(f.pool(), &[repo]).await;
@@ -583,7 +655,7 @@ async fn revoked_session(pg: bool) {
         );
     }
     for result in [
-        db::milestones::create_milestone(
+        codeyard_db_repos::milestones::create_milestone(
             f.pool(),
             (owner, session.clone()),
             repo,
@@ -593,10 +665,16 @@ async fn revoked_session(pg: bool) {
         )
         .await
         .map(|_| ()),
-        db::milestones::set_milestone_state(f.pool(), (owner, session.clone()), repo, 1, "closed")
-            .await
-            .map(|_| ()),
-        db::milestones::set_issue_milestone(
+        codeyard_db_repos::milestones::set_milestone_state(
+            f.pool(),
+            (owner, session.clone()),
+            repo,
+            1,
+            "closed",
+        )
+        .await
+        .map(|_| ()),
+        codeyard_db_repos::milestones::set_issue_milestone(
             f.pool(),
             (owner, session.clone()),
             repo,
@@ -607,20 +685,22 @@ async fn revoked_session(pg: bool) {
     ] {
         let error = result.expect_err("a revoked session must not write");
         assert_eq!(
-            error.downcast_ref::<db::milestones::MilestoneWriteRefusal>(),
-            Some(&db::milestones::MilestoneWriteRefusal::Denied)
+            error.downcast_ref::<codeyard_db_repos::milestones::MilestoneWriteRefusal>(),
+            Some(&codeyard_db_repos::milestones::MilestoneWriteRefusal::Denied)
         );
     }
     assert_eq!(snapshot(f.pool(), &[repo]).await, before);
-    let milestone = db::milestones::get_milestone(f.pool(), repo, 1)
+    let milestone = codeyard_db_repos::milestones::get_milestone(f.pool(), repo, 1)
         .await
         .unwrap()
         .unwrap();
     assert_eq!(milestone.milestone.state, "open");
-    assert!(db::milestones::get_milestone(f.pool(), repo, 2)
-        .await
-        .unwrap()
-        .is_none());
+    assert!(
+        codeyard_db_repos::milestones::get_milestone(f.pool(), repo, 2)
+            .await
+            .unwrap()
+            .is_none()
+    );
     f.finish().await;
 }
 

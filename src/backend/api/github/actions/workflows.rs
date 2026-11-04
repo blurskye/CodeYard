@@ -11,9 +11,9 @@ use codeyard_model::urls::repo_url;
 use crate::backend::ci::runs::DispatchRequest;
 use codeyard_db_core::ci_admission::AdmissionError;
 
-use crate::backend::db::action_workflows as workflows;
-use crate::backend::db::action_workflows::Workflow;
 use crate::backend::repositories::store::repo_store;
+use codeyard_db_actions::action_workflows as workflows;
+use codeyard_db_actions::action_workflows::Workflow;
 
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
@@ -161,7 +161,7 @@ async fn enabled(
     .await
     .map_err(|error| {
         if error
-            .downcast_ref::<crate::backend::db::repositories::records::RepositorySettingsRefusal>()
+            .downcast_ref::<codeyard_db_repos::repositories::records::RepositorySettingsRefusal>()
             .is_some()
         {
             Error::new(StatusCode::FORBIDDEN, "Workflow update denied")

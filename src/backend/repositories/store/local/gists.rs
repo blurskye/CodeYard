@@ -1,8 +1,8 @@
 use super::*;
 
-use crate::backend::db::gists::Admission;
-use crate::backend::db::gists::GistRefusal;
 use crate::backend::repositories::store::GistCredential;
+use codeyard_db_repos::gists::Admission;
+use codeyard_db_repos::gists::GistRefusal;
 use codeyard_git::gist_types::{GistEdit, GistRevision, GistSnapshot};
 use codeyard_support::credentials::AccountRestricted;
 
@@ -62,7 +62,7 @@ impl LocalStore {
                 return Err(RepoError::storage_node_unavailable());
             }
         }
-        if crate::backend::db::gists::by_repository(pool, id)
+        if codeyard_db_repos::gists::by_repository(pool, id)
             .await
             .map_err(failure)?
             .is_none()
@@ -78,7 +78,7 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         id: i64,
     ) -> Result<(), RepoError> {
-        if crate::backend::db::gists::pending(pool, id)
+        if codeyard_db_repos::gists::pending(pool, id)
             .await
             .map_err(failure)?
             .is_none()
@@ -97,7 +97,7 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         id: i64,
     ) -> Result<(), RepoError> {
-        if let Some(pending) = crate::backend::db::gists::pending(pool, id)
+        if let Some(pending) = codeyard_db_repos::gists::pending(pool, id)
             .await
             .map_err(failure)?
         {
@@ -116,7 +116,7 @@ impl LocalStore {
                 },
                 None => false,
             };
-            crate::backend::db::gists::finish(pool, id, &pending.sha, published, self.node_id)
+            codeyard_db_repos::gists::finish(pool, id, &pending.sha, published, self.node_id)
                 .await
                 .map_err(failure)?;
             if published {
@@ -199,7 +199,7 @@ impl LocalStore {
             .blocking(move |path| git::gists::prepare(path, &edit, &user.username, &email))
             .await?;
         let _change = self.begin_publisher_change(pool, id).await?;
-        crate::backend::db::gists::admit(
+        codeyard_db_repos::gists::admit(
             pool,
             actor,
             &credential.borrowed(),
@@ -221,7 +221,7 @@ impl LocalStore {
         )];
         let quorum = publication
             .scope(self.publish_quorum_refs(pool, id, &changes, async {
-                crate::backend::db::gists::check_write(pool, actor, &credential.borrowed(), id)
+                codeyard_db_repos::gists::check_write(pool, actor, &credential.borrowed(), id)
                     .await
                     .map_err(failure)?;
                 self.gist_location(pool, id, false).await?;
@@ -246,7 +246,7 @@ impl LocalStore {
         {
             let published = self.refs().await?.get("refs/heads/main") == Some(&prepared.sha);
             if !published {
-                crate::backend::db::gists::finish(pool, id, &prepared.sha, false, self.node_id)
+                codeyard_db_repos::gists::finish(pool, id, &prepared.sha, false, self.node_id)
                     .await
                     .map_err(failure)?;
                 return Err(RepoError::new(
@@ -255,7 +255,7 @@ impl LocalStore {
                 ));
             }
         }
-        if crate::backend::db::gists::finish(pool, id, &prepared.sha, true, self.node_id)
+        if codeyard_db_repos::gists::finish(pool, id, &prepared.sha, true, self.node_id)
             .await
             .is_err()
         {

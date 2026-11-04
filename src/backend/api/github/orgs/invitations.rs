@@ -7,9 +7,9 @@ use crate::backend::api::github::orgs::Error;
 use crate::backend::api::github::orgs::Result;
 use crate::backend::api::github::pagination::Pagination;
 
-use crate::backend::db::organizations::InvitationFilter;
-use crate::backend::db::organizations::InvitationTeams;
-use crate::backend::db::organizations::NewInvitation;
+use codeyard_db_orgs::organizations::InvitationFilter;
+use codeyard_db_orgs::organizations::InvitationTeams;
+use codeyard_db_orgs::organizations::NewInvitation;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -58,7 +58,7 @@ async fn documents(
         .flat_map(|invite| [invite.user_id, invite.invited_by_id])
         .flatten()
         .collect::<Vec<_>>();
-    let users = crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &ids)
+    let users = codeyard_db_identity::users::accounts::get_users_by_ids(&state.pool, &ids)
         .await
         .map_err(Error::unavailable)?
         .into_iter()
@@ -68,7 +68,7 @@ async fn documents(
         .iter()
         .map(|invite| invite.id)
         .collect::<Vec<_>>();
-    let counts = crate::backend::db::organizations::invitation_team_counts(&state.pool, &ids)
+    let counts = codeyard_db_orgs::organizations::invitation_team_counts(&state.pool, &ids)
         .await
         .map_err(Error::unavailable)?;
     Ok(invitations
@@ -120,7 +120,7 @@ async fn create(
         ));
     }
     let invitation = outcome(
-        crate::backend::db::organizations::create_organization_invitation(
+        codeyard_db_orgs::organizations::create_organization_invitation(
             &state.pool,
             actor.database_actor(),
             org.id,
@@ -161,7 +161,7 @@ async fn listing(
     let (org, actor) = context(state, headers, name, false).await?;
     let (offset, limit) = page.window()?;
     let invitations = outcome(
-        crate::backend::db::organizations::invitation_page(
+        codeyard_db_orgs::organizations::invitation_page(
             &state.pool,
             actor.user.id,
             org.id,
@@ -257,7 +257,7 @@ async fn cancel(
 ) -> Result<StatusCode> {
     let (org, actor) = context(&state, &headers, &params["org"], true).await?;
     outcome(
-        crate::backend::db::organizations::cancel_invitation_id(
+        codeyard_db_orgs::organizations::cancel_invitation_id(
             &state.pool,
             actor.database_actor(),
             org.id,
@@ -279,7 +279,7 @@ async fn teams(
     let (org, actor) = context(&state, &headers, &params["org"], false).await?;
     let (offset, limit) = page.window()?;
     let teams = outcome(
-        crate::backend::db::organizations::invitation_teams(
+        codeyard_db_orgs::organizations::invitation_teams(
             &state.pool,
             actor.user.id,
             org.id,
@@ -294,7 +294,7 @@ async fn teams(
         .into_iter()
         .map(|team| {
             crate::backend::webhooks::payloads::team(
-                &crate::backend::db::repositories::push_teams::TeamAccess {
+                &codeyard_db_repos::repositories::push_teams::TeamAccess {
                     team,
                     org_slug: org.name.clone(),
                     permission: 1,

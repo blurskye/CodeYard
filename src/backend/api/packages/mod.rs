@@ -13,10 +13,10 @@ mod tokens;
 use crate::backend::api::github::auth::Authentication;
 use crate::backend::app::AppState;
 
-use crate::backend::db::packages::Owner;
-use crate::backend::db::packages::Package;
-use crate::backend::db::packages::Permission;
-use crate::backend::db::packages::Refusal;
+use codeyard_db_repos::packages::Owner;
+use codeyard_db_repos::packages::Package;
+use codeyard_db_repos::packages::Permission;
+use codeyard_db_repos::packages::Refusal;
 
 use axum::{
     http::{header, HeaderMap, StatusCode},
@@ -175,14 +175,14 @@ fn writer(auth: Option<&Authentication>) -> Result<&Authentication> {
 }
 
 async fn owner(state: &AppState, name: &str) -> Result<Owner> {
-    crate::backend::db::packages::owner(&state.pool, name, None)
+    codeyard_db_repos::packages::owner(&state.pool, name, None)
         .await
         .map_err(Error::db)?
         .ok_or_else(Error::missing)
 }
 
 async fn container_owner(state: &AppState, name: &str) -> Result<Owner> {
-    crate::backend::db::packages::container_owner(&state.pool, name)
+    codeyard_db_repos::packages::container_owner(&state.pool, name)
         .await
         .map_err(Error::db)?
         .ok_or_else(Error::missing)
@@ -201,29 +201,25 @@ async fn package(
     }
     if create {
         let auth = writer(auth)?;
-        let repo = if auth.user.username == crate::backend::db::ci_tokens::BOT {
+        let repo = if auth.user.username == codeyard_db_core::queries::ci_tokens::BOT {
             Some(
-                crate::backend::db::ci_tokens::get(&state.pool, auth.token.id)
+                codeyard_db_actions::ci_tokens::get(&state.pool, auth.token.id)
                     .await
                     .map_err(Error::db)?
                     .ok_or_else(Error::missing)?
                     .repo_id,
             )
         } else {
-            crate::backend::db::repositories::records::get_repository(
-                &state.pool,
-                &owner.name,
-                name,
-            )
-            .await
-            .map_err(Error::db)?
-            .map(|repo| repo.id)
+            codeyard_db_repos::repositories::records::get_repository(&state.pool, &owner.name, name)
+                .await
+                .map_err(Error::db)?
+                .map(|repo| repo.id)
         };
-        crate::backend::db::packages::create(&state.pool, owner, kind, name, auth.token.id, repo)
+        codeyard_db_repos::packages::create(&state.pool, owner, kind, name, auth.token.id, repo)
             .await
             .map_err(Error::db)
     } else {
-        crate::backend::db::packages::find(
+        codeyard_db_repos::packages::find(
             &state.pool,
             owner,
             kind,
@@ -241,7 +237,7 @@ async fn all_versions(
     state: &AppState,
     package: i64,
     auth: Option<&Authentication>,
-) -> Result<Vec<crate::backend::db::packages::Version>> {
+) -> Result<Vec<codeyard_db_repos::packages::Version>> {
     all_version_fields(state, package, auth, false).await
 }
 
@@ -250,12 +246,12 @@ async fn all_version_fields(
     package: i64,
     auth: Option<&Authentication>,
     names_only: bool,
-) -> Result<Vec<crate::backend::db::packages::Version>> {
+) -> Result<Vec<codeyard_db_repos::packages::Version>> {
     let mut versions = Vec::new();
     let mut before = i64::MAX;
     let mut bytes = 0usize;
     loop {
-        let page = crate::backend::db::packages::version_page(
+        let page = codeyard_db_repos::packages::version_page(
             &state.pool,
             package,
             auth.map(|a| a.token.id.into()),
@@ -267,7 +263,7 @@ async fn all_version_fields(
         let done = page.len() < 100;
         for version in page {
             bytes = bytes.saturating_add(version.manifest.len() + version.name.len() + 512);
-            if bytes > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
+            if bytes > codeyard_db_repos::packages::MAX_METADATA_RESPONSE_BYTES {
                 return Err(Error::unavailable());
             }
             before = version.id;
@@ -289,7 +285,7 @@ async fn owner_packages(
     let mut before = i64::MAX;
     let mut bytes = 0usize;
     loop {
-        let page = crate::backend::db::packages::owner_page(
+        let page = codeyard_db_repos::packages::owner_page(
             &state.pool,
             auth.map(|a| a.token.id.into()),
             owner,
@@ -301,7 +297,7 @@ async fn owner_packages(
         let done = page.len() < 100;
         for package in page {
             bytes = bytes.saturating_add(package.name.len() + 512);
-            if bytes > crate::backend::db::packages::MAX_METADATA_RESPONSE_BYTES {
+            if bytes > codeyard_db_repos::packages::MAX_METADATA_RESPONSE_BYTES {
                 return Err(Error::unavailable());
             }
             before = package.id;

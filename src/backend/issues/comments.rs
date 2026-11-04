@@ -1,7 +1,6 @@
 use crate::backend::issues::database_error;
 use crate::backend::issues::OperationError;
 
-use crate::backend::db::users::accounts::AccountCredential;
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::mentions::mentions_anyone;
@@ -9,6 +8,7 @@ use crate::backend::notifications::mentions::notify_mentions;
 use crate::backend::notifications::mentions::MentionComment;
 use crate::backend::notifications::mentions::MentionSource;
 use crate::backend::notifications::NotificationBroadcaster;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 
 use crate::backend::webhooks::payloads::Scope;
 use serde::Deserialize;
@@ -43,7 +43,7 @@ async fn read_issue(
     ),
     OperationError,
 > {
-    let repository = crate::backend::db::repositories::records::get_repository(pool, owner, repo)
+    let repository = codeyard_db_repos::repositories::records::get_repository(pool, owner, repo)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -51,7 +51,7 @@ async fn read_issue(
             message: "Repository not found".to_owned(),
         })?;
     crate::backend::issues::require_read(pool, user, &repository).await?;
-    let issue = crate::backend::db::issues::get_issue(pool, repository.id, number)
+    let issue = codeyard_db_repos::issues::get_issue(pool, repository.id, number)
         .await
         .map_err(database_error)?
         .ok_or_else(|| OperationError::Missing {
@@ -67,7 +67,7 @@ async fn issue_comment(
     issue: &codeyard_db_core::models::Issue,
     comment_id: i64,
 ) -> Result<codeyard_db_core::models::IssueComment, OperationError> {
-    crate::backend::db::issues::get_issue_comment(pool, comment_id)
+    codeyard_db_repos::issues::get_issue_comment(pool, comment_id)
         .await
         .map_err(database_error)?
         .filter(|comment| comment.issue_id == issue.id)
@@ -135,7 +135,7 @@ pub async fn create_issue_comment(
             message: "The comment target changed. Reload before submitting.".into(),
         });
     }
-    let comment = crate::backend::db::issues::add_issue_comment(
+    let comment = codeyard_db_repos::issues::add_issue_comment(
         pool,
         repository.id,
         issue.id,
@@ -191,7 +191,7 @@ pub async fn create_issue_comment(
         .await;
 
     // The comment moved the issue's revision, so the hook names the issue as it is now.
-    let commented = match crate::backend::db::issues::get_issue_by_id(pool, issue.id).await {
+    let commented = match codeyard_db_repos::issues::get_issue_by_id(pool, issue.id).await {
         Ok(Some(current)) if current.repo_id == repository.id => current,
         Ok(_) => issue,
         Err(error) => {
@@ -294,7 +294,7 @@ pub async fn edit_issue_comment(
             message: message.to_owned(),
         });
     }
-    let comment = crate::backend::db::issues::edit_issue_comment(
+    let comment = codeyard_db_repos::issues::edit_issue_comment(
         pool,
         user.id,
         repository.id,
@@ -372,7 +372,7 @@ pub async fn delete_issue_comment(
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
     require_change(pool, &user, &repository, &issue).await?;
     issue_comment(pool, &issue, comment_id).await?;
-    let removed = crate::backend::db::issues::delete_issue_comment(
+    let removed = codeyard_db_repos::issues::delete_issue_comment(
         pool,
         user.id,
         repository.id,

@@ -158,7 +158,7 @@ pub async fn load_rules(
     pool: &codeyard_db_core::DbPool,
     repository: &Repository,
 ) -> Result<Vec<BranchProtectionRule>> {
-    crate::backend::db::repositories::protection::list_branch_protection_rules(pool, repository.id)
+    codeyard_db_repos::repositories::protection::list_branch_protection_rules(pool, repository.id)
         .await
 }
 
@@ -183,7 +183,7 @@ fn rules_for_branch<'a>(
 ) -> Result<Vec<&'a BranchProtectionRule>, Refusal> {
     let mut matching = Vec::new();
     for rule in rules {
-        let matches = crate::backend::db::repositories::protection::branch_pattern_matches(
+        let matches = codeyard_db_repos::repositories::protection::branch_pattern_matches(
             &rule.pattern,
             branch,
             budget,
@@ -256,7 +256,7 @@ pub async fn check_branch_write_with(
             && !rule.push_allowances.contains(&actor.id)
             && !rule.push_team_allowances.is_empty()
         {
-            crate::backend::db::repositories::push_teams::contains_actor(
+            codeyard_db_repos::repositories::push_teams::contains_actor(
                 pool,
                 repository.id,
                 actor.id,
@@ -348,15 +348,17 @@ async fn app_allows_actor(
     ids: &[i64],
 ) -> Result<bool> {
     for id in ids {
-        let Some(app) = crate::backend::db::github_apps::app(pool, &id.to_string()).await? else {
+        let Some(app) = codeyard_db_identity::github_apps::app(pool, &id.to_string()).await? else {
             continue;
         };
         if app.bot_id != actor {
             continue;
         }
-        if crate::backend::db::github_apps::repository_installation(pool, app.id, repo, true, None)
-            .await?
-            .is_some()
+        if codeyard_db_identity::github_apps::repository_installation(
+            pool, app.id, repo, true, None,
+        )
+        .await?
+        .is_some()
         {
             return Ok(true);
         }
@@ -408,7 +410,7 @@ async fn bypass_allows(
     }
     let teams = ids("teams");
     if !teams.is_empty()
-        && crate::backend::db::repositories::push_teams::contains_actor(pool, repo, actor, &teams)
+        && codeyard_db_repos::repositories::push_teams::contains_actor(pool, repo, actor, &teams)
             .await?
     {
         return Ok(true);
@@ -625,7 +627,7 @@ mod tests {
 
     #[test]
     fn users_and_teams_share_the_push_allowance_bound() {
-        use crate::backend::db::repositories::protection::{
+        use codeyard_db_repos::repositories::protection::{
             apply_protection_update, ActorListUpdate, ProtectionUpdate, ProtectionWriteRefusal,
         };
         let mut rule = rule();

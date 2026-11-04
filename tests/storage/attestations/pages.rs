@@ -205,7 +205,7 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     assert_eq!(reply.location.as_deref(), Some(base));
-    codeyard::backend::db::attestations::collect(f.pool())
+    codeyard_db_security::attestations::collect(f.pool())
         .await
         .unwrap();
     assert_eq!(

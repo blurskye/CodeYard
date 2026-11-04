@@ -51,7 +51,7 @@ type Result<T> = async_graphql::Result<T>;
 struct RequestContext {
     state: Arc<AppState>,
     auth: crate::backend::api::github::auth::Authentication,
-    actor: crate::backend::db::credentials::Actor,
+    actor: codeyard_db_core::queries::credentials::Actor,
     /// Scopes granted to an OAuth token; other credentials have none.
     oauth_scopes: Option<String>,
     /// Admission distinguishes personal tokens from integrations, which GraphQL does not accept.
@@ -63,7 +63,7 @@ struct RequestContext {
         std::collections::HashMap<(i64, String, String), Arc<codeyard_git::DiffInfo>>,
     >,
     mergeability: tokio::sync::Mutex<std::collections::HashMap<(i64, String, String), bool>>,
-    rate: crate::backend::db::graphql::RateLimit,
+    rate: codeyard_db_repos::graphql::RateLimit,
 }
 
 /// Field counts do not bound memory: one large text can be loaded under many aliases.
@@ -107,7 +107,7 @@ impl RequestContext {
 
     async fn authorize(&self, repo: i64, scope: &str, write: bool) -> Result<()> {
         let pool = &self.state.pool;
-        let live = crate::backend::db::users::tokens::token_user(pool, self.auth.token.id, write)
+        let live = codeyard_db_identity::users::tokens::token_user(pool, self.auth.token.id, write)
             .await
             .map_err(unavailable)?;
         if live.is_none_or(|user| user.id != self.auth.user.id) {
@@ -133,7 +133,7 @@ impl RequestContext {
                 .repository_scope(pool, repo, scope, write)
                 .await
                 .map_err(|error| crate::backend::api::github::auth::scope_error(error).graphql())?;
-        } else if crate::backend::db::fine_grained_tokens::classic_refused_repository(
+        } else if codeyard_db_identity::fine_grained_tokens::classic_refused_repository(
             pool,
             self.auth.token.id,
             repo,
@@ -144,7 +144,7 @@ impl RequestContext {
             return Err(token_denied());
         }
         // Check the live ACL even for cached scalars: ordinary PAT scope is not a read permit.
-        if crate::backend::db::repositories::access::readable_repository_ids(
+        if codeyard_db_repos::repositories::access::readable_repository_ids(
             pool,
             Some(self.auth.user.id),
             &[repo],
@@ -161,14 +161,10 @@ impl RequestContext {
                 .as_ref()
                 .is_some_and(|scopes| !codeyard_model::oauth_apps::has_scope(scopes, "repo"))
         {
-            if crate::backend::db::repositories::access::readable_repository_ids(
-                pool,
-                None,
-                &[repo],
-            )
-            .await
-            .map_err(unavailable)?
-            .is_empty()
+            if codeyard_db_repos::repositories::access::readable_repository_ids(pool, None, &[repo])
+                .await
+                .map_err(unavailable)?
+                .is_empty()
             {
                 return Err(token_denied());
             }
@@ -223,7 +219,7 @@ impl RequestContext {
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(token_denied)?;
-            let row = crate::backend::db::repositories::records::get_repository_by_id(
+            let row = codeyard_db_repos::repositories::records::get_repository_by_id(
                 &self.state.pool,
                 repo,
             )
@@ -248,7 +244,7 @@ impl RequestContext {
 
     async fn account_permission(&self, key: &str, oauth_scope: &str) -> Result<bool> {
         if self.auth.is_job()
-            || crate::backend::db::users::tokens::token_user(
+            || codeyard_db_identity::users::tokens::token_user(
                 &self.state.pool,
                 self.auth.token.id,
                 false,
@@ -273,7 +269,7 @@ impl RequestContext {
 
     async fn authorize_organization(&self, org: i64) -> Result<()> {
         self.require_oauth_scope("read:org")?;
-        if crate::backend::db::users::tokens::token_user(
+        if codeyard_db_identity::users::tokens::token_user(
             &self.state.pool,
             self.auth.token.id,
             false,
@@ -281,7 +277,7 @@ impl RequestContext {
         .await
         .map_err(unavailable)?
         .is_none_or(|user| user.id != self.auth.user.id)
-            || crate::backend::db::fine_grained_tokens::classic_refused(
+            || codeyard_db_identity::fine_grained_tokens::classic_refused(
                 &self.state.pool,
                 self.auth.token.id,
                 org,
@@ -400,7 +396,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             Ok(repository::object(&repo))
         }
         "I" => {
-            let issue = crate::backend::db::issues::get_issue_by_id(pool, id)
+            let issue = codeyard_db_repos::issues::get_issue_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -408,7 +404,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             Ok(issue::object(&issue))
         }
         "PR" => {
-            let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(pool, id)
+            let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -420,7 +416,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
         "LB" => issue::linked_branch_node(id, request).await,
         "RRS" => rulesets::node(id, request).await,
         "L" => {
-            let label = crate::backend::db::labels::get_label_by_id(pool, id)
+            let label = codeyard_db_repos::labels::get_label_by_id(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -436,11 +432,11 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             Ok(value)
         }
         "IC" => {
-            let comment = crate::backend::db::issues::get_issue_comment(pool, id)
+            let comment = codeyard_db_repos::issues::get_issue_comment(pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            let parent = crate::backend::db::issues::get_issue_by_id(pool, comment.issue_id)
+            let parent = codeyard_db_repos::issues::get_issue_by_id(pool, comment.issue_id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -451,12 +447,12 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             // The body and its review's visibility are read together, so a draft edited and
             // submitted meanwhile cannot show its unpublished text.
             let comment =
-                crate::backend::db::pull_requests::reviews::get_visible_pull_request_comment(
+                codeyard_db_repos::pull_requests::reviews::get_visible_pull_request_comment(
                     pool,
                     id,
                     request
                         .private_viewer(
-                            crate::backend::db::graphql::node_repository(pool, "PRRC", id)
+                            codeyard_db_repos::graphql::node_repository(pool, "PRRC", id)
                                 .await
                                 .map_err(unavailable)?
                                 .ok_or_else(missing)?,
@@ -468,7 +464,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            let parent = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+            let parent = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
                 pool,
                 comment.pull_request_id,
             )
@@ -558,7 +554,7 @@ async fn execute(
         Ok(None) => None,
     };
     let oauth_scopes =
-        match crate::backend::db::oauth_apps::token(&state.pool, authentication.token.id).await {
+        match codeyard_db_identity::oauth_apps::token(&state.pool, authentication.token.id).await {
             Ok(token) => token.map(|token| token.scopes),
             Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
         };
@@ -576,27 +572,26 @@ async fn execute(
                 .into_response()
         }
     };
-    let rate = match crate::backend::db::graphql::admit_query(&state.pool, authentication.token.id)
-        .await
-    {
-        Ok(Some(rate)) => rate,
-        Ok(None) => {
-            return document(async_graphql::Response::from_errors(vec![
-                async_graphql::ServerError::new("API rate limit exceeded", None),
-            ]))
-            .into_response()
-        }
-        Err(error) => {
-            return (
-                StatusCode::SERVICE_UNAVAILABLE,
-                document(async_graphql::Response::from_errors(vec![unavailable(
-                    error,
-                )
-                .into_server_error(async_graphql::Pos::default())])),
-            )
+    let rate =
+        match codeyard_db_repos::graphql::admit_query(&state.pool, authentication.token.id).await {
+            Ok(Some(rate)) => rate,
+            Ok(None) => {
+                return document(async_graphql::Response::from_errors(vec![
+                    async_graphql::ServerError::new("API rate limit exceeded", None),
+                ]))
                 .into_response()
-        }
-    };
+            }
+            Err(error) => {
+                return (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    document(async_graphql::Response::from_errors(vec![unavailable(
+                        error,
+                    )
+                    .into_server_error(async_graphql::Pos::default())])),
+                )
+                    .into_response()
+            }
+        };
     let actor = authentication.database_actor();
     let query_timeout = state.graphql_query_timeout;
     let request = body.data(RequestContext {

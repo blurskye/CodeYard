@@ -10,8 +10,8 @@ use crate::backend::identity::sessions::SessionContext;
 use crate::backend::identity::sessions::SessionIssueError;
 use crate::backend::identity::AuthenticatedAccount;
 
-use crate::backend::db::users::transitions::AccountAdmission;
 use codeyard_db_core::DbPool;
+use codeyard_db_identity::users::transitions::AccountAdmission;
 
 pub enum RegistrationOutcome {
     Registered(Box<AuthenticatedAccount>),
@@ -48,7 +48,7 @@ pub async fn register_password(
     let hash = crate::backend::identity::passwords::hash_password(input.password)
         .await
         .map_err(RegistrationError::Password)?;
-    let user = match crate::backend::db::users::transitions::register_password(
+    let user = match codeyard_db_identity::users::transitions::register_password(
         pool,
         input.username,
         input.email.filter(|email| !email.trim().is_empty()),

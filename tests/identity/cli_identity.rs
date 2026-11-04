@@ -105,12 +105,12 @@ async fn user_create_requires_setup_without_blocking_web_bootstrap() {
         installation.path().join("data/gitserv.db").display()
     );
     let pool = codeyard_db_core::init_db(&url).await.unwrap();
-    assert!(codeyard::backend::db::users::accounts::list_users(&pool)
+    assert!(codeyard_db_identity::users::accounts::list_users(&pool)
         .await
         .unwrap()
         .is_empty());
     assert!(matches!(
-        codeyard::backend::db::users::transitions::complete_setup(
+        codeyard_db_identity::users::transitions::complete_setup(
             &pool,
             "root_admin",
             None,
@@ -120,7 +120,7 @@ async fn user_create_requires_setup_without_blocking_web_bootstrap() {
         )
         .await
         .unwrap(),
-        codeyard::backend::db::users::transitions::SetupClaim::Completed(_)
+        codeyard_db_identity::users::transitions::SetupClaim::Completed(_)
     ));
     let created = run(installation.path(), &["user", "create", "alice"]);
     assert!(created.status.success(), "{created:?}");
@@ -159,7 +159,7 @@ fn provision(
 }
 
 async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
-    use codeyard::backend::db::users::{accounts, transitions};
+    use codeyard_db_identity::users::{accounts, transitions};
     let installation = tempfile::tempdir().unwrap();
     let refused = provision(
         installation.path(),
@@ -188,7 +188,7 @@ async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
         assert!(!output.status.success(), "{output:?}");
         assert_eq!(accounts::list_users(pool).await.unwrap().len(), 1);
         assert!(
-            codeyard::backend::db::node_config::get_node_configuration(pool)
+            codeyard_db_cluster::node_config::get_node_configuration(pool)
                 .await
                 .unwrap()
                 .is_none_or(|config| !config.setup_completed)
@@ -210,7 +210,7 @@ async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
     assert!(output.status.success(), "{output:?}");
     assert!(!String::from_utf8_lossy(&output.stdout).contains("bootstrap-password"));
     assert!(!String::from_utf8_lossy(&output.stderr).contains("bootstrap-password"));
-    let config = codeyard::backend::db::node_config::get_node_configuration(pool)
+    let config = codeyard_db_cluster::node_config::get_node_configuration(pool)
         .await
         .unwrap()
         .unwrap();
@@ -301,7 +301,7 @@ async fn cli_account_validation_and_local_recovery_postgres() {
 
 #[tokio::test]
 async fn local_bootstrap_rolls_back_and_serializes_with_public_setup_on_both_engines() {
-    use codeyard::backend::db::users::transitions::{self, SetupClaim};
+    use codeyard_db_identity::users::transitions::{self, SetupClaim};
     let postgres = native::PostgresDatabase::new().await;
     let sqlite = native::NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {
@@ -310,12 +310,12 @@ async fn local_bootstrap_rolls_back_and_serializes_with_public_setup_on_both_eng
                 .await
                 .is_err()
         );
-        assert!(codeyard::backend::db::users::accounts::list_users(pool)
+        assert!(codeyard_db_identity::users::accounts::list_users(pool)
             .await
             .unwrap()
             .is_empty());
         assert!(
-            codeyard::backend::db::node_config::get_node_configuration(pool)
+            codeyard_db_cluster::node_config::get_node_configuration(pool)
                 .await
                 .unwrap()
                 .is_none()
@@ -331,13 +331,13 @@ async fn local_bootstrap_rolls_back_and_serializes_with_public_setup_on_both_eng
         };
         assert!(winner.is_admin);
         assert_eq!(
-            codeyard::backend::db::users::accounts::list_users(pool)
+            codeyard_db_identity::users::accounts::list_users(pool)
                 .await
                 .unwrap()
                 .len(),
             1
         );
-        let config = codeyard::backend::db::node_config::get_node_configuration(pool)
+        let config = codeyard_db_cluster::node_config::get_node_configuration(pool)
             .await
             .unwrap()
             .unwrap();

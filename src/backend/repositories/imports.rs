@@ -3,8 +3,8 @@ pub mod archive;
 pub mod forge;
 use crate::backend::app::AppState;
 
-use crate::backend::db::source_imports::SourceImport;
 use crate::backend::repositories::store::repo_store;
+use codeyard_db_repos::source_imports::SourceImport;
 
 use codeyard_db_core::models::Repository;
 use serde::{Deserialize, Serialize};
@@ -38,9 +38,11 @@ impl ImportCredential {
         pool: &codeyard_db_core::DbPool,
     ) -> anyhow::Result<Option<codeyard_db_core::models::User>> {
         match self {
-            Self::Token(id) => crate::backend::db::users::tokens::token_user(pool, *id, true).await,
+            Self::Token(id) => {
+                codeyard_db_identity::users::tokens::token_user(pool, *id, true).await
+            }
             Self::Session(id) => {
-                crate::backend::db::users::sessions::get_session_user(pool, id).await
+                codeyard_db_identity::users::sessions::get_session_user(pool, id).await
             }
         }
     }
@@ -89,7 +91,7 @@ pub async fn start(
     {
         return Err(ImportError::NotEmpty);
     }
-    let import = crate::backend::db::source_imports::start(
+    let import = codeyard_db_repos::source_imports::start(
         &state.pool,
         user.id,
         repo.id,
@@ -98,9 +100,11 @@ pub async fn start(
     )
     .await
     .map_err(|error| {
-        match error.downcast_ref::<crate::backend::db::source_imports::ImportRefusal>() {
-            Some(crate::backend::db::source_imports::ImportRefusal::Denied) => ImportError::Denied,
-            Some(crate::backend::db::source_imports::ImportRefusal::Running) => {
+        match error.downcast_ref::<codeyard_db_core::queries::source_imports::ImportRefusal>() {
+            Some(codeyard_db_core::queries::source_imports::ImportRefusal::Denied) => {
+                ImportError::Denied
+            }
+            Some(codeyard_db_core::queries::source_imports::ImportRefusal::Running) => {
                 ImportError::Running
             }
             None => ImportError::Unavailable,
@@ -113,7 +117,7 @@ pub async fn start(
         credential,
         credentials,
     ) {
-        crate::backend::db::source_imports::finish(&state.pool, repo.id, &import.generation, false)
+        codeyard_db_repos::source_imports::finish(&state.pool, repo.id, &import.generation, false)
             .await
             .map_err(|_| ImportError::Unavailable)?;
         return Err(ImportError::Unavailable);
@@ -155,7 +159,7 @@ pub fn source_url(text: &str) -> anyhow::Result<url::Url> {
 async fn cancelled(pool: &codeyard_db_core::DbPool, import: &SourceImport) -> anyhow::Result<()> {
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        if !crate::backend::db::source_imports::get(pool, import.repo_id)
+        if !codeyard_db_repos::source_imports::get(pool, import.repo_id)
             .await?
             .is_some_and(|current| current.generation == import.generation && current.running())
         {
@@ -214,7 +218,7 @@ fn spawn(
             tracing::warn!(repo_id = repo.id, "source import failed");
         }
         if let Err(error) =
-            crate::backend::db::source_imports::finish(&state.pool, repo.id, &import.generation, success).await
+            codeyard_db_repos::source_imports::finish(&state.pool, repo.id, &import.generation, success).await
         {
             tracing::error!(repo_id = repo.id, error = %error, "record source import result");
         }

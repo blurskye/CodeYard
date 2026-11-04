@@ -7,11 +7,11 @@
 //! quotas as one uploaded through the files API, then activated when set. The picture
 //! an account stops using is removed in the same database transaction as the change.
 
-use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_support::credentials::AccountRestricted;
 
-use crate::backend::db::users::accounts::UserAvatarOutcome;
+use codeyard_db_identity::users::accounts::UserAvatarOutcome;
 
 use crate::backend::files::UploadDeclaration;
 use crate::backend::files::UploadError;
@@ -150,7 +150,7 @@ async fn change_user_avatar(
     credential: &AccountCredential<'_>,
     file: Option<Uuid>,
 ) -> Result<(), AvatarError> {
-    match crate::backend::db::users::accounts::set_user_avatar(pool, user.id, credential, file)
+    match codeyard_db_identity::users::accounts::set_user_avatar(pool, user.id, credential, file)
         .await
     {
         Ok(UserAvatarOutcome::Applied(_)) => Ok(()),
@@ -170,7 +170,7 @@ pub async fn set_org_avatar(
     org: i64,
     file: Option<Uuid>,
 ) -> Result<(), AvatarError> {
-    match crate::backend::db::organizations::set_organization_avatar(pool, actor.id, org, file)
+    match codeyard_db_orgs::organizations::set_organization_avatar(pool, actor.id, org, file)
         .await
         .map_err(unavailable)?
     {

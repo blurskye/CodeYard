@@ -6,8 +6,8 @@ pub(crate) mod updates;
 pub mod worker;
 use crate::backend::cluster::NodeContext;
 
-use crate::backend::db::repositories::dependencies::{self as records, Feature};
 use crate::backend::repositories::store::repo_store;
+use codeyard_db_repos::repositories::dependencies::{self as records, Feature};
 use codeyard_git::error::{ErrorKind, RepoError};
 #[derive(Debug)]
 pub enum DependencyError {
@@ -67,7 +67,7 @@ pub async fn status(
         || !current.same_owner(&repository)
         || (repository.is_private && !current.private_consent)
         || current.last_status == "unsupported";
-    if let Some(settings) = crate::backend::db::code_security::repository_settings(pool, repo)
+    if let Some(settings) = codeyard_db_security::code_security::repository_settings(pool, repo)
         .await
         .map_err(|error| DependencyError::Store(store_error(error)))?
     {
@@ -93,7 +93,7 @@ pub async fn set_enabled(
     pool: &codeyard_db_core::DbPool,
     cluster: Option<&NodeContext>,
     actor: i64,
-    credential: crate::backend::db::users::accounts::OwnedAccountCredential,
+    credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential,
     repo: i64,
     feature: Feature,
     enabled: bool,
@@ -175,7 +175,7 @@ pub(crate) fn check_publication(
     Ok(())
 }
 pub(crate) fn store_error(error: anyhow::Error) -> codeyard_git::error::RepoError {
-    use crate::backend::db::repositories::dependencies::Refusal;
+    use codeyard_db_repos::repositories::dependencies::Refusal;
     use codeyard_git::error::{ErrorKind, RepoError};
     if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return RepoError::write_denied();

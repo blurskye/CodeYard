@@ -410,12 +410,12 @@ pub async fn backup(
     dir: &Path,
 ) -> Result<()> {
     ensure!(
-        !crate::backend::db::cluster::cluster_enabled(pool).await?,
+        !codeyard_db_cluster::cluster::cluster_enabled(pool).await?,
         "codeyard backup covers a single-node installation; this one is in cluster mode"
     );
     let s3 = crate::backend::storage::s3::S3Config::optional_from_env()?.is_some();
     let started = std::time::Instant::now();
-    let before = crate::backend::db::backups::list_repositories(pool).await?;
+    let before = codeyard_db_cluster::backups::list_repositories(pool).await?;
     ensure!(
         before.iter().all(|repo| repo.storage_node_id.is_none()),
         "single-node backup cannot include repositories assigned to storage nodes"
@@ -448,12 +448,12 @@ pub async fn backup(
     let after = match pool {
         codeyard_db_core::DbPool::Sqlite(_) => {
             let target = partial.to_str().context("backup path is not UTF-8")?;
-            crate::backend::db::backups::copy_sqlite(pool, target).await?;
-            crate::backend::db::backups::sqlite_snapshot_repositories(&partial).await?
+            codeyard_db_cluster::backups::copy_sqlite(pool, target).await?;
+            codeyard_db_cluster::backups::sqlite_snapshot_repositories(&partial).await?
         }
         codeyard_db_core::DbPool::Postgres(_) => {
             let (snapshot_tx, snapshot, repositories) =
-                crate::backend::db::backups::postgres_snapshot(pool).await?;
+                codeyard_db_cluster::backups::postgres_snapshot(pool).await?;
             let snapshot = format!("--snapshot={snapshot}");
             let target = format!("--file={}", partial.display());
             postgres_tool(
@@ -571,7 +571,8 @@ pub async fn backup(
     // Publish the new database last. Until this rename the previous backup is still complete:
     // nothing it names has been removed yet.
     ensure!(
-        started.elapsed().as_secs() < crate::backend::db::files::RESTORE_WINDOW_SECONDS as u64,
+        started.elapsed().as_secs()
+            < codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS as u64,
         "backup exceeded the object retention window; refusing publication"
     );
     std::fs::rename(&partial, dir.join(file))?;
@@ -690,7 +691,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
             ensure!(source.is_file(), "{} has no {POSTGRES_FILE}", dir.display());
             let pool = codeyard_db_core::init_db(places.database_url).await?;
             ensure!(
-                crate::backend::db::backups::is_empty(&pool).await?,
+                codeyard_db_cluster::backups::is_empty(&pool).await?,
                 "restore needs an empty PostgreSQL database; this one has tables"
             );
             let source = source.to_str().context("backup path is not UTF-8")?;
@@ -726,7 +727,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
     }
     // The rows name the directory the backup came from; point them at this one. A repository
     // deleted after the snapshot is only under `deleted/`, and the checks below bring it back.
-    for repository in crate::backend::db::backups::list_repositories(&pool).await? {
+    for repository in codeyard_db_cluster::backups::list_repositories(&pool).await? {
         if repository.storage_node_id.is_some() {
             continue;
         }
@@ -734,7 +735,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
         let here = root.join(&name);
         let here = here.to_str().context("repository path is not UTF-8")?;
         if repository.disk_path != here {
-            crate::backend::db::backups::set_disk_path(&pool, repository.id, here).await?;
+            codeyard_db_cluster::backups::set_disk_path(&pool, repository.id, here).await?;
         }
     }
     println!("Repositories restored.");

@@ -5,12 +5,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::organization_values as values;
-use crate::backend::db::organization_values::Kind;
-use crate::backend::db::organization_values::OrganizationValue;
-use crate::backend::db::organization_values::Save;
-use crate::backend::db::organization_values::Selection;
-use crate::backend::db::organization_values::ValueError;
 use axum::{
     extract::{rejection::JsonRejection, MatchedPath, OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -18,6 +12,12 @@ use axum::{
     routing::{delete, get, patch, post, put, MethodRouter},
     Json,
 };
+use codeyard_db_orgs::organization_values as values;
+use codeyard_db_orgs::organization_values::Kind;
+use codeyard_db_orgs::organization_values::OrganizationValue;
+use codeyard_db_orgs::organization_values::Save;
+use codeyard_db_orgs::organization_values::Selection;
+use codeyard_db_orgs::organization_values::ValueError;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -124,20 +124,16 @@ async fn organization(
     if write {
         auth.require_write()?;
     }
-    let org = crate::backend::db::organizations::get_public_organization(&state.pool, name)
+    let org = codeyard_db_orgs::organizations::get_public_organization(&state.pool, name)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    match crate::backend::db::organizations::get_organization_role(
-        &state.pool,
-        auth.user.id,
-        org.id,
-    )
-    .await
-    .map_err(Error::unavailable)?
+    match codeyard_db_orgs::organizations::get_organization_role(&state.pool, auth.user.id, org.id)
+        .await
+        .map_err(Error::unavailable)?
     {
-        crate::backend::db::organizations::OrganizationOutcome::Applied(role)
-            if crate::backend::db::organizations::administers(role) => {}
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(role)
+            if codeyard_db_core::queries::organizations::administers(role) => {}
         _ => {
             return Err(Error::new(
                 StatusCode::FORBIDDEN,

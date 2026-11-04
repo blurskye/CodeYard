@@ -611,7 +611,7 @@ async fn oci(pg: bool) {
         401,
         &serde_json::from_slice::<Value>(&body).unwrap(),
     );
-    let grant = codeyard::backend::db::packages::registry_token(
+    let grant = codeyard_db_repos::packages::registry_token(
         f.pool(),
         &tokens::token_hash(writer.trim_start_matches("Bearer ")),
     )
@@ -624,7 +624,7 @@ async fn oci(pg: bool) {
             &[alice],
         )
         .await;
-    codeyard::backend::db::packages::settings(
+    codeyard_db_repos::packages::settings(
         f.pool(),
         package,
         grant.token_id.unwrap().into(),
@@ -695,11 +695,11 @@ async fn packages_reject_truncated_or_corrupt_chunks() {
         .await
         .unwrap();
     let bytes = b"original";
-    let blob = codeyard::backend::db::packages::Blob {
+    let blob = codeyard_db_repos::packages::Blob {
         digest: packages::digest(bytes),
         size: bytes.len() as i64,
     };
-    let key = codeyard::backend::db::packages::object_key(&blob.digest);
+    let key = codeyard_db_repos::packages::object_key(&blob.digest);
     storage
         .put_bytes(
             &codeyard::backend::storage::Upload {

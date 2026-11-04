@@ -4,9 +4,9 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::assignees::AssignedItem;
 use crate::backend::issues::comments::CommentTarget;
 use crate::backend::issues::comments::CreateCommentRequest;
+use codeyard_db_repos::assignees::AssignedItem;
 
 use crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest;
 
@@ -34,8 +34,8 @@ pub(super) struct Comment {
     updated_at: DateTime<Utc>,
 }
 
-impl From<crate::backend::db::issues::ConversationComment> for Comment {
-    fn from(row: crate::backend::db::issues::ConversationComment) -> Self {
+impl From<codeyard_db_repos::issues::ConversationComment> for Comment {
+    fn from(row: codeyard_db_repos::issues::ConversationComment) -> Self {
         Self {
             id: row.id,
             item: if row.pull_request {
@@ -69,11 +69,11 @@ pub(super) async fn find(
     }
     let native_id = id / 2;
     if id % 2 == 0 {
-        let comment = crate::backend::db::issues::get_issue_comment(pool, native_id)
+        let comment = codeyard_db_repos::issues::get_issue_comment(pool, native_id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        let issue = crate::backend::db::issues::get_issue_by_id(pool, comment.issue_id)
+        let issue = codeyard_db_repos::issues::get_issue_by_id(pool, comment.issue_id)
             .await
             .map_err(Error::unavailable)?
             .filter(|issue| issue.repo_id == repo_id)
@@ -88,14 +88,14 @@ pub(super) async fn find(
             updated_at: comment.updated_at,
         })
     } else {
-        let comment = crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+        let comment = codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(
             pool, native_id,
         )
         .await
         .map_err(Error::unavailable)?
         .filter(|comment| comment.path.is_none() && comment.review_id.is_none())
         .ok_or_else(Error::missing)?;
-        let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+        let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
             pool,
             comment.pull_request_id,
         )
@@ -149,7 +149,7 @@ async fn documents(
             .collect();
         ids.sort_unstable();
         ids.dedup();
-        for pin in crate::backend::db::pins::get_pins(pool, pull, &ids)
+        for pin in codeyard_db_repos::pins::get_pins(pool, pull, &ids)
             .await
             .map_err(Error::unavailable)?
         {
@@ -167,7 +167,7 @@ async fn documents(
     ids.extend(pins.values().filter_map(|pin| pin.pinned_by));
     ids.sort_unstable();
     ids.dedup();
-    let users: HashMap<_, _> = crate::backend::db::users::accounts::get_users_by_ids(pool, &ids)
+    let users: HashMap<_, _> = codeyard_db_identity::users::accounts::get_users_by_ids(pool, &ids)
         .await
         .map_err(Error::unavailable)?
         .into_iter()
@@ -541,7 +541,7 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    use crate::backend::db::discussions::ListSort;
+    use codeyard_db_repos::discussions::ListSort;
     let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let number = match p.get("issue_number") {
         Some(number) => {
@@ -573,10 +573,10 @@ async fn list(
         })
         .transpose()?;
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::issues::list_repository_comments(
+    let rows = codeyard_db_repos::issues::list_repository_comments(
         &state.pool,
         repo.id,
-        &crate::backend::db::issues::CommentFilter {
+        &codeyard_db_repos::issues::CommentFilter {
             number,
             since,
             sort,

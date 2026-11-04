@@ -3,12 +3,12 @@
 use crate::backend::ci::CiRuns;
 use crate::backend::repositories::dependencies::registry::Client;
 
-use crate::backend::db::repositories::dependencies::Feature;
-use crate::backend::db::repositories::dependencies::Job;
-use crate::backend::db::repositories::dependencies::Refusal;
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::BlobRange;
+use codeyard_db_repos::repositories::dependencies::Feature;
+use codeyard_db_repos::repositories::dependencies::Job;
+use codeyard_db_repos::repositories::dependencies::Refusal;
 use codeyard_git::error::ErrorKind;
 
 use crate::backend::repositories::store::RepoStore;
@@ -58,9 +58,9 @@ async fn process(
     client: &Client,
     job: &Job,
 ) -> Result<()> {
-    crate::backend::db::repositories::dependencies::check_job(pool, job, Feature::Alerts).await?;
+    codeyard_db_repos::repositories::dependencies::check_job(pool, job, Feature::Alerts).await?;
     let repository =
-        crate::backend::db::repositories::records::get_repository_by_id(pool, job.repo_id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, job.repo_id)
             .await?
             .ok_or(Refusal::Missing)?;
     let store = repo_store(&repository, ci.cluster.as_ref());
@@ -79,7 +79,7 @@ async fn process(
         .context("The default branch is missing")?
         .clone();
     // A proposal must use the shared scanner's current pinned inventory, never its own scan.
-    crate::backend::db::repositories::dependencies::complete_scan(pool, job, &sha).await?;
+    codeyard_db_repos::repositories::dependencies::complete_scan(pool, job, &sha).await?;
     if job.updates_actor_id.is_some() {
         // Only proposals need an npm lockfile. Without a usable one they are skipped, and the
         // alerts from the shared scan stay active. A storage failure is still retried.
@@ -116,7 +116,7 @@ async fn process(
                 return Ok(());
             }
         };
-        match crate::backend::db::repositories::dependencies::check_job(pool, job, Feature::Updates)
+        match codeyard_db_repos::repositories::dependencies::check_job(pool, job, Feature::Updates)
             .await
         {
             Ok(()) => {
@@ -148,7 +148,7 @@ pub async fn run_once(
     broadcaster: &NotificationBroadcaster,
     client: &Client,
 ) -> Result<bool> {
-    let Some(job) = crate::backend::db::repositories::dependencies::claim(
+    let Some(job) = codeyard_db_repos::repositories::dependencies::claim(
         pool,
         &uuid::Uuid::new_v4().to_string(),
     )
@@ -186,7 +186,7 @@ pub async fn run_once(
             "Dependency security job did not complete; its private status was retained"
         );
     }
-    crate::backend::db::repositories::dependencies::release(pool, &job, status, message).await?;
+    codeyard_db_repos::repositories::dependencies::release(pool, &job, status, message).await?;
     Ok(true)
 }
 /// Pinned to the web-server lifetime; no detached scanner or unbounded per-repository task set.

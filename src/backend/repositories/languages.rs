@@ -1,6 +1,6 @@
 //! Stored default-branch languages, including successfully computed empty results.
 
-use crate::backend::db::repository_stats::LanguageSource;
+use codeyard_db_repos::repository_stats::LanguageSource;
 use codeyard_git::error::{ErrorKind, RepoError};
 
 use crate::backend::repositories::store::RepoStore;
@@ -24,7 +24,7 @@ static COMPUTATIONS: LazyLock<Mutex<HashMap<i64, Weak<tokio::sync::Mutex<()>>>>>
 
 pub async fn stored(pool: &DbPool, repo_id: i64) -> Result<Vec<LanguageStat>> {
     Ok(
-        crate::backend::db::repository_stats::get_repo_languages(pool, repo_id)
+        codeyard_db_repos::repository_stats::get_repo_languages(pool, repo_id)
             .await?
             .into_iter()
             .map(|row| LanguageStat {
@@ -71,7 +71,7 @@ pub async fn compute_and_store(
     tokio::time::timeout(REFRESH_TIMEOUT, async {
         let _computation = computation.lock().await;
         let Some(source) =
-            crate::backend::db::repository_stats::language_source(pool, repository.id).await?
+            codeyard_db_repos::repository_stats::language_source(pool, repository.id).await?
         else {
             return Ok(Vec::new());
         };
@@ -90,7 +90,7 @@ pub async fn compute_and_store(
                 .unwrap_or_else(|| "main".into());
             if current == branch
                 && git::branch_tip(path, &branch)? == tip
-                && crate::backend::db::repository_stats::languages_computed(
+                && codeyard_db_repos::repository_stats::languages_computed(
                     pool,
                     &source,
                     &tip.clone().unwrap_or_default(),
@@ -100,7 +100,7 @@ pub async fn compute_and_store(
                 return Ok::<_, anyhow::Error>(languages);
             }
             let Some(current_source) =
-                crate::backend::db::repository_stats::language_source(pool, repository.id).await?
+                codeyard_db_repos::repository_stats::language_source(pool, repository.id).await?
             else {
                 return Ok(Vec::new());
             };
@@ -151,7 +151,7 @@ pub(crate) fn refresh_default_branch(
                 let computation = computation(repo_id);
                 let _computation = computation.lock().await;
                 let Some(source) =
-                    crate::backend::db::repository_stats::language_source(&pool, repo_id).await?
+                    codeyard_db_repos::repository_stats::language_source(&pool, repo_id).await?
                 else {
                     return Ok(());
                 };
@@ -180,7 +180,7 @@ async fn compute_local(
     source: &LanguageSource,
 ) -> Result<Vec<LanguageStat>> {
     let tip = git::branch_tip(path, branch)?.unwrap_or_default();
-    if crate::backend::db::repository_stats::languages_computed(pool, source, &tip).await? {
+    if codeyard_db_repos::repository_stats::languages_computed(pool, source, &tip).await? {
         return stored(pool, source.repo_id).await;
     }
     let languages = if tip.is_empty() {
@@ -193,7 +193,7 @@ async fn compute_local(
     // as ref publishers, then retain the database placement CAS through commit.
     let _publication = git::locks::publication(path).await?;
     let Some(current) =
-        crate::backend::db::repository_stats::language_source(pool, source.repo_id).await?
+        codeyard_db_repos::repository_stats::language_source(pool, source.repo_id).await?
     else {
         return Ok(languages);
     };
@@ -240,7 +240,7 @@ async fn store_rows(
         })
         .collect();
     // False when the version check lost to a newer write, and nothing was stored.
-    crate::backend::db::repository_stats::upsert_repo_languages(pool, source, revision, &rows).await
+    codeyard_db_repos::repository_stats::upsert_repo_languages(pool, source, revision, &rows).await
 }
 
 #[cfg(test)]

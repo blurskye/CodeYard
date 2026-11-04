@@ -43,7 +43,7 @@ pub async fn get_repo_permissions(
         } else if repository.is_personal_owner(user.id) {
             "owner"
         } else {
-            crate::backend::db::repositories::access::get_user_repo_access(
+            codeyard_db_repos::repositories::access::get_user_repo_access(
                 &state.pool,
                 user.id,
                 repository.id,

@@ -6,9 +6,9 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::organizations::roles::RoleTarget;
-use crate::backend::db::organizations::roles::SECURITY_MANAGER_ROLE_ID;
-use crate::backend::db::repositories::push_teams::TeamAccess;
+use codeyard_db_core::queries::organizations::roles::SECURITY_MANAGER_ROLE_ID;
+use codeyard_db_orgs::organizations::roles::RoleTarget;
+use codeyard_db_repos::repositories::push_teams::TeamAccess;
 
 use axum::{
     body::Bytes,
@@ -43,13 +43,9 @@ async fn product(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let role = outcome(
-        crate::backend::db::organizations::get_organization_role(
-            &state.pool,
-            actor.user.id,
-            org.id,
-        )
-        .await
-        .map_err(Error::unavailable)?,
+        codeyard_db_orgs::organizations::get_organization_role(&state.pool, actor.user.id, org.id)
+            .await
+            .map_err(Error::unavailable)?,
     )?;
     if role != codeyard_db_core::models::OrgRole::Owner {
         return Err(Error::new(
@@ -110,7 +106,7 @@ async fn teams(
     let org = target(&state, &name).await?;
     // This legacy operation has no pagination. Refuse an oversized response, never silently truncate it.
     let teams = outcome(
-        crate::backend::db::organizations::roles::teams(
+        codeyard_db_orgs::organizations::roles::teams(
             &state.pool,
             actor.user.id,
             org.id,
@@ -153,7 +149,7 @@ async fn change(
     actor.require_write()?;
     let org = target(state, name).await?;
     outcome(
-        crate::backend::db::organizations::roles::change(
+        codeyard_db_orgs::organizations::roles::change(
             &state.pool,
             actor.database_actor(),
             org.id,

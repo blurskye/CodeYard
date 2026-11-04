@@ -12,12 +12,12 @@ use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard::backend::db::organizations::OrganizationOutcome;
-use codeyard::backend::db::users::accounts::AccountCredential;
-use codeyard::backend::db::webhooks::HookOwner;
-use codeyard::backend::db::webhooks::WebhookFields;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_db_core::queries::webhooks::WebhookFields;
+use codeyard_db_repos::webhooks::HookOwner;
 use codeyard_support::crypto::hmac_sha256;
 use database::Database;
 use pulls::Client;
@@ -148,7 +148,7 @@ async fn setup(pg: bool) -> (Database, tempfile::TempDir, Client, Client) {
     codeyard::backend::repositories::lifecycle::provision(
         (database.pool(), None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
         "proj",
         None,
         false,
@@ -189,7 +189,7 @@ async fn deliveries(
     count: usize,
 ) -> Vec<codeyard_db_core::models::WebhookDelivery> {
     for _ in 0..200 {
-        let rows = codeyard::backend::db::webhooks::list_deliveries(database.pool(), hook)
+        let rows = codeyard_db_repos::webhooks::list_deliveries(database.pool(), hook)
             .await
             .unwrap();
         if rows.len() >= count {
@@ -201,7 +201,7 @@ async fn deliveries(
 }
 
 async fn repo_id(database: &Database) -> String {
-    codeyard::backend::db::repositories::records::get_repository(database.pool(), "alice", "proj")
+    codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
         .await
         .unwrap()
         .unwrap()
@@ -210,20 +210,15 @@ async fn repo_id(database: &Database) -> String {
 }
 
 async fn hook_id(database: &Database) -> i64 {
-    let repo = codeyard::backend::db::repositories::records::get_repository(
-        database.pool(),
-        "alice",
-        "proj",
-    )
-    .await
-    .unwrap()
-    .unwrap();
-    let hooks = codeyard::backend::db::webhooks::list_webhooks(
-        database.pool(),
-        HookOwner::Repository(repo.id),
-    )
-    .await
-    .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
+    let hooks =
+        codeyard_db_repos::webhooks::list_webhooks(database.pool(), HookOwner::Repository(repo.id))
+            .await
+            .unwrap();
     assert_eq!(hooks.len(), 1, "exactly one hook");
     hooks[0].id
 }
@@ -297,13 +292,13 @@ async fn flow(pg: bool, receiver: &Receiver, url: &str) {
     assert!(page.contains(url), "hook URL is listed");
     assert!(page.contains("Webhooks"));
     assert!(page.contains("Last delivery 200"));
-    let summaries = codeyard::backend::db::webhooks::list_delivery_summaries(database.pool(), hook)
+    let summaries = codeyard_db_repos::webhooks::list_delivery_summaries(database.pool(), hook)
         .await
         .unwrap();
     assert_eq!(summaries[0].id, rows[0].id);
     assert!(summaries[0].request_body.is_empty() && summaries[0].response_body.is_none());
     assert_eq!(
-        codeyard::backend::db::webhooks::latest_delivery_status(database.pool(), hook)
+        codeyard_db_repos::webhooks::latest_delivery_status(database.pool(), hook)
             .await
             .unwrap(),
         Some(Some(200))
@@ -357,7 +352,7 @@ async fn flow(pg: bool, receiver: &Receiver, url: &str) {
         .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
-        codeyard::backend::db::webhooks::list_deliveries(database.pool(), hook)
+        codeyard_db_repos::webhooks::list_deliveries(database.pool(), hook)
             .await
             .unwrap()
             .len(),
@@ -424,10 +419,10 @@ async fn flow(pg: bool, receiver: &Receiver, url: &str) {
         reply.location.as_deref(),
         Some("/alice/proj/settings?tab=webhooks&notice=deleted")
     );
-    assert!(codeyard::backend::db::webhooks::list_webhooks(
+    assert!(codeyard_db_repos::webhooks::list_webhooks(
         database.pool(),
         HookOwner::Repository(
-            codeyard::backend::db::repositories::records::get_repository(
+            codeyard_db_repos::repositories::records::get_repository(
                 database.pool(),
                 "alice",
                 "proj"
@@ -497,7 +492,7 @@ async fn pull_request_comment_hooks(pg: bool, url: &str) {
         .await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
-        codeyard::backend::db::webhooks::list_deliveries(database.pool(), hook)
+        codeyard_db_repos::webhooks::list_deliveries(database.pool(), hook)
             .await
             .unwrap()
             .len(),
@@ -548,7 +543,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
     use codeyard::backend::webhooks::{self, delivery};
     let (mut database, _root, _alice, _bob) = setup(pg).await;
     let pool = database.pool();
-    let repo = codeyard::backend::db::repositories::records::get_repository(pool, "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
@@ -565,7 +560,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
         active: true,
         ssl_verify: true,
     };
-    let id = codeyard::backend::db::webhooks::insert_webhook(
+    let id = codeyard_db_repos::webhooks::insert_webhook(
         pool,
         owner,
         actor,
@@ -577,12 +572,12 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
     .unwrap()
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::webhooks::latest_delivery_status(pool, id)
+        codeyard_db_repos::webhooks::latest_delivery_status(pool, id)
             .await
             .unwrap(),
         None
     );
-    let hook = codeyard::backend::db::webhooks::get_webhook(pool, owner, id)
+    let hook = codeyard_db_repos::webhooks::get_webhook(pool, owner, id)
         .await
         .unwrap()
         .unwrap();
@@ -592,7 +587,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
     assert_eq!(rows[0].status_code, Some(200));
     assert_eq!(rows[0].response_body.as_deref(), Some("ok\\0binary"));
     fields.active = false;
-    codeyard::backend::db::webhooks::update_webhook(
+    codeyard_db_repos::webhooks::update_webhook(
         pool,
         owner,
         actor,
@@ -607,7 +602,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
     assert_eq!(receiver.received().len(), 1, "disabled queued hook sent");
     fields.active = true;
     fields.payload_url.push_str("/changed");
-    codeyard::backend::db::webhooks::update_webhook(
+    codeyard_db_repos::webhooks::update_webhook(
         pool,
         owner,
         actor,
@@ -620,7 +615,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
     .unwrap();
     delivery::send(pool, &hook, &outgoing).await;
     assert_eq!(receiver.received().len(), 1, "rotated queued hook sent");
-    let current = codeyard::backend::db::webhooks::get_webhook(pool, owner, id)
+    let current = codeyard_db_repos::webhooks::get_webhook(pool, owner, id)
         .await
         .unwrap()
         .unwrap();
@@ -638,7 +633,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(receiver.received().len(), 2);
-    codeyard::backend::db::webhooks::delete_webhook(
+    codeyard_db_repos::webhooks::delete_webhook(
         pool,
         owner,
         actor,
@@ -671,7 +666,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
 async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
     let (mut database, _root, alice, bob) = setup(pg).await;
     let pool = database.pool();
-    let repo = codeyard::backend::db::repositories::records::get_repository(pool, "alice", "proj")
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")
         .await
         .unwrap()
         .unwrap();
@@ -685,7 +680,7 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
         active: true,
         ssl_verify: true,
     };
-    let hook = codeyard::backend::db::webhooks::insert_webhook(
+    let hook = codeyard_db_repos::webhooks::insert_webhook(
         pool,
         HookOwner::Repository(repo.id),
         actor,
@@ -746,12 +741,12 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
         )
         .await;
     deliveries(&database, hook, 9).await; // tag create, push and release
-    let bob_id = codeyard::backend::db::users::accounts::get_user_by_username(pool, "bob")
+    let bob_id = codeyard_db_identity::users::accounts::get_user_by_username(pool, "bob")
         .await
         .unwrap()
         .unwrap()
         .id;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         pool,
         bob_id,
         repo.id,
@@ -795,7 +790,7 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
     tokio::time::sleep(Duration::from_millis(200)).await;
     assert!(!built.load(std::sync::atomic::Ordering::SeqCst));
     assert_eq!(
-        codeyard::backend::db::webhooks::list_deliveries(pool, hook)
+        codeyard_db_repos::webhooks::list_deliveries(pool, hook)
             .await
             .unwrap()
             .len(),
@@ -841,14 +836,11 @@ async fn server_ref_events(pg: bool, url: &str) {
         repo_store, FileWrite, MergeMethod, MergeRequest,
     };
     let (database, _root, alice, _) = setup(pg).await;
-    let repository = codeyard::backend::db::repositories::records::get_repository(
-        database.pool(),
-        "alice",
-        "proj",
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    let repository =
+        codeyard_db_repos::repositories::records::get_repository(database.pool(), "alice", "proj")
+            .await
+            .unwrap()
+            .unwrap();
     let actor = repository.owner_user_id.unwrap();
     alice
         .form_reply(
@@ -984,22 +976,20 @@ async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
     database.complete_setup().await;
     let actor = database.actor("creator").await;
     let pool = database.pool();
-    let OrganizationOutcome::Applied(org) =
-        codeyard::backend::db::organizations::create_organization(
-            pool,
-            actor,
-            &codeyard::backend::db::organizations::NewOrganization::new(
-                "creation_org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
-            )
-            .unwrap(),
+    let OrganizationOutcome::Applied(org) = codeyard_db_orgs::organizations::create_organization(
+        pool,
+        actor,
+        &codeyard_db_orgs::organizations::NewOrganization::new(
+            "creation_org",
+            codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
         )
-        .await
-        .unwrap()
-    else {
+        .unwrap(),
+    )
+    .await
+    .unwrap() else {
         panic!("organization creation failed");
     };
-    let hook = codeyard::backend::db::webhooks::insert_webhook(
+    let hook = codeyard_db_repos::webhooks::insert_webhook(
         pool,
         HookOwner::Organization(org.id),
         actor,
@@ -1022,9 +1012,9 @@ async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
     let repo = lifecycle::provision(
         (pool, None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner {
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner {
             actor_id: actor,
-            target: codeyard::backend::db::repositories::creation::RepositoryTarget::Organization(
+            target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
                 org.id,
             ),
         },
@@ -1106,7 +1096,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     let repo = codeyard::backend::repositories::lifecycle::provision(
         (pool, None),
         root.path(),
-        codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "proj",
         None,
         false,
@@ -1114,37 +1104,33 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     )
     .await
     .unwrap();
-    let OrganizationOutcome::Applied(org) =
-        codeyard::backend::db::organizations::create_organization(
-            pool,
-            owner,
-            &codeyard::backend::db::organizations::NewOrganization::new(
-                "hook_org",
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
-            )
-            .unwrap(),
+    let OrganizationOutcome::Applied(org) = codeyard_db_orgs::organizations::create_organization(
+        pool,
+        owner,
+        &codeyard_db_orgs::organizations::NewOrganization::new(
+            "hook_org",
+            codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
         )
-        .await
-        .unwrap()
-    else {
+        .unwrap(),
+    )
+    .await
+    .unwrap() else {
         panic!("the organization was not created");
     };
-    let OrganizationOutcome::Applied(_) =
-        codeyard::backend::db::organizations::add_organization_member(
-            pool,
-            owner,
-            org.id,
-            second,
-            OrgRole::Owner,
-        )
-        .await
-        .unwrap()
-    else {
+    let OrganizationOutcome::Applied(_) = codeyard_db_orgs::organizations::add_organization_member(
+        pool,
+        owner,
+        org.id,
+        second,
+        OrgRole::Owner,
+    )
+    .await
+    .unwrap() else {
         panic!("the second owner was not added");
     };
     // The first owner is demoted before any write of its own runs.
     let OrganizationOutcome::Applied(_) =
-        codeyard::backend::db::organizations::update_organization_member_role(
+        codeyard_db_orgs::organizations::update_organization_member_role(
             pool,
             second,
             org.id,
@@ -1167,7 +1153,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     };
     let organization = HookOwner::Organization(org.id);
     assert_eq!(
-        codeyard::backend::db::webhooks::insert_webhook(
+        codeyard_db_repos::webhooks::insert_webhook(
             pool,
             organization,
             owner,
@@ -1180,7 +1166,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
         None,
         "a demoted owner created an organization hook"
     );
-    let hook = codeyard::backend::db::webhooks::insert_webhook(
+    let hook = codeyard_db_repos::webhooks::insert_webhook(
         pool,
         organization,
         second,
@@ -1192,7 +1178,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     .unwrap()
     .expect("a current owner creates a hook");
     assert_eq!(
-        codeyard::backend::db::webhooks::update_webhook(
+        codeyard_db_repos::webhooks::update_webhook(
             pool,
             organization,
             owner,
@@ -1206,7 +1192,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
         None
     );
     assert_eq!(
-        codeyard::backend::db::webhooks::delete_webhook(
+        codeyard_db_repos::webhooks::delete_webhook(
             pool,
             organization,
             owner,
@@ -1218,7 +1204,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
         None
     );
     assert_eq!(
-        codeyard::backend::db::webhooks::list_webhooks(pool, organization)
+        codeyard_db_repos::webhooks::list_webhooks(pool, organization)
             .await
             .unwrap()
             .len(),
@@ -1227,7 +1213,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
 
     let repository = HookOwner::Repository(repo.id);
     assert_eq!(
-        codeyard::backend::db::webhooks::insert_webhook(
+        codeyard_db_repos::webhooks::insert_webhook(
             pool,
             repository,
             outsider,
@@ -1240,7 +1226,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
         None,
         "a user without access created a repository hook"
     );
-    let repository_hook = codeyard::backend::db::webhooks::insert_webhook(
+    let repository_hook = codeyard_db_repos::webhooks::insert_webhook(
         pool,
         repository,
         owner,
@@ -1252,7 +1238,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     .unwrap()
     .expect("the repository owner creates a hook");
     assert_eq!(
-        codeyard::backend::db::webhooks::update_webhook(
+        codeyard_db_repos::webhooks::update_webhook(
             pool,
             repository,
             outsider,
@@ -1266,7 +1252,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
         None
     );
     assert_eq!(
-        codeyard::backend::db::webhooks::delete_webhook(
+        codeyard_db_repos::webhooks::delete_webhook(
             pool,
             repository,
             outsider,
@@ -1278,7 +1264,7 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
         None
     );
     assert_eq!(
-        codeyard::backend::db::webhooks::list_webhooks(pool, repository)
+        codeyard_db_repos::webhooks::list_webhooks(pool, repository)
             .await
             .unwrap()
             .len(),

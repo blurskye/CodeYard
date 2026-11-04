@@ -42,9 +42,10 @@ pub async fn update_issue(
     )
     .await
     .map_err(crate::backend::api::repos::issues::operation_error)?;
-    let author = crate::backend::db::users::accounts::get_user_by_id(&state.pool, issue.author_id)
-        .await
-        .map_err(crate::backend::api::http::error::discussion_write_error)?;
+    let author =
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, issue.author_id)
+            .await
+            .map_err(crate::backend::api::http::error::discussion_write_error)?;
     let response = load_issue_response(&state.pool, issue, author.map(UserResponse::from))
         .await
         .map_err(crate::backend::api::http::error::discussion_write_error)?;
@@ -99,9 +100,8 @@ pub(crate) async fn load_issue_response(
     issue: codeyard_db_core::models::Issue,
     author: Option<UserResponse>,
 ) -> anyhow::Result<IssueResponse> {
-    let labels =
-        crate::backend::db::labels::get_issue_labels(pool, issue.repo_id, issue.id).await?;
-    let comments_count = crate::backend::db::issues::count_issue_comments(pool, &[issue.id])
+    let labels = codeyard_db_repos::labels::get_issue_labels(pool, issue.repo_id, issue.id).await?;
+    let comments_count = codeyard_db_repos::issues::count_issue_comments(pool, &[issue.id])
         .await?
         .first()
         .map_or(0, |(_, count)| *count);
@@ -120,7 +120,7 @@ pub async fn get_issue(
 ) -> Result<Json<IssueResponse>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    let issue = crate::backend::db::issues::get_issue(&state.pool, repository.id, number)
+    let issue = codeyard_db_repos::issues::get_issue(&state.pool, repository.id, number)
         .await
         .map_err(|_| storage_unavailable())?
         .ok_or_else(|| {
@@ -130,9 +130,10 @@ pub async fn get_issue(
             )
         })?;
 
-    let author = crate::backend::db::users::accounts::get_user_by_id(&state.pool, issue.author_id)
-        .await
-        .map_err(|_| storage_unavailable())?;
+    let author =
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, issue.author_id)
+            .await
+            .map_err(|_| storage_unavailable())?;
     let response = load_issue_response(&state.pool, issue, author.map(UserResponse::from))
         .await
         .map_err(|_| storage_unavailable())?;
@@ -154,7 +155,7 @@ pub(crate) async fn native_detail(
         // Issues and pull requests share one number sequence, and a pull request's page is under
         // `/pulls`. Links to `/issues/N` reach it through this redirect, which keeps the fragment.
         Err(response) if kind == Kind::Issue && response.status() == StatusCode::NOT_FOUND => {
-            if let Some(moved) = crate::backend::db::issues::management::redirect(
+            if let Some(moved) = codeyard_db_repos::issues::management::redirect(
                 &ctx.state.pool,
                 repo.record.id,
                 number,
@@ -162,7 +163,7 @@ pub(crate) async fn native_detail(
             .await
             .map_err(|_| unavailable(&ctx))?
             {
-                let target = crate::backend::db::repositories::records::get_repository_by_id(
+                let target = codeyard_db_repos::repositories::records::get_repository_by_id(
                     &ctx.state.pool,
                     moved.repo_id,
                 )
@@ -179,7 +180,7 @@ pub(crate) async fn native_detail(
                 {
                     return Err(response);
                 }
-                let owner = crate::backend::db::repositories::records::repository_owner_name(
+                let owner = codeyard_db_repos::repositories::records::repository_owner_name(
                     &ctx.state.pool,
                     target.id,
                 )
@@ -207,7 +208,7 @@ pub(crate) async fn native_detail(
                     target.name, moved.number
                 )));
             }
-            let pull_request = crate::backend::db::pull_requests::records::get_pull_request(
+            let pull_request = codeyard_db_repos::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
                 repo.record.id,
                 number,
@@ -225,7 +226,7 @@ pub(crate) async fn native_detail(
                     .filter(|id| *id > 0)
                     .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid comment."))?;
                 if let Some(id) =
-                    crate::backend::db::pull_requests::reviews::converted_issue_comment(
+                    codeyard_db_repos::pull_requests::reviews::converted_issue_comment(
                         &ctx.state.pool,
                         pull_request.id,
                         source,
@@ -255,17 +256,17 @@ pub(crate) async fn native_detail(
                 .parse::<i64>()
                 .map_err(|_| ctx.error(StatusCode::BAD_REQUEST, "Invalid comment."))?;
             let issue =
-                crate::backend::db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
+                codeyard_db_repos::issues::get_issue(&ctx.state.pool, repo.record.id, number)
                     .await
                     .map_err(|_| unavailable(&ctx))?
                     .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
-            let comment = crate::backend::db::issues::get_issue_comment(&ctx.state.pool, id)
+            let comment = codeyard_db_repos::issues::get_issue_comment(&ctx.state.pool, id)
                 .await
                 .map_err(|_| unavailable(&ctx))?
                 .filter(|comment| comment.issue_id == issue.id)
                 .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Comment not found."))?;
             let position =
-                crate::backend::db::issues::issue_comment_position(&ctx.state.pool, comment.id)
+                codeyard_db_repos::issues::issue_comment_position(&ctx.state.pool, comment.id)
                     .await
                     .map_err(|_| unavailable(&ctx))?;
             ctx.query.insert(
@@ -281,7 +282,7 @@ pub(crate) async fn native_detail(
             let id = id
                 .parse::<i64>()
                 .map_err(|_| ctx.error(StatusCode::BAD_REQUEST, "Invalid comment."))?;
-            let pull = crate::backend::db::pull_requests::records::get_pull_request(
+            let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
                 repo.record.id,
                 number,
@@ -290,7 +291,7 @@ pub(crate) async fn native_detail(
             .map_err(|_| unavailable(&ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
             let comment =
-                crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+                codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(
                     &ctx.state.pool,
                     id,
                 )
@@ -313,7 +314,7 @@ pub(crate) async fn native_detail(
             let id = id
                 .parse::<i64>()
                 .map_err(|_| ctx.error(StatusCode::BAD_REQUEST, "Invalid review."))?;
-            let pull = crate::backend::db::pull_requests::records::get_pull_request(
+            let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
                 repo.record.id,
                 number,
@@ -321,7 +322,7 @@ pub(crate) async fn native_detail(
             .await
             .map_err(|_| unavailable(&ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
-            let review = crate::backend::db::pull_requests::reviews::get_pull_request_review_by_id(
+            let review = codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(
                 &ctx.state.pool,
                 id,
             )
@@ -330,10 +331,10 @@ pub(crate) async fn native_detail(
             .filter(|review| review.pull_request_id == pull.id && review.state != "pending")
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Review not found."))?;
             let page = crate::backend::issues::discussion_page(
-                crate::backend::db::pull_requests::reviews::count_discussion_items_through(
+                codeyard_db_repos::pull_requests::reviews::count_discussion_items_through(
                     &ctx.state.pool,
                     pull.id,
-                    crate::backend::db::pull_requests::reviews::DiscussionRef::Review(review.id),
+                    codeyard_db_repos::pull_requests::reviews::DiscussionRef::Review(review.id),
                 )
                 .await,
             );

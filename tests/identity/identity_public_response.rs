@@ -7,7 +7,7 @@ use crate::support::native_database as native;
 use axum::http::StatusCode;
 use codeyard::backend::api::user::responses::PublicUserResponse;
 
-use codeyard::backend::db::users::accounts::AuthorDisplay;
+use codeyard_db_identity::users::accounts::AuthorDisplay;
 use serde_json::json;
 
 #[tokio::test]
@@ -16,8 +16,8 @@ async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
     let postgres = native::PostgresDatabase::new().await;
     let sqlite = native::NativeDatabase::new().await;
     for pool in [&postgres.pool, &sqlite.pool] {
-        let codeyard::backend::db::users::transitions::SetupClaim::Completed(user) =
-            codeyard::backend::db::users::transitions::complete_setup(
+        let codeyard_db_identity::users::transitions::SetupClaim::Completed(user) =
+            codeyard_db_identity::users::transitions::complete_setup(
                 pool,
                 "profile_owner",
                 None,
@@ -146,15 +146,13 @@ async fn setup_rejects_nul_email_on_both_engines() {
         )
         .await;
         assert!(matches!(result, Err(SetupError::InputBounds)));
-        assert!(
-            codeyard::backend::db::users::accounts::get_user_by_username(
-                database.pool(),
-                "setup-owner"
-            )
-            .await
-            .unwrap()
-            .is_none()
-        );
+        assert!(codeyard_db_identity::users::accounts::get_user_by_username(
+            database.pool(),
+            "setup-owner"
+        )
+        .await
+        .unwrap()
+        .is_none());
         database.finish().await;
     }
 }

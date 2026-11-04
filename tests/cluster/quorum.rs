@@ -76,11 +76,11 @@ impl Stores {
             },
         ];
         let fixture = setup_with_refs(pool, 2, "2", &refs).await;
-        assert!(codeyard::backend::db::cluster::enable_cluster(pool)
+        assert!(codeyard_db_cluster::cluster::enable_cluster(pool)
             .await
             .unwrap());
         let repository =
-            codeyard::backend::db::repositories::records::get_repository_by_id(pool, fixture.repo)
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, fixture.repo)
                 .await
                 .unwrap()
                 .unwrap();
@@ -133,7 +133,7 @@ impl Stores {
                 tcp: vec![listener.addr()],
                 ..Default::default()
             };
-            codeyard::backend::db::cluster::record_node_heartbeat(
+            codeyard_db_cluster::cluster::record_node_heartbeat(
                 pool,
                 &context.key.public_hex(),
                 "test",
@@ -156,7 +156,7 @@ impl Stores {
             base64::engine::general_purpose::STANDARD.encode(key)
         );
         let credential =
-            codeyard::backend::db::users::ssh_keys::add_ssh_key(pool, fixture.owner, "owner", &key)
+            codeyard_db_identity::users::ssh_keys::add_ssh_key(pool, fixture.owner, "owner", &key)
                 .await
                 .unwrap();
         Self {
@@ -243,7 +243,7 @@ impl Stores {
 
     async fn rpc_refs(&self, pool: &DbPool) -> std::collections::HashMap<String, String> {
         let key = codeyard_support::node_identity::NodeKey::generate();
-        let web = codeyard::backend::db::cluster::register_own_node(
+        let web = codeyard_db_cluster::cluster::register_own_node(
             pool,
             &key.public_hex(),
             "web",
@@ -256,13 +256,11 @@ impl Stores {
         context.key = key.clone();
         context.iroh = IrohDialer::new(Relay::Off, key);
         context.node_id = web.id;
-        let repository = codeyard::backend::db::repositories::records::get_repository_by_id(
-            pool,
-            self.fixture.repo,
-        )
-        .await
-        .unwrap()
-        .unwrap();
+        let repository =
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, self.fixture.repo)
+                .await
+                .unwrap()
+                .unwrap();
         let (reply, _) = context
             .call(
                 self.fixture.primary,
@@ -285,13 +283,11 @@ impl Stores {
     }
 
     async fn store(&self, pool: &DbPool) -> RepoStore {
-        let row = codeyard::backend::db::repositories::records::get_repository_by_id(
-            pool,
-            self.fixture.repo,
-        )
-        .await
-        .unwrap()
-        .unwrap();
+        let row =
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, self.fixture.repo)
+                .await
+                .unwrap()
+                .unwrap();
         self.contexts[0]
             .repository_store(&row, false)
             .await
@@ -337,7 +333,7 @@ async fn last_write(pool: &DbPool, repo: i64) -> codeyard_db_core::models::Write
             .await
             .unwrap(),
     };
-    codeyard::backend::db::cluster::writes::load_write(pool, &id)
+    codeyard_db_cluster::cluster::writes::load_write(pool, &id)
         .await
         .unwrap()
         .unwrap()
@@ -371,7 +367,7 @@ async fn both_voters_publish(pool: &DbPool) {
     assert_eq!(write.decision, "commit");
     assert_eq!(write.votes.len(), 2);
     assert!(write.finished);
-    let view = codeyard::backend::db::cluster::writes::recovery_view(pool, stores.fixture.repo)
+    let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, stores.fixture.repo)
         .await
         .unwrap();
     assert_eq!(
@@ -393,7 +389,7 @@ async fn both_voters_publish(pool: &DbPool) {
 async fn editor_uses_both_stores(pool: &DbPool) {
     let stores = Stores::new(pool).await;
     let f = &stores.fixture;
-    let row = codeyard::backend::db::repositories::records::get_repository_by_id(pool, f.repo)
+    let row = codeyard_db_repos::repositories::records::get_repository_by_id(pool, f.repo)
         .await
         .unwrap()
         .unwrap();
@@ -454,7 +450,7 @@ async fn refusing_voter_keeps_refs(pool: &DbPool) {
     assert_eq!(write.decision, "abort");
     assert_eq!(write.votes.len(), 1);
     assert_eq!(write.votes[0].node_id, stores.fixture.primary);
-    let view = codeyard::backend::db::cluster::writes::recovery_view(pool, stores.fixture.repo)
+    let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, stores.fixture.repo)
         .await
         .unwrap();
     assert_eq!(view.committed_version, 0);
@@ -478,7 +474,7 @@ async fn unreachable_voter_times_out(pool: &DbPool) {
         tcp: vec![stalled.local_addr().unwrap()],
         ..Default::default()
     };
-    codeyard::backend::db::cluster::record_node_heartbeat(
+    codeyard_db_cluster::cluster::record_node_heartbeat(
         pool,
         &stores.contexts[1].key.public_hex(),
         "test",
@@ -515,7 +511,7 @@ async fn unreachable_voter_times_out(pool: &DbPool) {
         "abort"
     );
     assert_eq!(
-        codeyard::backend::db::cluster::writes::recovery_view(pool, stores.fixture.repo)
+        codeyard_db_cluster::cluster::writes::recovery_view(pool, stores.fixture.repo)
             .await
             .unwrap()
             .committed_version,
@@ -527,7 +523,7 @@ async fn unreachable_voter_times_out(pool: &DbPool) {
 async fn stale_writer_is_refused(pool: &DbPool) {
     let stores = Stores::new(pool).await;
     let f = &stores.fixture;
-    let row = codeyard::backend::db::repositories::records::get_repository_by_id(pool, f.repo)
+    let row = codeyard_db_repos::repositories::records::get_repository_by_id(pool, f.repo)
         .await
         .unwrap()
         .unwrap();
@@ -536,7 +532,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
         .await
         .unwrap();
     assert_eq!(stale.refs().await.unwrap()[MAIN], stores.old);
-    assert!(codeyard::backend::db::cluster::writes::switch_write_family(
+    assert!(codeyard_db_cluster::cluster::writes::switch_write_family(
         pool,
         f.repo,
         f.primary,
@@ -557,7 +553,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
         .unwrap();
     }
     assert!(
-        codeyard::backend::db::cluster::writes::recovery_view(pool, f.repo)
+        codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
             .await
             .unwrap()
             .serving
@@ -570,7 +566,7 @@ async fn stale_writer_is_refused(pool: &DbPool) {
     assert!(status.is_err() || !status.unwrap().success());
     assert!(!String::from_utf8_lossy(&output).contains("ok refs/heads/main"));
     assert!(
-        codeyard::backend::db::cluster::writes::recovery_view(pool, f.repo)
+        codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
             .await
             .unwrap()
             .unfinished
@@ -636,7 +632,7 @@ async fn rename_is_one_write(pool: &DbPool) {
         .iter()
         .any(|change| change.name.starts_with("refs/codeyard/publications/")));
     assert_eq!(
-        codeyard::backend::db::repositories::records::get_repository_by_id(pool, f.repo)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, f.repo)
             .await
             .unwrap()
             .unwrap()
@@ -644,7 +640,7 @@ async fn rename_is_one_write(pool: &DbPool) {
         "renamed"
     );
     assert_eq!(
-        codeyard::backend::db::repositories::protection::branch_redirect(pool, f.repo, "main")
+        codeyard_db_repos::repositories::protection::branch_redirect(pool, f.repo, "main")
             .await
             .unwrap()
             .as_deref(),
@@ -653,7 +649,7 @@ async fn rename_is_one_write(pool: &DbPool) {
 
     stores.listeners[1].stop().await;
     set_timeout(pool, 1).await.unwrap();
-    let before = codeyard::backend::db::cluster::writes::recovery_view(pool, f.repo)
+    let before = codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
         .await
         .unwrap();
     let error = timeout(
@@ -669,13 +665,13 @@ async fn rename_is_one_write(pool: &DbPool) {
     let write = last_write(pool, f.repo).await;
     assert_eq!(write.decision, "abort");
     assert_eq!(write.votes.len(), 1);
-    let after = codeyard::backend::db::cluster::writes::recovery_view(pool, f.repo)
+    let after = codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
         .await
         .unwrap();
     assert_eq!(after.refs, before.refs);
     assert_eq!(after.committed_version, before.committed_version);
     assert_eq!(
-        codeyard::backend::db::repositories::records::get_repository_by_id(pool, f.repo)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, f.repo)
             .await
             .unwrap()
             .unwrap()
@@ -683,7 +679,7 @@ async fn rename_is_one_write(pool: &DbPool) {
         "renamed"
     );
     assert!(
-        codeyard::backend::db::repositories::protection::branch_redirect(pool, f.repo, "renamed")
+        codeyard_db_repos::repositories::protection::branch_redirect(pool, f.repo, "renamed")
             .await
             .unwrap()
             .is_none()
@@ -748,7 +744,7 @@ async fn default_branch_uses_both_stores(pool: &DbPool) {
     assert_eq!(write.changes[0].old_target.as_deref(), Some(MAIN));
     assert_eq!(write.changes[0].new_target.as_deref(), Some(other));
     assert_eq!(
-        codeyard::backend::db::repositories::records::get_repository_by_id(pool, f.repo)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, f.repo)
             .await
             .unwrap()
             .unwrap()
@@ -763,8 +759,8 @@ async fn default_branch_uses_both_stores(pool: &DbPool) {
             f.repo,
             f.owner,
             "main",
-            &codeyard::backend::db::repositories::records::RepositoryChanges {
-                merge_methods: codeyard::backend::db::repositories::records::MergeMethodUpdate {
+            &codeyard_db_repos::repositories::records::RepositoryChanges {
+                merge_methods: codeyard_db_repos::repositories::records::MergeMethodUpdate {
                     merge: Some(false),
                     squash: Some(false),
                     rebase: Some(false),
@@ -779,7 +775,7 @@ async fn default_branch_uses_both_stores(pool: &DbPool) {
         codeyard::backend::repositories::store::ErrorKind::Invalid
     );
     assert_eq!(stores.heads(), vec![other; 2]);
-    let restored = codeyard::backend::db::cluster::writes::recovery_view(pool, f.repo)
+    let restored = codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
         .await
         .unwrap();
     assert_eq!(
@@ -809,13 +805,13 @@ async fn default_branch_uses_both_stores(pool: &DbPool) {
     let write = last_write(pool, f.repo).await;
     assert_eq!(write.decision, "abort");
     assert_eq!(write.votes.len(), 1);
-    let after = codeyard::backend::db::cluster::writes::recovery_view(pool, f.repo)
+    let after = codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
         .await
         .unwrap();
     assert_eq!(after.refs, restored.refs);
     assert_eq!(after.committed_version, restored.committed_version);
     assert_eq!(
-        codeyard::backend::db::repositories::records::get_repository_by_id(pool, f.repo)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, f.repo)
             .await
             .unwrap()
             .unwrap()
@@ -829,7 +825,7 @@ async fn new_repositories_stay_refused(pool: &DbPool) {
     use codeyard::backend::repositories::lifecycle::{self, LifecycleFailure};
     let stores = Stores::new(pool).await;
     let f = &stores.fixture;
-    let source = codeyard::backend::db::repositories::records::get_repository_by_id(pool, f.repo)
+    let source = codeyard_db_repos::repositories::records::get_repository_by_id(pool, f.repo)
         .await
         .unwrap()
         .unwrap();
@@ -841,7 +837,7 @@ async fn new_repositories_stay_refused(pool: &DbPool) {
             let error = lifecycle::provision(
                 (pool, Some(&stores.contexts[0])),
                 &stores.contexts[0].repos_path,
-                codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
                     f.owner,
                 ),
                 name,

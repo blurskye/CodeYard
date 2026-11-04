@@ -7,7 +7,7 @@ use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use codeyard_model::urls::repo_url;
 
-use crate::backend::db::source_imports::SourceImport;
+use codeyard_db_repos::source_imports::SourceImport;
 
 use crate::backend::repositories::store::repo_store;
 use axum::{
@@ -85,7 +85,7 @@ async fn status(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = administrator(&state, &headers, &owner, &name, false).await?;
-    let import = crate::backend::db::source_imports::get(&state.pool, repo.id)
+    let import = codeyard_db_repos::source_imports::get(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -182,7 +182,7 @@ async fn retry(
     request: Request,
 ) -> Result<Json<Value>> {
     let (repo, actor) = administrator(&state, &headers, &owner, &name, true).await?;
-    let previous = crate::backend::db::source_imports::get(&state.pool, repo.id)
+    let previous = codeyard_db_repos::source_imports::get(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;

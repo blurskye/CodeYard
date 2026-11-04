@@ -14,7 +14,7 @@ pub(crate) async fn publication_authorized(
     let Some(id) = publisher else {
         return Ok(false);
     };
-    let Some(user) = crate::backend::db::users::accounts::get_user_by_id(pool, id).await? else {
+    let Some(user) = codeyard_db_identity::users::accounts::get_user_by_id(pool, id).await? else {
         return Ok(false);
     };
     if user.is_banned || user.must_change_password {
@@ -34,7 +34,7 @@ pub(crate) async fn can_update_head(
         || actor.must_change_password
         || base.is_archived
         || head.is_archived
-        || crate::backend::db::repository_exports::locked(pool, head.id).await?
+        || codeyard_db_repos::repository_exports::locked(pool, head.id).await?
         || pull.state != "open"
         || pull.repo_id != base.id
         || pull.head_repo_id != Some(head.id)
@@ -62,7 +62,7 @@ pub(crate) async fn can_update_head(
     let Some(grantor) = pull.maintainer_edit_granted_by_id else {
         return Ok(false);
     };
-    let active = crate::backend::db::users::accounts::get_user_by_id(pool, grantor)
+    let active = codeyard_db_identity::users::accounts::get_user_by_id(pool, grantor)
         .await?
         .is_some_and(|owner| !owner.is_banned && !owner.must_change_password);
     Ok(active && crate::backend::repositories::access::can_write(pool, actor, base).await?)

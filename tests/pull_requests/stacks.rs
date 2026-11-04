@@ -10,9 +10,9 @@ use crate::support::fake_webui_bundle as bundle;
 use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
-use codeyard::backend::db::pull_requests::records::{StackJoin, StackRefusal};
 use codeyard::backend::repositories::pull_requests::{merge, OperationError};
 use codeyard::backend::{api::create_router, app::AppState, db, storage::ObjectStore};
+use codeyard_db_repos::pull_requests::records::{StackJoin, StackRefusal};
 use database::{wait_until_blocked, Database};
 use pulls::Client;
 use serde_json::{json, Value};

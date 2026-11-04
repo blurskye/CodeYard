@@ -9,13 +9,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::rulesets::Definition;
-use crate::backend::db::rulesets::Invalid;
-use crate::backend::db::rulesets::ListFilter;
-use crate::backend::db::rulesets::Owner;
-use crate::backend::db::rulesets::Page;
-use crate::backend::db::rulesets::Ruleset;
-use crate::backend::db::rulesets::Version;
 use axum::{
     body::Bytes,
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
@@ -24,6 +17,13 @@ use axum::{
     routing::{delete, get, post, put, MethodRouter},
     Json,
 };
+use codeyard_db_core::queries::rulesets::records::ListFilter;
+use codeyard_db_core::queries::rulesets::records::Owner;
+use codeyard_db_core::queries::rulesets::records::Page;
+use codeyard_db_core::queries::rulesets::records::Ruleset;
+use codeyard_db_core::queries::rulesets::records::Version;
+use codeyard_db_core::queries::rulesets::Definition;
+use codeyard_db_core::queries::rulesets::Invalid;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -117,7 +117,7 @@ impl Scope {
         let Owner::Organization(org) = owner else {
             return Err(Error::missing());
         };
-        let org = crate::backend::db::organizations::profiles::get_public_organization_by_id(
+        let org = codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
             &state.pool,
             org,
         )
@@ -177,9 +177,9 @@ impl List {
         let mut targets = Vec::new();
         for target in self.targets.iter().flat_map(|s| s.split(',')) {
             match target {
-                "branch" => targets.push(crate::backend::db::rulesets::Target::Branch),
-                "tag" => targets.push(crate::backend::db::rulesets::Target::Tag),
-                "push" => targets.push(crate::backend::db::rulesets::Target::Push),
+                "branch" => targets.push(codeyard_db_core::queries::rulesets::Target::Branch),
+                "tag" => targets.push(codeyard_db_core::queries::rulesets::Target::Tag),
+                "push" => targets.push(codeyard_db_core::queries::rulesets::Target::Push),
                 // The documented repository target has no native policy type yet.
                 "repository" => {}
                 _ => return Err(Error::validation("RepositoryRuleset", "targets", "invalid")),
@@ -205,7 +205,7 @@ async fn list(
         per_page: query.per_page,
     };
     let rows = outcome(
-        crate::backend::db::rulesets::list_rulesets(
+        codeyard_db_repos::rulesets::list_rulesets(
             &state.pool,
             scope.actor,
             scope.owner,
@@ -241,7 +241,7 @@ async fn get_one(
 ) -> Result<Json<Value>> {
     let scope = Scope::resolve(&state, &headers, &params, false).await?;
     let row = outcome(
-        crate::backend::db::rulesets::get_ruleset(
+        codeyard_db_repos::rulesets::get_ruleset(
             &state.pool,
             scope.actor,
             scope.owner,
@@ -265,7 +265,7 @@ async fn create(
     let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     let input = Definition::parse(&input).map_err(|e| error(e.into()))?;
     let row = outcome(
-        crate::backend::db::rulesets::create_ruleset(
+        codeyard_db_repos::rulesets::create_ruleset(
             &state.pool,
             scope.actor()?,
             scope.owner,
@@ -292,7 +292,7 @@ async fn update(
         serde_json::from_slice(&body).map_err(crate::backend::api::github::json_parse_error)?
     };
     let row = outcome(
-        crate::backend::db::rulesets::change_ruleset(
+        codeyard_db_repos::rulesets::change_ruleset(
             &state.pool,
             scope.actor()?,
             scope.owner,
@@ -311,7 +311,7 @@ async fn remove(
 ) -> Result<StatusCode> {
     let scope = Scope::resolve(&state, &headers, &params, true).await?;
     outcome(
-        crate::backend::db::rulesets::remove_ruleset(
+        codeyard_db_repos::rulesets::remove_ruleset(
             &state.pool,
             scope.actor()?,
             scope.owner,
@@ -331,7 +331,7 @@ async fn history(
 ) -> Result<Response> {
     let scope = Scope::resolve(&state, &headers, &params, false).await?;
     let rows = outcome(
-        crate::backend::db::rulesets::ruleset_versions(
+        codeyard_db_repos::rulesets::ruleset_versions(
             &state.pool,
             scope.actor,
             scope.owner,
@@ -357,7 +357,7 @@ async fn version(
     let scope = Scope::resolve(&state, &headers, &params, false).await?;
     let ruleset = id(&params, "ruleset_id")?;
     let row = outcome(
-        crate::backend::db::rulesets::ruleset_version(
+        codeyard_db_repos::rulesets::ruleset_version(
             &state.pool,
             scope.actor,
             scope.owner,

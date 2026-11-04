@@ -65,7 +65,7 @@ async fn toggle(
             )
         }
     };
-    match crate::backend::db::repositories::security::set_enabled(
+    match codeyard_db_repos::repositories::security::set_enabled(
         &ctx.state.pool,
         ctx.database_actor(ctx.user.as_ref().unwrap().id),
         loaded.repository.id,
@@ -162,7 +162,7 @@ async fn index_model(
     title: String,
     body: String,
 ) -> Response {
-    let enabled = match crate::backend::db::repositories::security::enabled(
+    let enabled = match codeyard_db_repos::repositories::security::enabled(
         &ctx.state.pool,
         loaded.repository.id,
     )
@@ -172,7 +172,7 @@ async fn index_model(
         Err(error) => return refused(ctx, error),
     };
     let mut rows = if let Some(user) = &ctx.user {
-        match crate::backend::db::repositories::security::list_reports(
+        match codeyard_db_repos::repositories::security::list_reports(
             &ctx.state.pool,
             ctx.database_actor(user.id),
             loaded.repository.id,
@@ -227,7 +227,7 @@ async fn thread_model(
             "Sign in to read private security reports.",
         );
     };
-    let mut thread = match crate::backend::db::repositories::security::report_thread(
+    let mut thread = match codeyard_db_repos::repositories::security::report_thread(
         &ctx.state.pool,
         ctx.database_actor(actor),
         loaded.repository.id,
@@ -351,7 +351,7 @@ async fn create(
     let title = field(&form, "title");
     let body = field(&form, "body");
     let result = match codeyard_model::security_reports::NewReport::new(&title, &body) {
-        Ok(_) => crate::backend::db::advisories::create(
+        Ok(_) => codeyard_db_security::advisories::create(
             &ctx.state.pool,
             ctx.database_actor(actor),
             loaded.repository.id,
@@ -409,7 +409,7 @@ async fn change(
     let intent = field(&form, "intent");
     let result = match intent.as_str() {
         // A reply returns how many replies came before it, which names the page that shows it.
-        "reply" => crate::backend::db::repositories::security::reply(
+        "reply" => codeyard_db_repos::repositories::security::reply(
             &ctx.state.pool,
             ctx.database_actor(actor),
             loaded.repository.id,
@@ -418,7 +418,7 @@ async fn change(
         )
         .await
         .map(Some),
-        "close" => crate::backend::db::repositories::security::set_state(
+        "close" => codeyard_db_repos::repositories::security::set_state(
             &ctx.state.pool,
             ctx.database_actor(actor),
             loaded.repository.id,
@@ -427,7 +427,7 @@ async fn change(
         )
         .await
         .map(|()| None),
-        "reopen" => crate::backend::db::repositories::security::set_state(
+        "reopen" => codeyard_db_repos::repositories::security::set_state(
             &ctx.state.pool,
             ctx.database_actor(actor),
             loaded.repository.id,

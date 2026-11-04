@@ -40,7 +40,7 @@ async fn target(
 )> {
     let (repo, _) = repository(state, headers, owner, name, false).await?;
     let pull =
-        crate::backend::db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
+        codeyard_db_repos::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -48,7 +48,7 @@ async fn target(
 }
 
 async fn person(state: &AppState, id: i64) -> Result<Value> {
-    let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?;
     Ok(user
@@ -84,16 +84,14 @@ pub(super) async fn hidden_head(
     pull: &codeyard_db_core::models::PullRequest,
 ) -> Result<Value> {
     let head = match pull.head_repo_id {
-        Some(id) => {
-            crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
-                .await
-                .map_err(Error::unavailable)?
-        }
+        Some(id) => codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?,
         None => None,
     };
     let owner = match &head {
         Some(head) => {
-            crate::backend::db::repositories::records::repository_owner_name(&state.pool, head.id)
+            codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, head.id)
                 .await
                 .map_err(Error::unavailable)?
                 .map(|name| {
@@ -120,7 +118,7 @@ pub(super) async fn document(
     detail: bool,
 ) -> Result<Value> {
     let viewer = crate::backend::api::github::auth::authenticate(state, headers, false).await?;
-    let author = crate::backend::db::users::accounts::get_user_by_id(&state.pool, pull.author_id)
+    let author = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, pull.author_id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -144,7 +142,7 @@ pub(super) async fn document(
     // The base shares the retained revision, not authority over the source repository.
     value["head"] = if let Some(head) = readable_head(state, viewer.as_ref(), pull).await? {
         let head_owner =
-            crate::backend::db::repositories::records::repository_owner_name(&state.pool, head.id)
+            codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, head.id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -158,7 +156,7 @@ pub(super) async fn document(
         hidden_head(state, pull).await?
     };
     let labels =
-        crate::backend::db::labels::get_pull_request_labels(&state.pool, pull.repo_id, pull.id)
+        codeyard_db_repos::labels::get_pull_request_labels(&state.pool, pull.repo_id, pull.id)
             .await
             .map_err(Error::unavailable)?;
     value["labels"] = json!(labels
@@ -166,7 +164,7 @@ pub(super) async fn document(
         .map(|label| crate::backend::webhooks::payloads::label(label, owner, &repo.name))
         .collect::<Vec<_>>());
     if let Some(id) = pull.milestone_id {
-        let summary = crate::backend::db::milestones::get_milestone_by_id(&state.pool, repo.id, id)
+        let summary = codeyard_db_repos::milestones::get_milestone_by_id(&state.pool, repo.id, id)
             .await
             .map_err(Error::unavailable)?;
         value["milestone"] = match summary {
@@ -182,16 +180,16 @@ pub(super) async fn document(
             None => Value::Null,
         };
     }
-    let names = crate::backend::db::assignees::list_assignees(
+    let names = codeyard_db_repos::assignees::list_assignees(
         &state.pool,
-        crate::backend::db::assignees::AssignedItem::PullRequest(pull.id),
+        codeyard_db_repos::assignees::AssignedItem::PullRequest(pull.id),
     )
     .await
     .map_err(Error::unavailable)?;
     let mut assignees = Vec::new();
     for name in names {
         if let Some(user) =
-            crate::backend::db::users::accounts::get_user_by_username(&state.pool, &name)
+            codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &name)
                 .await
                 .map_err(Error::unavailable)?
         {
@@ -200,7 +198,7 @@ pub(super) async fn document(
     }
     value["assignee"] = assignees.first().cloned().unwrap_or(Value::Null);
     value["assignees"] = json!(assignees);
-    let reviewers = crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+    let reviewers = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
         &state.pool,
         pull.id,
     )
@@ -234,7 +232,7 @@ pub(super) async fn document(
             .await
             .map_err(store_error)?;
         let (comments, review_comments) =
-            crate::backend::db::pull_requests::reviews::pull_request_comment_counts(
+            codeyard_db_repos::pull_requests::reviews::pull_request_comment_counts(
                 &state.pool,
                 pull.id,
             )
@@ -305,7 +303,7 @@ async fn list(
         }
         None => (None, None),
     };
-    let filter = crate::backend::db::pull_requests::records::PullRequestFilter {
+    let filter = codeyard_db_repos::pull_requests::records::PullRequestFilter {
         viewer_id: viewer.as_ref().map(|actor| actor.user.id),
         state: state_filter,
         base: query.base.as_deref(),
@@ -315,7 +313,7 @@ async fn list(
         ascending,
         month_ago: chrono::Utc::now() - chrono::Duration::days(30),
     };
-    let rows = crate::backend::db::pull_requests::records::list_filtered_pull_requests(
+    let rows = codeyard_db_repos::pull_requests::records::list_filtered_pull_requests(
         &state.pool,
         repo.id,
         &filter,

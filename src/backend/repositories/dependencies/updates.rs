@@ -4,14 +4,14 @@ use crate::backend::ci::CiRuns;
 use crate::backend::repositories::dependencies::registry::Client;
 use crate::backend::repositories::dependencies::worker::Pinned;
 
-use crate::backend::db::repositories::dependencies as records;
-use crate::backend::db::repositories::dependencies::AlertState;
-use crate::backend::db::repositories::dependencies::Feature;
-use crate::backend::db::repositories::dependencies::Job;
-use crate::backend::db::repositories::dependencies::Publication;
-use crate::backend::db::repositories::dependencies::Refusal;
-use crate::backend::db::repositories::dependencies::Update;
 use crate::backend::notifications::NotificationBroadcaster;
+use codeyard_db_repos::repositories::dependencies as records;
+use codeyard_db_repos::repositories::dependencies::AlertState;
+use codeyard_db_repos::repositories::dependencies::Feature;
+use codeyard_db_repos::repositories::dependencies::Job;
+use codeyard_db_repos::repositories::dependencies::Publication;
+use codeyard_db_repos::repositories::dependencies::Refusal;
+use codeyard_db_repos::repositories::dependencies::Update;
 
 use crate::backend::repositories::pull_requests::mutations::create_pull_request;
 use crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest;
@@ -23,7 +23,7 @@ use sha2::{Digest, Sha256};
 
 /// The owner name of a repository, as push events and pull requests name it.
 async fn owner_name(pool: &codeyard_db_core::DbPool, repository: i64) -> Result<String> {
-    crate::backend::db::repositories::records::repository_owner_names(pool, &[repository])
+    codeyard_db_repos::repositories::records::repository_owner_names(pool, &[repository])
         .await?
         .get(&repository)
         .cloned()
@@ -50,7 +50,7 @@ async fn open(
         records::proposal_number(pool, actor, pinned.repository.id, &update.branch).await?;
     let pull = if let Some(number) = existing {
         // Include closed/merged proposals: a crash before receipt storage never reopens one.
-        crate::backend::db::pull_requests::records::get_pull_request(
+        codeyard_db_repos::pull_requests::records::get_pull_request(
             pool,
             pinned.repository.id,
             number,
@@ -99,7 +99,7 @@ async fn open(
         {
             Ok(pull) => pull,
             Err(crate::backend::repositories::pull_requests::OperationError::Opened { number }) => {
-                crate::backend::db::pull_requests::records::get_pull_request(
+                codeyard_db_repos::pull_requests::records::get_pull_request(
                     pool,
                     pinned.repository.id,
                     number,
@@ -181,7 +181,7 @@ pub(crate) async fn propose(
     let store = repo_store(&pinned.repository, ci.cluster.as_ref());
     // The advisories without OSV records veto every candidate too, and they are read once for
     // the job. The OSV ones are looked up by package below.
-    let advisories = crate::backend::db::dependabot_alerts::without_osv(pool).await?;
+    let advisories = codeyard_db_security::dependabot_alerts::without_osv(pool).await?;
     let (mut attempted, mut proposed) = (0, 0);
     for (key, alert) in snapshot.alerts {
         if proposed >= 3 || attempted >= 5 {
@@ -298,7 +298,7 @@ pub(crate) async fn propose(
                         .any(|v| {
                             v["package"]["ecosystem"] == "npm"
                                 && v["package"]["name"] == package.name
-                                && crate::backend::db::dependabot_alerts::affected(
+                                && codeyard_db_core::queries::dependabot_alerts::affected(
                                     &version.to_string(),
                                     v["vulnerable_version_range"].as_str().unwrap_or(""),
                                 )

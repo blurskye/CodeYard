@@ -3,10 +3,10 @@ use crate::support::native_database::{NativeDatabase, PostgresDatabase};
 use codeyard_db_core::DbPool;
 
 async fn long_branch_activity(pool: &DbPool) {
-    let user = codeyard::backend::db::users::accounts::create_user(pool, "branch-owner", None)
+    let user = codeyard_db_identity::users::accounts::create_user(pool, "branch-owner", None)
         .await
         .unwrap();
-    let repo = codeyard::backend::db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         pool,
         user.id,
         "branches",
@@ -25,10 +25,10 @@ async fn long_branch_activity(pool: &DbPool) {
     );
     assert_eq!(branch.len(), 1023);
     for branch in [branch.clone(), format!("{branch}x")] {
-        codeyard::backend::db::activity::record_repository_push(pool, repo.id, user.id, &branch, 1)
+        codeyard_db_repos::activity::record_repository_push(pool, repo.id, user.id, &branch, 1)
             .await
             .unwrap();
-        let rows = codeyard::backend::db::activity::list_user_activity(pool, user.id, None, 20, 0)
+        let rows = codeyard_db_repos::activity::list_user_activity(pool, user.id, None, 20, 0)
             .await
             .unwrap();
         assert!(rows
@@ -80,14 +80,11 @@ async fn cli_escapes_emails_descriptions_and_key_labels() {
     let database = NativeDatabase::new().await;
     let value = "Hi\u{1b}[2J\u{1b}[H\nforged\r\t\u{7f}\u{85} café";
     let escaped = "Hi\\u{1b}[2J\\u{1b}[H\\nforged\\r\\t\\u{7f}\\u{85} café";
-    let user = codeyard::backend::db::users::accounts::create_user(
-        &database.pool,
-        "operator",
-        Some(value),
-    )
-    .await
-    .unwrap();
-    codeyard::backend::db::repositories::records::create_repository(
+    let user =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "operator", Some(value))
+            .await
+            .unwrap();
+    codeyard_db_repos::repositories::records::create_repository(
         &database.pool,
         user.id,
         "repo",

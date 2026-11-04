@@ -5,10 +5,10 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::packages::Owner;
-use crate::backend::db::packages::Package;
-use crate::backend::db::packages::Permission;
-use crate::backend::db::packages::Refusal;
+use codeyard_db_repos::packages::Owner;
+use codeyard_db_repos::packages::Package;
+use codeyard_db_repos::packages::Permission;
+use codeyard_db_repos::packages::Refusal;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -68,7 +68,7 @@ async fn namespace(
             "user",
         )
     };
-    let owner = crate::backend::db::packages::owner(&state.pool, name, Some(kind))
+    let owner = codeyard_db_repos::packages::owner(&state.pool, name, Some(kind))
         .await
         .map_err(error)?
         .ok_or_else(Error::missing)?;
@@ -91,7 +91,7 @@ async fn package(
 ) -> Result<Package> {
     let kind = kind(params.get("package_type").map(String::as_str))?;
     let name = params.get("package_name").ok_or_else(Error::missing)?;
-    crate::backend::db::packages::find(
+    codeyard_db_repos::packages::find(
         &state.pool,
         owner,
         kind,
@@ -111,7 +111,7 @@ async fn documents(
     auth: Option<&crate::backend::api::github::auth::Authentication>,
 ) -> Result<Vec<Value>> {
     let ids: Vec<_> = packages.iter().map(|package| package.id).collect();
-    let counts: HashMap<_, _> = crate::backend::db::packages::version_counts(&state.pool, &ids)
+    let counts: HashMap<_, _> = codeyard_db_repos::packages::version_counts(&state.pool, &ids)
         .await
         .map_err(error)?
         .into_iter()
@@ -120,7 +120,7 @@ async fn documents(
         .iter()
         .filter_map(|package| package.repo_id)
         .collect();
-    let snapshots = crate::backend::db::repository_stats::readable_snapshots(
+    let snapshots = codeyard_db_repos::repository_stats::readable_snapshots(
         &state.pool,
         auth.map(|auth| auth.user.id),
         &ids,
@@ -193,7 +193,7 @@ async fn list(
             Some("deleted") => true,
             _ => return Err(Error::validation("PackageVersion", "state", "invalid")),
         };
-        let mut versions = crate::backend::db::packages::versions(
+        let mut versions = codeyard_db_repos::packages::versions(
             &state.pool,
             package.id,
             token,
@@ -207,7 +207,7 @@ async fn list(
         versions.truncate(limit);
         let ids: Vec<_> = versions.iter().map(|version| version.id).collect();
         let mut tags: HashMap<i64, Vec<String>> = HashMap::new();
-        for (id, tag) in crate::backend::db::packages::version_tags(&state.pool, &ids)
+        for (id, tag) in codeyard_db_repos::packages::version_tags(&state.pool, &ids)
             .await
             .map_err(error)?
         {
@@ -230,10 +230,10 @@ async fn list(
         {
             return Err(Error::validation("Package", "visibility", "invalid"));
         }
-        let mut packages = crate::backend::db::packages::list(
+        let mut packages = codeyard_db_repos::packages::list(
             &state.pool,
             token,
-            crate::backend::db::packages::Listing {
+            codeyard_db_repos::packages::Listing {
                 owner: Some(&owner),
                 repo: None,
                 kind: Some(kind),
@@ -276,10 +276,10 @@ async fn get_one(
     let value = if let Some(id) = params.get("package_version_id") {
         let id = id.parse().map_err(|_| Error::missing())?;
         let version =
-            crate::backend::db::packages::version_by_id(&state.pool, package.id, token, id)
+            codeyard_db_repos::packages::version_by_id(&state.pool, package.id, token, id)
                 .await
                 .map_err(error)?;
-        let tags = crate::backend::db::packages::tags(&state.pool, package.id, token, version.id)
+        let tags = codeyard_db_repos::packages::tags(&state.pool, package.id, token, version.id)
             .await
             .map_err(error)?;
         crate::backend::webhooks::payloads::package_version(&owner, &package, &version, &tags)
@@ -311,7 +311,7 @@ async fn change(
         .get("package_version_id")
         .map(|id| id.parse::<i64>().map_err(|_| Error::missing()))
         .transpose()?;
-    crate::backend::db::packages::set_deleted(
+    codeyard_db_repos::packages::set_deleted(
         &state.pool,
         package.id,
         version,

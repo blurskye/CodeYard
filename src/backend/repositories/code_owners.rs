@@ -326,7 +326,8 @@ pub async fn resolve_owners<'a>(
         }
     }
     for names in names.chunks(500) {
-        for user in crate::backend::db::users::accounts::get_users_by_usernames(pool, names).await?
+        for user in
+            codeyard_db_identity::users::accounts::get_users_by_usernames(pool, names).await?
         {
             resolved
                 .get_mut(&format!("@{}", user.username))
@@ -347,7 +348,7 @@ pub async fn resolve_owners<'a>(
     let review_teams: std::collections::HashSet<String> = if teams.is_empty() {
         std::collections::HashSet::new()
     } else {
-        crate::backend::db::pull_requests::team_reviewers::list(pool, repository.id, None, None)
+        codeyard_db_repos::pull_requests::team_reviewers::list(pool, repository.id, None, None)
             .await?
             .into_iter()
             .map(|team| team.team.slug)
@@ -363,7 +364,7 @@ pub async fn resolve_owners<'a>(
             break;
         };
         for (team, id) in
-            crate::backend::db::organizations::teams::team_members_by_names(pool, org_id, teams)
+            codeyard_db_orgs::organizations::teams::team_members_by_names(pool, org_id, teams)
                 .await?
         {
             members += 1;
@@ -388,7 +389,7 @@ pub async fn resolve_owners<'a>(
     if !repository.is_archived {
         for ids in ids.chunks(500) {
             let levels: HashMap<_, _> =
-                crate::backend::db::repositories::access::get_users_repo_access(
+                codeyard_db_repos::repositories::access::get_users_repo_access(
                     pool,
                     ids,
                     repository.id,
@@ -396,7 +397,7 @@ pub async fn resolve_owners<'a>(
                 .await?
                 .into_iter()
                 .collect();
-            for user in crate::backend::db::users::accounts::get_users_by_ids(pool, ids).await? {
+            for user in codeyard_db_identity::users::accounts::get_users_by_ids(pool, ids).await? {
                 if !user.is_banned
                     && !user.must_change_password
                     && ((repository.owner_kind == "user"

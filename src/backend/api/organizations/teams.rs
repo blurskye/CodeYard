@@ -8,10 +8,10 @@ use crate::backend::api::organizations::organization::Fields;
 use crate::backend::api::organizations::organization::INVALID_FORM;
 use crate::backend::app::AppState;
 
-use crate::backend::db::organizations::*;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_db_orgs::organizations::*;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::orgs as view;
 use std::sync::Arc;
@@ -175,7 +175,7 @@ pub(super) async fn apply(
     use crate::backend::api::organizations::organization::unit;
     let pool = &ctx.state.pool;
     let result = match command {
-        Command::Create(input) => crate::backend::db::organizations::create_organization_team(
+        Command::Create(input) => codeyard_db_orgs::organizations::create_organization_team(
             pool,
             ctx.database_actor(actor),
             org,
@@ -184,7 +184,7 @@ pub(super) async fn apply(
         .await
         .map(unit),
         Command::Edit { team, profile } => {
-            crate::backend::db::organizations::update_organization_team(
+            codeyard_db_orgs::organizations::update_organization_team(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -195,7 +195,7 @@ pub(super) async fn apply(
             .map(unit)
         }
         Command::Delete { team } => {
-            crate::backend::db::organizations::delete_organization_team(
+            codeyard_db_orgs::organizations::delete_organization_team(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -211,9 +211,9 @@ pub(super) async fn apply(
             let Some(user) = target(ctx, &username).await? else {
                 return Ok(OrganizationOutcome::Denied);
             };
-            match crate::backend::db::organizations::get_organization_role(pool, user, org).await {
+            match codeyard_db_orgs::organizations::get_organization_role(pool, user, org).await {
                 Ok(OrganizationOutcome::Applied(_)) => {
-                    crate::backend::db::organizations::add_organization_team_member(
+                    codeyard_db_orgs::organizations::add_organization_team_member(
                         pool,
                         ctx.database_actor(actor),
                         org,
@@ -225,7 +225,7 @@ pub(super) async fn apply(
                     .map(unit)
                 }
                 Ok(_) => {
-                    let result = crate::backend::db::organizations::invite_team_member(
+                    let result = codeyard_db_orgs::organizations::invite_team_member(
                         pool,
                         ctx.database_actor(actor),
                         org,
@@ -249,7 +249,7 @@ pub(super) async fn apply(
             }
         }
         Command::RemoveMember { team, user } => {
-            crate::backend::db::organizations::remove_organization_team_member(
+            codeyard_db_orgs::organizations::remove_organization_team_member(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -262,7 +262,7 @@ pub(super) async fn apply(
             team,
             repo,
             permission,
-        } => crate::backend::db::organizations::grant_organization_team_repository(
+        } => codeyard_db_orgs::organizations::grant_organization_team_repository(
             pool,
             ctx.database_actor(actor),
             org,
@@ -273,7 +273,7 @@ pub(super) async fn apply(
         .await
         .map(unit),
         Command::Revoke { team, repo } => {
-            crate::backend::db::organizations::revoke_organization_team_repository(
+            codeyard_db_orgs::organizations::revoke_organization_team_repository(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -327,7 +327,7 @@ async fn repository_rows(
     org: i64,
     page: OrganizationPage,
 ) -> Result<Vec<OrganizationRepository>, Response> {
-    match crate::backend::db::organizations::list_organization_repositories(
+    match codeyard_db_orgs::organizations::list_organization_repositories(
         &ctx.state.pool,
         actor,
         org,
@@ -362,7 +362,7 @@ pub(super) async fn detail(
         .ok_or_else(|| invalid(ctx))?;
     // A one-row scoped seek works independently of the teams-list cursor. Never
     // scan/truncate all teams or use an unscoped persistence read for this ID.
-    let selected = match crate::backend::db::organizations::list_organization_teams(
+    let selected = match codeyard_db_orgs::organizations::list_organization_teams(
         &ctx.state.pool,
         actor,
         org,
@@ -383,7 +383,7 @@ pub(super) async fn detail(
     let (repositories_cursor, repo_page) =
         crate::backend::api::organizations::organization::cursor(ctx, "team_repositories_after")
             .ok_or_else(|| invalid(ctx))?;
-    let members = match crate::backend::db::organizations::list_organization_team_members(
+    let members = match codeyard_db_orgs::organizations::list_organization_team_members(
         &ctx.state.pool,
         actor,
         org,
@@ -398,7 +398,7 @@ pub(super) async fn detail(
     };
     // This operation filters foreign/inactive/private repositories by effective
     // actor READ before LIMIT; team visibility alone never reveals grant IDs.
-    let repositories = match crate::backend::db::organizations::list_organization_team_repositories(
+    let repositories = match codeyard_db_orgs::organizations::list_organization_team_repositories(
         &ctx.state.pool,
         actor,
         org,
@@ -468,20 +468,17 @@ pub(super) async fn public_show(
         return public_team_not_found(&ctx);
     };
     let pool = &ctx.state.pool;
-    let org = match crate::backend::db::organizations::get_public_organization(pool, &name).await {
+    let org = match codeyard_db_orgs::organizations::get_public_organization(pool, &name).await {
         Ok(Some(org)) => org,
         Ok(None) => return public_team_not_found(&ctx),
         Err(_) => return unavailable(&ctx),
     };
-    let public = match crate::backend::db::organizations::get_public_team(
-        pool, actor, org.id, &slug,
-    )
-    .await
-    {
-        Ok(Some(public)) => public,
-        Ok(None) => return public_team_not_found(&ctx),
-        Err(_) => return unavailable(&ctx),
-    };
+    let public =
+        match codeyard_db_orgs::organizations::get_public_team(pool, actor, org.id, &slug).await {
+            Ok(Some(public)) => public,
+            Ok(None) => return public_team_not_found(&ctx),
+            Err(_) => return unavailable(&ctx),
+        };
     let show_repositories = ctx
         .query
         .get("tab")
@@ -493,7 +490,7 @@ pub(super) async fn public_show(
         };
     let team_id = public.team.id;
     let (members, repositories, more, after) = if show_repositories {
-        let rows = match crate::backend::db::organizations::list_public_team_repositories(
+        let rows = match codeyard_db_orgs::organizations::list_public_team_repositories(
             pool, actor, org.id, team_id, page,
         )
         .await
@@ -516,7 +513,7 @@ pub(super) async fn public_show(
             .collect();
         (Vec::new(), repositories, more, after)
     } else {
-        let rows = match crate::backend::db::organizations::list_public_team_members(
+        let rows = match codeyard_db_orgs::organizations::list_public_team_members(
             pool, actor, org.id, team_id, page,
         )
         .await

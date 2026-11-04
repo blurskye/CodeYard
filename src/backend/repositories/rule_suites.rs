@@ -10,25 +10,25 @@ use crate::backend::repositories::git_sessions::ReceiveCredential;
 use crate::backend::repositories::protection::History;
 use codeyard_model::workflow_glob::WorkflowMatchBudget;
 
-use crate::backend::db::organizations::OrganizationOutcome;
-use crate::backend::db::rulesets::ActorType;
-use crate::backend::db::rulesets::BypassMode;
-use crate::backend::db::rulesets::Enforcement;
-use crate::backend::db::rulesets::Evaluation;
-use crate::backend::db::rulesets::Owner;
-use crate::backend::db::rulesets::Rule;
-use crate::backend::db::rulesets::RuleResult;
-use crate::backend::db::rulesets::RuleSource;
-use crate::backend::db::rulesets::Ruleset;
-use crate::backend::db::rulesets::SourceType;
-use crate::backend::db::rulesets::Suite;
-use crate::backend::db::rulesets::SuiteEnforcement;
-use crate::backend::db::rulesets::SuiteResult;
 use anyhow::Result;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_core::queries::rulesets::records::Evaluation;
+use codeyard_db_core::queries::rulesets::records::Owner;
+use codeyard_db_core::queries::rulesets::records::RuleResult;
+use codeyard_db_core::queries::rulesets::records::RuleSource;
+use codeyard_db_core::queries::rulesets::records::Ruleset;
+use codeyard_db_core::queries::rulesets::records::SourceType;
+use codeyard_db_core::queries::rulesets::records::Suite;
+use codeyard_db_core::queries::rulesets::records::SuiteEnforcement;
+use codeyard_db_core::queries::rulesets::records::SuiteResult;
+use codeyard_db_core::queries::rulesets::ActorType;
+use codeyard_db_core::queries::rulesets::BypassMode;
+use codeyard_db_core::queries::rulesets::Enforcement;
+use codeyard_db_core::queries::rulesets::Rule;
 use std::collections::HashSet;
 
 #[derive(Clone, Copy)]
@@ -70,7 +70,7 @@ async fn exempted(
     let org_admin = if has(ActorType::OrganizationAdmin) && repository.owner_kind == "org" {
         if let Some(org) = repository.owner_org_id {
             matches!(
-                crate::backend::db::organizations::membership::get_organization_role(
+                codeyard_db_orgs::organizations::membership::get_organization_role(
                     pool, actor.id, org
                 )
                 .await?,
@@ -92,7 +92,7 @@ async fn exempted(
         let ids: Vec<_> = ids.into_iter().collect();
         for batch in ids.chunks(500) {
             teams.extend(
-                crate::backend::db::rulesets::bypass_teams(pool, repository.id, actor.id, batch)
+                codeyard_db_repos::rulesets::bypass_teams(pool, repository.id, actor.id, batch)
                     .await?,
             );
         }
@@ -217,7 +217,7 @@ pub(crate) async fn record_push(
     history: &History<'_>,
     credential: Option<ReceiveCredential>,
 ) -> Result<()> {
-    let mut rulesets = crate::backend::db::rulesets::push_rulesets(pool, repository.id).await?;
+    let mut rulesets = codeyard_db_repos::rulesets::push_rulesets(pool, repository.id).await?;
     rulesets.retain(|ruleset| ruleset.definition.enforcement == Enforcement::Evaluate);
     if rulesets.is_empty() {
         return Ok(());
@@ -279,7 +279,7 @@ pub(crate) async fn record_push(
         if !targeted {
             continue;
         }
-        crate::backend::db::rulesets::record_rule_suite(
+        codeyard_db_repos::rulesets::record_rule_suite(
             pool,
             &Suite {
                 id: 0,

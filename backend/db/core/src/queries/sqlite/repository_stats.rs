@@ -1,0 +1,1 @@
+pub const DOCUMENT_FACTS: &str = "(SELECT COUNT(*) FROM issues WHERE repo_id=r.id AND state='open')+(SELECT COUNT(*) FROM pull_requests WHERE repo_id=r.id AND state='open') AS open_items,(SELECT MAX(accepted_at) FROM ci_accepted_pushes WHERE repo_id=r.id) AS pushed_at,(SELECT language FROM repo_languages WHERE repo_id=r.id ORDER BY bytes DESC,language LIMIT 1) AS language";

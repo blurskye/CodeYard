@@ -17,10 +17,11 @@ pub(crate) async fn form(
     let name = field(form, "name").to_ascii_uppercase();
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
     let result = if action == "variable-save" {
         let previous = field(form, "previous").to_ascii_uppercase();
-        crate::backend::db::variables::save(
+        codeyard_db_actions::variables::save(
             &ctx.state.pool,
             actor.id,
             &credential,
@@ -31,7 +32,7 @@ pub(crate) async fn form(
         )
         .await
     } else {
-        crate::backend::db::variables::delete(
+        codeyard_db_actions::variables::delete(
             &ctx.state.pool,
             actor.id,
             &credential,
@@ -43,7 +44,7 @@ pub(crate) async fn form(
     match result {
         Ok(()) => ctx.redirect(&format!("{}/settings?tab=secrets", loaded.chrome.base())),
         Err(error) => {
-            use crate::backend::db::variables::VariableError;
+            use codeyard_db_actions::variables::VariableError;
             let (status, message) = match error {
                 VariableError::Denied => (
                     StatusCode::FORBIDDEN,

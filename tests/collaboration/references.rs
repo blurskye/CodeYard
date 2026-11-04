@@ -60,9 +60,7 @@ async fn references(pg: bool) {
         codeyard::backend::repositories::lifecycle::provision(
             (f.pool(), None),
             root.path(),
-            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
-                alice_id,
-            ),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
             name,
             None,
             private,
@@ -235,7 +233,7 @@ async fn references(pg: bool) {
     assert_eq!(names, vec!["open"]);
 
     let notes =
-        codeyard::backend::db::repositories::records::get_repository(f.pool(), "alice", "notes")
+        codeyard_db_repos::repositories::records::get_repository(f.pool(), "alice", "notes")
             .await
             .unwrap()
             .unwrap();

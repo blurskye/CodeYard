@@ -1,0 +1,221 @@
+use crate::dependency_graph::Reader;
+use crate::dependency_graph::Submission;
+use crate::dependency_graph::SBOM_REPORTS_PER_REPOSITORY;
+use crate::dependency_graph::SBOM_REPORT_LIFETIME_SECONDS;
+use codeyard_model::dependency_graph::GraphError;
+use codeyard_model::dependency_graph::Snapshot;
+use sqlx::SqlitePool;
+
+async fn authorize_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    reader: &Reader,
+    repo: i64,
+) -> Result<(), GraphError> {
+    match reader {
+        Reader::Viewer(Some(actor)) => {
+            if !codeyard_db_core::queries::sqlite::repositories::access::lock_readable_repository_in_transaction(
+                tx,
+                actor.user_id,
+                repo,
+            )
+            .await
+            .map_err(GraphError::Authority)?
+                || !codeyard_db_core::queries::sqlite::credentials::repository(tx, actor, repo, "contents", false)
+                    .await
+                    .map_err(GraphError::Authority)?
+            {
+                return Err(GraphError::Denied);
+            }
+        }
+        Reader::Viewer(None) | Reader::Scan(_) => {
+            let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived))", codeyard_db_core::queries::sqlite::repositories::access::readable_condition()))
+                .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_one(&mut **tx).await?;
+            if !visible {
+                return Err(GraphError::Denied);
+            }
+        }
+    }
+    if let Reader::Scan(generation) = reader {
+        let job: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM vulnerability_jobs WHERE repo_id=$1 AND generation=$2)",
+        )
+        .bind(repo)
+        .bind(generation)
+        .fetch_one(&mut **tx)
+        .await?;
+        if !job {
+            return Err(GraphError::Denied);
+        }
+    }
+    if !enabled_in(tx, repo).await? {
+        return Err(GraphError::Disabled);
+    }
+    Ok(())
+}
+
+pub async fn check_read(pool: &SqlitePool, reader: &Reader, repo: i64) -> Result<(), GraphError> {
+    let mut tx = pool.begin().await?;
+    authorize_in(&mut tx, reader, repo).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Only the newest snapshot of each replacement key is read, so older copies are dropped.
+/// Submissions and the background dependency scan both call this after saving a snapshot.
+pub(super) async fn drop_replaced_snapshots(
+    connection: &mut sqlx::SqliteConnection,
+    repo: i64,
+    snapshot: &Snapshot,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("DELETE FROM dependency_snapshots WHERE repo_id=$1 AND sha=$2 AND reference=$3 AND correlator=$4 AND detector=$5 AND id<>(SELECT id FROM dependency_snapshots WHERE repo_id=$1 AND sha=$2 AND reference=$3 AND correlator=$4 AND detector=$5 ORDER BY scanned DESC, id DESC LIMIT 1)")
+        .bind(repo)
+        .bind(snapshot.sha.to_ascii_lowercase())
+        .bind(&snapshot.reference)
+        .bind(&snapshot.job.correlator)
+        .bind(&snapshot.detector.name)
+        .execute(connection)
+        .await?;
+    Ok(())
+}
+
+pub async fn submit(
+    pool: &SqlitePool,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    repo: i64,
+    snapshot: &Snapshot,
+) -> Result<Submission, GraphError> {
+    snapshot.validate()?;
+    let credential = actor.into();
+    let actor = credential.user_id;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !codeyard_db_core::queries::sqlite::discussions::lock_write_authority(&mut tx, actor, repo)
+        .await
+        .map_err(GraphError::Authority)?
+    {
+        return Err(GraphError::Denied);
+    }
+    if !codeyard_db_core::queries::sqlite::credentials::repository(
+        &mut tx,
+        &credential,
+        repo,
+        "contents",
+        true,
+    )
+    .await
+    .map_err(GraphError::Authority)?
+    {
+        return Err(GraphError::Denied);
+    }
+    if !enabled_in(&mut tx, repo).await? {
+        return Err(GraphError::Disabled);
+    }
+    let mut submission: Submission = sqlx::query_as("INSERT INTO dependency_snapshots(repo_id,sha,reference,correlator,detector,scanned,body) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,created_at")
+        .bind(repo).bind(snapshot.sha.to_ascii_lowercase()).bind(&snapshot.reference)
+        .bind(&snapshot.job.correlator).bind(&snapshot.detector.name).bind(snapshot.scanned)
+        .bind(serde_json::to_string(snapshot)?).fetch_one(&mut *tx).await?;
+    drop_replaced_snapshots(&mut tx, repo, snapshot).await?;
+    let _ = bounded_snapshot_ids(
+        &mut tx,
+        repo,
+        Some(&snapshot.reference),
+        Some(&snapshot.sha.to_ascii_lowercase()),
+    )
+    .await?;
+    submission.updated = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM dependency_snapshots WHERE repo_id=$1 AND reference=$2 AND correlator=$3 AND detector=$4 AND scanned>$5)")
+        .bind(repo).bind(&snapshot.reference).bind(&snapshot.job.correlator).bind(&snapshot.detector.name).bind(snapshot.scanned).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(submission)
+}
+
+pub async fn snapshots(
+    pool: &SqlitePool,
+    reader: &Reader,
+    repo: i64,
+    reference: Option<&str>,
+    sha: Option<&str>,
+) -> Result<Vec<Snapshot>, GraphError> {
+    let mut tx = pool.begin().await?;
+    authorize_in(&mut tx, reader, repo).await?;
+    let rows = snapshots_in(&mut tx, repo, reference, sha).await?;
+    tx.commit().await?;
+    Ok(rows)
+}
+
+/// The latest submitted revision is one coherent stored inventory, not per-correlator tips.
+pub async fn latest_snapshots(
+    pool: &SqlitePool,
+    reader: &Reader,
+    repo: i64,
+    reference: &str,
+) -> Result<Vec<Snapshot>, GraphError> {
+    let mut tx = pool.begin().await?;
+    authorize_in(&mut tx, reader, repo).await?;
+    let sha: Option<String> = sqlx::query_scalar("SELECT sha FROM dependency_snapshots WHERE repo_id=?1 AND reference=?2 ORDER BY id DESC LIMIT 1")
+        .bind(repo).bind(reference).fetch_optional(&mut *tx).await?;
+    let rows = match sha {
+        Some(sha) => snapshots_in(&mut tx, repo, Some(reference), Some(&sha)).await?,
+        None => Vec::new(),
+    };
+    tx.commit().await?;
+    Ok(rows)
+}
+
+pub async fn save_report(
+    pool: &SqlitePool,
+    reader: &Reader,
+    repo: i64,
+    id: &str,
+    body: &str,
+) -> Result<(), GraphError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    authorize_in(&mut tx, reader, repo).await?;
+    sqlx::query("INSERT INTO dependency_sbom_reports(repo_id,id,body) VALUES($1,$2,$3)")
+        .bind(repo)
+        .bind(id)
+        .bind(body)
+        .execute(&mut *tx)
+        .await?;
+    // Expired reports go, and so does anything beyond the repository's limit, newest kept.
+    sqlx::query("DELETE FROM dependency_sbom_reports WHERE repo_id=$1 AND (created_at <= strftime('%Y-%m-%dT%H:%M:%f000Z','now','-' || $2 || ' seconds') OR id NOT IN (SELECT id FROM dependency_sbom_reports WHERE repo_id=$1 AND created_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-' || $2 || ' seconds') ORDER BY created_at DESC, id DESC LIMIT $3))")
+        .bind(repo)
+        .bind(SBOM_REPORT_LIFETIME_SECONDS)
+        .bind(SBOM_REPORTS_PER_REPOSITORY)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn prune_expired_reports(pool: &SqlitePool) -> Result<u64, GraphError> {
+    Ok(sqlx::query("DELETE FROM dependency_sbom_reports WHERE created_at <= strftime('%Y-%m-%dT%H:%M:%f000Z','now','-' || $1 || ' seconds')")
+        .bind(SBOM_REPORT_LIFETIME_SECONDS)
+        .execute(pool)
+        .await?
+        .rows_affected())
+}
+
+pub async fn report(
+    pool: &SqlitePool,
+    reader: &Reader,
+    repo: i64,
+    id: &str,
+) -> Result<Option<String>, GraphError> {
+    let mut tx = pool.begin().await?;
+    authorize_in(&mut tx, reader, repo).await?;
+    let body = sqlx::query_scalar("SELECT body FROM dependency_sbom_reports WHERE repo_id=$1 AND id=$2 AND created_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-' || $3 || ' seconds')")
+        .bind(repo).bind(id).bind(SBOM_REPORT_LIFETIME_SECONDS).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(body)
+}
+
+use codeyard_db_core::queries::sqlite::dependency_graph::enabled_in;
+
+use codeyard_db_core::queries::sqlite::dependency_graph::snapshots_in;
+
+use codeyard_db_core::queries::sqlite::dependency_graph::bounded_snapshot_ids;
+
+use codeyard_db_core::queries::sqlite::dependency_graph::bounded_snapshot_ids;
+
+use codeyard_db_core::queries::sqlite::dependency_graph::enabled_in;
+
+use codeyard_db_core::queries::sqlite::dependency_graph::snapshots_in;

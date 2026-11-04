@@ -111,7 +111,7 @@ pub(super) async fn actor(
     pool: &codeyard_db_core::DbPool,
     id: i64,
 ) -> Result<codeyard_db_core::models::User, OperationError> {
-    crate::backend::db::users::accounts::get_user_by_id(pool, id)
+    codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
         .await
         .map_err(write_error)?
         .filter(|user| !user.is_banned)
@@ -173,7 +173,7 @@ pub(super) async fn require_write(
 }
 
 pub(super) fn write_error(error: anyhow::Error) -> OperationError {
-    use crate::backend::db::discussions::DiscussionWriteRefusal;
+    use codeyard_db_core::queries::discussions::DiscussionWriteRefusal;
     if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return OperationError::Denied {
             code: "forbidden",
@@ -182,23 +182,20 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
     }
     // Initial metadata now shares the create transaction, so preserve its typed refusals.
     let metadata = error
-        .downcast_ref::<crate::backend::db::assignees::AssignmentRefusal>()
+        .downcast_ref::<codeyard_db_repos::assignees::AssignmentRefusal>()
         .map(|r| {
             (
-                matches!(r, crate::backend::db::assignees::AssignmentRefusal::Denied),
-                matches!(
-                    r,
-                    crate::backend::db::assignees::AssignmentRefusal::NotFound
-                ),
+                matches!(r, codeyard_db_repos::assignees::AssignmentRefusal::Denied),
+                matches!(r, codeyard_db_repos::assignees::AssignmentRefusal::NotFound),
                 r.to_string(),
             )
         })
         .or_else(|| {
             error
-                .downcast_ref::<crate::backend::db::labels::LabelWriteRefusal>()
+                .downcast_ref::<codeyard_db_repos::labels::LabelWriteRefusal>()
                 .map(|r| {
                     (
-                        matches!(r, crate::backend::db::labels::LabelWriteRefusal::Denied),
+                        matches!(r, codeyard_db_repos::labels::LabelWriteRefusal::Denied),
                         false,
                         r.to_string(),
                     )
@@ -206,16 +203,16 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
         })
         .or_else(|| {
             error
-                .downcast_ref::<crate::backend::db::milestones::MilestoneWriteRefusal>()
+                .downcast_ref::<codeyard_db_repos::milestones::MilestoneWriteRefusal>()
                 .map(|r| {
                     (
                         matches!(
                             r,
-                            crate::backend::db::milestones::MilestoneWriteRefusal::Denied
+                            codeyard_db_repos::milestones::MilestoneWriteRefusal::Denied
                         ),
                         matches!(
                             r,
-                            crate::backend::db::milestones::MilestoneWriteRefusal::NotFound
+                            codeyard_db_repos::milestones::MilestoneWriteRefusal::NotFound
                         ),
                         r.to_string(),
                     )
@@ -223,11 +220,11 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
         })
         .or_else(|| {
             error
-                .downcast_ref::<crate::backend::db::issue_attributes::Refusal>()
+                .downcast_ref::<codeyard_db_repos::issue_attributes::Refusal>()
                 .map(|r| {
                     (
-                        matches!(r, crate::backend::db::issue_attributes::Refusal::Denied),
-                        matches!(r, crate::backend::db::issue_attributes::Refusal::Missing),
+                        matches!(r, codeyard_db_repos::issue_attributes::Refusal::Denied),
+                        matches!(r, codeyard_db_repos::issue_attributes::Refusal::Missing),
                         r.to_string(),
                     )
                 })
@@ -250,13 +247,13 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
             }
         };
     }
-    if let Some(refusal) = error.downcast_ref::<crate::backend::db::relationships::Refusal>() {
+    if let Some(refusal) = error.downcast_ref::<codeyard_db_identity::relationships::Refusal>() {
         return match refusal {
-            crate::backend::db::relationships::Refusal::Denied => OperationError::Denied {
+            codeyard_db_identity::relationships::Refusal::Denied => OperationError::Denied {
                 code: "forbidden",
                 message: refusal.to_string(),
             },
-            crate::backend::db::relationships::Refusal::Missing => OperationError::Missing {
+            codeyard_db_identity::relationships::Refusal::Missing => OperationError::Missing {
                 code: "not_found",
                 message: refusal.to_string(),
             },

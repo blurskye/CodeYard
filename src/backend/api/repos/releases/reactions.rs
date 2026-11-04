@@ -41,30 +41,30 @@ pub(crate) async fn react(
         _ => ctx.error(StatusCode::FORBIDDEN, "Release access denied."),
     })?;
     let content = field(&form, "content");
-    if !crate::backend::db::reactions::valid_content(
-        crate::backend::db::reactions::Subject::Release,
+    if !codeyard_db_repos::reactions::valid_content(
+        codeyard_db_repos::reactions::Subject::Release,
         &content,
     ) {
         return Err(ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Unknown reaction."));
     }
-    crate::backend::db::reactions::toggle_reaction(
+    codeyard_db_repos::reactions::toggle_reaction(
         &ctx.state.pool,
         user.id,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
         detail.repository.id,
         id,
-        crate::backend::db::reactions::Subject::Release,
+        codeyard_db_repos::reactions::Subject::Release,
         id,
         &content,
     )
     .await
     .map_err(|error| {
-        if error.is::<crate::backend::db::reactions::ReactionRefusal>() {
+        if error.is::<codeyard_db_repos::reactions::ReactionRefusal>() {
             ctx.error(StatusCode::NOT_FOUND, "Release not found.")
-        } else if error.is::<crate::backend::db::discussions::DiscussionWriteRefusal>() {
+        } else if error.is::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>() {
             ctx.error(StatusCode::FORBIDDEN, "Reaction mutation denied.")
         } else {
             ctx.error(

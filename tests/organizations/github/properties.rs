@@ -1,15 +1,15 @@
 use super::request;
 use crate::support::{
-    codeyard::backend::db::organizations::applied, database::Database, http_client::Client,
+    codeyard_db_orgs::organizations::applied, database::Database, http_client::Client,
 };
 
-use codeyard::backend::db::organizations::properties::PropertyValue;
-use codeyard::backend::db::organizations::properties::ValueInput;
-use codeyard::backend::db::organizations::NewOrganization;
-use codeyard::backend::db::organizations::OrganizationProfile;
-use codeyard::backend::db::repositories::creation::NewRepository;
-use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
-use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard_db_core::queries::organizations::properties::PropertyValue;
+use codeyard_db_core::queries::organizations::properties::ValueInput;
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::OrganizationProfile;
+use codeyard_db_repos::repositories::creation::NewRepository;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
@@ -34,7 +34,7 @@ async fn repository(
     let disk = uuid::Uuid::new_v4().to_string();
     let git = git2::Repository::init_bare(root.join(&disk)).unwrap();
     git.set_head("refs/heads/main").unwrap();
-    codeyard::backend::db::repositories::creation::insert_repository(
+    codeyard_db_repos::repositories::creation::insert_repository(
         f.pool(),
         NewRepository {
             owner: RepositoryCreationOwner {
@@ -62,7 +62,7 @@ async fn contract(pg: bool) {
     let outside = f.actor("outside").await;
     let delegated = f.actor("delegated").await;
     let org = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -71,7 +71,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let other = applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("foreign", OrganizationProfile::new(None, None).unwrap())
@@ -82,7 +82,7 @@ async fn contract(pg: bool) {
     );
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 f.pool(),
                 owner,
                 org.id,
@@ -304,7 +304,7 @@ async fn contract(pg: bool) {
         &[outside, first.id],
     )
     .await;
-    codeyard::backend::db::organizations::properties::set_repository_values(
+    codeyard_db_orgs::organizations::properties::set_repository_values(
         f.pool(),
         outside,
         first.id,
@@ -316,7 +316,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     assert!(
-        codeyard::backend::db::organizations::properties::set_repository_values(
+        codeyard_db_orgs::organizations::properties::set_repository_values(
             f.pool(),
             outside,
             first.id,
@@ -328,24 +328,19 @@ async fn contract(pg: bool) {
         .await
         .is_err()
     );
-    assert!(
-        codeyard::backend::db::organizations::properties::repository(
-            f.pool(),
-            Some(outside),
-            second.id
-        )
-        .await
-        .unwrap()
-        .is_none()
-    );
-    let visible = codeyard::backend::db::organizations::properties::repository(
+    assert!(codeyard_db_orgs::organizations::properties::repository(
         f.pool(),
         Some(outside),
-        first.id,
+        second.id
     )
     .await
     .unwrap()
-    .unwrap();
+    .is_none());
+    let visible =
+        codeyard_db_orgs::organizations::properties::repository(f.pool(), Some(outside), first.id)
+            .await
+            .unwrap()
+            .unwrap();
     assert!(visible.repository_admin);
     assert!(!visible.organization_owner);
     // PUT and batch PATCH replace optional definition fields rather than merging old values.
@@ -354,7 +349,7 @@ async fn contract(pg: bool) {
     assert!(reset["default_value"].is_null());
     assert!(reset["description"].is_null());
     assert!(
-        codeyard::backend::db::organizations::properties::set_repository_values(
+        codeyard_db_orgs::organizations::properties::set_repository_values(
             f.pool(),
             outside,
             first.id,
@@ -398,7 +393,7 @@ async fn contract(pg: bool) {
         422,
     )
     .await;
-    let denied = codeyard::backend::db::repositories::creation::insert_repository_with_properties(
+    let denied = codeyard_db_repos::repositories::creation::insert_repository_with_properties(
         f.pool(),
         NewRepository {
             owner: RepositoryCreationOwner {
@@ -420,8 +415,8 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err();
     assert!(matches!(
-        denied.downcast_ref::<codeyard::backend::db::organizations::properties::Refusal>(),
-        Some(codeyard::backend::db::organizations::properties::Refusal::Denied)
+        denied.downcast_ref::<codeyard_db_core::queries::organizations::properties::Refusal>(),
+        Some(codeyard_db_core::queries::organizations::properties::Refusal::Denied)
     ));
     assert_eq!(
         f.scalar(
@@ -467,7 +462,7 @@ async fn contract(pg: bool) {
         source_id: None,
     };
     assert!(
-        codeyard::backend::db::repositories::creation::insert_repository(f.pool(), input())
+        codeyard_db_repos::repositories::creation::insert_repository(f.pool(), input())
             .await
             .is_err()
     );
@@ -479,7 +474,7 @@ async fn contract(pg: bool) {
         .await,
         0
     );
-    let future = codeyard::backend::db::repositories::creation::insert_repository_with_properties(
+    let future = codeyard_db_repos::repositories::creation::insert_repository_with_properties(
         f.pool(),
         input(),
         &[ValueInput {
@@ -491,20 +486,16 @@ async fn contract(pg: bool) {
     .unwrap()
     .unwrap();
     assert_eq!(
-        codeyard::backend::db::organizations::properties::repository(
-            f.pool(),
-            Some(owner),
-            future.id
-        )
-        .await
-        .unwrap()
-        .unwrap()
-        .values
-        .properties
-        .iter()
-        .find(|value| value.property_name == "ticket")
-        .unwrap()
-        .value,
+        codeyard_db_orgs::organizations::properties::repository(f.pool(), Some(owner), future.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .values
+            .properties
+            .iter()
+            .find(|value| value.property_name == "ticket")
+            .unwrap()
+            .value,
         Some(PropertyValue::String("new".into()))
     );
     assert_eq!(

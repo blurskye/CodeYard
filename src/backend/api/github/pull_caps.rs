@@ -3,12 +3,12 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::interactions::InteractionScope;
-use crate::backend::db::pull_caps::CapUpdate;
-use crate::backend::db::pull_caps::PullCap;
-use crate::backend::db::pull_caps::PullCapRefusal;
-use crate::backend::db::pull_caps::PullCapScope;
-use crate::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_db_identity::interactions::InteractionScope;
+use codeyard_db_repos::pull_caps::CapUpdate;
+use codeyard_db_repos::pull_caps::PullCap;
+use codeyard_db_repos::pull_caps::PullCapRefusal;
+use codeyard_db_repos::pull_caps::PullCapScope;
 
 use axum::{
     extract::{rejection::JsonRejection, Path, State},
@@ -101,7 +101,7 @@ async fn actor_scope(
 async fn read(state: Arc<AppState>, headers: HeaderMap, scope: ScopeName) -> Result<Json<PullCap>> {
     let (actor, scope) = actor_scope(&state, &headers, scope, false).await?;
     Ok(Json(
-        crate::backend::db::pull_caps::get_cap(&state.pool, actor.user.id, scope)
+        codeyard_db_repos::pull_caps::get_cap(&state.pool, actor.user.id, scope)
             .await
             .map_err(failure)?,
     ))
@@ -115,7 +115,7 @@ async fn update(
     let (actor, scope) = actor_scope(&state, &headers, scope, true).await?;
     let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
     Ok(Json(
-        crate::backend::db::pull_caps::update_cap(
+        codeyard_db_repos::pull_caps::update_cap(
             &state.pool,
             actor.user.id,
             &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -163,7 +163,7 @@ async fn bypass(
 ) -> Result<Json<Vec<Value>>> {
     let (actor, scope) =
         actor_scope(&state, &headers, ScopeName::Repository(owner, repo), false).await?;
-    let users = crate::backend::db::pull_caps::bypass_users(&state.pool, actor.user.id, scope.id())
+    let users = codeyard_db_repos::pull_caps::bypass_users(&state.pool, actor.user.id, scope.id())
         .await
         .map_err(failure)?;
     Ok(Json(
@@ -188,7 +188,7 @@ async fn change_bypass(
     let (actor, scope) =
         actor_scope(&state, &headers, ScopeName::Repository(owner, repo), true).await?;
     let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
-    crate::backend::db::pull_caps::change_bypass(
+    codeyard_db_repos::pull_caps::change_bypass(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),

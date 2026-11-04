@@ -47,13 +47,13 @@ async fn readable(
     name: &str,
 ) -> Result<(
     codeyard_db_core::models::Repository,
-    crate::backend::db::dependency_graph::Reader,
+    codeyard_db_security::dependency_graph::Reader,
 )> {
     let (repo, authentication) = repository(state, headers, owner, name, false).await?;
     let actor = authentication.as_ref().map(|auth| auth.database_actor());
     Ok((
         repo,
-        crate::backend::db::dependency_graph::Reader::Viewer(actor),
+        codeyard_db_security::dependency_graph::Reader::Viewer(actor),
     ))
 }
 
@@ -78,7 +78,7 @@ async fn submit(
         .await
         .map_err(store_error)?
         .sha;
-    let submission = crate::backend::db::dependency_graph::submit(
+    let submission = codeyard_db_security::dependency_graph::submit(
         &state.pool,
         actor.database_actor(),
         repo.id,
@@ -86,7 +86,7 @@ async fn submit(
     )
     .await
     .map_err(error)?;
-    crate::backend::db::vulnerabilities::enqueue(&state.pool, repo.id)
+    codeyard_db_security::vulnerabilities::enqueue(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?;
     Ok((StatusCode::CREATED, Json(json!({
@@ -115,7 +115,7 @@ async fn compare(
         .split_once("...")
         .filter(|(base, head)| !base.is_empty() && !head.is_empty())
         .ok_or_else(|| Error::new(StatusCode::BAD_REQUEST, "Invalid comparison"))?;
-    crate::backend::db::dependency_graph::check_read(&state.pool, &reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(&state.pool, &reader, repo.id)
         .await
         .map_err(error)?;
     let store = repo_store(&repo, state.cluster.as_ref());
@@ -123,7 +123,7 @@ async fn compare(
         .comparison_from(&store, base, head, 0, 1)
         .await
         .map_err(store_error)?;
-    let mut base = crate::backend::db::dependency_graph::snapshots(
+    let mut base = codeyard_db_security::dependency_graph::snapshots(
         &state.pool,
         &reader,
         repo.id,
@@ -132,7 +132,7 @@ async fn compare(
     )
     .await
     .map_err(error)?;
-    let mut head = crate::backend::db::dependency_graph::snapshots(
+    let mut head = codeyard_db_security::dependency_graph::snapshots(
         &state.pool,
         &reader,
         repo.id,
@@ -164,7 +164,7 @@ async fn compare(
         .iter()
         .any(|change| change["version"].as_str().is_some_and(|v| !v.is_empty()))
     {
-        crate::backend::db::dependabot_alerts::without_osv(&state.pool)
+        codeyard_db_security::dependabot_alerts::without_osv(&state.pool)
             .await
             .map_err(Error::unavailable)?
     } else {
@@ -220,7 +220,7 @@ async fn compare(
         }
         change["vulnerabilities"] = json!(vulnerabilities);
     }
-    crate::backend::db::dependency_graph::check_read(&state.pool, &reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(&state.pool, &reader, repo.id)
         .await
         .map_err(error)?;
     Ok((page.headers(&uri, has_more)?, Json(changes)).into_response())
@@ -228,11 +228,11 @@ async fn compare(
 
 async fn current(
     state: &AppState,
-    reader: &crate::backend::db::dependency_graph::Reader,
+    reader: &codeyard_db_security::dependency_graph::Reader,
     repo: &codeyard_db_core::models::Repository,
     owner: &str,
 ) -> Result<Value> {
-    crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
         .await
         .map_err(error)?;
     let (refs, branch) = repo_store(repo, state.cluster.as_ref())
@@ -244,12 +244,12 @@ async fn current(
     // mid-request cannot mix versions.
     let Some(sha) = refs.get(&reference).cloned() else {
         let value = codeyard_model::dependency_graph::sbom(&format!("{owner}/{}", repo.name), &[]);
-        crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
+        codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
             .await
             .map_err(error)?;
         return Ok(value);
     };
-    let mut snapshots = crate::backend::db::dependency_graph::snapshots(
+    let mut snapshots = codeyard_db_security::dependency_graph::snapshots(
         &state.pool,
         reader,
         repo.id,
@@ -272,7 +272,7 @@ async fn current(
     .map_err(store_error)?;
     let value =
         codeyard_model::dependency_graph::sbom(&format!("{owner}/{}", repo.name), &snapshots);
-    crate::backend::db::dependency_graph::check_read(&state.pool, reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(&state.pool, reader, repo.id)
         .await
         .map_err(error)?;
     Ok(value)
@@ -291,10 +291,11 @@ async fn export(
 ) -> Result<Json<Value>> {
     let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
     let value = if let Some(id) = query.report {
-        let body = crate::backend::db::dependency_graph::report(&state.pool, &reader, repo.id, &id)
-            .await
-            .map_err(error)?
-            .ok_or_else(Error::missing)?;
+        let body =
+            codeyard_db_security::dependency_graph::report(&state.pool, &reader, repo.id, &id)
+                .await
+                .map_err(error)?
+                .ok_or_else(Error::missing)?;
         serde_json::from_str(&body).map_err(Error::unavailable)?
     } else {
         current(&state, &reader, &repo, &owner).await?
@@ -309,7 +310,7 @@ async fn generate(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Response> {
     let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
-    crate::backend::db::dependency_graph::check_read(&state.pool, &reader, repo.id)
+    codeyard_db_security::dependency_graph::check_read(&state.pool, &reader, repo.id)
         .await
         .map_err(error)?;
     if method == Method::HEAD {
@@ -317,7 +318,7 @@ async fn generate(
     }
     let body = current(&state, &reader, &repo, &owner).await?;
     let id = uuid::Uuid::new_v4().to_string();
-    crate::backend::db::dependency_graph::save_report(
+    codeyard_db_security::dependency_graph::save_report(
         &state.pool,
         &reader,
         repo.id,
@@ -335,7 +336,7 @@ async fn fetch(
     Path((owner, name, id)): Path<(String, String, String)>,
 ) -> Result<Response> {
     let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
-    if crate::backend::db::dependency_graph::report(&state.pool, &reader, repo.id, &id)
+    if codeyard_db_security::dependency_graph::report(&state.pool, &reader, repo.id, &id)
         .await
         .map_err(error)?
         .is_none()

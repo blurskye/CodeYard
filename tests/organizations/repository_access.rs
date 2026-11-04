@@ -12,13 +12,12 @@ use codeyard_db_core::models::OrgRole;
 impl Database {
     async fn org(&self, owner: i64, name: &str) -> i64 {
         applied(
-            codeyard::backend::db::organizations::create_organization(
+            codeyard_db_orgs::organizations::create_organization(
                 self.pool(),
                 owner,
-                &codeyard::backend::db::organizations::NewOrganization::new(
+                &codeyard_db_orgs::organizations::NewOrganization::new(
                     name,
-                    codeyard::backend::db::organizations::OrganizationProfile::new(None, None)
-                        .unwrap(),
+                    codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
                 )
                 .unwrap(),
             )
@@ -29,7 +28,7 @@ impl Database {
     }
     async fn member(&self, owner: i64, org: i64, actor: i64, role: OrgRole) {
         applied(
-            codeyard::backend::db::organizations::add_organization_member(
+            codeyard_db_orgs::organizations::add_organization_member(
                 self.pool(),
                 owner,
                 org,
@@ -45,16 +44,16 @@ impl Database {
         owner: i64,
         org: i64,
         slug: &str,
-        privacy: codeyard::backend::db::organizations::TeamPrivacy,
+        privacy: codeyard_db_orgs::organizations::TeamPrivacy,
     ) -> i64 {
         applied(
-            codeyard::backend::db::organizations::create_organization_team(
+            codeyard_db_orgs::organizations::create_organization_team(
                 self.pool(),
                 owner,
                 org,
-                &codeyard::backend::db::organizations::NewTeam::new(
+                &codeyard_db_orgs::organizations::NewTeam::new(
                     slug,
-                    codeyard::backend::db::organizations::TeamProfile::new(
+                    codeyard_db_orgs::organizations::TeamProfile::new(
                         "Access fixture",
                         None,
                         privacy,
@@ -70,13 +69,13 @@ impl Database {
     }
     async fn team_member(&self, owner: i64, org: i64, team: i64, actor: i64) {
         applied(
-            codeyard::backend::db::organizations::add_organization_team_member(
+            codeyard_db_orgs::organizations::add_organization_team_member(
                 self.pool(),
                 owner,
                 org,
                 team,
                 actor,
-                codeyard::backend::db::organizations::TeamRole::Member,
+                codeyard_db_orgs::organizations::TeamRole::Member,
             )
             .await
             .unwrap(),
@@ -84,20 +83,20 @@ impl Database {
     }
     async fn grant_team(&self, owner: i64, org: i64, team: i64, repo: i64, level: i16) {
         applied(
-            codeyard::backend::db::organizations::grant_organization_team_repository(
+            codeyard_db_orgs::organizations::grant_organization_team_repository(
                 self.pool(),
                 owner,
                 org,
                 team,
                 repo,
-                codeyard::backend::db::organizations::TeamRepositoryPermission::new(level).unwrap(),
+                codeyard_db_orgs::organizations::TeamRepositoryPermission::new(level).unwrap(),
             )
             .await
             .unwrap(),
         );
     }
     async fn repo(&self, owner: i64, org: Option<i64>, name: &str, private: bool) -> i64 {
-        let repo = codeyard::backend::db::repositories::records::create_repository(
+        let repo = codeyard_db_repos::repositories::records::create_repository(
             self.pool(),
             owner,
             name,
@@ -118,13 +117,9 @@ impl Database {
     }
     async fn expect(&self, actor: i64, repo: i64, level: AccessLevel) {
         assert_eq!(
-            codeyard::backend::db::repositories::access::get_user_repo_access(
-                self.pool(),
-                actor,
-                repo
-            )
-            .await
-            .unwrap(),
+            codeyard_db_repos::repositories::access::get_user_repo_access(self.pool(), actor, repo)
+                .await
+                .unwrap(),
             level,
             "canonical actor={actor} repo={repo}"
         );
@@ -132,12 +127,12 @@ impl Database {
 }
 
 async fn canonical_access_contract(database: &Database) {
-    use codeyard::backend::db::organizations::TeamPrivacy::{Secret, Visible};
     use codeyard_db_core::models::AccessLevel::Admin;
     use codeyard_db_core::models::AccessLevel::None as NoAccess;
     use codeyard_db_core::models::AccessLevel::Owner;
     use codeyard_db_core::models::AccessLevel::Read;
     use codeyard_db_core::models::AccessLevel::Write;
+    use codeyard_db_orgs::organizations::TeamPrivacy::{Secret, Visible};
     let pool = database.pool();
     let owner = database.actor("access_owner").await;
     let admin = database.actor("access_admin").await;
@@ -188,7 +183,7 @@ async fn canonical_access_contract(database: &Database) {
     // Exercise Git's outer access CASE through the declared SQLx i16 result type.
     for write in [false, true] {
         assert_eq!(
-            codeyard::backend::db::repositories::access::git_access(pool, owner, personal, write)
+            codeyard_db_repos::repositories::access::git_access(pool, owner, personal, write)
                 .await
                 .unwrap(),
             Owner,
@@ -212,7 +207,7 @@ async fn canonical_access_contract(database: &Database) {
     database.grant_team(owner, org, visible, private, 5).await;
     database.expect(member, private, Admin).await;
     applied(
-        codeyard::backend::db::organizations::revoke_organization_team_repository(
+        codeyard_db_orgs::organizations::revoke_organization_team_repository(
             pool, owner, org, visible, private,
         )
         .await
@@ -220,7 +215,7 @@ async fn canonical_access_contract(database: &Database) {
     );
     database.expect(member, private, Write).await;
     applied(
-        codeyard::backend::db::organizations::remove_organization_team_member(
+        codeyard_db_orgs::organizations::remove_organization_team_member(
             pool, owner, org, secret, member,
         )
         .await
@@ -230,22 +225,22 @@ async fn canonical_access_contract(database: &Database) {
     database.team_member(owner, org, secret, member).await;
 
     // Direct and org contributions combine by maximum, not short-circuit order.
-    codeyard::backend::db::repositories::access::grant_repo_access(pool, member, private, Read)
+    codeyard_db_repos::repositories::access::grant_repo_access(pool, member, private, Read)
         .await
         .unwrap();
     database.expect(member, private, Write).await;
-    codeyard::backend::db::repositories::access::grant_repo_access(pool, member, private, Admin)
+    codeyard_db_repos::repositories::access::grant_repo_access(pool, member, private, Admin)
         .await
         .unwrap();
     database.expect(member, private, Admin).await;
     assert!(
-        codeyard::backend::db::repositories::access::revoke_repo_access(pool, member, private)
+        codeyard_db_repos::repositories::access::revoke_repo_access(pool, member, private)
             .await
             .unwrap()
     );
     database.expect(member, private, Write).await;
     for level in 1..=5 {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             pool,
             outsider,
             private,
@@ -258,7 +253,7 @@ async fn canonical_access_contract(database: &Database) {
             .await;
     }
     assert!(
-        codeyard::backend::db::repositories::access::revoke_repo_access(pool, outsider, private)
+        codeyard_db_repos::repositories::access::revoke_repo_access(pool, outsider, private)
             .await
             .unwrap()
     );
@@ -266,10 +261,10 @@ async fn canonical_access_contract(database: &Database) {
 
     // Persisted direct Owner is not a collaborator permission (schema defines
     // 0..=5); only correctly scoped personal/org ownership can supply Owner.
-    codeyard::backend::db::repositories::access::grant_repo_access(pool, outsider, private, Read)
+    codeyard_db_repos::repositories::access::grant_repo_access(pool, outsider, private, Read)
         .await
         .unwrap();
-    codeyard::backend::db::repositories::access::grant_repo_access(pool, outsider, public, Read)
+    codeyard_db_repos::repositories::access::grant_repo_access(pool, outsider, public, Read)
         .await
         .unwrap();
     for level in [-1, 0, 6, 7, 32767] {
@@ -290,10 +285,10 @@ async fn canonical_access_contract(database: &Database) {
         database.expect(member, private, NoAccess).await;
     }
     database.grant_team(owner, org, secret, private, 3).await;
-    codeyard::backend::db::repositories::access::revoke_repo_access(pool, outsider, private)
+    codeyard_db_repos::repositories::access::revoke_repo_access(pool, outsider, private)
         .await
         .unwrap();
-    codeyard::backend::db::repositories::access::revoke_repo_access(pool, outsider, public)
+    codeyard_db_repos::repositories::access::revoke_repo_access(pool, outsider, public)
         .await
         .unwrap();
     for role in ["unknown", "OWNER", "member "] {
@@ -364,7 +359,7 @@ async fn canonical_access_contract(database: &Database) {
     database.expect(member, private, Write).await;
 
     // Actor restrictions beat every source, including public and personal Owner.
-    codeyard::backend::db::repositories::access::grant_repo_access(pool, outsider, private, Admin)
+    codeyard_db_repos::repositories::access::grant_repo_access(pool, outsider, private, Admin)
         .await
         .unwrap();
     for actor in [owner, admin, member, outsider, site_admin] {
@@ -452,22 +447,22 @@ async fn canonical_access_contract(database: &Database) {
         .await;
 
     // Real DAO member removal clears both scoped team and direct contributions.
-    codeyard::backend::db::repositories::access::grant_repo_access(pool, member, private, Admin)
+    codeyard_db_repos::repositories::access::grant_repo_access(pool, member, private, Admin)
         .await
         .unwrap();
     applied(
-        codeyard::backend::db::organizations::remove_organization_member(pool, owner, org, member)
+        codeyard_db_orgs::organizations::remove_organization_member(pool, owner, org, member)
             .await
             .unwrap(),
     );
     database.expect(member, private, NoAccess).await;
     database.expect(member, public, Read).await;
-    codeyard::backend::db::repositories::access::grant_repo_access(pool, member, private, Read)
+    codeyard_db_repos::repositories::access::grant_repo_access(pool, member, private, Read)
         .await
         .unwrap();
     database.expect(member, private, Read).await;
     assert!(
-        codeyard::backend::db::repositories::access::revoke_repo_access(pool, member, private)
+        codeyard_db_repos::repositories::access::revoke_repo_access(pool, member, private)
             .await
             .unwrap()
     );
@@ -502,7 +497,7 @@ async fn canonical_access_contract(database: &Database) {
     database.expect(owner, collision, Owner).await;
     database.expect(700_000, collision_personal, Owner).await;
     database.expect(owner, collision_personal, NoAccess).await;
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         pool,
         outsider,
         collision_personal,

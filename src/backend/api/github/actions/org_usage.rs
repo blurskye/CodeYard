@@ -5,7 +5,6 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::organizations::OrganizationOutcome;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -13,6 +12,7 @@ use axum::{
     routing::{get, MethodRouter},
     Json,
 };
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -22,13 +22,13 @@ async fn report(
     name: &str,
     offset: i64,
     limit: i64,
-) -> Result<crate::backend::db::action_objects::OrganizationCacheUsage> {
+) -> Result<codeyard_db_core::queries::action_objects::OrganizationCacheUsage> {
     let actor = crate::backend::api::github::auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?
         .user
         .id;
-    match crate::backend::db::action_objects::org_cache_usage(
+    match codeyard_db_actions::action_objects::org_cache_usage(
         &state.pool,
         actor,
         name,

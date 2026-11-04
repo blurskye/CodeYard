@@ -26,7 +26,7 @@ async fn list(
         .ok_or_else(crate::backend::api::github::auth::required)?
         .user;
     let (offset, limit) = page.window()?;
-    let teams = crate::backend::db::repositories::github::repository_teams(
+    let teams = codeyard_db_repos::repositories::github::repository_teams(
         &state.pool,
         actor.id,
         repository.id,

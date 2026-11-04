@@ -1,10 +1,10 @@
 //! Accepted ref activity shared by editor/branch/merge publication and Git HTTP/SSH hooks.
 
-use crate::backend::db::repositories::activity::Kind;
-use crate::backend::db::repositories::activity::RefActivity;
 use crate::backend::webhooks::ref_changes::RefMove;
 use anyhow::{Context, Result};
 use codeyard_db_core::DbPool;
+use codeyard_db_repos::repositories::activity::Kind;
+use codeyard_db_repos::repositories::activity::RefActivity;
 use codeyard_git as git;
 use std::path::Path;
 use uuid::Uuid;
@@ -40,7 +40,7 @@ pub async fn record_moves(
                 changes.push(RefActivity::new(reference, before, after, kind)?);
             }
             if !changes.is_empty() {
-                crate::backend::db::repositories::activity::record(
+                codeyard_db_repos::repositories::activity::record(
                     &pool, repo, actor, &operation, &changes,
                 )
                 .await?;
@@ -70,7 +70,7 @@ pub struct Query {
 #[error("{0}")]
 pub struct InvalidQuery(pub &'static str);
 pub struct Page {
-    pub rows: Vec<crate::backend::db::repositories::activity::Activity>,
+    pub rows: Vec<codeyard_db_repos::repositories::activity::Activity>,
     pub previous: Option<String>,
     pub next: Option<String>,
 }
@@ -169,7 +169,7 @@ pub async fn page(pool: &DbPool, repo: i64, input: &Query, viewer: Option<i64>) 
     };
     let reverse = input.before.is_some();
     let limit = input.per_page.unwrap_or(30).clamp(1, 100);
-    let filter = crate::backend::db::repositories::activity::Filter {
+    let filter = codeyard_db_repos::repositories::activity::Filter {
         boundary,
         descending: descending != reverse,
         reference: input.reference.as_deref().filter(|value| !value.is_empty()),
@@ -177,7 +177,7 @@ pub async fn page(pool: &DbPool, repo: i64, input: &Query, viewer: Option<i64>) 
         kind,
         since,
     };
-    let mut rows = crate::backend::db::repositories::activity::list(
+    let mut rows = codeyard_db_repos::repositories::activity::list(
         pool,
         repo,
         &filter,

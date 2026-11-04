@@ -38,7 +38,7 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> (usiz
     let mut processed = 0;
     for _ in 0..PER_PASS {
         let message =
-            match crate::backend::db::email::claim_due_email(pool, MAX_ATTEMPTS, CLAIM_SECONDS)
+            match codeyard_db_identity::email::claim_due_email(pool, MAX_ATTEMPTS, CLAIM_SECONDS)
                 .await
             {
                 Ok(Some(message)) => message,
@@ -51,12 +51,12 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> (usiz
         processed += 1;
         // Claims can outlive a link rotation or a notification's repository grant.
         let allowed =
-            match crate::backend::db::email::delivery_allowed(pool, message.id, message.attempts)
+            match codeyard_db_identity::email::delivery_allowed(pool, message.id, message.attempts)
                 .await
             {
                 Ok(true) => match message.notification_id {
                     Some(notification) => {
-                        crate::backend::db::notifications::records::notification_email_allowed(
+                        codeyard_db_repos::notifications::records::notification_email_allowed(
                             pool,
                             notification,
                         )
@@ -69,10 +69,11 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> (usiz
         let refusal = match allowed {
             Ok(true) => None,
             Ok(false) => Some(
-                crate::backend::db::email::withdraw_email(pool, message.id, message.attempts).await,
+                codeyard_db_identity::email::withdraw_email(pool, message.id, message.attempts)
+                    .await,
             ),
             Err(error) => Some(
-                crate::backend::db::email::mark_email_failed(
+                codeyard_db_identity::email::mark_email_failed(
                     pool,
                     message.id,
                     message.attempts,
@@ -99,11 +100,12 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> (usiz
         {
             Ok(()) => {
                 sent += 1;
-                crate::backend::db::email::mark_email_sent(pool, message.id, message.attempts).await
+                codeyard_db_identity::email::mark_email_sent(pool, message.id, message.attempts)
+                    .await
             }
             Err(error) => {
                 warn!(%error, id = message.id, attempts = message.attempts, "email send failed");
-                crate::backend::db::email::mark_email_failed(
+                codeyard_db_identity::email::mark_email_failed(
                     pool,
                     message.id,
                     message.attempts,
@@ -137,7 +139,8 @@ pub async fn run(
             info!(sent, "sent queued email");
         }
         if pass.is_multiple_of(PRUNE_EVERY) {
-            match crate::backend::db::email::remove_old_email(&pool, MAX_ATTEMPTS, KEEP_DAYS).await
+            match codeyard_db_identity::email::remove_old_email(&pool, MAX_ATTEMPTS, KEEP_DAYS)
+                .await
             {
                 Ok(0) => {}
                 Ok(removed) => info!(removed, "removed old queued email"),

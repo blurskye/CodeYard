@@ -35,7 +35,7 @@ impl CiRuns {
         sender: i64,
         event_type: String,
         client_payload: Value,
-        credential: crate::backend::db::ci::CiCredential,
+        credential: codeyard_db_core::queries::ci::CiCredential,
     ) -> Result<(), AdmissionError> {
         if repo.is_archived {
             return Err(AdmissionError::Denied(
@@ -88,11 +88,9 @@ impl CiRuns {
         let Some(actor) = run.triggered_by_id else {
             return Ok(());
         };
-        let Some(repo) = crate::backend::db::repositories::records::get_repository_by_id(
-            &self.pool,
-            run.repo_id,
-        )
-        .await?
+        let Some(repo) =
+            codeyard_db_repos::repositories::records::get_repository_by_id(&self.pool, run.repo_id)
+                .await?
         else {
             return Ok(());
         };
@@ -114,7 +112,7 @@ impl CiRuns {
                 break;
             };
             let Some(previous) =
-                crate::backend::db::ci::get_ci_run_by_id(&self.pool, repo.id, id).await?
+                codeyard_db_actions::ci::get_ci_run_by_id(&self.pool, repo.id, id).await?
             else {
                 may_chain = false;
                 break;
@@ -122,13 +120,13 @@ impl CiRuns {
             source = previous;
         }
         let store = repo_store(&repo, self.cluster.as_ref());
-        let owner = crate::backend::db::ci::ci_repository_owner(&self.pool, repo.id)
+        let owner = codeyard_db_actions::ci::ci_repository_owner(&self.pool, repo.id)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
-        let sender = crate::backend::db::users::accounts::get_user_by_id(&self.pool, actor)
+        let sender = codeyard_db_identity::users::accounts::get_user_by_id(&self.pool, actor)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
-        let metadata = crate::backend::db::action_runs::metadata(&self.pool, repo.id, &[run.id])
+        let metadata = codeyard_db_actions::action_runs::metadata(&self.pool, repo.id, &[run.id])
             .await?
             .into_iter()
             .next()
@@ -139,7 +137,7 @@ impl CiRuns {
         } else {
             match metadata.head_repository.as_ref() {
                 Some(snapshot) => {
-                    match crate::backend::db::repositories::records::get_repository_by_id(
+                    match codeyard_db_repos::repositories::records::get_repository_by_id(
                         &self.pool,
                         snapshot.0.id,
                     )
@@ -149,7 +147,7 @@ impl CiRuns {
                     {
                         Some(head) if head.id == repo.id => repository.clone(),
                         Some(head) if !head.is_private => {
-                            match crate::backend::db::ci::ci_repository_owner(&self.pool, head.id)
+                            match codeyard_db_actions::ci::ci_repository_owner(&self.pool, head.id)
                                 .await
                                 .ok()
                                 .flatten()
@@ -174,7 +172,7 @@ impl CiRuns {
             }),
             None => Value::Null,
         };
-        let workflow_document = crate::backend::db::action_workflows::workflow_by_id(
+        let workflow_document = codeyard_db_actions::action_workflows::workflow_by_id(
             &self.pool,
             repo.id,
             metadata.workflow_id,
@@ -185,7 +183,7 @@ impl CiRuns {
         });
         let pull = match run.pull_request_id {
             Some(id) => {
-                crate::backend::db::pull_requests::records::get_pull_request_by_id(&self.pool, id)
+                codeyard_db_repos::pull_requests::records::get_pull_request_by_id(&self.pool, id)
                     .await?
                     .filter(|pull| pull.repo_id == repo.id)
             }
@@ -219,14 +217,16 @@ impl CiRuns {
         // A rerun keeps the first attempt's actor; whoever reran it is the triggering actor, as
         // in the REST document.
         let first = match run.workflow_run_id.filter(|id| *id != run.id) {
-            Some(root) => crate::backend::db::ci::get_ci_run_by_id(&self.pool, repo.id, root)
+            Some(root) => codeyard_db_actions::ci::get_ci_run_by_id(&self.pool, repo.id, root)
                 .await?
                 .and_then(|first| first.triggered_by_id)
                 .filter(|id| *id != actor),
             None => None,
         };
         let first = match first {
-            Some(id) => crate::backend::db::users::accounts::get_user_by_id(&self.pool, id).await?,
+            Some(id) => {
+                codeyard_db_identity::users::accounts::get_user_by_id(&self.pool, id).await?
+            }
             None => None,
         };
         document["actor"] =
@@ -277,27 +277,25 @@ impl CiRuns {
         job_id: i64,
         action: &'static str,
     ) -> anyhow::Result<()> {
-        let Some(run) = crate::backend::db::ci::get_ci_run(&self.pool, run_id).await? else {
+        let Some(run) = codeyard_db_actions::ci::get_ci_run(&self.pool, run_id).await? else {
             return Ok(());
         };
         let Some(actor) = run.triggered_by_id else {
             return Ok(());
         };
-        let Some(repo) = crate::backend::db::repositories::records::get_repository_by_id(
-            &self.pool,
-            run.repo_id,
-        )
-        .await?
+        let Some(repo) =
+            codeyard_db_repos::repositories::records::get_repository_by_id(&self.pool, run.repo_id)
+                .await?
         else {
             return Ok(());
         };
         // The queued event names a job that has not started yet.
         let Some(job) =
-            crate::backend::db::action_jobs::get(&self.pool, repo.id, job_id, true).await?
+            codeyard_db_actions::action_jobs::get(&self.pool, repo.id, job_id, true).await?
         else {
             return Ok(());
         };
-        let steps = crate::backend::db::action_jobs::steps(&self.pool, repo.id, job_id).await?;
+        let steps = codeyard_db_actions::action_jobs::steps(&self.pool, repo.id, job_id).await?;
         let snapshot = repo.clone();
         crate::backend::webhooks::emit(
             &self.pool,
@@ -332,14 +330,14 @@ impl CiRuns {
         actor: i64,
         event: &str,
         payload: &Value,
-        credential: Option<crate::backend::db::ci::CiCredential>,
+        credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<(), AdmissionError> {
         if !is_repository_event(event) || !self.actor_may_discover_workflows(repo.id, actor).await?
         {
             return Ok(());
         }
         // With Actions turned off the event is still accepted; it just starts nothing.
-        if !crate::backend::db::action_settings::actions_enabled(&self.pool, repo.id).await? {
+        if !codeyard_db_actions::action_settings::actions_enabled(&self.pool, repo.id).await? {
             return Ok(());
         }
         let store = repo_store(repo, self.cluster.as_ref());

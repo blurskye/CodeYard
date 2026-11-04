@@ -5,8 +5,8 @@ use crate::backend::api::github::migrations::AppState;
 use crate::backend::api::github::migrations::Error;
 use crate::backend::api::github::migrations::Result;
 
-use crate::backend::db::import_authors::Author;
-use crate::backend::db::source_imports::ImportRefusal;
+use codeyard_db_core::queries::source_imports::ImportRefusal;
+use codeyard_db_identity::import_authors::Author;
 
 use crate::backend::repositories::store::repo_store;
 
@@ -89,7 +89,7 @@ async fn list(
     Query(query): Query<Since>,
 ) -> Result<Json<Value>> {
     let (repo, actor) = administrator(&state, &headers, &owner, &name, false).await?;
-    crate::backend::db::source_imports::get(&state.pool, repo.id)
+    codeyard_db_repos::source_imports::get(&state.pool, repo.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -129,7 +129,7 @@ async fn list(
     }
     let authors = authors.into_iter().collect::<Vec<_>>();
     let mut rows =
-        crate::backend::db::import_authors::record(&state.pool, actor.user.id, repo.id, &authors)
+        codeyard_db_identity::import_authors::record(&state.pool, actor.user.id, repo.id, &authors)
             .await
             .map_err(error)?;
     rows.retain(|row| row.id > query.since.unwrap_or(0));
@@ -173,7 +173,7 @@ async fn map(
     {
         return Err(Error::validation("PorterAuthor", "email", "invalid"));
     }
-    let row = crate::backend::db::import_authors::map(
+    let row = codeyard_db_identity::import_authors::map(
         &state.pool,
         actor.user.id,
         repo.id,

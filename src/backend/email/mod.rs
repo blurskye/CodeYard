@@ -20,7 +20,8 @@ pub async fn notify_user(pool: &DbPool, notification: &codeyard_db_core::models:
     if !config::is_configured(pool).await {
         return;
     }
-    match crate::backend::db::email::notification_email_address(pool, notification.user_id).await {
+    match codeyard_db_identity::email::notification_email_address(pool, notification.user_id).await
+    {
         Ok(Some(to)) => {
             let mail = codeyard_model::mail_messages::notification(
                 &public_origin(),
@@ -28,7 +29,7 @@ pub async fn notify_user(pool: &DbPool, notification: &codeyard_db_core::models:
                 notification.body.as_deref(),
                 notification.link.as_deref(),
             );
-            if let Err(error) = crate::backend::db::email::enqueue_notification_email(
+            if let Err(error) = codeyard_db_identity::email::enqueue_notification_email(
                 pool,
                 notification.id,
                 &to,
@@ -86,7 +87,7 @@ pub async fn send_test(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::db::email::NewEmailSettings;
+    use codeyard_db_identity::email::NewEmailSettings;
 
     struct Fixture {
         _directory: tempfile::TempDir,
@@ -104,7 +105,7 @@ mod tests {
         .await
         .unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let admin = crate::backend::db::users::accounts::create_user(
+        let admin = codeyard_db_identity::users::accounts::create_user(
             &pool,
             "admin",
             Some("admin@example.com"),
@@ -157,7 +158,7 @@ mod tests {
             Some((ciphertext.as_slice(), nonce.as_slice())),
         );
         assert!(
-            crate::backend::db::email::save_email_settings(&f.pool, f.admin, "live", &first)
+            codeyard_db_identity::email::save_email_settings(&f.pool, f.admin, "live", &first)
                 .await
                 .unwrap()
         );
@@ -173,11 +174,11 @@ mod tests {
 
         // Saving without a password keeps the one already stored.
         let second = settings("smtp.example.org", None);
-        assert!(
-            crate::backend::db::email::save_email_settings(&f.pool, f.admin, "live", &second)
-                .await
-                .unwrap()
-        );
+        assert!(codeyard_db_identity::email::save_email_settings(
+            &f.pool, f.admin, "live", &second
+        )
+        .await
+        .unwrap());
         let (saved, _) = config::load(&f.pool, Some(&f.secrets))
             .await
             .unwrap()
@@ -195,20 +196,20 @@ mod tests {
     async fn only_a_signed_in_administrator_can_save() {
         let f = fixture().await;
         let input = settings("mail.example.com", None);
-        assert!(!crate::backend::db::email::save_email_settings(
+        assert!(!codeyard_db_identity::email::save_email_settings(
             &f.pool, f.admin, "expired", &input
         )
         .await
         .unwrap());
-        let user = crate::backend::db::users::accounts::create_user(&f.pool, "bob", None)
+        let user = codeyard_db_identity::users::accounts::create_user(&f.pool, "bob", None)
             .await
             .unwrap();
-        assert!(
-            !crate::backend::db::email::save_email_settings(&f.pool, user.id, "live", &input)
-                .await
-                .unwrap()
-        );
-        assert!(crate::backend::db::email::get_email_settings(&f.pool)
+        assert!(!codeyard_db_identity::email::save_email_settings(
+            &f.pool, user.id, "live", &input
+        )
+        .await
+        .unwrap());
+        assert!(codeyard_db_identity::email::get_email_settings(&f.pool)
             .await
             .unwrap()
             .is_none());
@@ -217,7 +218,7 @@ mod tests {
     #[tokio::test]
     async fn notification_mail_needs_a_verified_address_and_the_preference() {
         let f = fixture().await;
-        let unverified = crate::backend::db::users::accounts::create_user(
+        let unverified = codeyard_db_identity::users::accounts::create_user(
             &f.pool,
             "bob",
             Some("bob@example.com"),
@@ -225,43 +226,43 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            crate::backend::db::email::notification_email_address(&f.pool, f.admin)
+            codeyard_db_identity::email::notification_email_address(&f.pool, f.admin)
                 .await
                 .unwrap()
                 .as_deref(),
             Some("admin@example.com")
         );
         assert_eq!(
-            crate::backend::db::email::notification_email_address(&f.pool, unverified.id)
+            codeyard_db_identity::email::notification_email_address(&f.pool, unverified.id)
                 .await
                 .unwrap(),
             None
         );
 
-        assert!(crate::backend::db::email::get_email_notifications(
+        assert!(codeyard_db_identity::email::get_email_notifications(
             &f.pool,
             f.admin,
-            &crate::backend::db::users::accounts::AccountCredential::Session("live")
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session("live")
         )
         .await
         .unwrap());
-        crate::backend::db::email::set_email_notifications(
+        codeyard_db_identity::email::set_email_notifications(
             &f.pool,
             f.admin,
-            &crate::backend::db::users::accounts::AccountCredential::Session("live"),
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session("live"),
             false,
         )
         .await
         .unwrap();
-        assert!(!crate::backend::db::email::get_email_notifications(
+        assert!(!codeyard_db_identity::email::get_email_notifications(
             &f.pool,
             f.admin,
-            &crate::backend::db::users::accounts::AccountCredential::Session("live")
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session("live")
         )
         .await
         .unwrap());
         assert_eq!(
-            crate::backend::db::email::notification_email_address(&f.pool, f.admin)
+            codeyard_db_identity::email::notification_email_address(&f.pool, f.admin)
                 .await
                 .unwrap(),
             None
@@ -273,9 +274,9 @@ mod tests {
         let f = fixture().await;
         static NO_METADATA: serde_json::Value = serde_json::Value::Null;
         let notification = |body: Option<&'static str>, link: Option<&'static str>| {
-            crate::backend::db::notifications::records::create_notification(
+            codeyard_db_repos::notifications::records::create_notification(
                 &f.pool,
-                crate::backend::db::notifications::records::NewNotification {
+                codeyard_db_core::queries::notifications::records::NewNotification {
                     user_id: f.admin,
                     actor_id: None,
                     repo_id: None,
@@ -289,10 +290,10 @@ mod tests {
         };
         notify_user(&f.pool, &notification(None, None).await.unwrap()).await;
         // Signup review needs a finished setup and a live administrator session.
-        crate::backend::db::node_config::upsert_node_configuration(&f.pool, "public", true)
+        codeyard_db_cluster::node_config::upsert_node_configuration(&f.pool, "public", true)
             .await
             .unwrap();
-        let early = crate::backend::db::users::signup_requests::create_signup_request(
+        let early = codeyard_db_identity::users::signup_requests::create_signup_request(
             &f.pool,
             "carol",
             Some("carol@example.com"),
@@ -300,25 +301,27 @@ mod tests {
         )
         .await
         .unwrap();
-        crate::backend::db::users::signup_requests::reject_signup_request(
+        codeyard_db_identity::users::signup_requests::reject_signup_request(
             &f.pool,
             early.id,
             (f.admin, "live".to_owned()),
         )
         .await
         .unwrap();
-        assert!(crate::backend::db::email::claim_due_email(&f.pool, 5, 600)
-            .await
-            .unwrap()
-            .is_none());
+        assert!(
+            codeyard_db_identity::email::claim_due_email(&f.pool, 5, 600)
+                .await
+                .unwrap()
+                .is_none()
+        );
 
         let input = settings("mail.example.com", None);
-        crate::backend::db::email::save_email_settings(&f.pool, f.admin, "live", &input)
+        codeyard_db_identity::email::save_email_settings(&f.pool, f.admin, "live", &input)
             .await
             .unwrap();
         let mail = notification(Some("Body"), Some("/x")).await.unwrap();
         notify_user(&f.pool, &mail).await;
-        let later = crate::backend::db::users::signup_requests::create_signup_request(
+        let later = codeyard_db_identity::users::signup_requests::create_signup_request(
             &f.pool,
             "dave",
             Some("dave@example.com"),
@@ -326,18 +329,18 @@ mod tests {
         )
         .await
         .unwrap();
-        crate::backend::db::users::signup_requests::reject_signup_request(
+        codeyard_db_identity::users::signup_requests::reject_signup_request(
             &f.pool,
             later.id,
             (f.admin, "live".to_owned()),
         )
         .await
         .unwrap();
-        let first = crate::backend::db::email::claim_due_email(&f.pool, 5, 600)
+        let first = codeyard_db_identity::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
             .unwrap();
-        let second = crate::backend::db::email::claim_due_email(&f.pool, 5, 600)
+        let second = codeyard_db_identity::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
             .unwrap();
@@ -347,11 +350,9 @@ mod tests {
         );
         assert_eq!(first.notification_id, Some(mail.id));
         assert!(
-            crate::backend::db::notifications::records::notification_email_allowed(
-                &f.pool, mail.id
-            )
-            .await
-            .unwrap()
+            codeyard_db_repos::notifications::records::notification_email_allowed(&f.pool, mail.id)
+                .await
+                .unwrap()
         );
         // The signup decision mail is queued with the decision once a mail server is set up.
         assert_eq!(second.to_address, "dave@example.com");
@@ -363,14 +364,14 @@ mod tests {
         let DbPool::Sqlite(raw) = &f.pool else {
             unreachable!()
         };
-        crate::backend::db::email::enqueue_email(&f.pool, "a@example.com", "One", "Body")
+        codeyard_db_identity::email::enqueue_email(&f.pool, "a@example.com", "One", "Body")
             .await
             .unwrap();
 
         // Two claims at once get the one message between them.
         let (left, right) = tokio::join!(
-            crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600),
-            crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600),
+            codeyard_db_identity::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600),
+            codeyard_db_identity::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600),
         );
         let claimed: Vec<_> = [left.unwrap(), right.unwrap()]
             .into_iter()
@@ -380,7 +381,7 @@ mod tests {
         assert_eq!(claimed[0].attempts, 1);
         // A claimed message is held, so it is not handed out again.
         assert!(
-            crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
+            codeyard_db_identity::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
                 .await
                 .unwrap()
                 .is_none()
@@ -389,7 +390,7 @@ mod tests {
         // Each failure sets the next attempt; with no wait it is due again at once.
         let id = claimed[0].id;
         for attempts in 1..=outbox::MAX_ATTEMPTS {
-            crate::backend::db::email::mark_email_failed(
+            codeyard_db_identity::email::mark_email_failed(
                 &f.pool,
                 id,
                 attempts,
@@ -400,7 +401,7 @@ mod tests {
             .await
             .unwrap();
             let next =
-                crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
+                codeyard_db_identity::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
                     .await
                     .unwrap();
             if attempts == outbox::MAX_ATTEMPTS {
@@ -423,14 +424,14 @@ mod tests {
         assert_eq!(body, "", "a given-up message keeps no body");
 
         // A failure with a wait is not due yet.
-        crate::backend::db::email::enqueue_email(&f.pool, "b@example.com", "Two", "Body")
+        codeyard_db_identity::email::enqueue_email(&f.pool, "b@example.com", "Two", "Body")
             .await
             .unwrap();
-        let two = crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
+        let two = codeyard_db_identity::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
             .await
             .unwrap()
             .unwrap();
-        crate::backend::db::email::mark_email_failed(
+        codeyard_db_identity::email::mark_email_failed(
             &f.pool,
             two.id,
             two.attempts,
@@ -441,14 +442,14 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
+            codeyard_db_identity::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
                 .await
                 .unwrap()
                 .is_none()
         );
 
         // Sent mail and given-up mail are pruned once old; waiting mail stays.
-        crate::backend::db::email::enqueue_email(&f.pool, "c@example.com", "Three", "Body")
+        codeyard_db_identity::email::enqueue_email(&f.pool, "c@example.com", "Three", "Body")
             .await
             .unwrap();
         sqlx::query("UPDATE email_outbox SET sent_at=created_at WHERE subject='Three'")
@@ -460,7 +461,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            crate::backend::db::email::remove_old_email(&f.pool, outbox::MAX_ATTEMPTS, 14)
+            codeyard_db_identity::email::remove_old_email(&f.pool, outbox::MAX_ATTEMPTS, 14)
                 .await
                 .unwrap(),
             2
@@ -472,19 +473,19 @@ mod tests {
         assert_eq!(left, ["Two"]);
 
         // A sender that dies mid-send still uses up the attempts, and the message is given up.
-        crate::backend::db::email::enqueue_email(&f.pool, "d@example.com", "Four", "Body")
+        codeyard_db_identity::email::enqueue_email(&f.pool, "d@example.com", "Four", "Body")
             .await
             .unwrap();
         for attempt in 1..=outbox::MAX_ATTEMPTS {
             let claimed =
-                crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 0)
+                codeyard_db_identity::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 0)
                     .await
                     .unwrap()
                     .unwrap();
             assert_eq!(claimed.attempts, attempt);
         }
         assert!(
-            crate::backend::db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 0)
+            codeyard_db_identity::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 0)
                 .await
                 .unwrap()
                 .is_none()

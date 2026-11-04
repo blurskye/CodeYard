@@ -82,7 +82,7 @@ pub async fn get_pull_request_diff(
 ) -> Result<Json<DiffInfo>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    let pull_request = crate::backend::db::pull_requests::records::get_pull_request(
+    let pull_request = codeyard_db_repos::pull_requests::records::get_pull_request(
         &state.pool,
         repository.id,
         number,
@@ -144,7 +144,7 @@ async fn viewed_marks(
 ) -> ResultPage<pulls::Viewed> {
     let displayed: Vec<String> = files.iter().map(|file| file.filename.clone()).collect();
     let marks: HashMap<String, String> =
-        crate::backend::db::pull_requests::viewed::list_pull_request_viewed_files(
+        codeyard_db_repos::pull_requests::viewed::list_pull_request_viewed_files(
             &ctx.state.pool,
             pull_id,
             user_id,
@@ -228,7 +228,7 @@ pub(crate) async fn render_diff(
     error: Option<&str>,
     status: StatusCode,
 ) -> ResultPage<Response> {
-    let mut pull = crate::backend::db::pull_requests::records::get_pull_request(
+    let mut pull = codeyard_db_repos::pull_requests::records::get_pull_request(
         &ctx.state.pool,
         repo.record.id,
         value.number,
@@ -265,7 +265,7 @@ pub(crate) async fn render_diff(
         &pull.base_sha,
     )
     .await?;
-    let inline = crate::backend::db::pull_requests::reviews::list_pull_request_inline_comments(
+    let inline = codeyard_db_repos::pull_requests::reviews::list_pull_request_inline_comments(
         &ctx.state.pool,
         pull.id,
     )
@@ -274,7 +274,7 @@ pub(crate) async fn render_diff(
     let truncated = inline.truncated;
     // The viewer's own pending comments show here, and nobody else's do.
     let pending = match ctx.user.as_ref() {
-        Some(user) => crate::backend::db::pull_requests::reviews::list_pending_review_comments(
+        Some(user) => codeyard_db_repos::pull_requests::reviews::list_pending_review_comments(
             &ctx.state.pool,
             pull.id,
             user.id,
@@ -289,7 +289,7 @@ pub(crate) async fn render_diff(
     let pending = pending.comments;
     let pending_ids: HashSet<i64> = pending.iter().map(|entry| entry.comment.id).collect();
     let stored = match (&review, ctx.user.as_ref()) {
-        (None, Some(user)) => crate::backend::db::pull_requests::reviews::get_pending_review(
+        (None, Some(user)) => codeyard_db_repos::pull_requests::reviews::get_pending_review(
             &ctx.state.pool,
             pull.id,
             user.id,

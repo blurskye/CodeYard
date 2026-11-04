@@ -2,13 +2,13 @@
 //! The queries apply the repository visibility rule, so a row the viewer cannot read is never
 //! returned. Each list is capped at `LIST_LIMIT`; the counts are not.
 
-use crate::backend::db::discussions::StateCounts;
-use crate::backend::db::issues::IssueRelation;
-use crate::backend::db::issues::ViewerIssueEntry;
-use crate::backend::db::pull_requests::records::PullRequestRelation;
-use crate::backend::db::pull_requests::records::ViewerPullRequestEntry;
 use anyhow::Result;
 use codeyard_db_core::DbPool;
+use codeyard_db_repos::discussions::StateCounts;
+use codeyard_db_repos::issues::IssueRelation;
+use codeyard_db_repos::issues::ViewerIssueEntry;
+use codeyard_db_repos::pull_requests::records::PullRequestRelation;
+use codeyard_db_repos::pull_requests::records::ViewerPullRequestEntry;
 
 pub const LIST_LIMIT: i64 = 100;
 
@@ -30,9 +30,9 @@ pub async fn list_issues(
 ) -> Result<IssueList> {
     // The rows carry their labels and comment counts, read in the rows' snapshot.
     let rows =
-        crate::backend::db::issues::list_viewer_issues(pool, viewer_id, relation, open, LIST_LIMIT)
+        codeyard_db_repos::issues::list_viewer_issues(pool, viewer_id, relation, open, LIST_LIMIT)
             .await?;
-    let counts = crate::backend::db::issues::count_viewer_issues(pool, viewer_id, relation).await?;
+    let counts = codeyard_db_repos::issues::count_viewer_issues(pool, viewer_id, relation).await?;
     Ok(IssueList { rows, counts })
 }
 
@@ -42,11 +42,11 @@ pub async fn list_pull_requests(
     relation: PullRequestRelation,
     open: bool,
 ) -> Result<PullRequestList> {
-    let rows = crate::backend::db::pull_requests::records::list_viewer_pull_requests(
+    let rows = codeyard_db_repos::pull_requests::records::list_viewer_pull_requests(
         pool, viewer_id, relation, open, LIST_LIMIT,
     )
     .await?;
-    let counts = crate::backend::db::pull_requests::records::count_viewer_pull_requests(
+    let counts = codeyard_db_repos::pull_requests::records::count_viewer_pull_requests(
         pool, viewer_id, relation,
     )
     .await?;

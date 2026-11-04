@@ -5,15 +5,15 @@ use crate::backend::api::repos::forms::authorize_post;
 
 use crate::backend::api::repos::pulls::diff::diff_url;
 
-use crate::backend::db::reactions::ReactionRefusal;
-use crate::backend::db::reactions::Subject;
-use crate::backend::db::reactions::CONTENTS;
 use crate::backend::issues::discussion_link_at;
 use crate::backend::issues::MAX_COMMENT_PAGE;
 use crate::backend::issues::MAX_REVIEW_COMMENT_OFFSET;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_db_repos::reactions::ReactionRefusal;
+use codeyard_db_repos::reactions::Subject;
+use codeyard_db_repos::reactions::CONTENTS;
 use codeyard_webui::pages::repos::issues::{CommentPage, Item, Kind, Reaction};
 use codeyard_webui::pages::repos::pulls::Thread;
 use std::collections::HashMap;
@@ -42,7 +42,7 @@ pub(crate) async fn native_react(
         Kind::Issue => (
             Subject::Issue,
             Subject::IssueComment,
-            crate::backend::db::issues::get_issue(pool, repo.record.id, number)
+            codeyard_db_repos::issues::get_issue(pool, repo.record.id, number)
                 .await
                 .map_err(|_| unavailable(&ctx))?
                 .map(|issue| issue.id),
@@ -50,7 +50,7 @@ pub(crate) async fn native_react(
         Kind::Pull => (
             Subject::PullRequest,
             Subject::PullRequestComment,
-            crate::backend::db::pull_requests::records::get_pull_request(
+            codeyard_db_repos::pull_requests::records::get_pull_request(
                 pool,
                 repo.record.id,
                 number,
@@ -98,10 +98,10 @@ pub(crate) async fn native_react(
         discussion_link_at(&base, page, offset, &anchor)
     };
     // The write checks the reactor's access, the archive state and the target in its transaction.
-    crate::backend::db::reactions::toggle_reaction(
+    codeyard_db_repos::reactions::toggle_reaction(
         pool,
         ctx.require_user()?.id,
-        &crate::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                 .unwrap_or_default(),
         ),
@@ -144,14 +144,10 @@ async fn reactions_on(
     ids: &[i64],
 ) -> ResultPage<HashMap<i64, Vec<Reaction>>> {
     let viewer = ctx.user.as_ref().map_or(0, |user| user.id);
-    let rows = crate::backend::db::reactions::reaction_counts(
-        &ctx.state.pool,
-        subject.name(),
-        ids,
-        viewer,
-    )
-    .await
-    .map_err(|_| unavailable(ctx))?;
+    let rows =
+        codeyard_db_repos::reactions::reaction_counts(&ctx.state.pool, subject.name(), ids, viewer)
+            .await
+            .map_err(|_| unavailable(ctx))?;
     let mut grouped: HashMap<i64, Vec<Reaction>> = HashMap::new();
     for row in rows {
         grouped.entry(row.subject_id).or_default().push(Reaction {

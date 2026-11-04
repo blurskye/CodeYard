@@ -23,7 +23,7 @@ pub(super) async fn authorize(
         || caller.owner_kind != called.owner_kind
         || caller.owner_user_id != called.owner_user_id
         || caller.owner_org_id != called.owner_org_id
-        || !crate::backend::db::repositories::access::get_user_repo_access(pool, actor, called.id)
+        || !codeyard_db_repos::repositories::access::get_user_repo_access(pool, actor, called.id)
             .await?
             .can_read()
     {
@@ -32,8 +32,8 @@ pub(super) async fn authorize(
     // The called repository's Actions access setting decides whether other repositories in its
     // namespace may call it. As on GitHub, an unset setting shares nothing.
     let (called_settings, _) =
-        crate::backend::db::action_settings::effective(pool, called.id).await?;
-    let access = crate::backend::db::action_settings::Setting::Access;
+        codeyard_db_actions::action_settings::effective(pool, called.id).await?;
+    let access = codeyard_db_core::queries::action_settings::Setting::Access;
     let level = called_settings
         .get(access.key())
         .unwrap_or(&access.defaults())
@@ -54,7 +54,7 @@ pub(super) struct Resolver<'a> {
     pub actor: i64,
     pub files: BTreeMap<String, serde_json::Value>,
     pub environment: Option<String>,
-    pub scheduling: crate::backend::db::runners::Scheduling,
+    pub scheduling: codeyard_db_actions::runners::Scheduling,
     active: BTreeSet<String>,
     called: BTreeSet<String>,
     /// Each called ref's commit and the full ref name OIDC claims carry.
@@ -111,7 +111,7 @@ impl<'a> Resolver<'a> {
             actor,
             files: BTreeMap::new(),
             environment,
-            scheduling: crate::backend::db::runners::Scheduling::default(),
+            scheduling: codeyard_db_actions::runners::Scheduling::default(),
             active: BTreeSet::new(),
             called: BTreeSet::new(),
             refs: BTreeMap::new(),
@@ -232,7 +232,7 @@ impl<'a> Resolver<'a> {
                     {
                         return Err(AdmissionError::Invalid("Invalid called workflow reference"));
                     }
-                    let target = crate::backend::db::repositories::records::get_repository(
+                    let target = codeyard_db_repos::repositories::records::get_repository(
                         self.pool, owner, name,
                     )
                     .await?

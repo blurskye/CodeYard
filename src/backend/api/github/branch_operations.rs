@@ -104,7 +104,7 @@ async fn upstream(
         .await
         .map_err(crate::backend::api::github::auth::scope_error)?;
     let parent_owner =
-        crate::backend::db::repositories::records::repository_owner_name(&state.pool, parent.id)
+        codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, parent.id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;

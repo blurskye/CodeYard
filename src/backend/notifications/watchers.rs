@@ -72,7 +72,7 @@ pub async fn notify_watchers(
     loop {
         // The query applies the event, ignore, account and read rules, so every user it returns
         // is notified.
-        let batch = match crate::backend::db::repositories::engagement::list_event_watchers(
+        let batch = match codeyard_db_repos::repositories::engagement::list_event_watchers(
             pool,
             item.repository.id,
             item.event.name(),

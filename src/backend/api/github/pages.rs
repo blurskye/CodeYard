@@ -25,18 +25,18 @@ fn failure(error: anyhow::Error) -> Error {
     if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return Error::new(StatusCode::FORBIDDEN, "Pages administration denied");
     }
-    match error.downcast_ref::<crate::backend::db::pages::Refusal>() {
-        Some(crate::backend::db::pages::Refusal::Denied) => {
+    match error.downcast_ref::<codeyard_db_repos::pages::Refusal>() {
+        Some(codeyard_db_repos::pages::Refusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Pages administration denied")
         }
-        Some(crate::backend::db::pages::Refusal::Missing) => Error::missing(),
-        Some(crate::backend::db::pages::Refusal::Duplicate) => {
+        Some(codeyard_db_repos::pages::Refusal::Missing) => Error::missing(),
+        Some(codeyard_db_repos::pages::Refusal::Duplicate) => {
             Error::validation("Pages", "site", "already_exists")
         }
-        Some(crate::backend::db::pages::Refusal::Invalid) => {
+        Some(codeyard_db_repos::pages::Refusal::Invalid) => {
             Error::validation("Pages", "configuration", "invalid")
         }
-        Some(crate::backend::db::pages::Refusal::Conflict) => Error::new(
+        Some(codeyard_db_repos::pages::Refusal::Conflict) => Error::new(
             StatusCode::CONFLICT,
             "This Pages deployment is no longer cancellable",
         ),
@@ -56,8 +56,8 @@ async fn visible(
 }
 fn reader(
     actor: Option<&crate::backend::api::github::auth::Authentication>,
-) -> crate::backend::db::repositories::credentials::Reader<'_> {
-    crate::backend::db::repositories::credentials::Reader {
+) -> codeyard_db_repos::repositories::credentials::Reader<'_> {
+    codeyard_db_repos::repositories::credentials::Reader {
         user: actor.map(|actor| actor.user.id),
         credential: actor.map(crate::backend::api::github::auth::Authentication::credential),
     }
@@ -66,14 +66,14 @@ async fn require_site(
     state: &AppState,
     actor: Option<&crate::backend::api::github::auth::Authentication>,
     repo: i64,
-) -> Result<crate::backend::db::pages::Site> {
-    crate::backend::db::pages::site(&state.pool, &reader(actor), repo)
+) -> Result<codeyard_db_repos::pages::Site> {
+    codeyard_db_repos::pages::site(&state.pool, &reader(actor), repo)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)
 }
 fn site_document(
-    site: &crate::backend::db::pages::Site,
+    site: &codeyard_db_repos::pages::Site,
     owner: &str,
     name: &str,
     status: Option<&str>,
@@ -92,7 +92,7 @@ async fn settings(
     let (repo, actor) = visible(&state, &headers, &params, false).await?;
     let site = require_site(&state, actor.as_ref(), repo.id).await?;
     let builds =
-        crate::backend::db::pages::builds(&state.pool, &reader(actor.as_ref()), repo.id, 0, 1)
+        codeyard_db_repos::pages::builds(&state.pool, &reader(actor.as_ref()), repo.id, 0, 1)
             .await
             .map_err(failure)?;
     Ok(Json(site_document(
@@ -121,7 +121,7 @@ async fn mutate(
         ));
     }
     let create = method == Method::POST;
-    let update = crate::backend::db::pages::Update::parse(&value, create).map_err(failure)?;
+    let update = codeyard_db_repos::pages::Update::parse(&value, create).map_err(failure)?;
     if let Some(source) = &update.source {
         repo_store(&repo, state.cluster.as_ref())
             .commit(&format!("refs/heads/{}", source.branch))
@@ -134,10 +134,10 @@ async fn mutate(
                 }
             })?;
     }
-    let site = crate::backend::db::pages::save(
+    let site = codeyard_db_repos::pages::save(
         &state.pool,
         actor.user.id,
-        &crate::backend::db::users::accounts::AccountCredential::Token(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
             actor.token.id,
             &actor.token.token_hash,
         ),
@@ -169,10 +169,10 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
-    crate::backend::db::pages::delete(
+    codeyard_db_repos::pages::delete(
         &state.pool,
         actor.user.id,
-        &crate::backend::db::users::accounts::AccountCredential::Token(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Token(
             actor.token.id,
             &actor.token.token_hash,
         ),
@@ -186,10 +186,10 @@ async fn build_document(
     state: &AppState,
     owner: &str,
     name: &str,
-    build: &crate::backend::db::pages::Build,
+    build: &codeyard_db_repos::pages::Build,
 ) -> Result<Value> {
     let pusher = if let Some(id) = build.actor_id {
-        crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+        codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
             .as_ref()
@@ -211,7 +211,7 @@ async fn builds(
     let (repo, actor) = visible(&state, &headers, &params, false).await?;
     require_site(&state, actor.as_ref(), repo.id).await?;
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::pages::builds(
+    let rows = codeyard_db_repos::pages::builds(
         &state.pool,
         &reader(actor.as_ref()),
         repo.id,
@@ -235,7 +235,7 @@ async fn build(
     let (repo, actor) = visible(&state, &headers, &params, false).await?;
     require_site(&state, actor.as_ref(), repo.id).await?;
     let row = if let Some(id) = params.get("build_id") {
-        crate::backend::db::pages::build(
+        codeyard_db_repos::pages::build(
             &state.pool,
             &reader(actor.as_ref()),
             repo.id,
@@ -244,7 +244,7 @@ async fn build(
         .await
         .map_err(failure)?
     } else {
-        crate::backend::db::pages::builds(&state.pool, &reader(actor.as_ref()), repo.id, 0, 1)
+        codeyard_db_repos::pages::builds(&state.pool, &reader(actor.as_ref()), repo.id, 0, 1)
             .await
             .map_err(failure)?
             .into_iter()
@@ -270,7 +270,7 @@ async fn request_build(
         .commit(&format!("refs/heads/{branch}"))
         .await
         .map_err(store_error)?;
-    let build = crate::backend::db::pages::request_build(
+    let build = codeyard_db_repos::pages::request_build(
         &state.pool,
         actor.user.id,
         &actor.credential(),
@@ -330,12 +330,12 @@ async fn create_deployment(
         .await
         .map_err(store_error)?
         .sha;
-    let deployment = crate::backend::db::pages::request_deployment(
+    let deployment = codeyard_db_repos::pages::request_deployment(
         &state.pool,
         actor.user.id,
         &actor.credential(),
         repo.id,
-        crate::backend::db::pages::Attempt {
+        codeyard_db_repos::pages::Attempt {
             sha: &sha,
             environment,
             artifact_id: input.artifact_id,
@@ -369,7 +369,7 @@ async fn deployment(
         .parse()
         .map_err(|_| Error::missing())?;
     let row =
-        crate::backend::db::pages::deployment(&state.pool, &reader(actor.as_ref()), repo.id, id)
+        codeyard_db_repos::pages::deployment(&state.pool, &reader(actor.as_ref()), repo.id, id)
             .await
             .map_err(failure)?
             .ok_or_else(Error::missing)?;
@@ -386,7 +386,7 @@ async fn cancel(
         .parse()
         .map_err(|_| Error::missing())?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
-    crate::backend::db::pages::cancel(&state.pool, actor.user.id, &actor.credential(), repo.id, id)
+    codeyard_db_repos::pages::cancel(&state.pool, actor.user.id, &actor.credential(), repo.id, id)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)

@@ -72,7 +72,7 @@ pub(super) async fn recheck_repository_read(
 ) -> Result<()> {
     let mut auth = authenticate(state, headers, false).await?;
     let repo =
-        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, repository)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, repository)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -119,15 +119,15 @@ pub(super) fn read_method(method: &Method) -> bool {
 }
 
 impl Authentication {
-    pub fn credential(&self) -> crate::backend::db::users::accounts::AccountCredential<'_> {
-        crate::backend::db::users::accounts::AccountCredential::Token(
+    pub fn credential(&self) -> codeyard_db_core::queries::users::accounts::AccountCredential<'_> {
+        codeyard_db_core::queries::users::accounts::AccountCredential::Token(
             self.token.id,
             &self.token.token_hash,
         )
     }
 
     /// The authenticated token, so database admission re-checks it is still live.
-    pub fn database_actor(&self) -> crate::backend::db::credentials::Actor {
+    pub fn database_actor(&self) -> codeyard_db_core::queries::credentials::Actor {
         (self.user.id, &self.credential()).into()
     }
 
@@ -135,8 +135,8 @@ impl Authentication {
         &self,
         headers: &HeaderMap,
         permission: &'static str,
-    ) -> Result<crate::backend::db::ci::CiCredential> {
-        Ok(crate::backend::db::ci::CiCredential::Token {
+    ) -> Result<codeyard_db_core::queries::ci::CiCredential> {
+        Ok(codeyard_db_core::queries::ci::CiCredential::Token {
             id: self.token.id,
             hash: token_hash(credential(headers).ok_or_else(required)?),
             permission,
@@ -144,7 +144,7 @@ impl Authentication {
     }
 
     pub fn is_job(&self) -> bool {
-        self.user.username == crate::backend::db::ci_tokens::BOT
+        self.user.username == codeyard_db_core::queries::ci_tokens::BOT
     }
 
     pub async fn repository_scope(
@@ -173,7 +173,7 @@ impl Authentication {
         }
         if !self.is_job() {
             // An organization may refuse classic tokens.
-            if crate::backend::db::fine_grained_tokens::classic_refused_repository(
+            if codeyard_db_identity::fine_grained_tokens::classic_refused_repository(
                 pool,
                 self.token.id,
                 repo_id,
@@ -185,7 +185,7 @@ impl Authentication {
             }
             return Ok(());
         }
-        let token = crate::backend::db::ci_tokens::get(pool, self.token.id)
+        let token = codeyard_db_actions::ci_tokens::get(pool, self.token.id)
             .await
             .map_err(|_| ScopeError::Unavailable)?
             .ok_or(ScopeError::Denied)?;
@@ -202,17 +202,17 @@ impl Authentication {
 
     /// Dispatches may use a live job token, but host execution retains its original actor's authority.
     pub async fn workflow_actor(&self, state: &AppState, repo: i64) -> Result<i64> {
-        if self.user.username != crate::backend::db::ci_tokens::BOT {
+        if self.user.username != codeyard_db_core::queries::ci_tokens::BOT {
             return Ok(self.user.id);
         }
-        let token = crate::backend::db::ci_tokens::get(&state.pool, self.token.id)
+        let token = codeyard_db_actions::ci_tokens::get(&state.pool, self.token.id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(required)?;
         if token.repo_id != repo {
             return Err(Error::missing());
         }
-        crate::backend::db::ci::get_ci_run_by_id(&state.pool, repo, token.run_id)
+        codeyard_db_actions::ci::get_ci_run_by_id(&state.pool, repo, token.run_id)
             .await
             .map_err(Error::unavailable)?
             .and_then(|run| run.triggered_by_id)
@@ -222,7 +222,7 @@ impl Authentication {
     /// Checks that the token still works, for a request whose body took long to arrive after
     /// it authenticated: a token revoked meanwhile must not publish that body.
     pub async fn require_live(&self, pool: &codeyard_db_core::DbPool) -> Result<()> {
-        crate::backend::db::users::tokens::token_user(pool, self.token.id, true)
+        codeyard_db_identity::users::tokens::token_user(pool, self.token.id, true)
             .await
             .map_err(Error::unavailable)?
             .filter(|user| user.id == self.user.id)
@@ -253,7 +253,7 @@ pub(super) async fn readable_repositories(
     scope: &str,
 ) -> Result<std::collections::HashSet<i64>> {
     if let Some(auth) = auth {
-        if crate::backend::db::users::tokens::token_user(&state.pool, auth.token.id, false)
+        if codeyard_db_identity::users::tokens::token_user(&state.pool, auth.token.id, false)
             .await
             .map_err(Error::unavailable)?
             .is_none_or(|user| user.id != auth.user.id)
@@ -263,7 +263,7 @@ pub(super) async fn readable_repositories(
     }
     let mut readable = std::collections::HashSet::new();
     for chunk in ids.chunks(100) {
-        let visible = crate::backend::db::repositories::access::readable_repository_ids(
+        let visible = codeyard_db_repos::repositories::access::readable_repository_ids(
             &state.pool,
             auth.map(|auth| auth.user.id),
             chunk,
@@ -274,15 +274,13 @@ pub(super) async fn readable_repositories(
             readable.extend(visible);
             continue;
         };
-        for repo in crate::backend::db::repositories::records::get_repositories_by_ids(
-            &state.pool,
-            &visible,
-        )
-        .await
-        .map_err(Error::unavailable)?
+        for repo in
+            codeyard_db_repos::repositories::records::get_repositories_by_ids(&state.pool, &visible)
+                .await
+                .map_err(Error::unavailable)?
         {
             if !repo.is_private {
-                if !crate::backend::db::fine_grained_tokens::classic_refused_repository(
+                if !codeyard_db_identity::fine_grained_tokens::classic_refused_repository(
                     &state.pool,
                     auth.token.id,
                     repo.id,
@@ -317,7 +315,7 @@ pub(super) async fn referenced_repository(
     id: i64,
 ) -> Result<Option<codeyard_db_core::models::Repository>> {
     let Some(repo) =
-        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
             .await
             .map_err(Error::unavailable)?
     else {
@@ -509,7 +507,7 @@ pub(super) async fn authorize_request(
             }
             return Ok(None);
         }
-        if let Some(token) = crate::backend::db::oauth_apps::token(&state.pool, auth.token.id)
+        if let Some(token) = codeyard_db_identity::oauth_apps::token(&state.pool, auth.token.id)
             .await
             .map_err(Error::unavailable)?
         {
@@ -535,7 +533,7 @@ pub(super) async fn authorize_request(
                     .collect::<Vec<_>>()
                     .as_slice()
                 {
-                    if crate::backend::db::repositories::records::get_repository(
+                    if codeyard_db_repos::repositories::records::get_repository(
                         &state.pool,
                         owner,
                         name,
@@ -577,7 +575,7 @@ pub(super) async fn authorize_request(
             }
             return Ok(Some(token.scopes));
         }
-        if auth.user.username != crate::backend::db::ci_tokens::BOT {
+        if auth.user.username != codeyard_db_core::queries::ci_tokens::BOT {
             classic_policy(&state, auth.token.id, params.as_ref(), path).await?;
             return Ok(Some("repo,read:org,gist,workflow".to_owned()));
         }
@@ -623,7 +621,7 @@ pub(super) async fn authorize_request(
         let owner = params.get("owner").ok_or_else(Error::missing)?;
         let name = params.get("repo").ok_or_else(Error::missing)?;
         let repo =
-            crate::backend::db::repositories::records::get_repository(&state.pool, owner, name)
+            codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, name)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
@@ -718,13 +716,13 @@ async fn bound_repository(
     params: &std::collections::HashMap<String, String>,
 ) -> Result<codeyard_db_core::models::Repository> {
     let repo = if let Some(id) = params.get("repository_id") {
-        crate::backend::db::repositories::records::get_repository_by_id(
+        codeyard_db_repos::repositories::records::get_repository_by_id(
             &state.pool,
             id.parse().map_err(|_| Error::missing())?,
         )
         .await
     } else {
-        crate::backend::db::repositories::records::get_repository(
+        codeyard_db_repos::repositories::records::get_repository(
             &state.pool,
             params.get("owner").ok_or_else(Error::missing)?,
             params.get("repo").ok_or_else(Error::missing)?,
@@ -739,12 +737,12 @@ async fn pull_conversation(pool: &codeyard_db_core::DbPool, repo: i64, path: &st
     let segments: Vec<_> = path.trim_start_matches('/').split('/').collect();
     match segments.as_slice() {
         ["repos", _, _, "issues", number, "comments"] => match number.parse() {
-            Ok(number) => Ok(
-                crate::backend::db::pull_requests::records::get_pull_request(pool, repo, number)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .is_some(),
-            ),
+            Ok(number) => Ok(codeyard_db_repos::pull_requests::records::get_pull_request(
+                pool, repo, number,
+            )
+            .await
+            .map_err(Error::unavailable)?
+            .is_some()),
             Err(_) => Ok(false),
         },
         ["repos", _, _, "issues", "comments", id, ..] => match id.parse() {
@@ -752,7 +750,7 @@ async fn pull_conversation(pool: &codeyard_db_core::DbPool, repo: i64, path: &st
                 crate::backend::api::github::comments::find(pool, repo, id)
                     .await?
                     .item,
-                crate::backend::db::assignees::AssignedItem::PullRequest(_)
+                codeyard_db_repos::assignees::AssignedItem::PullRequest(_)
             )),
             Err(_) => Ok(false),
         },
@@ -843,7 +841,7 @@ async fn personal(
     let organization = |name: &str| {
         let name = name.to_owned();
         async move {
-            crate::backend::db::organizations::get_public_organization(&state.pool, &name)
+            codeyard_db_orgs::organizations::get_public_organization(&state.pool, &name)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)
@@ -885,7 +883,7 @@ async fn personal(
             let owner = match segments.as_slice() {
                 ["user", "packages", ..] => Some(Owner::User(auth.user.id)),
                 ["users", name, "packages", ..] => {
-                    crate::backend::db::users::accounts::get_user_by_username(&state.pool, name)
+                    codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, name)
                         .await
                         .map_err(Error::unavailable)?
                         .map(|user| Owner::User(user.id))
@@ -942,10 +940,10 @@ async fn personal(
 pub(super) async fn require_copy_owner(
     state: &AppState,
     auth: &Authentication,
-    target: crate::backend::db::repositories::creation::RepositoryTarget,
+    target: codeyard_db_repos::repositories::creation::RepositoryTarget,
 ) -> Result<()> {
-    use crate::backend::db::repositories::creation::RepositoryTarget;
     use crate::backend::identity::fine_grained::Owner;
+    use codeyard_db_repos::repositories::creation::RepositoryTarget;
     let Some(bounds) = crate::backend::identity::github_apps::authority(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?
@@ -985,22 +983,20 @@ async fn classic_policy(
             ) else {
                 return Ok(());
             };
-            crate::backend::db::repositories::records::get_repository(&state.pool, owner, name)
+            codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, name)
                 .await
                 .map_err(Error::unavailable)?
                 .and_then(|repo| repo.owner_org_id)
         }
-        ["repositories", id, ..] => {
-            crate::backend::db::repositories::records::get_repository_by_id(
-                &state.pool,
-                id.parse().map_err(|_| Error::missing())?,
-            )
-            .await
-            .map_err(Error::unavailable)?
-            .and_then(|repo| repo.owner_org_id)
-        }
+        ["repositories", id, ..] => codeyard_db_repos::repositories::records::get_repository_by_id(
+            &state.pool,
+            id.parse().map_err(|_| Error::missing())?,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .and_then(|repo| repo.owner_org_id),
         ["orgs" | "organizations", name, ..] => {
-            crate::backend::db::organizations::get_public_organization(&state.pool, name)
+            codeyard_db_orgs::organizations::get_public_organization(&state.pool, name)
                 .await
                 .map_err(Error::unavailable)?
                 .map(|org| org.id)
@@ -1017,7 +1013,7 @@ async fn classic_policy(
 /// name the organization only through another resource (a team or archive ID) call this once
 /// they resolve it.
 pub(super) async fn refuse_classic(state: &AppState, token: i64, org: i64) -> Result<()> {
-    if crate::backend::db::fine_grained_tokens::classic_refused(&state.pool, token, org)
+    if codeyard_db_identity::fine_grained_tokens::classic_refused(&state.pool, token, org)
         .await
         .map_err(Error::unavailable)?
     {
@@ -1071,7 +1067,7 @@ async fn authenticate_uncached(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<Option<Authentication>> {
-    let config = crate::backend::db::node_config::get_node_configuration(&state.pool)
+    let config = codeyard_db_cluster::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(Error::unavailable)?
         .filter(|config| config.setup_completed)
@@ -1086,7 +1082,7 @@ async fn authenticate_uncached(
     let presented = credential(headers);
     let token = match presented {
         Some(value) => {
-            crate::backend::db::users::tokens::find_token(&state.pool, &token_hash(value))
+            codeyard_db_identity::users::tokens::find_token(&state.pool, &token_hash(value))
                 .await
                 .map_err(Error::unavailable)?
         }
@@ -1095,7 +1091,7 @@ async fn authenticate_uncached(
     let mut user_id = None;
     if let Some(token) = token {
         if let Some(user) =
-            crate::backend::db::users::tokens::token_user(&state.pool, token.id, false)
+            codeyard_db_identity::users::tokens::token_user(&state.pool, token.id, false)
                 .await
                 .map_err(Error::unavailable)?
         {
@@ -1138,7 +1134,7 @@ pub(in crate::backend::api) async fn touch(
     let address = crate::backend::api::http::session::client_address(headers)
         .filter(|address| address.len() <= 64);
     if let Err(error) =
-        crate::backend::db::users::tokens::touch_token(&state.pool, token.id, address).await
+        codeyard_db_identity::users::tokens::touch_token(&state.pool, token.id, address).await
     {
         tracing::warn!(%error, "could not record token use");
     }

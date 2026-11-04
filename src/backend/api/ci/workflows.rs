@@ -45,7 +45,7 @@ pub async fn list_ci_workflows(
     }
 
     let repository =
-        crate::backend::db::repositories::get_repository(&state.pool, &query.owner, &query.repo)
+        codeyard_db_repos::repositories::get_repository(&state.pool, &query.owner, &query.repo)
             .await
             .map_err(|_| {
                 (

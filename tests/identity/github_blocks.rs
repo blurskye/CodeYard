@@ -5,9 +5,9 @@ use crate::support::{
     http_client::Client,
 };
 
-use codeyard::backend::db::repositories::creation::NewRepository;
-use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
-use codeyard::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_db_repos::repositories::creation::NewRepository;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 
 use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::AccessLevel;
@@ -100,7 +100,7 @@ async fn contract(pg: bool) {
         404,
     )
     .await;
-    let public = codeyard::backend::db::repositories::records::create_repository(
+    let public = codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         alice,
         "project",
@@ -110,7 +110,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let private = codeyard::backend::db::repositories::records::create_repository(
+    let private = codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         alice,
         "private",
@@ -120,7 +120,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let other_repo = codeyard::backend::db::repositories::records::create_repository(
+    let other_repo = codeyard_db_repos::repositories::records::create_repository(
         f.pool(),
         carol,
         "shared",
@@ -131,7 +131,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     for repo in [&public, &private] {
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             f.pool(),
             bob,
             repo.id,
@@ -141,24 +141,24 @@ async fn contract(pg: bool) {
         .unwrap();
     }
     let issue =
-        codeyard::backend::db::issues::create_issue(f.pool(), public.id, alice, "Issue", "Body")
+        codeyard_db_repos::issues::create_issue(f.pool(), public.id, alice, "Issue", "Body")
             .await
             .unwrap();
-    codeyard::backend::db::assignees::assign_user(
+    codeyard_db_repos::assignees::assign_user(
         f.pool(),
         alice,
         public.id,
-        codeyard::backend::db::assignees::AssignedItem::Issue(issue.id),
+        codeyard_db_repos::assignees::AssignedItem::Issue(issue.id),
         bob,
     )
     .await
     .unwrap();
     for (a, b) in [(alice, bob), (bob, alice), (carol, alice)] {
-        codeyard::backend::db::following::follow_user(
+        codeyard_db_identity::following::follow_user(
             f.pool(),
             a,
             b,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(f.pool(), a).await,
             ),
         )
@@ -166,28 +166,28 @@ async fn contract(pg: bool) {
         .unwrap();
     }
     for actor in [bob, carol] {
-        codeyard::backend::db::repositories::engagement::star_repo(f.pool(), actor, public.id)
+        codeyard_db_repos::repositories::engagement::star_repo(f.pool(), actor, public.id)
             .await
             .unwrap();
-        codeyard::backend::db::repositories::engagement::watch_repo(f.pool(), actor, public.id)
+        codeyard_db_repos::repositories::engagement::watch_repo(f.pool(), actor, public.id)
             .await
             .unwrap();
     }
-    codeyard::backend::db::issues::add_issue_comment(
+    codeyard_db_repos::issues::add_issue_comment(
         f.pool(),
         issue.repo_id,
         issue.id,
         bob,
         "Before block",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
     )
     .await
     .unwrap();
-    codeyard::backend::db::notifications::create_notification(
+    codeyard_db_repos::notifications::create_notification(
         f.pool(),
-        codeyard::backend::db::notifications::NewNotification {
+        codeyard_db_repos::notifications::NewNotification {
             user_id: alice,
             actor_id: Some(bob),
             repo_id: Some(public.id),
@@ -231,51 +231,47 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(
-        !codeyard::backend::db::following::is_user_following(f.pool(), alice, bob)
+        !codeyard_db_identity::following::is_user_following(f.pool(), alice, bob)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::following::is_user_following(f.pool(), bob, alice)
+        !codeyard_db_identity::following::is_user_following(f.pool(), bob, alice)
             .await
             .unwrap()
     );
     assert!(
-        codeyard::backend::db::following::is_user_following(f.pool(), carol, alice)
+        codeyard_db_identity::following::is_user_following(f.pool(), carol, alice)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::repositories::engagement::is_repo_starred(f.pool(), bob, public.id)
+        !codeyard_db_repos::repositories::engagement::is_repo_starred(f.pool(), bob, public.id)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::repositories::engagement::is_repo_watched(f.pool(), bob, public.id)
+        !codeyard_db_repos::repositories::engagement::is_repo_watched(f.pool(), bob, public.id)
             .await
             .unwrap()
     );
     assert_eq!(f.repository(public.id).await.stars_count, 1);
     assert_eq!(f.repository(public.id).await.watchers_count, 1);
-    assert!(codeyard::backend::db::assignees::list_assignees(
+    assert!(codeyard_db_repos::assignees::list_assignees(
         f.pool(),
-        codeyard::backend::db::assignees::AssignedItem::Issue(issue.id)
+        codeyard_db_repos::assignees::AssignedItem::Issue(issue.id)
     )
     .await
     .unwrap()
     .is_empty());
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(
-            f.pool(),
-            bob,
-            private.id
-        )
-        .await
-        .unwrap(),
+        codeyard_db_repos::repositories::access::get_user_repo_access(f.pool(), bob, private.id)
+            .await
+            .unwrap(),
         AccessLevel::None
     );
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(f.pool(), bob, public.id)
+        codeyard_db_repos::repositories::access::get_user_repo_access(f.pool(), bob, public.id)
             .await
             .unwrap(),
         AccessLevel::Read
@@ -308,22 +304,24 @@ async fn contract(pg: bool) {
         403,
     )
     .await;
-    let target = codeyard::backend::db::reactions::Target {
+    let target = codeyard_db_repos::reactions::Target {
         repo_id: public.id,
         item_id: issue.id,
-        subject: codeyard::backend::db::reactions::Subject::Issue,
+        subject: codeyard_db_repos::reactions::Subject::Issue,
         subject_id: issue.id,
     };
-    assert!(codeyard::backend::db::reactions::create_reaction(
+    assert!(codeyard_db_repos::reactions::create_reaction(
         f.pool(),
         bob,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&other_session.session),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
+            &other_session.session
+        ),
         target,
         "+1"
     )
     .await
     .unwrap_err()
-    .is::<codeyard::backend::db::discussions::DiscussionWriteRefusal>());
+    .is::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>());
     let reply = other_session
         .form_reply(
             &format!("/alice/project/issues/{}/comments", issue.number),
@@ -335,36 +333,32 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, axum::http::StatusCode::FORBIDDEN);
-    assert!(codeyard::backend::db::issues::create_issue(
-        f.pool(),
-        public.id,
-        bob,
-        "Refused",
-        "Body"
-    )
-    .await
-    .unwrap_err()
-    .is::<codeyard::backend::db::discussions::DiscussionWriteRefusal>());
-    assert!(codeyard::backend::db::issues::add_issue_comment(
+    assert!(
+        codeyard_db_repos::issues::create_issue(f.pool(), public.id, bob, "Refused", "Body")
+            .await
+            .unwrap_err()
+            .is::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>()
+    );
+    assert!(codeyard_db_repos::issues::add_issue_comment(
         f.pool(),
         issue.repo_id,
         issue.id,
         bob,
         "Refused",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await
         )
     )
     .await
     .is_err());
     assert!(
-        codeyard::backend::db::repositories::engagement::watch_repo(f.pool(), bob, public.id)
+        codeyard_db_repos::repositories::engagement::watch_repo(f.pool(), bob, public.id)
             .await
             .unwrap_err()
-            .is::<codeyard::backend::db::users::blocks::InteractionBlocked>()
+            .is::<codeyard_db_identity::users::blocks::InteractionBlocked>()
     );
     assert!(
-        codeyard::backend::db::repositories::engagement::set_watch_level(
+        codeyard_db_repos::repositories::engagement::set_watch_level(
             f.pool(),
             bob,
             public.id,
@@ -374,17 +368,15 @@ async fn contract(pg: bool) {
         .await
         .is_err()
     );
-    assert!(
-        codeyard::backend::db::repositories::access::grant_repo_access(
-            f.pool(),
-            bob,
-            public.id,
-            AccessLevel::Write
-        )
-        .await
-        .is_err()
-    );
-    let fork = codeyard::backend::db::repositories::creation::insert_repository(
+    assert!(codeyard_db_repos::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        public.id,
+        AccessLevel::Write
+    )
+    .await
+    .is_err());
+    let fork = codeyard_db_repos::repositories::creation::insert_repository(
         f.pool(),
         NewRepository {
             owner: RepositoryCreationOwner::personal(bob),
@@ -399,10 +391,10 @@ async fn contract(pg: bool) {
     .await;
     assert!(fork
         .unwrap_err()
-        .is::<codeyard::backend::db::repositories::creation::RepositoryStorageRefusal>());
-    let refused = codeyard::backend::db::notifications::create_notification(
+        .is::<codeyard_db_repos::repositories::creation::RepositoryStorageRefusal>());
+    let refused = codeyard_db_repos::notifications::create_notification(
         f.pool(),
-        codeyard::backend::db::notifications::NewNotification {
+        codeyard_db_repos::notifications::NewNotification {
             user_id: alice,
             actor_id: Some(bob),
             repo_id: Some(public.id),
@@ -416,15 +408,14 @@ async fn contract(pg: bool) {
     .await;
     assert!(refused
         .unwrap_err()
-        .is::<codeyard::backend::db::notifications::records::NotificationSuppressed>());
+        .is::<codeyard_db_core::queries::notifications::records::NotificationSuppressed>());
     // Unrelated owners and organization scopes are not account-wide bans.
-    let organization = codeyard::backend::db::organizations::profiles::NewOrganization::new(
+    let organization = codeyard_db_orgs::organizations::profiles::NewOrganization::new(
         "shared-org",
-        codeyard::backend::db::organizations::profiles::OrganizationProfile::new(None, None)
-            .unwrap(),
+        codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
     )
     .unwrap();
-    let organization = match codeyard::backend::db::organizations::profiles::create_organization(
+    let organization = match codeyard_db_orgs::organizations::profiles::create_organization(
         f.pool(),
         alice,
         &organization,
@@ -432,18 +423,17 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     {
-        codeyard::backend::db::organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         other => panic!("{other:?}"),
     };
-    let org_repo = codeyard::backend::db::repositories::creation::insert_repository(
+    let org_repo = codeyard_db_repos::repositories::creation::insert_repository(
         f.pool(),
         NewRepository {
             owner: RepositoryCreationOwner {
                 actor_id: alice,
-                target:
-                    codeyard::backend::db::repositories::creation::RepositoryTarget::Organization(
-                        organization.id,
-                    ),
+                target: codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(
+                    organization.id,
+                ),
             },
             name: "shared",
             description: None,
@@ -456,7 +446,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    codeyard::backend::db::issues::create_issue(
+    codeyard_db_repos::issues::create_issue(
         f.pool(),
         org_repo.id,
         bob,
@@ -465,13 +455,13 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::db::repositories::engagement::star_repo(f.pool(), bob, org_repo.id)
+    codeyard_db_repos::repositories::engagement::star_repo(f.pool(), bob, org_repo.id)
         .await
         .unwrap();
-    codeyard::backend::db::issues::create_issue(f.pool(), other_repo.id, bob, "Allowed", "Body")
+    codeyard_db_repos::issues::create_issue(f.pool(), other_repo.id, bob, "Allowed", "Body")
         .await
         .unwrap();
-    codeyard::backend::db::repositories::engagement::star_repo(f.pool(), bob, other_repo.id)
+    codeyard_db_repos::repositories::engagement::star_repo(f.pool(), bob, other_repo.id)
         .await
         .unwrap();
     let (_, blocks) = request(
@@ -529,7 +519,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(
-        !codeyard::backend::db::users::blocks::is_blocked(f.pool(), alice, dave)
+        !codeyard_db_identity::users::blocks::is_blocked(f.pool(), alice, dave)
             .await
             .unwrap()
     );
@@ -572,32 +562,28 @@ async fn contract(pg: bool) {
     .await;
     // Unblocking restores contribution eligibility, not deleted relationships or grants.
     assert!(
-        !codeyard::backend::db::following::is_user_following(f.pool(), bob, alice)
+        !codeyard_db_identity::following::is_user_following(f.pool(), bob, alice)
             .await
             .unwrap()
     );
     assert!(
-        !codeyard::backend::db::repositories::engagement::is_repo_starred(f.pool(), bob, public.id)
+        !codeyard_db_repos::repositories::engagement::is_repo_starred(f.pool(), bob, public.id)
             .await
             .unwrap()
     );
     assert_eq!(
-        codeyard::backend::db::repositories::access::get_user_repo_access(
-            f.pool(),
-            bob,
-            private.id
-        )
-        .await
-        .unwrap(),
+        codeyard_db_repos::repositories::access::get_user_repo_access(f.pool(), bob, private.id)
+            .await
+            .unwrap(),
         AccessLevel::None
     );
-    codeyard::backend::db::issues::add_issue_comment(
+    codeyard_db_repos::issues::add_issue_comment(
         f.pool(),
         issue.repo_id,
         issue.id,
         bob,
         "After unblock",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), bob).await,
         ),
     )
@@ -625,7 +611,7 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, axum::http::StatusCode::SEE_OTHER);
     assert!(
-        !codeyard::backend::db::users::blocks::is_blocked(f.pool(), alice, bob)
+        !codeyard_db_identity::users::blocks::is_blocked(f.pool(), alice, bob)
             .await
             .unwrap()
     );
@@ -662,23 +648,23 @@ async fn contract(pg: bool) {
         let pool = f.pool().clone();
         let repo = public.id;
         let issue_writer = tokio::spawn(async move {
-            codeyard::backend::db::issues::create_issue(&pool, repo, bob, "Waiting", "Body")
+            codeyard_db_repos::issues::create_issue(&pool, repo, bob, "Waiting", "Body")
                 .await
                 .is_err()
         });
         let pool = f.pool().clone();
         let star_writer = tokio::spawn(async move {
-            codeyard::backend::db::repositories::engagement::star_repo(&pool, bob, repo)
+            codeyard_db_repos::repositories::engagement::star_repo(&pool, bob, repo)
                 .await
                 .is_err()
         });
         let pool = f.pool().clone();
         let follower = tokio::spawn(async move {
-            codeyard::backend::db::following::follow_user(
+            codeyard_db_identity::following::follow_user(
                 &pool,
                 bob,
                 alice,
-                &codeyard::backend::db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::support::live_session(&pool, bob).await,
                 ),
             )

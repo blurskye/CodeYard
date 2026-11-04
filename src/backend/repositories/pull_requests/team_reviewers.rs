@@ -13,16 +13,16 @@ pub async fn set_requests(
     actor: &User,
     repo: &Repository,
     pull: &PullRequest,
-    input: &crate::backend::db::pull_requests::team_reviewers::ReviewRequests<'_>,
+    input: &codeyard_db_repos::pull_requests::team_reviewers::ReviewRequests<'_>,
 ) -> Result<(), OperationError> {
-    let owner = crate::backend::db::repositories::records::repository_owner_name(pool, repo.id)
+    let owner = codeyard_db_repos::repositories::records::repository_owner_name(pool, repo.id)
         .await
         .map_err(crate::backend::repositories::pull_requests::database_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Repository not found".into(),
         })?;
-    let changed = crate::backend::db::pull_requests::team_reviewers::set_requests(
+    let changed = codeyard_db_repos::pull_requests::team_reviewers::set_requests(
         pool, actor.id, pull.id, input,
     )
     .await
@@ -50,14 +50,14 @@ pub async fn change(
     repo: &Repository,
     pull: &PullRequest,
     slugs: &[String],
-    action: crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction,
+    action: codeyard_db_repos::pull_requests::team_reviewers::ReviewTeamAction,
 ) -> Result<Vec<Team>, OperationError> {
-    let changed = crate::backend::db::pull_requests::team_reviewers::change(
+    let changed = codeyard_db_repos::pull_requests::team_reviewers::change(
         pool, actor.id, pull.id, slugs, action, None,
     )
     .await
     .map_err(error)?;
-    if action == crate::backend::db::pull_requests::team_reviewers::ReviewTeamAction::Remove {
+    if action == codeyard_db_repos::pull_requests::team_reviewers::ReviewTeamAction::Remove {
         emit_events(
             pool,
             None,
@@ -97,7 +97,7 @@ pub(super) async fn emit_events(
     if teams.is_empty() {
         return;
     }
-    let Ok(Some(org)) = crate::backend::db::ci::ci_repository_owner(pool, repo.id).await else {
+    let Ok(Some(org)) = codeyard_db_actions::ci::ci_repository_owner(pool, repo.id).await else {
         tracing::warn!(
             repo_id = repo.id,
             "review team events skipped: owner unavailable"
@@ -105,7 +105,7 @@ pub(super) async fn emit_events(
         return;
     };
     // A team that lost its access since is sent without a permission.
-    let access = crate::backend::db::pull_requests::team_reviewers::list(pool, repo.id, None, None)
+    let access = codeyard_db_repos::pull_requests::team_reviewers::list(pool, repo.id, None, None)
         .await
         .unwrap_or_default();
     for team in teams {
@@ -126,7 +126,7 @@ pub(super) async fn emit_events(
 }
 
 pub(super) fn error(error: anyhow::Error) -> OperationError {
-    if error.is::<crate::backend::db::pull_requests::team_reviewers::InvalidReviewTeam>() {
+    if error.is::<codeyard_db_repos::pull_requests::team_reviewers::InvalidReviewTeam>() {
         OperationError::Invalid {
             code: "invalid_review_team",
             message: error.to_string(),
@@ -148,12 +148,12 @@ pub(super) async fn notify(
     if ids.is_empty() {
         return;
     }
-    let Ok(Some(owner)) = crate::backend::db::ci::ci_repository_owner(pool, repo.id).await else {
+    let Ok(Some(owner)) = codeyard_db_actions::ci::ci_repository_owner(pool, repo.id).await else {
         return;
     };
     let mut after = 0;
     loop {
-        let members = match crate::backend::db::pull_requests::team_reviewers::members(
+        let members = match codeyard_db_repos::pull_requests::team_reviewers::members(
             pool, repo.id, &ids, after,
         )
         .await

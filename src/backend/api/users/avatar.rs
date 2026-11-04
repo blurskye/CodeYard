@@ -46,16 +46,16 @@ pub(crate) async fn avatar_get(
 ) -> Response {
     let pool = &state.pool;
     // Users and organizations share one name space; a name that is no user may be an organization.
-    let file_id = match crate::backend::db::users::accounts::get_user_by_username(pool, &name).await
-    {
-        Ok(Some(user)) => user.avatar_file_id,
-        Ok(None) => crate::backend::db::organizations::get_public_organization(pool, &name)
-            .await
-            .ok()
-            .flatten()
-            .and_then(|org| org.avatar_file_id),
-        Err(_) => None,
-    };
+    let file_id =
+        match codeyard_db_identity::users::accounts::get_user_by_username(pool, &name).await {
+            Ok(Some(user)) => user.avatar_file_id,
+            Ok(None) => codeyard_db_orgs::organizations::get_public_organization(pool, &name)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|org| org.avatar_file_id),
+            Err(_) => None,
+        };
     let mut response = match file_id {
         Some(id) => Redirect::temporary(&format!("/api/files/{id}/download")).into_response(),
         None => {

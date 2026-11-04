@@ -61,14 +61,16 @@ pub async fn password_login(
         return Err(LoginError::SetupRequired);
     }
     let user =
-        crate::backend::db::users::accounts::get_user_by_username(pool, credentials.identity)
+        codeyard_db_identity::users::accounts::get_user_by_username(pool, credentials.identity)
             .await
             .map_err(|_| LoginError::AccountUnavailable)?;
     let user = match user {
         Some(user) => Some(user),
-        None => crate::backend::db::users::accounts::get_user_by_email(pool, credentials.identity)
-            .await
-            .map_err(|_| LoginError::AccountUnavailable)?,
+        None => {
+            codeyard_db_identity::users::accounts::get_user_by_email(pool, credentials.identity)
+                .await
+                .map_err(|_| LoginError::AccountUnavailable)?
+        }
     };
     // Shared admission precedes every KDF, including missing/OAuth-only accounts.
     let attempt = crate::backend::identity::admission::admit_login(
@@ -141,7 +143,7 @@ async fn upgrade_hash(pool: &DbPool, user: &mut codeyard_db_core::models::User, 
             return;
         }
     };
-    match crate::backend::db::users::accounts::replace_password_hash(pool, user.id, &old, &new)
+    match codeyard_db_identity::users::accounts::replace_password_hash(pool, user.id, &old, &new)
         .await
     {
         Ok(true) => user.password_hash = Some(new),
@@ -158,7 +160,7 @@ async fn adopt_current_hash(
     password: &str,
 ) {
     let Ok(Some(current)) =
-        crate::backend::db::users::accounts::get_user_by_id(pool, user.id).await
+        codeyard_db_identity::users::accounts::get_user_by_id(pool, user.id).await
     else {
         return;
     };
@@ -192,7 +194,7 @@ pub async fn second_factor_login(
         now,
     )
     .ok_or(LoginError::PendingLoginExpired)?;
-    let user = crate::backend::db::users::accounts::get_user_by_id(pool, user_id)
+    let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, user_id)
         .await
         .map_err(|_| LoginError::AccountUnavailable)?
         .ok_or(LoginError::PendingLoginExpired)?;
@@ -232,7 +234,7 @@ pub async fn second_factor_login(
     } else {
         None
     };
-    let credential = crate::backend::db::users::sessions::SessionCredential::SecondFactor {
+    let credential = codeyard_db_identity::users::sessions::SessionCredential::SecondFactor {
         password: user
             .password_hash
             .as_deref()

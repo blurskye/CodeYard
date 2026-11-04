@@ -11,10 +11,10 @@ use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use codeyard_model::urls::repo_url;
 
-use crate::backend::db::repositories::protection::ActorListUpdate;
-use crate::backend::db::repositories::protection::BranchProtectionRuleUpsert;
-use crate::backend::db::repositories::protection::ProtectionUpdate;
-use crate::backend::db::repositories::protection::ReviewProtectionUpdate;
+use codeyard_db_repos::repositories::protection::ActorListUpdate;
+use codeyard_db_repos::repositories::protection::BranchProtectionRuleUpsert;
+use codeyard_db_repos::repositories::protection::ProtectionUpdate;
+use codeyard_db_repos::repositories::protection::ReviewProtectionUpdate;
 
 use crate::backend::repositories::store::repo_store;
 
@@ -87,7 +87,7 @@ struct Protection {
 }
 
 fn valid_names(names: &[String]) -> Result<()> {
-    if names.len() > crate::backend::db::repositories::protection::MAX_ALLOWANCE_ACTORS
+    if names.len() > codeyard_db_repos::repositories::protection::MAX_ALLOWANCE_ACTORS
         || names
             .iter()
             .any(|name| name.is_empty() || name.len() > 255 || name.chars().any(char::is_control))
@@ -104,7 +104,7 @@ pub(super) async fn user_ids(state: &AppState, names: &[String]) -> Result<Vec<i
     let mut names = names.to_vec();
     names.sort_unstable();
     names.dedup();
-    let users = crate::backend::db::users::accounts::get_users_by_usernames(&state.pool, &names)
+    let users = codeyard_db_identity::users::accounts::get_users_by_usernames(&state.pool, &names)
         .await
         .map_err(Error::unavailable)?;
     if users.len() != names.len() {
@@ -117,11 +117,11 @@ async fn app_ids(state: &AppState, repo: i64, names: &[String]) -> Result<Vec<i6
     valid_names(names)?;
     let mut ids = Vec::new();
     for name in names {
-        let app = crate::backend::db::github_apps::app(&state.pool, name)
+        let app = codeyard_db_identity::github_apps::app(&state.pool, name)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(|| Error::invalid("Unknown app"))?;
-        if crate::backend::db::github_apps::repository_installation(
+        if codeyard_db_identity::github_apps::repository_installation(
             &state.pool,
             app.id,
             repo,
@@ -144,7 +144,7 @@ async fn app_ids(state: &AppState, repo: i64, names: &[String]) -> Result<Vec<i6
 pub(super) async fn app_documents(state: &AppState, ids: &[i64]) -> Result<Vec<Value>> {
     let mut values = Vec::new();
     for id in ids {
-        if let Some(app) = crate::backend::db::github_apps::app(&state.pool, &id.to_string())
+        if let Some(app) = codeyard_db_identity::github_apps::app(&state.pool, &id.to_string())
             .await
             .map_err(Error::unavailable)?
         {
@@ -158,22 +158,22 @@ pub(super) async fn app_documents(state: &AppState, ids: &[i64]) -> Result<Vec<V
 
 async fn actor_document(state: &AppState, repo: i64, actors: Actors) -> Result<Value> {
     if actors.users.len() + actors.teams.len() + actors.apps.len()
-        > crate::backend::db::repositories::protection::MAX_ALLOWANCE_ACTORS
+        > codeyard_db_repos::repositories::protection::MAX_ALLOWANCE_ACTORS
     {
         return Err(Error::invalid("Supply at most 100 actors"));
     }
     let ids = user_ids(state, &actors.users).await?;
-    let users = crate::backend::db::users::accounts::get_users_by_ids(&state.pool, &ids)
+    let users = codeyard_db_identity::users::accounts::get_users_by_ids(&state.pool, &ids)
         .await
         .map_err(Error::unavailable)?;
-    let teams = crate::backend::db::repositories::push_teams::resolve_names(
+    let teams = codeyard_db_repos::repositories::push_teams::resolve_names(
         &state.pool,
         repo,
         &actors.teams,
     )
     .await
     .map_err(write_error)?;
-    let rows = crate::backend::db::repositories::push_teams::by_ids(&state.pool, repo, &teams)
+    let rows = codeyard_db_repos::repositories::push_teams::by_ids(&state.pool, repo, &teams)
         .await
         .map_err(Error::unavailable)?;
     let mut teams = Vec::new();
@@ -199,7 +199,7 @@ async fn review_update(
     repo: i64,
     input: Reviews,
 ) -> Result<ReviewProtectionUpdate> {
-    let max_approvals = crate::backend::db::repositories::protection::MAX_REQUIRED_APPROVALS;
+    let max_approvals = codeyard_db_repos::repositories::protection::MAX_REQUIRED_APPROVALS;
     if input
         .required_approving_review_count
         .is_some_and(|count| !(0..=max_approvals).contains(&count))
@@ -311,7 +311,7 @@ async fn update(
         upsert.push_allowances = user_ids(&state, &actors.users)
             .await
             .map_err(Error::simple)?;
-        upsert.push_team_allowances = crate::backend::db::repositories::push_teams::resolve_names(
+        upsert.push_team_allowances = codeyard_db_repos::repositories::push_teams::resolve_names(
             &state.pool,
             repo.id,
             &actors.teams,
@@ -323,7 +323,7 @@ async fn update(
             .map_err(Error::simple)?;
     }
     upsert.github_settings = Some(settings);
-    let rule = crate::backend::db::repositories::protection::upsert_branch_protection_rule(
+    let rule = codeyard_db_repos::repositories::protection::upsert_branch_protection_rule(
         &state.pool,
         upsert,
     )
@@ -345,7 +345,7 @@ async fn reviews(
 ) -> Result<Json<Value>> {
     let (rule, actor, url) = protected(&state, &headers, &owner, &name, &branch, true).await?;
     let update = review_update(&state, rule.repo_id, input).await?;
-    let rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
+    let rule = codeyard_db_repos::repositories::protection::update_branch_protection_rule(
         &state.pool,
         actor,
         rule.repo_id,
@@ -373,7 +373,7 @@ async fn signatures(
     )
     .await?;
     if !read_method(&method) {
-        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
+        rule = codeyard_db_repos::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor,
             rule.repo_id,
@@ -424,7 +424,7 @@ async fn apps(
             valid_names(&names)?;
             let mut ids = Vec::new();
             for name in names {
-                if let Some(app) = crate::backend::db::github_apps::app(&state.pool, &name)
+                if let Some(app) = codeyard_db_identity::github_apps::app(&state.pool, &name)
                     .await
                     .map_err(Error::unavailable)?
                 {
@@ -440,7 +440,7 @@ async fn apps(
             Method::PUT => ActorListUpdate::Set(ids),
             _ => ActorListUpdate::Remove(ids),
         };
-        rule = crate::backend::db::repositories::protection::update_branch_protection_rule(
+        rule = codeyard_db_repos::repositories::protection::update_branch_protection_rule(
             &state.pool,
             actor,
             rule.repo_id,
@@ -482,7 +482,7 @@ async fn rules(
                 values.push(json!({"type":kind}));
             }
         }
-        if crate::backend::db::repositories::protection::has_review_requirements(&rule)
+        if codeyard_db_repos::repositories::protection::has_review_requirements(&rule)
             || rule.require_conversation_resolution
         {
             values.push(json!({"type":"pull_request","parameters":{
@@ -560,7 +560,7 @@ pub(super) async fn check_bindings(
         let app = match check.app_id {
             Some(-1) => None,
             Some(id) => {
-                crate::backend::db::github_apps::app(&state.pool, &id.to_string())
+                codeyard_db_identity::github_apps::app(&state.pool, &id.to_string())
                     .await
                     .map_err(Error::unavailable)?
                     .filter(|app| app.id == id)
@@ -579,13 +579,13 @@ pub(super) async fn check_bindings(
             bindings.push(json!({"context": context, "app_id": app}));
         }
     }
-    crate::backend::db::repositories::protection::normalize_check_bindings(&mut bindings)
+    codeyard_db_repos::repositories::protection::normalize_check_bindings(&mut bindings)
         .map_err(|refusal| write_error(refusal.into()))?;
     Ok(bindings)
 }
 
 async fn recent_producer(state: &AppState, repo: i64, context: &str) -> Result<Option<i64>> {
-    crate::backend::db::checks::recent_app(&state.pool, repo, context)
+    codeyard_db_actions::checks::recent_app(&state.pool, repo, context)
         .await
         .map_err(Error::unavailable)
 }

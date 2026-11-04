@@ -7,10 +7,10 @@ use crate::backend::app::AppState;
 use crate::backend::repositories::pull_requests::require_write;
 use crate::backend::repositories::pull_requests::OperationError;
 
-use crate::backend::db::pull_requests::auto_merge::AutoMerge;
-use crate::backend::db::pull_requests::auto_merge::AutoMergeRequest;
 use crate::backend::repositories::store::MergeMethod;
 use codeyard_db_core::models::PullRequest;
+use codeyard_db_repos::pull_requests::auto_merge::AutoMerge;
+use codeyard_db_repos::pull_requests::auto_merge::AutoMergeRequest;
 use std::{sync::Arc, time::Duration};
 
 /// How often the background check retries pull requests waiting to merge.
@@ -42,7 +42,7 @@ async fn writable(
 ) -> Result<(), OperationError> {
     let user = actor(pool, actor_id).await?;
     let repository =
-        crate::backend::db::repositories::records::get_repository_by_id(pool, pull.repo_id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(pool, pull.repo_id)
             .await
             .map_err(storage_error)?
             .ok_or_else(|| OperationError::Missing {
@@ -74,7 +74,7 @@ pub async fn enable(
         request.commit_message.as_deref(),
         request.author_email.as_deref(),
     )?;
-    crate::backend::db::pull_requests::auto_merge::enable_auto_merge_at_head(
+    codeyard_db_repos::pull_requests::auto_merge::enable_auto_merge_at_head(
         pool,
         &AutoMergeRequest {
             pull_request_id: pull.id,
@@ -99,7 +99,7 @@ pub async fn disable(
     pull: &PullRequest,
 ) -> Result<(), OperationError> {
     writable(pool, actor_id, pull).await?;
-    crate::backend::db::pull_requests::auto_merge::disable_auto_merge(pool, pull.id)
+    codeyard_db_repos::pull_requests::auto_merge::disable_auto_merge(pool, pull.id)
         .await
         .map_err(storage_error)?;
     Ok(())
@@ -118,7 +118,7 @@ async fn run_due_until_stop(
     let pool = &state.pool;
     let mut after = 0;
     loop {
-        let page = crate::backend::db::pull_requests::auto_merge::pending_auto_merges(
+        let page = codeyard_db_repos::pull_requests::auto_merge::pending_auto_merges(
             pool,
             after,
             CHECK_BATCH,
@@ -138,14 +138,14 @@ async fn run_due_until_stop(
                 request: entry,
                 generation,
             } = entry;
-            let pull = crate::backend::db::pull_requests::records::get_pull_request_by_id(
+            let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
                 pool,
                 entry.pull_request_id,
             )
             .await?;
             let repository = match &pull {
                 Some(pull) if pull.state == "open" => {
-                    crate::backend::db::repositories::records::get_repository_by_id(
+                    codeyard_db_repos::repositories::records::get_repository_by_id(
                         pool,
                         pull.repo_id,
                     )
@@ -155,7 +155,7 @@ async fn run_due_until_stop(
             };
             let owner = match &repository {
                 Some(repository) => {
-                    crate::backend::db::repositories::records::repository_owner_name(
+                    codeyard_db_repos::repositories::records::repository_owner_name(
                         pool,
                         repository.id,
                     )
@@ -164,7 +164,7 @@ async fn run_due_until_stop(
                 None => None,
             };
             let (Some(pull), Some(repository), Some(owner)) = (pull, repository, owner) else {
-                crate::backend::db::pull_requests::auto_merge::retire_auto_merge(
+                codeyard_db_repos::pull_requests::auto_merge::retire_auto_merge(
                     pool,
                     entry.pull_request_id,
                     &generation,
@@ -174,7 +174,7 @@ async fn run_due_until_stop(
             };
             // The page was read before earlier merges ran, so this request may have been
             // disabled or replaced since. Only the request as it stands now may merge.
-            let current = crate::backend::db::pull_requests::auto_merge::get_auto_merge(
+            let current = codeyard_db_repos::pull_requests::auto_merge::get_auto_merge(
                 pool,
                 entry.pull_request_id,
             )
@@ -184,18 +184,18 @@ async fn run_due_until_stop(
             }
             // A request made with a token merges under that token's live grants, as its merge button would.
             let authority = match entry.token_id {
-                None => crate::backend::db::credentials::Actor::from(entry.enabled_by),
+                None => codeyard_db_core::queries::credentials::Actor::from(entry.enabled_by),
                 Some(token) => {
-                    match crate::backend::db::users::tokens::token_hash(
+                    match codeyard_db_identity::users::tokens::token_hash(
                         pool,
                         token,
                         entry.enabled_by,
                     )
                     .await?
                     {
-                        Some(hash) => crate::backend::db::credentials::Actor::from((
+                        Some(hash) => codeyard_db_core::queries::credentials::Actor::from((
                             entry.enabled_by,
-                            crate::backend::db::users::accounts::OwnedAccountCredential::Token(
+                            codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
                                 token, hash,
                             ),
                         )),
@@ -236,7 +236,7 @@ async fn run_due_until_stop(
             };
             match merged {
                 Ok(_) | Err(OperationError::BranchMerged { .. }) => {
-                    crate::backend::db::pull_requests::auto_merge::retire_auto_merge(
+                    codeyard_db_repos::pull_requests::auto_merge::retire_auto_merge(
                         pool,
                         pull.id,
                         &generation,

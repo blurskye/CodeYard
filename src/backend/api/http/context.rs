@@ -43,7 +43,7 @@ async fn csrf_token_for_session(
     let ttl = CSRF_TTL_SECONDS
         .min((browser_session.expires_at - chrono::Utc::now()).num_seconds())
         .max(1);
-    crate::backend::db::users::sessions::get_or_create_csrf_token(
+    codeyard_db_identity::users::sessions::get_or_create_csrf_token(
         &state.pool,
         &browser_session.id,
         browser_session.user_id,
@@ -60,7 +60,7 @@ pub(crate) async fn csrf_token_for_existing_session(
     let id = crate::backend::api::http::session::extract_session_id(headers)
         .filter(|id| is_hex_token(id, 64))
         .ok_or(ExistingCsrfError::Missing)?;
-    let session = crate::backend::db::users::sessions::get_browser_session(&state.pool, &id)
+    let session = codeyard_db_identity::users::sessions::get_browser_session(&state.pool, &id)
         .await
         .map_err(|_| ExistingCsrfError::Unavailable)?
         .ok_or(ExistingCsrfError::Missing)?;
@@ -94,7 +94,10 @@ pub struct PageContext {
 }
 
 impl PageContext {
-    pub(crate) fn database_actor(&self, user_id: i64) -> crate::backend::db::credentials::Actor {
+    pub(crate) fn database_actor(
+        &self,
+        user_id: i64,
+    ) -> codeyard_db_core::queries::credentials::Actor {
         (
             user_id,
             crate::backend::api::http::session::extract_session_id(&self.headers)
@@ -114,7 +117,7 @@ impl PageContext {
                 "The service is temporarily unavailable. Please try again.",
             )
         };
-        let config = crate::backend::db::node_config::get_node_configuration(&state.pool)
+        let config = codeyard_db_cluster::node_config::get_node_configuration(&state.pool)
             .await
             .map_err(|_| unavailable())?;
         let setup_completed = config.as_ref().is_some_and(|c| c.setup_completed);
@@ -124,14 +127,14 @@ impl PageContext {
         let supplied_id = crate::backend::api::http::session::extract_session_id(&headers)
             .filter(|id| is_hex_token(id, 64));
         let existing_session = match supplied_id.as_deref() {
-            Some(id) => crate::backend::db::users::sessions::get_browser_session(&state.pool, id)
+            Some(id) => codeyard_db_identity::users::sessions::get_browser_session(&state.pool, id)
                 .await
                 .map_err(|_| unavailable())?,
             None => None,
         };
         let user = match existing_session.as_ref().and_then(|s| s.user_id) {
             Some(id) => {
-                let user = crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+                let user = codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
                     .await
                     .map_err(|_| unavailable())?
                     .ok_or_else(|| {
@@ -207,7 +210,7 @@ impl PageContext {
                     // Never adopt an attacker-supplied unknown cookie ID.
                     let id = crate::backend::api::http::session::generate_session_id();
                     let agent = crate::backend::api::http::session::extract_user_agent(&headers);
-                    let s = crate::backend::db::users::sessions::create_browser_session(
+                    let s = codeyard_db_identity::users::sessions::create_browser_session(
                         &state.pool,
                         &id,
                         agent.as_deref(),
@@ -246,7 +249,7 @@ impl PageContext {
         // header, so its requests skip the count. A failed count hides the badge, not the page.
         let unread_notifications = match user.as_ref() {
             Some(user) if !path.starts_with("/api/") => {
-                match crate::backend::db::notifications::records::count_header_unread(
+                match codeyard_db_repos::notifications::records::count_header_unread(
                     &state.pool,
                     user.id,
                 )

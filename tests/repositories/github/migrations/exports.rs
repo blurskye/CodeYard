@@ -1,5 +1,5 @@
 use super::*;
-use codeyard::backend::db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
+use codeyard_db_repos::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
 
 async fn exported(router: &Router, path: &str, token: &str, operation: &str) -> Value {
     tokio::time::timeout(std::time::Duration::from_secs(30), async {

@@ -22,7 +22,7 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::organizations::OrganizationOutcome;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -120,7 +120,7 @@ pub(super) fn outcome<T>(value: OrganizationOutcome<T>) -> Result<T> {
 }
 
 pub(super) async fn target(state: &AppState, name: &str) -> Result<Organization> {
-    crate::backend::db::organizations::get_public_organization(&state.pool, name)
+    codeyard_db_orgs::organizations::get_public_organization(&state.pool, name)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)
@@ -139,13 +139,9 @@ async fn owner_actor(
         .ok_or_else(crate::backend::api::github::auth::required)?;
     let org = target(state, name).await?;
     let role = outcome(
-        crate::backend::db::organizations::get_organization_role(
-            &state.pool,
-            actor.user.id,
-            org.id,
-        )
-        .await
-        .map_err(Error::unavailable)?,
+        codeyard_db_orgs::organizations::get_organization_role(&state.pool, actor.user.id, org.id)
+            .await
+            .map_err(Error::unavailable)?,
     )?;
     if role != codeyard_db_core::models::OrgRole::Owner {
         return Err(Error::new(
@@ -165,7 +161,7 @@ async fn get_org(
     let org = target(&state, &name).await?;
     if let Some(actor) = actor {
         if let OrganizationOutcome::Applied(owned) =
-            crate::backend::db::organizations::settings::owned(&state.pool, actor.user.id, org.id)
+            codeyard_db_orgs::organizations::settings::owned(&state.pool, actor.user.id, org.id)
                 .await
                 .map_err(Error::unavailable)?
         {
@@ -174,7 +170,7 @@ async fn get_org(
                 .map(Json);
         }
     }
-    let configuration = crate::backend::db::organizations::settings::get(&state.pool, org.id)
+    let configuration = codeyard_db_orgs::organizations::settings::get(&state.pool, org.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -184,7 +180,7 @@ async fn get_org(
 }
 
 pub(super) async fn document(state: &AppState, org: &Organization) -> Result<Value> {
-    let configuration = crate::backend::db::organizations::settings::get(&state.pool, org.id)
+    let configuration = codeyard_db_orgs::organizations::settings::get(&state.pool, org.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -234,7 +230,7 @@ async fn list(
 ) -> Result<Response> {
     crate::backend::api::github::auth::authenticate(&state, &headers, false).await?;
     let limit = crate::backend::api::github::pagination::page_size(query.per_page);
-    let mut orgs = crate::backend::db::organizations::discovery::list_organizations(
+    let mut orgs = codeyard_db_orgs::organizations::discovery::list_organizations(
         &state.pool,
         None,
         false,
@@ -278,7 +274,7 @@ async fn organization_list(
     uri: Uri,
 ) -> Result<Response> {
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::organizations::discovery::list_organizations(
+    let rows = codeyard_db_orgs::organizations::discovery::list_organizations(
         &state.pool,
         Some(user),
         private,
@@ -351,7 +347,7 @@ async fn member_list(
     };
     let (offset, limit) = page.window()?;
     let rows = outcome(
-        crate::backend::db::organizations::discovery::list_visible_members(
+        codeyard_db_orgs::organizations::discovery::list_visible_members(
             &state.pool,
             actor.as_ref().map(|a| a.user.id),
             org.id,
@@ -401,7 +397,7 @@ async fn check(
     let actor = crate::backend::api::github::auth::authenticate(state, headers, false).await?;
     let org = target(state, name).await?;
     let user = crate::backend::api::github::users::target(state, username).await?;
-    let visible = crate::backend::db::organizations::discovery::list_organizations(
+    let visible = codeyard_db_orgs::organizations::discovery::list_organizations(
         &state.pool,
         Some(user.id),
         false,
@@ -419,7 +415,7 @@ async fn check(
     if !public {
         let is_member = if let Some(actor) = &actor {
             matches!(
-                crate::backend::db::organizations::get_organization_role(
+                codeyard_db_orgs::organizations::get_organization_role(
                     &state.pool,
                     actor.user.id,
                     org.id
@@ -446,7 +442,7 @@ async fn check(
                 .into_response());
         }
         if let Some(actor) = actor {
-            let states = crate::backend::db::organizations::discovery::list_membership_states(
+            let states = codeyard_db_orgs::organizations::discovery::list_membership_states(
                 &state.pool,
                 actor.user.id,
                 Some(org.id),
@@ -497,7 +493,7 @@ async fn visibility(
     }
     let org = target(state, name).await?;
     outcome(
-        crate::backend::db::organizations::discovery::set_membership_public(
+        codeyard_db_orgs::organizations::discovery::set_membership_public(
             &state.pool,
             actor.database_actor(),
             org.id,
@@ -535,7 +531,7 @@ async fn membership_value(
     org: &Organization,
     user: &User,
 ) -> Result<Value> {
-    let membership = crate::backend::db::organizations::discovery::list_membership_states(
+    let membership = codeyard_db_orgs::organizations::discovery::list_membership_states(
         &state.pool,
         actor,
         Some(org.id),
@@ -566,13 +562,9 @@ async fn membership(
     let org = target(&state, &name).await?;
     // Unlike /user/memberships, this read requires membership even for an invitee.
     if !matches!(
-        crate::backend::db::organizations::get_organization_role(
-            &state.pool,
-            actor.user.id,
-            org.id
-        )
-        .await
-        .map_err(Error::unavailable)?,
+        codeyard_db_orgs::organizations::get_organization_role(&state.pool, actor.user.id, org.id)
+            .await
+            .map_err(Error::unavailable)?,
         OrganizationOutcome::Applied(_)
     ) {
         return Err(Error::missing());
@@ -622,7 +614,7 @@ async fn own_memberships(
         per_page: query.per_page,
     };
     let (offset, limit) = page.window()?;
-    let rows = crate::backend::db::organizations::discovery::list_membership_states(
+    let rows = codeyard_db_orgs::organizations::discovery::list_membership_states(
         &state.pool,
         actor.user.id,
         None,
@@ -635,13 +627,11 @@ async fn own_memberships(
     let has_next = rows.len() > limit;
     let mut values = Vec::new();
     for row in rows.into_iter().take(limit) {
-        let org = crate::backend::db::organizations::get_public_organization_by_id(
-            &state.pool,
-            row.org_id,
-        )
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+        let org =
+            codeyard_db_orgs::organizations::get_public_organization_by_id(&state.pool, row.org_id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         values.push(membership_document(
             &org,
             &actor.user,
@@ -671,7 +661,7 @@ async fn accept(
     }
     let org = target(&state, &name).await?;
     let member = outcome(
-        crate::backend::db::organizations::accept_organization_invitation(
+        codeyard_db_orgs::organizations::accept_organization_invitation(
             &state.pool,
             actor.database_actor(),
             org.id,

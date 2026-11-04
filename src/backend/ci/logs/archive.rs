@@ -1,8 +1,8 @@
 //! Download formats project durable observations; archive members never stand in for executions.
-use crate::backend::db::action_logs::Line;
-use crate::backend::db::action_logs::Snapshot;
 use anyhow::Result;
 use chrono::Datelike;
+use codeyard_db_actions::action_logs::Line;
+use codeyard_db_actions::action_logs::Snapshot;
 use std::{
     collections::BTreeMap,
     io::{Cursor, Write},

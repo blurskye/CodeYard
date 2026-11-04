@@ -6,12 +6,12 @@ use codeyard_db_core::models::FileVisibility;
 async fn restricted_account_cannot_delete(pg: bool) {
     let mut database = Database::new(pg).await;
     let pool = database.pool();
-    let user = codeyard::backend::db::users::accounts::create_user(pool, "owner", None)
+    let user = codeyard_db_identity::users::accounts::create_user(pool, "owner", None)
         .await
         .unwrap();
-    let file = codeyard::backend::db::files::reserve_upload(
+    let file = codeyard_db_repos::files::reserve_upload(
         pool,
-        codeyard::backend::db::files::ReserveUpload {
+        codeyard_db_repos::files::ReserveUpload {
             user_id: user.id,
             filename: "avatar.png",
             content_type: "image/png",
@@ -37,12 +37,12 @@ async fn restricted_account_cannot_delete(pg: bool) {
             )
             .await;
         assert!(matches!(
-            codeyard::backend::db::files::delete_file(pool, file.id, user.id)
+            codeyard_db_repos::files::delete_file(pool, file.id, user.id)
                 .await
                 .unwrap(),
-            codeyard::backend::db::files::DeleteFileOutcome::Denied
+            codeyard_db_repos::files::DeleteFileOutcome::Denied
         ));
-        assert!(codeyard::backend::db::files::get_file_by_id(pool, file.id)
+        assert!(codeyard_db_repos::files::get_file_by_id(pool, file.id)
             .await
             .unwrap()
             .is_some());

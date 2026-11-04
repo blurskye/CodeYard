@@ -1,8 +1,6 @@
 //! The webhook section of a settings page: the view model it renders, built after the viewer
 //! has been checked, and the form fields it posts back as a hook draft.
 
-use crate::backend::db::webhooks as hooks;
-use crate::backend::db::webhooks::HookOwner;
 use crate::backend::webhooks::settings::HookError;
 use crate::backend::webhooks::settings::HookForm;
 use crate::backend::webhooks::settings::JSON_CONTENT_TYPE;
@@ -10,6 +8,8 @@ use codeyard_db_core::models::User;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::models::WebhookDelivery;
 use codeyard_db_core::DbPool;
+use codeyard_db_repos::webhooks as hooks;
+use codeyard_db_repos::webhooks::HookOwner;
 use codeyard_support::secrets::SecretEncryptor;
 use codeyard_webui::components::webhooks::{
     DeliveryDetail, DeliveryRow, HookDetail, HookDraft, HookRow, WebhookPanel,
@@ -34,7 +34,7 @@ pub struct Place<'a> {
 pub async fn build(
     pool: &DbPool,
     actor: &User,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     place: &Place<'_>,
     query: &HashMap<String, String>,
 ) -> Result<WebhookPanel, HookError> {
@@ -232,7 +232,7 @@ async fn with_saved_credentials(
     pool: &DbPool,
     owner: HookOwner,
     actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     mut draft: HookDraft,
 ) -> HookDraft {
     let Some(id) = draft.id else {
@@ -310,7 +310,7 @@ pub async fn apply(
     pool: &DbPool,
     encryptor: Option<&SecretEncryptor>,
     actor: &User,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
     owner: HookOwner,
     action: &str,
     form: &HashMap<String, String>,

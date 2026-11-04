@@ -108,7 +108,7 @@ mod tests {
         const GIB: i64 = 1024 * 1024 * 1024;
         for (name, free) in [("a", 100 * GIB), ("b", 12 * GIB), ("c", 11 * GIB)] {
             let key = codeyard_support::node_identity::NodeKey::generate();
-            let node = crate::backend::db::cluster::register_own_node(
+            let node = codeyard_db_cluster::cluster::register_own_node(
                 &pool,
                 &key.public_hex(),
                 name,
@@ -117,7 +117,7 @@ mod tests {
             )
             .await
             .unwrap();
-            crate::backend::db::cluster::record_node_heartbeat(
+            codeyard_db_cluster::cluster::record_node_heartbeat(
                 &pool,
                 &key.public_hex(),
                 "test",
@@ -128,14 +128,14 @@ mod tests {
             .unwrap();
             nodes.push(node.id);
         }
-        let owner = crate::backend::db::users::accounts::create_user(&pool, "owner", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
         let DbPool::Sqlite(raw) = &pool else {
             unreachable!()
         };
         for index in 0..20 {
-            let repo = crate::backend::db::repositories::records::create_repository(
+            let repo = codeyard_db_repos::repositories::records::create_repository(
                 &pool,
                 owner.id,
                 &format!("repo-{index}"),
@@ -154,14 +154,14 @@ mod tests {
                 .unwrap();
         }
         let primaries = group_primaries(
-            crate::backend::db::cluster::list_primary_repositories(&pool, nodes[0])
+            codeyard_db_cluster::cluster::list_primary_repositories(&pool, nodes[0])
                 .await
                 .unwrap(),
         );
         assign(&pool, nodes[0], ReplicaSetting::Copies(2), &primaries)
             .await
             .unwrap();
-        let allocations = crate::backend::db::cluster::pending_replica_bytes(&pool)
+        let allocations = codeyard_db_cluster::cluster::pending_replica_bytes(&pool)
             .await
             .unwrap();
         assert_eq!(allocations.iter().map(|row| row.1).sum::<i64>(), 22 * GIB);
@@ -276,9 +276,9 @@ async fn step(
     let node = context.node_id;
     take_over(pool, node, &context.repos_path, silent, TAKE_OVER_AFTER).await?;
     let setting =
-        ReplicaSetting::from_str(&crate::backend::db::cluster::get_replicas(pool).await?)?;
+        ReplicaSetting::from_str(&codeyard_db_cluster::cluster::get_replicas(pool).await?)?;
     let primaries =
-        group_primaries(crate::backend::db::cluster::list_primary_repositories(pool, node).await?);
+        group_primaries(codeyard_db_cluster::cluster::list_primary_repositories(pool, node).await?);
     assign(pool, node, setting, &primaries).await?;
     place_and_start(context, &primaries, retry, copying).await?;
     remove_surplus(context, pool, copying).await;
@@ -328,7 +328,7 @@ struct Primary {
 }
 
 /// The database lists one row per copy; rows of one repository are next to each other.
-fn group_primaries(rows: Vec<crate::backend::db::cluster::PrimaryReplicaRow>) -> Vec<Primary> {
+fn group_primaries(rows: Vec<codeyard_db_cluster::cluster::PrimaryReplicaRow>) -> Vec<Primary> {
     let mut primaries: Vec<Primary> = Vec::new();
     for (repository_id, disk_path, _, _, _, _) in rows {
         match primaries.last_mut() {
@@ -354,7 +354,7 @@ async fn assign(
     for primary in primaries {
         if attempted.insert(primary.repository_id) {
             attempted.extend(
-                crate::backend::db::cluster::assign_replica_family(
+                codeyard_db_cluster::cluster::assign_replica_family(
                     pool,
                     primary.repository_id,
                     node,
@@ -376,7 +376,7 @@ async fn place_and_start(
 ) -> Result<()> {
     let node = context.node_id;
     let mut held =
-        crate::backend::db::cluster::list_held_replicas(context.database()?, node).await?;
+        codeyard_db_cluster::cluster::list_held_replicas(context.database()?, node).await?;
     copying.cancel_obsolete(&held);
     let live: HashSet<_> = held.iter().map(|row| row.repository_id).collect();
     retry
@@ -406,7 +406,7 @@ pub(crate) fn copy_path(repos: &Path, uuid: Uuid) -> PathBuf {
 /// picks it, and the copies after it are still checked. Clearing only stops it from being
 /// promoted; the copy loop rebuilds it once it can be read.
 pub(crate) async fn reconcile(pool: &DbPool, node: i64, repos: &Path) -> Result<()> {
-    for row in crate::backend::db::cluster::list_held_replicas(pool, node).await? {
+    for row in codeyard_db_cluster::cluster::list_held_replicas(pool, node).await? {
         let Some(primary) = row.primary_node_id.filter(|primary| *primary != node) else {
             continue;
         };
@@ -424,7 +424,7 @@ pub(crate) async fn reconcile(pool: &DbPool, node: i64, repos: &Path) -> Result<
             }
         };
         if !usable {
-            crate::backend::db::cluster::set_applied_version(
+            codeyard_db_cluster::cluster::set_applied_version(
                 pool,
                 row.repository_id,
                 node,
@@ -462,7 +462,7 @@ async fn locate(
     copying: &Copying,
 ) -> HashSet<i64> {
     let mut failed = HashSet::new();
-    match crate::backend::db::cluster::writes::write_settings(pool).await {
+    match codeyard_db_cluster::cluster::writes::write_settings(pool).await {
         Ok(settings) if settings.write_quorum.is_some() => return failed,
         Err(error) => {
             warn!(%error, "could not check quorum before relocating storage");
@@ -532,7 +532,7 @@ async fn move_directory(
 ) -> Result<()> {
     let (primary_path, mirror_path) = if primary { (to, from) } else { (from, to) };
     let guards = tokio::time::timeout(MOVE_WAIT, moving(primary_path, mirror_path)).await?;
-    let row = crate::backend::db::repositories::records::get_repository_by_id(pool, repository)
+    let row = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository)
         .await?
         .context("repository was deleted before relocation")?;
     anyhow::ensure!(
@@ -541,7 +541,7 @@ async fn move_directory(
     );
     if !primary {
         anyhow::ensure!(
-            crate::backend::db::cluster::replica_applied_version(pool, repository, node)
+            codeyard_db_cluster::cluster::replica_applied_version(pool, repository, node)
                 .await?
                 .is_some(),
             "copy assignment changed before relocation"
@@ -747,7 +747,7 @@ async fn copy_one(
         .primary_node_id
         .context("the repository has no primary")?;
     let Some(version) =
-        crate::backend::db::cluster::get_write_version(pool, row.repository_id).await?
+        codeyard_db_cluster::cluster::get_write_version(pool, row.repository_id).await?
     else {
         return Ok(());
     };
@@ -761,7 +761,7 @@ async fn copy_one(
         maintenance::after_copy(row.repository_id, &mirror).await;
         // Refused if the repository was promoted elsewhere during the copy; the next round
         // copies from the new primary.
-        crate::backend::db::cluster::set_applied_version(
+        codeyard_db_cluster::cluster::set_applied_version(
             pool,
             row.repository_id,
             context.node_id,
@@ -812,7 +812,7 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
             else {
                 continue;
             };
-            match crate::backend::db::cluster::storage_needed(
+            match codeyard_db_cluster::cluster::storage_needed(
                 pool,
                 &uuid.to_string(),
                 context.node_id,
@@ -876,15 +876,15 @@ async fn keep_directories(context: &NodeContext) -> Result<HashSet<Uuid>> {
     let mut keep = HashSet::new();
     // Copies first. A promotion to this node removes its copy row and makes it primary in one
     // transaction, so the later primary list shows the repository if the copy list did not.
-    for row in crate::backend::db::cluster::list_held_replicas(pool, node).await? {
+    for row in codeyard_db_cluster::cluster::list_held_replicas(pool, node).await? {
         keep.insert(crate::backend::cluster::rpc::repository_uuid(
             &row.disk_path,
         )?);
     }
-    for (_, disk_path) in crate::backend::db::cluster::list_primary_paths(pool, node).await? {
+    for (_, disk_path) in codeyard_db_cluster::cluster::list_primary_paths(pool, node).await? {
         keep.insert(crate::backend::cluster::rpc::repository_uuid(&disk_path)?);
     }
-    for (_, disk_path) in crate::backend::db::cluster::list_unplaced_repositories(pool).await? {
+    for (_, disk_path) in codeyard_db_cluster::cluster::list_unplaced_repositories(pool).await? {
         if let Ok(uuid) = crate::backend::cluster::rpc::repository_uuid(&disk_path) {
             keep.insert(uuid);
         }

@@ -32,7 +32,7 @@ fn storage_location(
 
 /// Copy every table between SQLite and PostgreSQL and print the row counts
 pub async fn copy_database_cmd(from: &str, to: &str) -> Result<()> {
-    let counts = crate::backend::db::copy::copy_database(from, to).await?;
+    let counts = codeyard_db_cluster::copy::copy_database(from, to).await?;
     println!("{:<40} {:>12}", "Table", "Rows");
     for count in &counts {
         println!("{:<40} {:>12}", count.table, count.rows);
@@ -52,9 +52,9 @@ pub async fn create_user_cmd(pool: &DbPool, username: &str, email: Option<&str>)
         codeyard_model::account_input::validate_email(email)
             .map_err(|_| anyhow::anyhow!("Invalid email address"))?;
     }
-    let user = match crate::backend::db::users::transitions::create_cli_user(pool, username, email).await? {
-        crate::backend::db::users::transitions::AccountAdmission::User(user) => user,
-        crate::backend::db::users::transitions::AccountAdmission::SetupRequired => anyhow::bail!(
+    let user = match codeyard_db_identity::users::transitions::create_cli_user(pool, username, email).await? {
+        codeyard_db_identity::users::transitions::AccountAdmission::User(user) => user,
+        codeyard_db_identity::users::transitions::AccountAdmission::SetupRequired => anyhow::bail!(
             "Complete /setup first, or run codeyard user bootstrap <new-admin> --password-stdin locally"
         ),
         _ => anyhow::bail!("Account creation refused"),
@@ -86,20 +86,20 @@ pub async fn bootstrap_user_cmd(pool: &DbPool, username: &str, mode: &str) -> Re
     let hash = crate::backend::identity::passwords::hash_password(password)
         .await
         .map_err(|_| anyhow::anyhow!("Could not hash administrator password"))?;
-    match crate::backend::db::users::transitions::bootstrap_admin(pool, username, &hash, mode)
+    match codeyard_db_identity::users::transitions::bootstrap_admin(pool, username, &hash, mode)
         .await?
     {
-        crate::backend::db::users::transitions::SetupClaim::Completed(user) => {
+        codeyard_db_identity::users::transitions::SetupClaim::Completed(user) => {
             println!(
                 "Setup completed. Sign in as {} (id={}).",
                 user.username, user.id
             );
             Ok(())
         }
-        crate::backend::db::users::transitions::SetupClaim::AlreadyCompleted => {
+        codeyard_db_identity::users::transitions::SetupClaim::AlreadyCompleted => {
             anyhow::bail!("Setup is already complete; sign in with an existing administrator")
         }
-        crate::backend::db::users::transitions::SetupClaim::ExistingAccounts => {
+        codeyard_db_identity::users::transitions::SetupClaim::ExistingAccounts => {
             anyhow::bail!("That namespace already exists; choose a new administrator username")
         }
     }
@@ -107,7 +107,7 @@ pub async fn bootstrap_user_cmd(pool: &DbPool, username: &str, mode: &str) -> Re
 
 /// List all users
 pub async fn list_users_cmd(pool: &DbPool) -> Result<()> {
-    let users = crate::backend::db::users::accounts::list_users(pool).await?;
+    let users = codeyard_db_identity::users::accounts::list_users(pool).await?;
     if users.is_empty() {
         println!("No users found.");
         return Ok(());
@@ -135,12 +135,13 @@ pub async fn add_key_cmd(
     public_key: &str,
 ) -> Result<()> {
     crate::backend::identity::keys::validate_name(key_name)?;
-    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(pool, username)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
-    let key = crate::backend::db::users::ssh_keys::add_ssh_key(pool, user.id, key_name, public_key)
-        .await?;
+    let key =
+        codeyard_db_identity::users::ssh_keys::add_ssh_key(pool, user.id, key_name, public_key)
+            .await?;
     println!(
         "Added SSH key '{}' for user '{}'",
         terminal_text(&key.name),
@@ -158,7 +159,7 @@ pub async fn add_key_from_file_cmd(
     key_path: &std::path::Path,
 ) -> Result<()> {
     use tokio::io::AsyncReadExt;
-    let limit = crate::backend::db::users::ssh_keys::MAX_PUBLIC_KEY_BYTES + 1;
+    let limit = codeyard_db_identity::users::ssh_keys::MAX_PUBLIC_KEY_BYTES + 1;
     let mut public_key = String::new();
     tokio::fs::File::open(key_path)
         .await?
@@ -174,11 +175,11 @@ pub async fn add_key_from_file_cmd(
 
 /// List SSH keys for a user
 pub async fn list_keys_cmd(pool: &DbPool, username: &str) -> Result<()> {
-    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(pool, username)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
-    let keys = crate::backend::db::users::ssh_keys::list_user_keys(pool, user.id).await?;
+    let keys = codeyard_db_identity::users::ssh_keys::list_user_keys(pool, user.id).await?;
     if keys.is_empty() {
         println!("No SSH keys found for user '{}'.", username);
         return Ok(());
@@ -209,7 +210,7 @@ pub async fn create_repo_cmd(
     description: Option<&str>,
     is_private: bool,
 ) -> Result<()> {
-    let user = crate::backend::db::users::accounts::get_user_by_username(pool, owner)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(pool, owner)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", owner))?;
 
@@ -218,7 +219,7 @@ pub async fn create_repo_cmd(
     let created = crate::backend::repositories::lifecycle::provision(
         (pool, context.as_ref()),
         repos_path,
-        crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(user.id),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),
         name,
         description,
         is_private,
@@ -242,12 +243,12 @@ pub async fn create_repo_cmd(
 
 /// List repositories for a user
 pub async fn list_repos_cmd(pool: &DbPool, username: &str) -> Result<()> {
-    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(pool, username)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
     let repos =
-        crate::backend::db::repositories::records::list_user_repositories(pool, user.id).await?;
+        codeyard_db_repos::repositories::records::list_user_repositories(pool, user.id).await?;
     if repos.is_empty() {
         println!("No repositories found for user '{}'.", username);
         return Ok(());
@@ -276,11 +277,11 @@ pub async fn grant_access_cmd(
     username: &str,
     level: &str,
 ) -> Result<()> {
-    let repo = crate::backend::db::repositories::records::get_repository(pool, owner, repo_name)
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, owner, repo_name)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Repository not found: {}/{}", owner, repo_name))?;
 
-    let user = crate::backend::db::users::accounts::get_user_by_username(pool, username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(pool, username)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;
 
@@ -296,7 +297,7 @@ pub async fn grant_access_cmd(
         }
     };
 
-    crate::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         pool,
         user.id,
         repo.id,
@@ -318,7 +319,7 @@ pub async fn repo_info_cmd(
     owner: &str,
     repo_name: &str,
 ) -> Result<()> {
-    let repo = crate::backend::db::repositories::records::get_repository(pool, owner, repo_name)
+    let repo = codeyard_db_repos::repositories::records::get_repository(pool, owner, repo_name)
         .await?
         .ok_or_else(|| anyhow::anyhow!("Repository not found: {}/{}", owner, repo_name))?;
 

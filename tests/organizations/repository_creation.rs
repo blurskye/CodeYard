@@ -7,10 +7,10 @@ use crate::support::organizations::applied;
 mod fixture;
 use crate::support::http_client as http;
 
-use codeyard::backend::db::repositories::creation::NewRepository;
-use codeyard::backend::db::repositories::creation::RepositoryCreationOwner;
-use codeyard::backend::db::repositories::creation::RepositoryStorageRefusal;
-use codeyard::backend::db::repositories::creation::RepositoryTarget;
+use codeyard_db_repos::repositories::creation::NewRepository;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryStorageRefusal;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
@@ -21,19 +21,19 @@ fn owner(actor_id: i64, target: RepositoryTarget) -> RepositoryCreationOwner {
     RepositoryCreationOwner { actor_id, target }
 }
 async fn actor(database: &Database, name: &str) -> i64 {
-    codeyard::backend::db::users::accounts::create_user(database.pool(), name, None)
+    codeyard_db_identity::users::accounts::create_user(database.pool(), name, None)
         .await
         .unwrap()
         .id
 }
 async fn organization(database: &Database, actor: i64, slug: &str) -> i64 {
     applied(
-        codeyard::backend::db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             database.pool(),
             actor,
-            &codeyard::backend::db::organizations::NewOrganization::new(
+            &codeyard_db_orgs::organizations::NewOrganization::new(
                 slug,
-                codeyard::backend::db::organizations::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
             )
             .unwrap(),
         )
@@ -44,7 +44,7 @@ async fn organization(database: &Database, actor: i64, slug: &str) -> i64 {
 }
 async fn member(database: &Database, actor: i64, org: i64, user: i64, role: OrgRole) {
     applied(
-        codeyard::backend::db::organizations::add_organization_member(
+        codeyard_db_orgs::organizations::add_organization_member(
             database.pool(),
             actor,
             org,
@@ -62,7 +62,7 @@ async fn create(
     private: bool,
     source: Option<i64>,
 ) -> anyhow::Result<Option<Repository>> {
-    codeyard::backend::db::repositories::creation::insert_repository(
+    codeyard_db_repos::repositories::creation::insert_repository(
         database.pool(),
         NewRepository {
             owner: creation_owner,
@@ -106,7 +106,7 @@ async fn creation_contract(mut database: Database) {
         .execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[siteadmin])
         .await;
     // A user whose id equals the org id must not count as the org's owner.
-    let collision = codeyard::backend::db::users::accounts::get_user_by_id(database.pool(), org)
+    let collision = codeyard_db_identity::users::accounts::get_user_by_id(database.pool(), org)
         .await
         .unwrap()
         .unwrap()
@@ -158,7 +158,7 @@ async fn creation_contract(mut database: Database) {
         .is_none());
         assert_eq!(database.count().await, count);
         // Write access to one org repository doesn't allow creating others.
-        codeyard::backend::db::repositories::access::grant_repo_access(
+        codeyard_db_repos::repositories::access::grant_repo_access(
             database.pool(),
             direct_writer,
             created.id,
@@ -242,7 +242,7 @@ async fn creation_contract(mut database: Database) {
             .await;
     }
     applied(
-        codeyard::backend::db::organizations::update_organization_member_role(
+        codeyard_db_orgs::organizations::update_organization_member_role(
             database.pool(),
             own,
             org,
@@ -264,7 +264,7 @@ async fn creation_contract(mut database: Database) {
         RepositoryStorageRefusal::Denied,
     );
     applied(
-        codeyard::backend::db::organizations::remove_organization_member(
+        codeyard_db_orgs::organizations::remove_organization_member(
             database.pool(),
             own,
             org,
@@ -312,7 +312,7 @@ async fn personal_fork_contract(mut database: Database) {
         .await,
         RepositoryStorageRefusal::Denied,
     );
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         database.pool(),
         creator,
         private_source.id,
@@ -461,16 +461,14 @@ async fn initialization_cleanup_contract(mut database: Database) {
         cleaned.kind,
         codeyard::backend::repositories::lifecycle::LifecycleFailure::Unavailable
     );
-    assert!(
-        codeyard::backend::db::repositories::records::get_repository(
-            database.pool(),
-            "cleanup_owner",
-            "cleanup-complete"
-        )
-        .await
-        .unwrap()
-        .is_none()
-    );
+    assert!(codeyard_db_repos::repositories::records::get_repository(
+        database.pool(),
+        "cleanup_owner",
+        "cleanup-complete"
+    )
+    .await
+    .unwrap()
+    .is_none());
     assert_eq!(
         std::fs::read_dir(root.path()).unwrap().count(),
         original_entries
@@ -522,7 +520,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
         partial.kind,
         codeyard::backend::repositories::lifecycle::LifecycleFailure::InitializationCleanupFailed
     );
-    let remaining = codeyard::backend::db::repositories::records::get_repository(
+    let remaining = codeyard_db_repos::repositories::records::get_repository(
         database.pool(),
         "cleanup_owner",
         "cleanup-partial",
@@ -551,7 +549,7 @@ async fn initialization_cleanup_contract(mut database: Database) {
         retry.kind,
         codeyard::backend::repositories::lifecycle::LifecycleFailure::Conflict
     );
-    let after_retry = codeyard::backend::db::repositories::records::get_repository(
+    let after_retry = codeyard_db_repos::repositories::records::get_repository(
         database.pool(),
         "cleanup_owner",
         "cleanup-partial",
@@ -570,7 +568,7 @@ async fn shared_fixture_lifecycle(pg: bool) {
     let mut other = Database::new(pg).await;
     assert_eq!(database.count().await, i64::from(pg));
     assert_eq!(
-        codeyard::backend::db::users::accounts::count_users(database.pool())
+        codeyard_db_identity::users::accounts::count_users(database.pool())
             .await
             .unwrap(),
         i64::from(pg)
@@ -583,12 +581,12 @@ async fn shared_fixture_lifecycle(pg: bool) {
                 codeyard_db_core::DbPool::Postgres(_)
             ));
             let user =
-                codeyard::backend::db::users::accounts::get_user_by_id(database.pool(), f.owner.id)
+                codeyard_db_identity::users::accounts::get_user_by_id(database.pool(), f.owner.id)
                     .await
                     .unwrap()
                     .unwrap();
             assert_eq!(user.username, "ci_owner");
-            let repository = codeyard::backend::db::repositories::records::get_repository_by_id(
+            let repository = codeyard_db_repos::repositories::records::get_repository_by_id(
                 database.pool(),
                 f.repo.id,
             )
@@ -637,12 +635,12 @@ async fn shared_fixture_lifecycle(pg: bool) {
             &[target, untouched],
         )
         .await;
-    let target = codeyard::backend::db::users::accounts::get_user_by_id(database.pool(), target)
+    let target = codeyard_db_identity::users::accounts::get_user_by_id(database.pool(), target)
         .await
         .unwrap()
         .unwrap();
     let untouched =
-        codeyard::backend::db::users::accounts::get_user_by_id(database.pool(), untouched)
+        codeyard_db_identity::users::accounts::get_user_by_id(database.pool(), untouched)
             .await
             .unwrap()
             .unwrap();
@@ -650,20 +648,18 @@ async fn shared_fixture_lifecycle(pg: bool) {
     assert_eq!(untouched.display_name.as_deref(), Some("raw fixture"));
     assert!(target.is_admin && target.is_banned);
     assert!(!untouched.is_admin && !untouched.is_banned);
-    assert!(
-        codeyard::backend::db::users::accounts::get_user_by_username(
-            other.pool(),
-            "adapter_target"
-        )
-        .await
-        .unwrap()
-        .is_none()
-    );
+    assert!(codeyard_db_identity::users::accounts::get_user_by_username(
+        other.pool(),
+        "adapter_target"
+    )
+    .await
+    .unwrap()
+    .is_none());
 
     let pool = database.pool().clone();
     database.finish().await;
     database.finish().await;
-    let error = codeyard::backend::db::users::accounts::count_users(&pool)
+    let error = codeyard_db_identity::users::accounts::count_users(&pool)
         .await
         .unwrap_err();
     assert!(matches!(
@@ -685,7 +681,7 @@ async fn shared_fixture_lifecycle(pg: bool) {
     }
     assert_eq!(other.count().await, i64::from(pg));
     assert_eq!(
-        codeyard::backend::db::users::accounts::count_users(other.pool())
+        codeyard_db_identity::users::accounts::count_users(other.pool())
             .await
             .unwrap(),
         i64::from(pg)
@@ -709,7 +705,7 @@ async fn stale_fork_placement_contract(mut database: Database) {
     for name in ["old-primary", "new-primary"] {
         let key = codeyard_support::node_identity::NodeKey::generate().public_hex();
         nodes.push(
-            codeyard::backend::db::cluster::register_own_node(
+            codeyard_db_cluster::cluster::register_own_node(
                 database.pool(),
                 &key,
                 name,
@@ -721,7 +717,7 @@ async fn stale_fork_placement_contract(mut database: Database) {
             .id,
         );
         // A promotion needs its target to be reporting in, free disk space included.
-        codeyard::backend::db::cluster::record_node_heartbeat(
+        codeyard_db_cluster::cluster::record_node_heartbeat(
             database.pool(),
             &key,
             "test",
@@ -741,14 +737,14 @@ async fn stale_fork_placement_contract(mut database: Database) {
     .await
     .unwrap()
     .unwrap();
-    codeyard::backend::db::cluster::place_repository(database.pool(), source.id, nodes[0])
+    codeyard_db_cluster::cluster::place_repository(database.pool(), source.id, nodes[0])
         .await
         .unwrap();
     let stale = database.repository(source.id).await;
-    codeyard::backend::db::cluster::insert_replica(database.pool(), source.id, nodes[1], nodes[0])
+    codeyard_db_cluster::cluster::insert_replica(database.pool(), source.id, nodes[1], nodes[0])
         .await
         .unwrap();
-    codeyard::backend::db::cluster::set_applied_version(
+    codeyard_db_cluster::cluster::set_applied_version(
         database.pool(),
         source.id,
         nodes[1],
@@ -758,7 +754,7 @@ async fn stale_fork_placement_contract(mut database: Database) {
     .await
     .unwrap();
     assert!(matches!(
-        codeyard::backend::db::cluster::promote_repository(
+        codeyard_db_cluster::cluster::promote_repository(
             database.pool(),
             source.id,
             nodes[0],
@@ -767,11 +763,11 @@ async fn stale_fork_placement_contract(mut database: Database) {
         )
         .await
         .unwrap(),
-        codeyard::backend::db::cluster::PromoteOutcome::Promoted { .. }
+        codeyard_db_cluster::cluster::PromoteOutcome::Promoted { .. }
     ));
     let before = database.count().await;
     for placement in [stale.storage_node_id, None, Some(nodes[1])] {
-        let result = codeyard::backend::db::repositories::creation::insert_repository(
+        let result = codeyard_db_repos::repositories::creation::insert_repository(
             database.pool(),
             NewRepository {
                 owner: RepositoryCreationOwner::personal(creator),
@@ -824,7 +820,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
     };
     bundle::install();
     let mut database = Database::new(pg).await;
-    codeyard::backend::db::node_config::upsert_node_configuration(database.pool(), "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(database.pool(), "public", true)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -890,7 +886,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
         )
         .await
         .unwrap();
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         database.pool(),
         forker,
         source.id,
@@ -918,7 +914,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
             .await
     });
     fixture::wait_for_file(&gate.join("fetching")).await;
-    let fork = codeyard::backend::db::repositories::records::get_repository(
+    let fork = codeyard_db_repos::repositories::records::get_repository(
         database.pool(),
         "snapshot_forker",
         "snapshot",
@@ -926,15 +922,13 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
     .await
     .unwrap()
     .unwrap();
-    assert!(
-        codeyard::backend::db::repositories::access::revoke_repo_access(
-            database.pool(),
-            forker,
-            source.id
-        )
-        .await
-        .unwrap()
-    );
+    assert!(codeyard_db_repos::repositories::access::revoke_repo_access(
+        database.pool(),
+        forker,
+        source.id
+    )
+    .await
+    .unwrap());
     source_store
         .save_file_as(
             database.pool(),
@@ -969,13 +963,10 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
     assert!(!raw.text().contains("new private content"));
     assert_eq!(pending.await.unwrap().0, StatusCode::FORBIDDEN);
     assert!(
-        codeyard::backend::db::repositories::records::get_repository_by_id(
-            database.pool(),
-            fork.id
-        )
-        .await
-        .unwrap()
-        .is_none()
+        codeyard_db_repos::repositories::records::get_repository_by_id(database.pool(), fork.id)
+            .await
+            .unwrap()
+            .is_none()
     );
     assert!(
         !repo_store(&fork, nodes.last().map(|node| &node.context))
@@ -993,7 +984,7 @@ async fn fork_publication_contract(test: &str, pg: bool, remote: bool) {
         .to_string_lossy()
         .starts_with(".fork-")));
 
-    codeyard::backend::db::repositories::access::grant_repo_access(
+    codeyard_db_repos::repositories::access::grant_repo_access(
         database.pool(),
         forker,
         source.id,

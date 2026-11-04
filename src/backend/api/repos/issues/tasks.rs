@@ -121,11 +121,11 @@ async fn comment_body(
 ) -> ResultPage<String> {
     let body = match kind {
         Kind::Issue => {
-            let issue = crate::backend::db::issues::get_issue(&ctx.state.pool, repo_id, number)
+            let issue = codeyard_db_repos::issues::get_issue(&ctx.state.pool, repo_id, number)
                 .await
                 .map_err(|_| unavailable(ctx))?
                 .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
-            crate::backend::db::issues::get_issue_comment(&ctx.state.pool, id)
+            codeyard_db_repos::issues::get_issue_comment(&ctx.state.pool, id)
                 .await
                 .map(|comment| {
                     comment
@@ -138,7 +138,7 @@ async fn comment_body(
         // Only the author can edit a comment, so another account's comment, pending ones
         // included, is not found here. A reply in a submitted review keeps that review.
         Kind::Pull => {
-            let pull = crate::backend::db::pull_requests::records::get_pull_request(
+            let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
                 repo_id,
                 number,
@@ -146,7 +146,7 @@ async fn comment_body(
             .await
             .map_err(|_| unavailable(ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
-            crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+            codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(
                 &ctx.state.pool,
                 id,
             )
@@ -196,7 +196,7 @@ async fn save_comment_text(
                 pool,
                 broadcaster,
                 actor_id,
-                &crate::backend::db::users::accounts::AccountCredential::Session(
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                     &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                         .unwrap_or_default(),
                 ),
@@ -209,7 +209,7 @@ async fn save_comment_text(
             )
             .await
             .map_err(crate::backend::api::repos::issues::operation_error)?;
-            let position = crate::backend::db::issues::issue_comment_position(pool, id).await;
+            let position = codeyard_db_repos::issues::issue_comment_position(pool, id).await;
             Ok(comment_link(base, id, position))
         }
         Kind::Pull => {

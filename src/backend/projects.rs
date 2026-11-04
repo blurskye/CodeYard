@@ -1,9 +1,9 @@
 //! Project item filtering and ordering are shared by REST, native views and GraphQL.
-use crate::backend::db::projects::field_configuration;
-use crate::backend::db::projects::Field;
-use crate::backend::db::projects::Item;
-use crate::backend::db::projects::NewView;
 use anyhow::Result;
+use codeyard_db_repos::projects::field_configuration;
+use codeyard_db_repos::projects::Field;
+use codeyard_db_repos::projects::Item;
+use codeyard_db_repos::projects::NewView;
 use codeyard_model::project_query::Refusal;
 use serde_json::Value;
 

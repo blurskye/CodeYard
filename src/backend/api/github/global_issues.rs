@@ -3,11 +3,11 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::assignees::AssignedItem;
-use crate::backend::db::discussion_search::Collection;
-use crate::backend::db::discussion_search::Relation;
-use crate::backend::db::discussion_search::Search;
-use crate::backend::db::discussion_search::Sort;
+use codeyard_db_repos::assignees::AssignedItem;
+use codeyard_db_repos::discussion_search::Collection;
+use codeyard_db_repos::discussion_search::Relation;
+use codeyard_db_repos::discussion_search::Search;
+use codeyard_db_repos::discussion_search::Sort;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -38,7 +38,7 @@ async fn run(
         .ok_or_else(crate::backend::api::github::auth::required)?;
     let viewer = auth.user.id;
     if let Some(name) = &organization {
-        crate::backend::db::organizations::get_public_organization(&state.pool, name)
+        codeyard_db_orgs::organizations::get_public_organization(&state.pool, name)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -116,7 +116,7 @@ async fn run(
     .map_err(Error::invalid)?
     .with_classic_policy(Some(auth.token.id));
     let (offset, limit) = page.window()?;
-    let result = crate::backend::db::discussion_search::search(
+    let result = codeyard_db_repos::discussion_search::search(
         &state.pool,
         Some(viewer),
         &filter,
@@ -142,14 +142,14 @@ async fn run(
     )
     .await?;
     let repos =
-        crate::backend::db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
+        codeyard_db_repos::repositories::records::get_repositories_by_ids(&state.pool, &ids)
             .await
             .map_err(Error::unavailable)?
             .into_iter()
             .map(|repo| (repo.id, repo))
             .collect::<HashMap<_, _>>();
     let owners =
-        crate::backend::db::repositories::records::repository_owner_names(&state.pool, &ids)
+        codeyard_db_repos::repositories::records::repository_owner_names(&state.pool, &ids)
             .await
             .map_err(Error::unavailable)?;
     let mut items = Vec::new();

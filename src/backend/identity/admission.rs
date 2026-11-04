@@ -14,7 +14,7 @@ pub enum AdmissionError {
 /// The budgets one admitted attempt was counted against, so a right password can give it back.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Attempt {
-    receipt: crate::backend::db::users::admission::Receipt,
+    receipt: codeyard_db_identity::users::admission::Receipt,
 }
 
 /// Counts an attempt before its credentials are checked, against `client` (the request's address,
@@ -94,7 +94,7 @@ async fn admit(
 ) -> Result<Attempt, AdmissionError> {
     let admitted = tokio::time::timeout(
         Duration::from_secs(5),
-        crate::backend::db::users::admission::admit_password_attempt(
+        codeyard_db_identity::users::admission::admit_password_attempt(
             pool,
             client.as_deref(),
             &account,
@@ -115,7 +115,7 @@ async fn admit(
 pub async fn forgive_login(pool: &DbPool, attempt: &Attempt) {
     let forgiven = tokio::time::timeout(
         Duration::from_secs(5),
-        crate::backend::db::users::admission::forgive_password_attempt(pool, &attempt.receipt),
+        codeyard_db_identity::users::admission::forgive_password_attempt(pool, &attempt.receipt),
     )
     .await;
     if !matches!(forgiven, Ok(Ok(()))) {

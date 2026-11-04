@@ -166,7 +166,7 @@ async fn dependencies(
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
-    let reader = crate::backend::db::dependency_graph::Reader::Viewer(
+    let reader = codeyard_db_security::dependency_graph::Reader::Viewer(
         ctx.user.as_ref().map(|user| ctx.database_actor(user.id)),
     );
     let reference = ctx
@@ -193,7 +193,7 @@ async fn dependencies(
         );
     }
     let snapshots = match if let Some(sha) = revision.as_deref() {
-        crate::backend::db::dependency_graph::snapshots(
+        codeyard_db_security::dependency_graph::snapshots(
             &ctx.state.pool,
             &reader,
             loaded.repository.id,
@@ -202,7 +202,7 @@ async fn dependencies(
         )
         .await
     } else {
-        crate::backend::db::dependency_graph::latest_snapshots(
+        codeyard_db_security::dependency_graph::latest_snapshots(
             &ctx.state.pool,
             &reader,
             loaded.repository.id,
@@ -261,7 +261,7 @@ async fn pulse(
         Err(response) => return response,
     };
     let days = normalize_days(ctx.query.get("days").map(String::as_str));
-    let points = match crate::backend::db::repository_stats::list_repo_activity_points(
+    let points = match codeyard_db_repos::repository_stats::list_repo_activity_points(
         &ctx.state.pool,
         loaded.repository.id,
         days,
@@ -479,7 +479,7 @@ async fn actions(
         Err(response) => return response,
     };
     let days = normalize_days(ctx.query.get("days").map(String::as_str));
-    let usage = match crate::backend::db::repository_stats::list_workflow_usage(
+    let usage = match codeyard_db_repos::repository_stats::list_workflow_usage(
         &ctx.state.pool,
         loaded.repository.id,
         days,
@@ -551,7 +551,7 @@ async fn forks(
             Ok(user) => user.map(|user| user.id),
             Err(_) => return crate::backend::api::repos::chrome::unavailable(&ctx),
         };
-    let readable = match crate::backend::db::repositories::access::readable_repository_ids(
+    let readable = match codeyard_db_repos::repositories::access::readable_repository_ids(
         &ctx.state.pool,
         viewer,
         &ids,

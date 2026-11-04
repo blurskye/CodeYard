@@ -44,9 +44,7 @@ impl World {
         let repository = codeyard::backend::repositories::lifecycle::provision(
             (database.pool(), None),
             root.path(),
-            codeyard::backend::db::repositories::creation::RepositoryCreationOwner::personal(
-                alice_id,
-            ),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice_id),
             "proj",
             None,
             true,
@@ -59,7 +57,7 @@ impl World {
             (carol_id, codeyard_db_core::models::AccessLevel::Write),
             (dave_id, codeyard_db_core::models::AccessLevel::Read),
         ] {
-            codeyard::backend::db::repositories::access::grant_repo_access(
+            codeyard_db_repos::repositories::access::grant_repo_access(
                 database.pool(),
                 user,
                 repository.id,
@@ -399,9 +397,9 @@ async fn threads_and_inline_listing_contract(pg: bool) {
         .await;
     assert_eq!(second["in_reply_to_comment_id"], root_id, "{second}");
     // A reply can sit under another reply. A new reply to it still joins the root.
-    let nested = codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
+    let nested = codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
         world.database.pool(),
-        codeyard::backend::db::pull_requests::reviews::NewPullRequestComment {
+        codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
             pr_id: pull_row_id(&world, number).await,
             author_id: world.alice_id,
             body: "Nested",
@@ -439,7 +437,7 @@ async fn threads_and_inline_listing_contract(pg: bool) {
 
     // Only comments on files are listed inline, oldest first.
     let pr_id = pull_row_id(&world, number).await;
-    let listed = codeyard::backend::db::pull_requests::reviews::list_pull_request_inline_comments(
+    let listed = codeyard_db_repos::pull_requests::reviews::list_pull_request_inline_comments(
         world.database.pool(),
         pr_id,
     )
@@ -464,9 +462,9 @@ async fn threads_and_inline_listing_contract(pg: bool) {
 
     // The listing stops at 500 and says that more exist.
     for n in 5..500 {
-        codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
+        codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
             world.database.pool(),
-            codeyard::backend::db::pull_requests::reviews::NewPullRequestComment {
+            codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
                 pr_id,
                 author_id: world.alice_id,
                 body: &format!("Filler {n}"),
@@ -483,7 +481,7 @@ async fn threads_and_inline_listing_contract(pg: bool) {
         .await
         .unwrap();
     }
-    let full = codeyard::backend::db::pull_requests::reviews::list_pull_request_inline_comments(
+    let full = codeyard_db_repos::pull_requests::reviews::list_pull_request_inline_comments(
         world.database.pool(),
         pr_id,
     )
@@ -491,9 +489,9 @@ async fn threads_and_inline_listing_contract(pg: bool) {
     .unwrap();
     assert_eq!(full.comments.len(), 500);
     assert!(!full.truncated);
-    codeyard::backend::db::pull_requests::reviews::add_pull_request_comment(
+    codeyard_db_repos::pull_requests::reviews::add_pull_request_comment(
         world.database.pool(),
-        codeyard::backend::db::pull_requests::reviews::NewPullRequestComment {
+        codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
             pr_id,
             author_id: world.alice_id,
             body: "One too many",
@@ -509,7 +507,7 @@ async fn threads_and_inline_listing_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let capped = codeyard::backend::db::pull_requests::reviews::list_pull_request_inline_comments(
+    let capped = codeyard_db_repos::pull_requests::reviews::list_pull_request_inline_comments(
         world.database.pool(),
         pr_id,
     )
@@ -522,7 +520,7 @@ async fn threads_and_inline_listing_contract(pg: bool) {
 
 /// The database id of pull request `number` in `alice/proj`.
 async fn pull_row_id(world: &World, number: i64) -> i64 {
-    codeyard::backend::db::pull_requests::records::get_pull_request(
+    codeyard_db_repos::pull_requests::records::get_pull_request(
         world.database.pool(),
         world.repo_id,
         number as i32,
@@ -671,7 +669,7 @@ async fn reply_chain_loop_contract(pg: bool) {
         )
         .await;
 
-    let before = codeyard::backend::db::pull_requests::reviews::count_pull_request_comments(
+    let before = codeyard_db_repos::pull_requests::reviews::count_pull_request_comments(
         world.database.pool(),
         pr_id,
     )
@@ -693,7 +691,7 @@ async fn reply_chain_loop_contract(pg: bool) {
             "That comment thread is damaged and cannot be replied to."
         );
     }
-    let after = codeyard::backend::db::pull_requests::reviews::count_pull_request_comments(
+    let after = codeyard_db_repos::pull_requests::reviews::count_pull_request_comments(
         world.database.pool(),
         pr_id,
     )
@@ -758,7 +756,7 @@ async fn sqlite_committed_review_succeeds_when_notification_comments_cannot_be_r
             StatusCode::CREATED,
         )
         .await;
-    let saved = codeyard::backend::db::pull_requests::reviews::get_pull_request_review_by_id(
+    let saved = codeyard_db_repos::pull_requests::reviews::get_pull_request_review_by_id(
         world.database.pool(),
         review["id"].as_i64().unwrap(),
     )
@@ -975,9 +973,9 @@ async fn postgres_author_and_summary_rules_for_submitted_reviews() {
 /// The refusal a database write failed with, if it was one.
 fn refusal(
     error: &anyhow::Error,
-) -> Option<codeyard::backend::db::discussions::DiscussionWriteRefusal> {
+) -> Option<codeyard_db_core::queries::discussions::DiscussionWriteRefusal> {
     error
-        .downcast_ref::<codeyard::backend::db::discussions::DiscussionWriteRefusal>()
+        .downcast_ref::<codeyard_db_core::queries::discussions::DiscussionWriteRefusal>()
         .copied()
 }
 
@@ -988,8 +986,8 @@ fn pending_input<'a>(
     author_id: i64,
     head: &'a str,
     body: &'a str,
-) -> codeyard::backend::db::pull_requests::reviews::NewPullRequestComment<'a> {
-    codeyard::backend::db::pull_requests::reviews::NewPullRequestComment {
+) -> codeyard_db_repos::pull_requests::reviews::NewPullRequestComment<'a> {
+    codeyard_db_repos::pull_requests::reviews::NewPullRequestComment {
         pr_id,
         author_id,
         body,
@@ -1011,7 +1009,7 @@ async fn mention_count(world: &World, user: i64) -> usize {
 
 /// The links of a user's notifications of one kind.
 async fn notification_links(world: &World, user: i64, kind: &str) -> Vec<String> {
-    codeyard::backend::db::notifications::records::list_notifications_for_user(
+    codeyard_db_repos::notifications::records::list_notifications_for_user(
         world.database.pool(),
         user,
         100,
@@ -1070,16 +1068,16 @@ async fn pending_review_holds_at_most_200_comments(pg: bool) {
     let (number, head) = open_pull(&world.alice, "topic", world.base.as_str()).await;
     let pr_id = pull_row_id(&world, number).await;
     let pool = world.database.pool();
-    for index in 0..codeyard::backend::db::pull_requests::reviews::MAX_REVIEW_COMMENTS {
+    for index in 0..codeyard_db_repos::pull_requests::reviews::MAX_REVIEW_COMMENTS {
         let body = format!("Comment {index}");
-        codeyard::backend::db::pull_requests::reviews::add_pending_pull_request_comment(
+        codeyard_db_repos::pull_requests::reviews::add_pending_pull_request_comment(
             pool,
             pending_input(pr_id, world.bob_id, &head, &body),
         )
         .await
         .unwrap();
     }
-    let error = codeyard::backend::db::pull_requests::reviews::add_pending_pull_request_comment(
+    let error = codeyard_db_repos::pull_requests::reviews::add_pending_pull_request_comment(
         pool,
         pending_input(pr_id, world.bob_id, &head, "One too many"),
     )
@@ -1088,11 +1086,11 @@ async fn pending_review_holds_at_most_200_comments(pg: bool) {
     assert!(
         matches!(
             refusal(&error),
-            Some(codeyard::backend::db::discussions::DiscussionWriteRefusal::ReviewFull)
+            Some(codeyard_db_core::queries::discussions::DiscussionWriteRefusal::ReviewFull)
         ),
         "{error:#}"
     );
-    let held = codeyard::backend::db::pull_requests::reviews::list_pending_review_comments(
+    let held = codeyard_db_repos::pull_requests::reviews::list_pending_review_comments(
         pool,
         pr_id,
         world.bob_id,
@@ -1119,7 +1117,7 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
             &[pr_id],
         )
         .await;
-    let error = codeyard::backend::db::pull_requests::reviews::add_pending_pull_request_comment(
+    let error = codeyard_db_repos::pull_requests::reviews::add_pending_pull_request_comment(
         pool,
         pending_input(pr_id, world.bob_id, &head, "Too late"),
     )
@@ -1128,19 +1126,15 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
     assert!(
         matches!(
             refusal(&error),
-            Some(codeyard::backend::db::discussions::DiscussionWriteRefusal::InvalidReview)
+            Some(codeyard_db_core::queries::discussions::DiscussionWriteRefusal::InvalidReview)
         ),
         "{error:#}"
     );
     assert!(
-        codeyard::backend::db::pull_requests::reviews::get_pending_review(
-            pool,
-            pr_id,
-            world.bob_id
-        )
-        .await
-        .unwrap()
-        .is_none()
+        codeyard_db_repos::pull_requests::reviews::get_pending_review(pool, pr_id, world.bob_id)
+            .await
+            .unwrap()
+            .is_none()
     );
 
     world
@@ -1150,14 +1144,14 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
             &[pr_id],
         )
         .await;
-    codeyard::backend::db::pull_requests::reviews::add_pending_pull_request_comment(
+    codeyard_db_repos::pull_requests::reviews::add_pending_pull_request_comment(
         pool,
         pending_input(pr_id, world.bob_id, &head, "Inline only"),
     )
     .await
     .unwrap();
     assert!(
-        codeyard::backend::db::pull_requests::reviews::discard_pending_review(
+        codeyard_db_repos::pull_requests::reviews::discard_pending_review(
             pool,
             pr_id,
             world.bob_id
@@ -1165,11 +1159,11 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
         .await
         .unwrap()
     );
-    let error = codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+    let error = codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         pool,
         pr_id,
         world.bob_id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, world.bob_id).await,
         ),
         "commented",
@@ -1181,16 +1175,16 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
     assert!(
         matches!(
             refusal(&error),
-            Some(codeyard::backend::db::discussions::DiscussionWriteRefusal::EmptyReview)
+            Some(codeyard_db_core::queries::discussions::DiscussionWriteRefusal::EmptyReview)
         ),
         "{error:#}"
     );
     // The same review with a summary is accepted.
-    codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+    codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
         pool,
         pr_id,
         world.bob_id,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(pool, world.bob_id).await,
         ),
         "commented",
@@ -1318,11 +1312,11 @@ async fn reviews_past_the_old_limit_stay_on_the_conversation(pg: bool) {
     let pool = world.database.pool();
     for index in 0..1001 {
         let body = format!("Round {index:04}");
-        codeyard::backend::db::pull_requests::reviews::add_pull_request_review(
+        codeyard_db_repos::pull_requests::reviews::add_pull_request_review(
             pool,
             pr_id,
             world.bob_id,
-            &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 &crate::support::live_session(pool, world.bob_id).await,
             ),
             "commented",
@@ -1353,17 +1347,17 @@ async fn pull_request_sort_counts_only_shown_comments(pg: bool) {
     let (newer, _) = open_pull(&world.alice, "newer", world.base.as_str()).await;
     let pr_id = pull_row_id(&world, older).await;
     let pool = world.database.pool();
-    codeyard::backend::db::pull_requests::reviews::add_pending_pull_request_comment(
+    codeyard_db_repos::pull_requests::reviews::add_pending_pull_request_comment(
         pool,
         pending_input(pr_id, world.bob_id, &head, "Hidden"),
     )
     .await
     .unwrap();
-    let filter = codeyard::backend::db::discussions::ListFilter {
-        sort: codeyard::backend::db::discussions::ListSort::MostCommented,
+    let filter = codeyard_db_repos::discussions::ListFilter {
+        sort: codeyard_db_repos::discussions::ListSort::MostCommented,
         ..Default::default()
     };
-    let listed = codeyard::backend::db::pull_requests::records::list_repo_pull_requests(
+    let listed = codeyard_db_repos::pull_requests::records::list_repo_pull_requests(
         pool,
         world.repo_id,
         &filter,

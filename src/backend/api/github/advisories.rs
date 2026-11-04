@@ -7,9 +7,9 @@ use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 
-use crate::backend::db::advisories::Listing;
-use crate::backend::db::advisories::Scope;
-use crate::backend::db::advisories::Sort;
+use codeyard_db_security::advisories::Listing;
+use codeyard_db_security::advisories::Scope;
+use codeyard_db_security::advisories::Sort;
 use codeyard_model::advisories::Advisory;
 use codeyard_model::advisories::Data;
 
@@ -95,7 +95,7 @@ pub(super) fn failure(error: anyhow::Error) -> Error {
 async fn person(state: &AppState, id: Option<i64>) -> Result<Value> {
     if let Some(id) = id {
         Ok(
-            crate::backend::db::users::accounts::get_user_by_id(&state.pool, id)
+            codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .as_ref()
@@ -113,12 +113,12 @@ async fn document(
 ) -> Result<Value> {
     let data = Data::from_row(row).map_err(Error::unavailable)?;
     let repo =
-        crate::backend::db::repositories::records::get_repository_by_id(&state.pool, row.repo_id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, row.repo_id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
     let owner =
-        crate::backend::db::repositories::records::repository_owner_name(&state.pool, row.repo_id)
+        codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, row.repo_id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
@@ -134,7 +134,7 @@ async fn document(
     }
     let fork = if let (Some(id), Some(viewer)) = (row.private_fork_id, viewer) {
         if let Some(fork) =
-            crate::backend::db::repositories::records::get_repository_by_id(&state.pool, id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
                 .await
                 .map_err(Error::unavailable)?
         {
@@ -263,7 +263,7 @@ async fn list(
         limit: (limit + 1) as i64,
         offset: 0,
     };
-    let mut rows = crate::backend::db::advisories::list(
+    let mut rows = codeyard_db_security::advisories::list(
         &state.pool,
         actor.as_ref().map(|a| a.user.id),
         scope,
@@ -319,7 +319,7 @@ async fn get_advisory(
 ) -> Result<Json<Value>> {
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
-    let row = crate::backend::db::advisories::get(
+    let row = codeyard_db_security::advisories::get(
         &state.pool,
         actor.as_ref().map(|a| a.user.id),
         repo.id,
@@ -341,7 +341,7 @@ async fn create(
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
     let report = uri.path().ends_with("/reports");
-    let mut row = crate::backend::db::advisories::create(
+    let mut row = codeyard_db_security::advisories::create(
         &state.pool,
         actor.database_actor(),
         repo.id,
@@ -360,7 +360,7 @@ async fn create(
         .await
         {
             Ok(_) => {
-                if let Some(fresh) = crate::backend::db::advisories::get(
+                if let Some(fresh) = codeyard_db_security::advisories::get(
                     &state.pool,
                     Some(actor.user.id),
                     repo.id,
@@ -387,7 +387,7 @@ async fn create(
                 }
             }
             Err(error) => {
-                match crate::backend::db::advisories::discard_created(
+                match codeyard_db_security::advisories::discard_created(
                     &state.pool,
                     actor.user.id,
                     &row,
@@ -426,7 +426,7 @@ async fn update(
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
-    let row = crate::backend::db::advisories::update(
+    let row = codeyard_db_security::advisories::update(
         &state.pool,
         actor.database_actor(),
         repo.id,
@@ -444,7 +444,7 @@ async fn cve(
 ) -> Result<StatusCode> {
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
-    crate::backend::db::advisories::request_cve(
+    codeyard_db_security::advisories::request_cve(
         &state.pool,
         {
             let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;

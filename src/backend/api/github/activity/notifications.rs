@@ -5,10 +5,10 @@ use crate::backend::api::github::activity::Error;
 use crate::backend::api::github::activity::Pagination;
 use crate::backend::api::github::activity::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::notifications::records::NotificationInboxAction;
-use crate::backend::db::notifications::threads::ThreadAction;
-use crate::backend::db::notifications::threads::ThreadFilter;
-use crate::backend::db::notifications::threads::ThreadInbox;
+use codeyard_db_repos::notifications::records::NotificationInboxAction;
+use codeyard_db_repos::notifications::threads::ThreadAction;
+use codeyard_db_repos::notifications::threads::ThreadFilter;
+use codeyard_db_repos::notifications::threads::ThreadInbox;
 
 use crate::backend::notifications::inbox::InboxError;
 

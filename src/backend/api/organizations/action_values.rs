@@ -2,10 +2,6 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::organizations::organization::field;
 use crate::backend::app::AppState;
 
-use crate::backend::db::organization_values as values;
-use crate::backend::db::organization_values::Kind;
-use crate::backend::db::organization_values::Save;
-use crate::backend::db::organization_values::ValueError;
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -13,6 +9,10 @@ use axum::{
     routing::post,
     Router,
 };
+use codeyard_db_orgs::organization_values as values;
+use codeyard_db_orgs::organization_values::Kind;
+use codeyard_db_orgs::organization_values::Save;
+use codeyard_db_orgs::organization_values::ValueError;
 use codeyard_webui::pages::orgs::actions as view;
 use std::{collections::HashMap, sync::Arc};
 
@@ -69,14 +69,14 @@ pub(super) async fn build(
             repositories: entry.repository_ids,
         });
     }
-    let oidc = crate::backend::db::oidc::settings(
+    let oidc = codeyard_db_actions::oidc::settings(
         &ctx.state.pool,
         actor,
-        crate::backend::db::oidc::Scope::Organization(org),
+        codeyard_db_core::queries::oidc::Scope::Organization(org),
     )
     .await
     .map_err(ValueError::Authority)?;
-    let inclusions = crate::backend::db::oidc::inclusions(&ctx.state.pool, actor, org)
+    let inclusions = codeyard_db_actions::oidc::inclusions(&ctx.state.pool, actor, org)
         .await
         .map_err(ValueError::Authority)?;
     Ok(view::Panel {
@@ -151,29 +151,29 @@ async fn change(
             "Organization does not match this form.",
         );
     }
-    let credential = crate::backend::db::users::accounts::AccountCredential::Session(
+    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Session(
         ctx.session_id.as_deref().unwrap_or(""),
     );
     if action.starts_with("oidc-") {
         let result = match action.as_str() {
             "oidc-save" => {
-                let mut settings = crate::backend::db::oidc::Settings::from_keys(
+                let mut settings = codeyard_db_core::queries::oidc::Settings::from_keys(
                     false,
                     field(&form, "include_claim_keys"),
                 );
                 if settings.include_claim_keys.is_none() {
                     settings.include_claim_keys = Some(vec!["repo".into(), "context".into()]);
                 }
-                crate::backend::db::oidc::save_settings(
+                codeyard_db_actions::oidc::save_settings(
                     &ctx.state.pool,
                     (actor, &credential),
-                    crate::backend::db::oidc::Scope::Organization(org),
+                    codeyard_db_core::queries::oidc::Scope::Organization(org),
                     &settings,
                 )
                 .await
             }
             "oidc-property-add" | "oidc-property-delete" => {
-                crate::backend::db::oidc::change_inclusion(
+                codeyard_db_actions::oidc::change_inclusion(
                     &ctx.state.pool,
                     (actor, &credential),
                     org,

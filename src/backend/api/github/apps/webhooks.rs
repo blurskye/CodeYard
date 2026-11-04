@@ -5,8 +5,8 @@ use crate::backend::api::github::apps::super::Result;
 use crate::backend::api::github::apps::installations::jwt;
 use crate::backend::app::AppState;
 
-use crate::backend::db::github_app_hooks::Delivery;
-use crate::backend::db::webhooks::WebhookPatch;
+use codeyard_db_core::queries::webhooks::WebhookPatch;
+use codeyard_db_identity::github_app_hooks::Delivery;
 
 use crate::backend::webhooks::settings::HookError;
 use crate::backend::webhooks::settings::HookForm;
@@ -42,7 +42,7 @@ pub(super) async fn get_config(
     headers: HeaderMap,
 ) -> Result<Json<Value>> {
     let app = jwt(&state, &headers).await?;
-    let hook = crate::backend::db::github_app_hooks::hook(&state.pool, app.id)
+    let hook = codeyard_db_identity::github_app_hooks::hook(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(Json(configuration(hook.as_ref())))
@@ -82,7 +82,7 @@ pub(super) async fn update_config(
     let secret = string("secret")?;
     // The stored hook fills the fields the request leaves out only for validation. The save
     // writes just the named fields, so a concurrent edit of another field stands.
-    let old = crate::backend::db::github_app_hooks::hook(&state.pool, app.id)
+    let old = codeyard_db_identity::github_app_hooks::hook(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?;
     let creating = old.is_none();
@@ -116,7 +116,7 @@ pub(super) async fn update_config(
     let sealed =
         crate::backend::webhooks::settings::seal(state.secret_encryptor.as_deref(), &form.secret)
             .map_err(hook_error)?;
-    if !crate::backend::db::github_app_hooks::save(
+    if !codeyard_db_identity::github_app_hooks::save(
         &state.pool,
         app.id,
         &patch,
@@ -128,7 +128,7 @@ pub(super) async fn update_config(
     {
         return Err(Error::validation("Hook", "url", "missing_field"));
     }
-    let hook = crate::backend::db::github_app_hooks::hook(&state.pool, app.id)
+    let hook = codeyard_db_identity::github_app_hooks::hook(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(Json(configuration(hook.as_ref())))
@@ -176,7 +176,7 @@ pub(super) async fn list_deliveries(
             "Invalid delivery status",
         ));
     }
-    let mut all = crate::backend::db::github_app_hooks::deliveries(&state.pool, app.id)
+    let mut all = codeyard_db_identity::github_app_hooks::deliveries(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?;
     all.retain(|delivery| match query.status.as_deref() {
@@ -275,7 +275,7 @@ pub(super) async fn get_delivery(
     Path(id): Path<i64>,
 ) -> Result<Json<Value>> {
     let app = jwt(&state, &headers).await?;
-    let record = crate::backend::db::github_app_hooks::delivery(&state.pool, app.id, id)
+    let record = codeyard_db_identity::github_app_hooks::delivery(&state.pool, app.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -287,11 +287,11 @@ pub(super) async fn redeliver(
     Path(id): Path<i64>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let app = jwt(&state, &headers).await?;
-    let hook = crate::backend::db::github_app_hooks::hook(&state.pool, app.id)
+    let hook = codeyard_db_identity::github_app_hooks::hook(&state.pool, app.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let record = crate::backend::db::github_app_hooks::delivery(&state.pool, app.id, id)
+    let record = codeyard_db_identity::github_app_hooks::delivery(&state.pool, app.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;

@@ -67,7 +67,7 @@ async fn live_read(
     repo: i64,
 ) -> Result<()> {
     if let Some(auth) = auth {
-        if crate::backend::db::users::tokens::token_user(&state.pool, auth.token.id, false)
+        if codeyard_db_identity::users::tokens::token_user(&state.pool, auth.token.id, false)
             .await
             .map_err(Error::unavailable)?
             .is_none()
@@ -78,7 +78,7 @@ async fn live_read(
             .await
             .map_err(crate::backend::api::github::auth::scope_error)?;
     }
-    if crate::backend::db::repositories::access::readable_repository_ids(
+    if codeyard_db_repos::repositories::access::readable_repository_ids(
         &state.pool,
         auth.map(|auth| auth.user.id),
         &[repo],

@@ -1,6 +1,6 @@
 use crate::backend::ci::CiRuns;
-use crate::backend::db::repositories::records::get_git_repository;
-use crate::backend::db::users::ssh_keys::get_user_by_key_fingerprint;
+use codeyard_db_identity::users::ssh_keys::get_user_by_key_fingerprint;
+use codeyard_db_repos::repositories::records::get_git_repository;
 
 use crate::backend::repositories::git_sessions::GitTasks;
 use crate::backend::repositories::git_sessions::ReceiveCredential;
@@ -176,9 +176,9 @@ impl GitSshHandler {
             }
         }
         let key = public_key.to_openssh()?;
-        let fingerprint = crate::backend::db::users::ssh_keys::calculate_fingerprint(&key)?;
+        let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&key)?;
         let account = get_user_by_key_fingerprint(&self.pool, &fingerprint).await?;
-        let deploy = crate::backend::db::deploy_keys::get_deploy_key_by_fingerprint(
+        let deploy = codeyard_db_identity::deploy_keys::get_deploy_key_by_fingerprint(
             &self.pool,
             &fingerprint,
         )
@@ -192,7 +192,7 @@ impl GitSshHandler {
                     account.key.id,
                 )))
             }
-            (None, Some(key)) => Ok(crate::backend::db::deploy_keys::usable_deploy_key(
+            (None, Some(key)) => Ok(codeyard_db_identity::deploy_keys::usable_deploy_key(
                 &self.pool, key.id,
             )
             .await?
@@ -621,7 +621,7 @@ impl russh::server::Handler for GitSshHandler {
             let result = async {
                 let queued_store = repo_store(&repo, cluster.as_ref());
                 let mut _permit = wait_for_session_slot(&queued_store, &queued).await?;
-                let repo = tokio::time::timeout(std::time::Duration::from_secs(5), crate::backend::db::repositories::records::get_repository_by_id(&pool, repo.id))
+                let repo = tokio::time::timeout(std::time::Duration::from_secs(5), codeyard_db_repos::repositories::records::get_repository_by_id(&pool, repo.id))
                     .await??.ok_or_else(|| anyhow::anyhow!("repository unavailable"))?;
                 let store = repo_store(&repo, cluster.as_ref());
                 if store.is_local() != queued_store.is_local() {
@@ -632,7 +632,7 @@ impl russh::server::Handler for GitSshHandler {
                 }
                 match credential {
                     ReceiveCredential::DeployKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), crate::backend::repositories::deploy_keys::record_use(&pool, id)).await; }
-                    ReceiveCredential::SshKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), crate::backend::db::users::ssh_keys::touch_ssh_key(&pool, id)).await; }
+                    ReceiveCredential::SshKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_db_identity::users::ssh_keys::touch_ssh_key(&pool, id)).await; }
                     _ => {}
                 }
                 let (actor,_) = tokio::time::timeout(std::time::Duration::from_secs(5), credential.authorize(&pool, &repo, git_cmd.write)).await??;
@@ -827,14 +827,15 @@ mod tests {
             .unwrap();
         let pool = DbPool::from(native.clone());
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let public =
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
-        let key = crate::backend::db::users::ssh_keys::add_ssh_key(&pool, owner.id, "key", public)
-            .await
-            .unwrap();
+        let key =
+            codeyard_db_identity::users::ssh_keys::add_ssh_key(&pool, owner.id, "key", public)
+                .await
+                .unwrap();
         let public = PublicKey::from_openssh(public).unwrap();
         let ci = Arc::new(CiRuns::new(
             pool.clone(),
@@ -848,7 +849,7 @@ mod tests {
         let mut handler = GitSshHandler::new(pool.clone(), RateLimiter::new(), ci);
         // Enrollment stays valid for host OpenSSH; the built-in verifier cannot require touch.
         let security_key = "sk-ssh-ed25519@openssh.com AAAAGnNrLXNzaC1lZDI1NTE5QG9wZW5zc2guY29tAAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJlAAAAC3NzaDpmaXh0dXJl";
-        crate::backend::db::users::ssh_keys::add_ssh_key(
+        codeyard_db_identity::users::ssh_keys::add_ssh_key(
             &pool,
             owner.id,
             "security key",
@@ -886,7 +887,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        crate::backend::db::users::ssh_keys::delete_ssh_key(&pool, key.id)
+        codeyard_db_identity::users::ssh_keys::delete_ssh_key(&pool, key.id)
             .await
             .unwrap();
         assert!(matches!(
@@ -908,12 +909,12 @@ mod tests {
             .unwrap();
         let pool = DbPool::from(native);
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let public =
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
-        crate::backend::db::users::ssh_keys::add_ssh_key(&pool, owner.id, "key", public)
+        codeyard_db_identity::users::ssh_keys::add_ssh_key(&pool, owner.id, "key", public)
             .await
             .unwrap();
         let public = PublicKey::from_openssh(public).unwrap();

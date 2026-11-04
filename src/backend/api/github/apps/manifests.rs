@@ -4,7 +4,7 @@ use crate::backend::api::github::apps::super::Result;
 use crate::backend::api::github::apps::installations::app_value;
 use crate::backend::app::AppState;
 
-use crate::backend::db::github_apps::App;
+use codeyard_db_identity::github_apps::App;
 
 use codeyard_support::token_hash::token_hash;
 
@@ -26,7 +26,7 @@ pub(super) async fn convert(
         return Err(Error::missing());
     }
     let hash = token_hash(&code);
-    let draft = crate::backend::db::github_app_manifests::draft(&state.pool, &hash, true)
+    let draft = codeyard_db_identity::github_app_manifests::draft(&state.pool, &hash, true)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -70,7 +70,7 @@ pub(super) async fn convert(
     .map_err(|_| Error::unavailable(()))?;
     // The response is built without database reads after conversion, which deletes the code:
     // a failed read then would lose the only copy of the new credentials.
-    let owner = crate::backend::db::users::accounts::get_user_by_id(
+    let owner = codeyard_db_identity::users::accounts::get_user_by_id(
         &state.pool,
         draft.user_id.ok_or_else(Error::missing)?,
     )
@@ -107,7 +107,7 @@ pub(super) async fn convert(
         },
         created_at: chrono::Utc::now(),
     };
-    let app = crate::backend::db::github_app_manifests::convert(
+    let app = codeyard_db_identity::github_app_manifests::convert(
         &state.pool,
         &hash,
         &app,

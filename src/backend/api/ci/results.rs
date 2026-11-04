@@ -1,11 +1,6 @@
 //! The Results Twirp JSON API and Azure block-blob subset used by Actions v4.
 use crate::backend::app::AppState;
 
-use crate::backend::db::action_objects as objects;
-use crate::backend::db::action_objects::ActionObject;
-use crate::backend::db::action_objects::BlobPart;
-use crate::backend::db::action_objects::NewObject;
-use crate::backend::db::action_objects::RuntimeRun;
 use crate::backend::storage::StorageError;
 use crate::backend::storage::Upload;
 use axum::{
@@ -16,6 +11,11 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use codeyard_db_actions::action_objects as objects;
+use codeyard_db_actions::action_objects::ActionObject;
+use codeyard_db_actions::action_objects::BlobPart;
+use codeyard_db_actions::action_objects::NewObject;
+use codeyard_db_actions::action_objects::RuntimeRun;
 use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -142,7 +142,7 @@ async fn signed_url(
     {
         return Err(denied());
     }
-    let site = crate::backend::db::actions::get_actions_settings(&state.pool).await?;
+    let site = codeyard_db_actions::actions::get_actions_settings(&state.pool).await?;
     Ok(format!(
         "{}/twirp/blobs/{}?sig={token}",
         crate::backend::ci::runtime::results_url(&site),
@@ -171,9 +171,9 @@ async fn twirp(
     })?
     .map_err(|_| invalid())?;
     let request: Request = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-    let site = crate::backend::db::actions::get_actions_settings(&state.pool).await?;
+    let site = codeyard_db_actions::actions::get_actions_settings(&state.pool).await?;
     let repo =
-        crate::backend::db::actions::get_repo_actions_settings(&state.pool, run.repo_id).await?;
+        codeyard_db_actions::actions::get_repo_actions_settings(&state.pool, run.repo_id).await?;
     let cache_limit = site.cache_size_bytes(&repo);
     let now = chrono::Utc::now().timestamp();
     let artifact = service == "github.actions.results.api.v1.ArtifactService";
@@ -207,15 +207,15 @@ async fn twirp(
             }
             let days = if artifact {
                 let (repo_policy, org_policy) =
-                    crate::backend::db::action_settings::effective(&state.pool, run.repo_id)
+                    codeyard_db_actions::action_settings::effective(&state.pool, run.repo_id)
                         .await?;
-                let private = crate::backend::db::repositories::records::get_repository_by_id(
+                let private = codeyard_db_repos::repositories::records::get_repository_by_id(
                     &state.pool,
                     run.repo_id,
                 )
                 .await?
                 .is_some_and(|repository| repository.is_private);
-                crate::backend::db::action_settings::retention(
+                codeyard_db_core::queries::action_settings::retention(
                     &repo_policy,
                     &org_policy,
                     site.artifact_retention_days,
@@ -461,9 +461,9 @@ async fn put_blob(
         if bytes.is_empty() {
             return Err(invalid());
         }
-        let site = crate::backend::db::actions::get_actions_settings(&state.pool).await?;
+        let site = codeyard_db_actions::actions::get_actions_settings(&state.pool).await?;
         let repo =
-            crate::backend::db::actions::get_repo_actions_settings(&state.pool, object.repo_id)
+            codeyard_db_actions::actions::get_repo_actions_settings(&state.pool, object.repo_id)
                 .await?;
         let limit = if object.kind == "cache" {
             site.cache_size_bytes(&repo)

@@ -121,7 +121,7 @@ impl Fixture {
             (&unknown, OrgRole::Member),
         ] {
             applied(
-                codeyard::backend::db::organizations::add_organization_member(
+                codeyard_db_orgs::organizations::add_organization_member(
                     pool, owner.id, org, actor.id, role,
                 )
                 .await
@@ -162,7 +162,7 @@ impl Fixture {
         }
     }
     pub async fn actor(pool: &codeyard_db_core::DbPool, username: &str) -> Actor {
-        let id = codeyard::backend::db::users::accounts::create_user(pool, username, None)
+        let id = codeyard_db_identity::users::accounts::create_user(pool, username, None)
             .await
             .unwrap()
             .id;
@@ -171,7 +171,7 @@ impl Fixture {
     async fn session(pool: &codeyard_db_core::DbPool, id: i64) -> Actor {
         let session = native::token();
         let csrf = native::token();
-        codeyard::backend::db::users::sessions::create_session(
+        codeyard_db_identity::users::sessions::create_session(
             pool,
             &session,
             id,
@@ -182,7 +182,7 @@ impl Fixture {
         .await
         .unwrap();
         assert_eq!(
-            codeyard::backend::db::users::sessions::get_or_create_csrf_token(
+            codeyard_db_identity::users::sessions::get_or_create_csrf_token(
                 pool,
                 &session,
                 Some(id),
@@ -197,13 +197,12 @@ impl Fixture {
     }
     pub async fn organization(pool: &codeyard_db_core::DbPool, actor: i64, slug: &str) -> i64 {
         applied(
-            codeyard::backend::db::organizations::create_organization(
+            codeyard_db_orgs::organizations::create_organization(
                 pool,
                 actor,
-                &codeyard::backend::db::organizations::NewOrganization::new(
+                &codeyard_db_orgs::organizations::NewOrganization::new(
                     slug,
-                    codeyard::backend::db::organizations::OrganizationProfile::new(None, None)
-                        .unwrap(),
+                    codeyard_db_orgs::organizations::OrganizationProfile::new(None, None).unwrap(),
                 )
                 .unwrap(),
             )
@@ -297,7 +296,7 @@ impl Fixture {
         org: Option<i64>,
         private: bool,
     ) -> codeyard_db_core::models::Repository {
-        let repository = codeyard::backend::db::repositories::records::get_repository(
+        let repository = codeyard_db_repos::repositories::records::get_repository(
             self.database.pool(),
             owner,
             name,

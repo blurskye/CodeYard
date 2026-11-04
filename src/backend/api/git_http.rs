@@ -73,7 +73,7 @@ async fn authenticate(
     let presented = crate::backend::api::http::credentials::basic(headers).map(|(_, token)| token);
     let found = match presented.as_deref() {
         Some(value) => {
-            crate::backend::db::users::tokens::find_token(&state.pool, &token_hash(value))
+            codeyard_db_identity::users::tokens::find_token(&state.pool, &token_hash(value))
                 .await
                 .map_err(|_| unavailable())?
         }
@@ -81,7 +81,7 @@ async fn authenticate(
     };
     let mut user_id = None;
     if let Some(token) = found {
-        match crate::backend::db::users::tokens::token_user(&state.pool, token.id, false)
+        match codeyard_db_identity::users::tokens::token_user(&state.pool, token.id, false)
             .await
             .map_err(|_| unavailable())?
         {
@@ -125,7 +125,7 @@ async fn repository(
     headers: &HeaderMap,
     write: bool,
 ) -> Result<AuthorizedRepository, Response> {
-    let found = crate::backend::db::repositories::records::get_git_repository(
+    let found = codeyard_db_repos::repositories::records::get_git_repository(
         &state.pool,
         owner,
         name.strip_suffix(".git").unwrap_or(name),
@@ -141,7 +141,7 @@ async fn authorize_repository(
     headers: &HeaderMap,
     write: bool,
 ) -> Result<AuthorizedRepository, Response> {
-    let config = crate::backend::db::node_config::get_node_configuration(&state.pool)
+    let config = codeyard_db_cluster::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(|_| unavailable())?
         .filter(|config| config.setup_completed)
@@ -222,7 +222,7 @@ pub async fn info_refs(
     // The advertisement may have waited for a session slot, and access can change meanwhile. The
     // check is for the repository the refs came from, even if its name has been reused.
     let found =
-        match crate::backend::db::repositories::records::get_repository_by_id(&state.pool, repo.id)
+        match codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, repo.id)
             .await
         {
             Ok(found) => found,
@@ -344,7 +344,7 @@ async fn rpc(
     // checked again now. It is keyed by the original repository id, so a name reused meanwhile
     // does not stand in for it.
     let found =
-        match crate::backend::db::repositories::records::get_repository_by_id(&state.pool, repo.id)
+        match codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, repo.id)
             .await
         {
             Ok(found) => found,
@@ -446,7 +446,7 @@ async fn rpc(
     // Remote storage may have waited for its own session slot. Do not disclose even the
     // first bytes until the original credential and repository have been checked again.
     if !write {
-        let found = match crate::backend::db::repositories::records::get_repository_by_id(
+        let found = match codeyard_db_repos::repositories::records::get_repository_by_id(
             &response_state.pool,
             repository_id,
         )

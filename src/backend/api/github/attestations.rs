@@ -6,13 +6,8 @@ use crate::backend::api::github::repository;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::db::attestation_validation::PreparedBundle;
+use codeyard_db_security::attestation_validation::PreparedBundle;
 
-use crate::backend::db::attestations::Attestation;
-use crate::backend::db::attestations::Filter;
-use crate::backend::db::attestations::Owner;
-use crate::backend::db::attestations::Refusal;
-use crate::backend::db::attestations::MAX_RESPONSE_BUNDLE_BYTES;
 use axum::{
     extract::{OriginalUri, Path, Query, Request, State},
     http::{HeaderMap, Method, StatusCode},
@@ -20,6 +15,11 @@ use axum::{
     routing::{delete, get, post, MethodRouter},
     Json,
 };
+use codeyard_db_security::attestations::Attestation;
+use codeyard_db_security::attestations::Filter;
+use codeyard_db_security::attestations::Owner;
+use codeyard_db_security::attestations::Refusal;
+use codeyard_db_security::attestations::MAX_RESPONSE_BUNDLE_BYTES;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
@@ -41,7 +41,7 @@ fn failure(error: anyhow::Error) -> Error {
 fn checked_predicate(value: Option<&str>) -> Result<Option<&str>> {
     value
         .map(|value| {
-            if !crate::backend::db::attestations::valid_predicate(value) {
+            if !codeyard_db_security::attestations::valid_predicate(value) {
                 return Err(Error::validation(
                     "Attestation",
                     "predicate_type",
@@ -105,7 +105,7 @@ fn trim_bundles(
 async fn body(request: Request) -> Result<Value> {
     let bytes = axum::body::to_bytes(
         request.into_body(),
-        crate::backend::db::attestations::MAX_BUNDLE_BYTES + 1024,
+        codeyard_db_security::attestations::MAX_BUNDLE_BYTES + 1024,
     )
     .await
     .map_err(|_| Error::validation("Attestation", "bundle", "invalid"))?;
@@ -150,7 +150,7 @@ async fn list(
         .get("subject_digest")
         .or_else(|| params.get("attestation_id"))
         .ok_or_else(Error::missing)?;
-    if !crate::backend::db::attestations::valid_digest(digest) {
+    if !codeyard_db_core::queries::attestations::valid_digest(digest) {
         return Err(Error::validation(
             "Attestation",
             "subject_digest",
@@ -170,7 +170,7 @@ async fn list(
         before,
         limit: (limit + 1) as i64,
     };
-    let mut rows = crate::backend::db::attestations::list(&state.pool, &filter)
+    let mut rows = codeyard_db_security::attestations::list(&state.pool, &filter)
         .await
         .map_err(Error::unavailable)?;
     let more = trim_bundles(&page, &mut rows, None)?;
@@ -206,7 +206,7 @@ async fn bulk_list(
         || input
             .subject_digests
             .iter()
-            .any(|digest| !crate::backend::db::attestations::valid_digest(digest))
+            .any(|digest| !codeyard_db_core::queries::attestations::valid_digest(digest))
     {
         return Err(Error::validation(
             "Attestation",
@@ -226,7 +226,7 @@ async fn bulk_list(
         before,
         limit: (limit + 1) as i64,
     };
-    let mut rows = crate::backend::db::attestations::list(&state.pool, &filter)
+    let mut rows = codeyard_db_security::attestations::list(&state.pool, &filter)
         .await
         .map_err(Error::unavailable)?;
     let more = trim_bundles(&page, &mut rows, Some(&input.subject_digests))?;
@@ -277,7 +277,7 @@ async fn repositories(
         before,
         limit: (limit + 1) as i64,
     };
-    let mut rows = crate::backend::db::attestations::repositories(&state.pool, &filter)
+    let mut rows = codeyard_db_security::attestations::repositories(&state.pool, &filter)
         .await
         .map_err(Error::unavailable)?;
     let more = page.trim(&mut rows)?;
@@ -337,9 +337,9 @@ async fn remove(
             (None, Some(digests))
                 if !digests.is_empty()
                     && digests.len() <= 1024
-                    && digests
-                        .iter()
-                        .all(|digest| crate::backend::db::attestations::valid_digest(digest)) =>
+                    && digests.iter().all(|digest| {
+                        codeyard_db_core::queries::attestations::valid_digest(digest)
+                    }) =>
             {
                 (vec![], digests)
             }
@@ -356,7 +356,7 @@ async fn remove(
         )
     } else {
         let digest = &params["subject_digest"];
-        if !crate::backend::db::attestations::valid_digest(digest) {
+        if !codeyard_db_core::queries::attestations::valid_digest(digest) {
             return Err(Error::validation(
                 "Attestation",
                 "subject_digest",
@@ -365,7 +365,7 @@ async fn remove(
         }
         (vec![], vec![digest.clone()])
     };
-    let count = crate::backend::db::attestations::delete(
+    let count = codeyard_db_security::attestations::delete(
         &state.pool,
         actor.database_actor(),
         owner,
@@ -433,7 +433,7 @@ mod tests {
             .map(|id| {
                 row(
                     id,
-                    "x".repeat(crate::backend::db::attestations::MAX_BUNDLE_BYTES),
+                    "x".repeat(codeyard_db_security::attestations::MAX_BUNDLE_BYTES),
                 )
             })
             .collect();

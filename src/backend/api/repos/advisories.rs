@@ -1,8 +1,8 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
 
-use crate::backend::db::advisories::Listing;
-use crate::backend::db::advisories::Scope;
+use codeyard_db_security::advisories::Listing;
+use codeyard_db_security::advisories::Scope;
 use codeyard_model::advisories::Advisory;
 use codeyard_model::advisories::Data;
 
@@ -16,7 +16,9 @@ use axum::{
 use codeyard_webui::{
     app::Page,
     pages::repos::{
-        crate::backend::db::advisories::{Detail, Draft, Page as AdvisoryPage, Row, Vulnerability},
+        codeyard_db_security::advisories::{
+            Detail, Draft, Page as AdvisoryPage, Row, Vulnerability,
+        },
         page::Page as RepoPage,
     },
 };
@@ -79,7 +81,7 @@ async fn render(
     let actor = ctx.user.as_ref().map(|u| u.id);
     let data = async {
         if let Some(actor) = actor {
-            page.can_administer = crate::backend::db::advisories::can_administer(
+            page.can_administer = codeyard_db_security::advisories::can_administer(
                 &ctx.state.pool,
                 actor,
                 loaded.repository.id,
@@ -87,7 +89,7 @@ async fn render(
             .await?;
         }
         if let Some(ghsa) = ghsa {
-            let advisory = crate::backend::db::advisories::get(
+            let advisory = codeyard_db_security::advisories::get(
                 &ctx.state.pool,
                 actor,
                 loaded.repository.id,
@@ -98,7 +100,7 @@ async fn render(
             let data = Data::from_row(&advisory)?;
             page.draft = draft(&data);
             let fork_url = if let Some(id) = advisory.private_fork_id {
-                if let Some(fork) = crate::backend::db::repositories::records::get_repository_by_id(
+                if let Some(fork) = codeyard_db_repos::repositories::records::get_repository_by_id(
                     &ctx.state.pool,
                     id,
                 )
@@ -111,7 +113,7 @@ async fn render(
                     )
                     .await?
                     {
-                        crate::backend::db::repositories::records::repository_owner_name(
+                        codeyard_db_repos::repositories::records::repository_owner_name(
                             &ctx.state.pool,
                             id,
                         )
@@ -163,7 +165,7 @@ async fn render(
                 codeyard_model::advisories::Refusal::Invalid
             );
             page.page = number;
-            let mut rows = crate::backend::db::advisories::list(
+            let mut rows = codeyard_db_security::advisories::list(
                 &ctx.state.pool,
                 actor,
                 Scope::Repository(loaded.repository.id),
@@ -262,7 +264,7 @@ async fn submit(
         Err(response) => return response,
     };
     let actor = ctx.user.as_ref().unwrap().id;
-    let can_administer = match crate::backend::db::advisories::can_administer(
+    let can_administer = match codeyard_db_security::advisories::can_administer(
         &ctx.state.pool,
         actor,
         loaded.repository.id,
@@ -308,11 +310,11 @@ async fn submit(
         }
         match op.as_str() {
             "create"=>{
-                return Ok(crate::backend::db::advisories::create(&ctx.state.pool,authority.clone(),loaded.repository.id,&value,false).await?.ghsa_id);
+                return Ok(codeyard_db_security::advisories::create(&ctx.state.pool,authority.clone(),loaded.repository.id,&value,false).await?.ghsa_id);
             }
-            "save"=>{crate::backend::db::advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&value).await?;}
-            "publish"|"close"|"draft"=>{let state=match op.as_str(){"publish"=>"published","close"=>"closed",_=>"draft"};crate::backend::db::advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&json!({"state":state})).await?;}
-            "cve"=>crate::backend::db::advisories::request_cve(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa).await?,
+            "save"=>{codeyard_db_security::advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&value).await?;}
+            "publish"|"close"|"draft"=>{let state=match op.as_str(){"publish"=>"published","close"=>"closed",_=>"draft"};codeyard_db_security::advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&json!({"state":state})).await?;}
+            "cve"=>codeyard_db_security::advisories::request_cve(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa).await?,
             "fork"=>{crate::backend::repositories::advisories::private_fork(&ctx.state,authority.clone(),&loaded.repository,&ghsa).await?;}
             _=>anyhow::bail!(codeyard_model::advisories::Refusal::Invalid),
         }

@@ -22,7 +22,7 @@ pub(super) async fn manifest_start(
     uri: Uri,
     form: &Fields,
 ) -> Response {
-    match crate::backend::db::node_config::get_node_configuration(&state.pool).await {
+    match codeyard_db_cluster::node_config::get_node_configuration(&state.pool).await {
         Ok(Some(config)) if config.setup_completed => {}
         Ok(_) => return Redirect::to("/setup").into_response(),
         Err(_) => {
@@ -69,7 +69,7 @@ pub(super) async fn manifest_start(
         return public_error(StatusCode::UNPROCESSABLE_ENTITY, "State is too long");
     }
     let code = codeyard_support::crypto::random_hex();
-    if crate::backend::db::github_app_manifests::save(
+    if codeyard_db_identity::github_app_manifests::save(
         &state.pool,
         &token_hash(&code),
         &value.unwrap().to_string(),
@@ -86,7 +86,7 @@ pub(super) async fn manifest_start(
     Redirect::to(&format!("/settings/apps/new?manifest={code}")).into_response()
 }
 pub(super) async fn manifest_preview(ctx: &PageContext, code: &str) -> Response {
-    let draft = match crate::backend::db::github_app_manifests::draft(
+    let draft = match codeyard_db_identity::github_app_manifests::draft(
         &ctx.state.pool,
         &token_hash(code),
         false,
@@ -135,8 +135,12 @@ pub(super) async fn manifest_preview(ctx: &PageContext, code: &str) -> Response 
 }
 pub(super) async fn manifest_approve(ctx: &PageContext, form: &Fields) -> Response {
     let hash = token_hash(field(form, "manifest_code"));
-    let draft = match crate::backend::db::github_app_manifests::draft(&ctx.state.pool, &hash, false)
-        .await
+    let draft = match codeyard_db_identity::github_app_manifests::draft(
+        &ctx.state.pool,
+        &hash,
+        false,
+    )
+    .await
     {
         Ok(Some(draft)) => draft,
         _ => return ctx.error(StatusCode::NOT_FOUND, "Manifest expired or not found"),
@@ -152,7 +156,7 @@ pub(super) async fn manifest_approve(ctx: &PageContext, form: &Fields) -> Respon
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
     let code = codeyard_support::crypto::random_hex();
-    match crate::backend::db::github_app_manifests::approve(
+    match codeyard_db_identity::github_app_manifests::approve(
         &ctx.state.pool,
         &hash,
         ctx.user.as_ref().unwrap().id,

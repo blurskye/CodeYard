@@ -105,7 +105,7 @@ impl CiConfig {
     }
 
     pub fn from_env() -> Result<Self> {
-        crate::backend::db::ci::claims::candidate_limit()?;
+        codeyard_db_actions::ci::claims::candidate_limit()?;
         let defaults = Self::default();
         let var = |key: &str| std::env::var(key).ok().filter(|value| !value.is_empty());
         let mode = match var("CI_EXECUTION_MODE").as_deref() {
@@ -215,8 +215,8 @@ pub struct RunLimits {
 impl RunLimits {
     /// The stricter of the two settings for each limit.
     pub fn new(
-        site: &crate::backend::db::actions::ActionsSettings,
-        repo: &crate::backend::db::actions::RepoActionsSettings,
+        site: &codeyard_db_actions::actions::ActionsSettings,
+        repo: &codeyard_db_actions::actions::RepoActionsSettings,
     ) -> Self {
         let stricter = |a: Option<i32>, b: Option<i32>| {
             let value = match (a, b) {
@@ -255,7 +255,7 @@ fn parse_platform_map(raw: &str) -> Result<BTreeMap<String, String>> {
             .context("CI_ACT_PLATFORM_MAP entries look like label=image")?;
         let label = label.trim().to_ascii_lowercase();
         ensure!(
-            crate::backend::db::runners::valid_label(&label) && !image.trim().is_empty(),
+            codeyard_db_actions::runners::valid_label(&label) && !image.trim().is_empty(),
             "CI_ACT_PLATFORM_MAP entries look like label=image"
         );
         map.insert(label, image.trim().to_owned());
@@ -305,8 +305,8 @@ mod tests {
 
     #[test]
     fn run_limits_take_the_stricter_setting_and_default_to_none() {
-        use crate::backend::db::actions::ActionsSettings;
-        use crate::backend::db::actions::RepoActionsSettings;
+        use codeyard_db_actions::actions::ActionsSettings;
+        use codeyard_db_actions::actions::RepoActionsSettings;
         let none = RunLimits::new(&ActionsSettings::default(), &RepoActionsSettings::default());
         assert_eq!(none, RunLimits::default());
         assert_eq!(none.container_options(), "");

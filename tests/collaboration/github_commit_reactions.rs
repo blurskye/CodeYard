@@ -301,7 +301,7 @@ async fn reactions(pg: bool) {
         issue.id,
         alice,
         "Comment",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
             &crate::support::live_session(f.pool(), alice).await,
         ),
     )

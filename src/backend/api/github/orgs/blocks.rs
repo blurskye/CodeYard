@@ -7,7 +7,7 @@ use crate::backend::api::github::orgs::Error;
 use crate::backend::api::github::orgs::Result;
 use crate::backend::api::github::pagination::Pagination;
 
-use crate::backend::db::organizations::OrganizationOutcome;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -38,7 +38,7 @@ async fn list(
     let org = target(&state, &name).await?;
     let (offset, limit) = page.window()?;
     let mut users = outcome(
-        crate::backend::db::organizations::blocks::list(
+        codeyard_db_orgs::organizations::blocks::list(
             &state.pool,
             actor.user.id,
             org.id,
@@ -68,19 +68,14 @@ async fn check(
         .await?
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
-    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, &username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     if !outcome(
-        crate::backend::db::organizations::blocks::check(
-            &state.pool,
-            actor.user.id,
-            org.id,
-            user.id,
-        )
-        .await
-        .map_err(Error::unavailable)?,
+        codeyard_db_orgs::organizations::blocks::check(&state.pool, actor.user.id, org.id, user.id)
+            .await
+            .map_err(Error::unavailable)?,
     )? {
         return Err(Error::missing());
     }
@@ -112,11 +107,11 @@ async fn change(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(state, name).await?;
-    let user = crate::backend::db::users::accounts::get_user_by_username(&state.pool, username)
+    let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let result = crate::backend::db::organizations::blocks::change(
+    let result = codeyard_db_orgs::organizations::blocks::change(
         &state.pool,
         actor.database_actor(),
         org.id,

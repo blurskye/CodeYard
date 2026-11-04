@@ -1,0 +1,509 @@
+use anyhow::Result;
+use codeyard_db_core::models::Repository;
+use codeyard_db_core::models::SharedRepository;
+use codeyard_db_core::native_operation;
+use codeyard_db_core::DbPool;
+
+/// Forks in the whole network, as GitHub's GraphQL `forkCount` reports it. Only public forks
+/// count, so the number reveals no private repository to any audience.
+pub(crate) const NETWORK_FORK_COUNT: &str = "WITH RECURSIVE ancestors(id,parent) AS (SELECT id,forked_from_id FROM repositories WHERE id=$1 UNION ALL SELECT r.id,r.forked_from_id FROM repositories r JOIN ancestors a ON r.id=a.parent), network(id) AS (SELECT id FROM ancestors WHERE parent IS NULL UNION ALL SELECT r.id FROM repositories r JOIN network n ON r.forked_from_id=n.id) SELECT COUNT(*) FROM network n JOIN repositories r ON r.id=n.id WHERE r.forked_from_id IS NOT NULL AND NOT r.is_private AND NOT r.is_gist";
+
+native_operation!(crate::postgres::repositories::records::network_fork_count,
+    crate::sqlite::repositories::records::network_fork_count,
+    fn network_fork_count(pool: &DbPool, repo: i64) -> Result<i64>);
+
+native_operation!(crate::postgres::repositories::records::create_repository,
+    crate::sqlite::repositories::records::create_repository,
+    fn create_repository(
+    pool: &DbPool,
+    owner_id: i64,
+    name: &str,
+    description: Option<&str>,
+    is_private: bool,
+    disk_path: &str,
+) -> Result<Repository>);
+
+native_operation!(crate::postgres::repositories::records::get_repository,
+    crate::sqlite::repositories::records::get_repository,
+    /// Resolve ASCII-case-insensitive repository coordinates, returning canonical spelling.
+    /// Principal/allowance lookups remain exact; namespace admission reserves case variants.
+    fn get_repository(
+    pool: &DbPool,
+    owner_name: &str,
+    repo_name: &str,
+) -> Result<Option<Repository>>);
+
+/// Git's gist namespace shares the same transport and storage authorization as repositories.
+/// Transports strip one `.git` suffix before calling, so `name` is used exactly as given: a
+/// repository may itself be named `project.git`.
+pub async fn get_git_repository(
+    pool: &DbPool,
+    owner: &str,
+    name: &str,
+) -> Result<Option<Repository>> {
+    if owner.eq_ignore_ascii_case("gists") || owner.eq_ignore_ascii_case("gist") {
+        if let Some(repo) = crate::gists::git_repository(pool, name).await? {
+            return Ok(Some(repo));
+        }
+        if crate::gists::is_identifier(pool, name).await? {
+            return Ok(None);
+        }
+    }
+    get_repository(pool, owner, name).await
+}
+
+native_operation!(crate::postgres::repositories::records::get_repository_by_id,
+    crate::sqlite::repositories::records::get_repository_by_id,
+    fn get_repository_by_id(pool: &DbPool, id: i64) -> Result<Option<Repository>>);
+
+native_operation!(crate::postgres::repositories::records::repository_pushed_at,
+    crate::sqlite::repositories::records::repository_pushed_at,
+    fn repository_pushed_at(pool: &DbPool, repo_id: i64) -> Result<Option<chrono::DateTime<chrono::Utc>>>);
+
+native_operation!(crate::postgres::repositories::records::get_repositories_by_ids,
+    crate::sqlite::repositories::records::get_repositories_by_ids,
+    fn get_repositories_by_ids(pool: &DbPool, ids: &[i64]) -> Result<Vec<Repository>>);
+
+native_operation!(crate::postgres::repositories::records::repository_owner_name,
+    crate::sqlite::repositories::records::repository_owner_name,
+    /// Identity namespace only; callers must first authorize/scope the repository.
+    fn repository_owner_name(pool: &DbPool, repo_id: i64) -> Result<Option<String>>);
+
+native_operation!(crate::postgres::repositories::records::list_user_repositories,
+    crate::sqlite::repositories::records::list_user_repositories,
+    fn list_user_repositories(pool: &DbPool, user_id: i64) -> Result<Vec<Repository>>);
+
+native_operation!(crate::postgres::repositories::records::count_user_repositories,
+    crate::sqlite::repositories::records::count_user_repositories,
+    fn count_user_repositories(pool: &DbPool, user_id: i64, owner_session: Option<&str>) -> Result<i64>);
+
+native_operation!(crate::postgres::repositories::records::list_shared_repositories,
+    crate::sqlite::repositories::records::list_shared_repositories,
+    fn list_shared_repositories(pool: &DbPool, user_id: i64) -> Result<Vec<SharedRepository>>);
+
+native_operation!(crate::postgres::repositories::records::list_user_repository_page,
+    crate::sqlite::repositories::records::list_user_repository_page,
+    fn list_user_repository_page(pool: &DbPool, user: i64, owner_session: Option<&str>, text: &str, include_archived: bool, limit: i64, offset: i64) -> Result<(Vec<Repository>, i64)>);
+native_operation!(crate::postgres::repositories::records::list_shared_repository_page,
+    crate::sqlite::repositories::records::list_shared_repository_page,
+    fn list_shared_repository_page(pool: &DbPool, user: i64, text: &str, include_archived: bool, limit: i64, offset: i64) -> Result<(Vec<SharedRepository>, i64)>);
+
+/// Order of a public repository list. The limit applies after this order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepositorySort {
+    /// Newest first.
+    Recent,
+    /// Most stars first, then newest first.
+    Stars,
+    /// Most forks first, then newest first.
+    Forks,
+    /// Most recently changed first.
+    Updated,
+}
+
+/// Which public repositories an Explore search keeps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RepositoryKind {
+    #[default]
+    All,
+    /// Repositories that are not forks.
+    Sources,
+    Forks,
+    Archived,
+}
+
+/// Narrowing for an Explore search. An empty language or topic keeps every repository's language
+/// or topics.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RepositoryFilter<'a> {
+    pub language: &'a str,
+    pub topic: &'a str,
+    pub kind: RepositoryKind,
+}
+
+impl RepositoryKind {
+    /// The condition on `repositories` columns that keeps this kind.
+    pub fn condition(self) -> &'static str {
+        match self {
+            Self::All => "TRUE",
+            Self::Sources => "NOT is_fork",
+            Self::Forks => "is_fork",
+            Self::Archived => "is_archived",
+        }
+    }
+}
+
+native_operation!(crate::postgres::repositories::records::public_languages,
+    crate::sqlite::repositories::records::public_languages,
+    fn public_languages(pool: &DbPool, limit: i64) -> Result<Vec<String>>);
+
+native_operation!(crate::postgres::repositories::records::list_public_repositories,
+    crate::sqlite::repositories::records::list_public_repositories,
+    fn list_public_repositories(
+    pool: &DbPool,
+    sort: RepositorySort,
+    limit: i64,
+) -> Result<Vec<Repository>>);
+
+// The most starred public repositories that `viewer` does not own personally, whose name or
+// description contains `text` as the viewer's own and shared lists match it. The filter runs
+// before the limit, so it never empties the list while other repositories match.
+native_operation!(crate::postgres::repositories::records::list_trending_repositories,
+    crate::sqlite::repositories::records::list_trending_repositories,
+    fn list_trending_repositories(pool: &DbPool, viewer: i64, text: &str, limit: i64) -> Result<Vec<Repository>>);
+
+native_operation!(crate::postgres::repositories::records::search_public_repositories,
+    crate::sqlite::repositories::records::search_public_repositories,
+    fn search_public_repositories(
+    pool: &DbPool,
+    text: &str,
+    filter: RepositoryFilter<'_>,
+    sort: RepositorySort,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<Repository>>);
+
+/// Stable policy refusals; unrecognized database failures remain unknown errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum RepositorySettingsRefusal {
+    #[error("Repository settings denied")]
+    Denied,
+    #[error("Repository visibility is locked")]
+    VisibilityLocked,
+    #[error("Invalid repository name")]
+    InvalidName,
+    #[error("Repository name is already reserved")]
+    NameConflict,
+    #[error("At least one merge method must stay allowed")]
+    NoMergeMethod,
+    #[error("Invalid repository topics")]
+    InvalidTopics,
+    #[error("Invalid repository website")]
+    InvalidWebsite,
+    #[error("Only organization repositories can be internal")]
+    InternalNeedsOrganization,
+    #[error("Invalid squash merge commit title or message")]
+    InvalidSquashMessage,
+}
+
+pub(crate) fn validate_repository_alias(name: &str) -> Result<()> {
+    anyhow::ensure!(
+        codeyard_support::repository_names::valid(name),
+        RepositorySettingsRefusal::InvalidName
+    );
+    Ok(())
+}
+
+native_operation!(crate::postgres::repositories::records::update_repository,
+    crate::sqlite::repositories::records::update_repository,
+    /// Saves the description, visibility and merge methods in one transaction. A refusal or a
+    /// failed write leaves all three unchanged.
+    fn update_repository(
+    pool: &DbPool,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    repo_id: i64,
+    description: Option<&str>,
+    is_private: impl Into<VisibilityUpdate>,
+    merge_methods: MergeMethodUpdate,
+) -> Result<()>);
+
+/// GitHub's per-repository switches, with GitHub's defaults when nothing is stored.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct RepositoryFeatures {
+    pub wiki: bool,
+    pub has_issues: bool,
+    pub has_projects: bool,
+    pub allow_forking: bool,
+    pub delete_branch_on_merge: bool,
+    pub allow_update_branch: bool,
+    pub allow_auto_merge: bool,
+    pub squash_merge_commit_title: String,
+    pub squash_merge_commit_message: String,
+}
+
+/// The `RepositoryFeatures` columns of `repositories r LEFT JOIN repository_features f`.
+pub(crate) const FEATURES: &str = "COALESCE(f.wiki_enabled,FALSE) AS wiki,COALESCE(f.has_issues,TRUE) AS has_issues,COALESCE(f.has_projects,TRUE) AS has_projects,COALESCE(f.allow_forking,TRUE) AS allow_forking,COALESCE(f.delete_branch_on_merge,FALSE) AS delete_branch_on_merge,COALESCE(f.allow_update_branch,FALSE) AS allow_update_branch,COALESCE(f.allow_auto_merge,FALSE) AS allow_auto_merge,COALESCE(f.squash_merge_commit_title,'COMMIT_OR_PR_TITLE') AS squash_merge_commit_title,COALESCE(f.squash_merge_commit_message,'COMMIT_MESSAGES') AS squash_merge_commit_message";
+
+native_operation!(crate::postgres::repositories::records::repository_features,
+    crate::sqlite::repositories::records::repository_features,
+    fn repository_features(pool: &DbPool, repo_id: i64) -> Result<RepositoryFeatures>);
+
+/// A change to GitHub's repository switches. A field left as `None` keeps its stored value.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FeatureUpdate {
+    pub has_issues: Option<bool>,
+    pub has_projects: Option<bool>,
+    pub allow_forking: Option<bool>,
+    pub delete_branch_on_merge: Option<bool>,
+    pub allow_update_branch: Option<bool>,
+    pub allow_auto_merge: Option<bool>,
+    pub squash_merge_commit_title: Option<String>,
+    pub squash_merge_commit_message: Option<String>,
+}
+
+impl FeatureUpdate {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Accepts GitHub's documented values only. As on GitHub, COMMIT_OR_PR_TITLE goes only with
+    /// COMMIT_MESSAGES.
+    pub fn validate(&self) -> Result<()> {
+        let title = self.squash_merge_commit_title.as_deref();
+        let message = self.squash_merge_commit_message.as_deref();
+        anyhow::ensure!(
+            title.is_none_or(|value| matches!(value, "PR_TITLE" | "COMMIT_OR_PR_TITLE"))
+                && message
+                    .is_none_or(|value| matches!(value, "PR_BODY" | "COMMIT_MESSAGES" | "BLANK"))
+                && !(title == Some("COMMIT_OR_PR_TITLE")
+                    && message.is_some_and(|value| value != "COMMIT_MESSAGES")),
+            RepositorySettingsRefusal::InvalidSquashMessage
+        );
+        Ok(())
+    }
+}
+
+native_operation!(crate::postgres::repositories::records::set_repository_wiki,
+    crate::sqlite::repositories::records::set_repository_wiki,
+    fn set_repository_wiki(pool: &DbPool, actor: i64, repo_id: i64, enabled: bool) -> Result<()>);
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+#[serde(bound(deserialize = "T: serde::Deserialize<'de>"))]
+pub struct RepositoryChanges<T> {
+    pub token: Option<i64>,
+    pub name: Option<T>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nullable_change"
+    )]
+    pub description: Option<Option<T>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "nullable_change"
+    )]
+    pub website: Option<Option<T>>,
+    pub is_private: Option<bool>,
+    pub visibility_expected: Option<bool>,
+    pub archived: Option<bool>,
+    pub is_template: Option<bool>,
+    pub wiki: Option<bool>,
+    pub discussions: Option<bool>,
+    pub merge_methods: MergeMethodUpdate,
+    /// GitHub Enterprise internal visibility; only applies while the repository is private.
+    pub internal: Option<bool>,
+    #[serde(default)]
+    pub features: FeatureUpdate,
+}
+
+pub fn nullable_change<'de, D, T>(
+    deserializer: D,
+) -> std::result::Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    <Option<T> as serde::Deserialize>::deserialize(deserializer).map(Some)
+}
+
+impl RepositoryChanges<&str> {
+    pub fn owned(&self) -> RepositoryChanges<String> {
+        RepositoryChanges {
+            token: self.token,
+            name: self.name.map(str::to_owned),
+            description: self.description.map(|value| value.map(str::to_owned)),
+            website: self.website.map(|value| value.map(str::to_owned)),
+            wiki: self.wiki,
+            discussions: self.discussions,
+            is_private: self.is_private,
+            visibility_expected: self.visibility_expected,
+            archived: self.archived,
+            is_template: self.is_template,
+            merge_methods: self.merge_methods,
+            internal: self.internal,
+            features: self.features.clone(),
+        }
+    }
+}
+impl RepositoryChanges<String> {
+    pub fn borrowed(&self) -> RepositoryChanges<&str> {
+        RepositoryChanges {
+            token: self.token,
+            name: self.name.as_deref(),
+            description: self.description.as_ref().map(|value| value.as_deref()),
+            website: self.website.as_ref().map(|value| value.as_deref()),
+            wiki: self.wiki,
+            discussions: self.discussions,
+            is_private: self.is_private,
+            visibility_expected: self.visibility_expected,
+            archived: self.archived,
+            is_template: self.is_template,
+            merge_methods: self.merge_methods,
+            internal: self.internal,
+            features: self.features.clone(),
+        }
+    }
+}
+
+impl<T> RepositoryChanges<T> {
+    pub fn changes_metadata(&self) -> bool {
+        self.name.is_some()
+            || self.description.is_some()
+            || self.website.is_some()
+            || self.is_private.is_some()
+            || self.is_template.is_some()
+            || self.wiki.is_some()
+            || self.discussions.is_some()
+            || self.merge_methods.merge.is_some()
+            || self.merge_methods.squash.is_some()
+            || self.merge_methods.rebase.is_some()
+            || self.internal.is_some()
+            || !self.features.is_empty()
+    }
+}
+
+native_operation!(crate::postgres::repositories::records::patch_repository,
+    crate::sqlite::repositories::records::patch_repository,
+    fn patch_repository(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, changes: &RepositoryChanges<&str>) -> Result<Repository>);
+
+native_operation!(crate::postgres::repositories::records::patch_repository_and_default,
+    crate::sqlite::repositories::records::patch_repository_and_default,
+    /// Called under the repository Git lock, after HEAD was changed successfully.
+    fn patch_repository_and_default(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo_id:i64,changes:&RepositoryChanges<&str>,name:&str,expected_owner:Option<&str>)->Result<Repository>);
+
+/// Unconfirmed native saves may keep visibility, but must not change it concurrently.
+pub struct VisibilityUpdate {
+    pub is_private: bool,
+    pub expected: Option<bool>,
+}
+
+impl From<bool> for VisibilityUpdate {
+    fn from(is_private: bool) -> Self {
+        Self {
+            is_private,
+            expected: None,
+        }
+    }
+}
+
+/// A change to the merge methods that pull requests may use. A method left as `None` keeps
+/// its stored value.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct MergeMethodUpdate {
+    pub merge: Option<bool>,
+    pub squash: Option<bool>,
+    pub rebase: Option<bool>,
+}
+impl MergeMethodUpdate {
+    pub fn resolve(self, current: (bool, bool, bool)) -> Result<(bool, bool, bool)> {
+        let methods = (
+            self.merge.unwrap_or(current.0),
+            self.squash.unwrap_or(current.1),
+            self.rebase.unwrap_or(current.2),
+        );
+        anyhow::ensure!(
+            methods.0 || methods.1 || methods.2,
+            RepositorySettingsRefusal::NoMergeMethod
+        );
+        Ok(methods)
+    }
+}
+
+native_operation!(crate::postgres::repositories::records::set_merge_methods,
+    crate::sqlite::repositories::records::set_merge_methods,
+    fn set_merge_methods(
+    pool: &DbPool,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    repo_id: i64,
+    update: MergeMethodUpdate,
+) -> Result<()>);
+
+native_operation!(crate::postgres::repositories::records::restore_repository_default_branch,
+    crate::sqlite::repositories::records::restore_repository_default_branch,
+    fn restore_repository_default_branch(pool: &DbPool, repo_id: i64, expected: &str, previous: &str) -> Result<bool>);
+
+native_operation!(crate::postgres::repositories::records::set_repository_default_branch,
+    crate::sqlite::repositories::records::set_repository_default_branch,
+    fn set_repository_default_branch(pool: &DbPool, actor_id: i64, repo_id: i64, branch: &str) -> Result<bool>);
+
+native_operation!(crate::postgres::repositories::records::set_repository_archived,
+    crate::sqlite::repositories::records::set_repository_archived,
+    fn set_repository_archived(pool: &DbPool, actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, archived: bool) -> Result<bool>);
+
+native_operation!(crate::postgres::repositories::records::update_repo_default_branch,
+    crate::sqlite::repositories::records::update_repo_default_branch,
+    fn update_repo_default_branch(pool: &DbPool, repo_id: i64, branch: &str) -> Result<()>);
+
+native_operation!(crate::postgres::repositories::records::advance_contribution_version,
+    crate::sqlite::repositories::records::advance_contribution_version,
+    /// Advances the version that contributor proofs are keyed to. Pushes call it after the refs move.
+    fn advance_contribution_version(pool: &DbPool, repo_id: i64) -> Result<()>);
+
+native_operation!(crate::postgres::repositories::records::update_repo_size_at,
+    crate::sqlite::repositories::records::update_repo_size_at,
+    fn update_repo_size_at(pool: &DbPool, repo_id: i64, size: i64, node: Option<i64>) -> Result<()>);
+
+native_operation!(crate::postgres::repositories::records::update_repo_size,
+    crate::sqlite::repositories::records::update_repo_size,
+    fn update_repo_size(pool: &DbPool, repo_id: i64, size: i64) -> Result<()>);
+
+native_operation!(crate::postgres::repositories::records::delete_repository,
+    crate::sqlite::repositories::records::delete_repository,
+    fn delete_repository(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64) -> Result<Repository>);
+
+native_operation!(crate::postgres::repositories::records::delete_unattached_advisory_fork,
+    crate::sqlite::repositories::records::delete_unattached_advisory_fork,
+    fn delete_unattached_advisory_fork(pool: &DbPool, repo_id: i64) -> Result<Option<Repository>>);
+
+native_operation!(crate::postgres::repositories::records::delete_unwritten_repository,
+    crate::sqlite::repositories::records::delete_unwritten_repository,
+    fn delete_unwritten_repository(pool: &DbPool, repo_id: i64) -> Result<Option<Repository>>);
+
+native_operation!(crate::postgres::repositories::records::rename_repository,
+    crate::sqlite::repositories::records::rename_repository,
+    fn rename_repository(
+    pool: &DbPool,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    repo_id: i64,
+    new_name: &str,
+) -> Result<Repository>);
+
+native_operation!(crate::postgres::repositories::records::transfer_repository,
+    crate::sqlite::repositories::records::transfer_repository,
+    fn transfer_repository(
+    pool: &DbPool,
+    actor_id: impl Into<codeyard_db_core::queries::credentials::Actor>,
+    repo_id: i64,
+    target: crate::repositories::creation::RepositoryTarget,
+) -> Result<Repository>);
+
+// The primary checked actual tags under the Git lock. Keep the destination
+// name stable while the ownership transaction commits.
+native_operation!(crate::postgres::repositories::records::transfer_repository_checked,
+    crate::sqlite::repositories::records::transfer_repository_checked,
+    fn transfer_repository_checked(pool:&DbPool,actor_id:impl Into<codeyard_db_core::queries::credentials::Actor>,repo_id:i64,target:crate::repositories::creation::RepositoryTarget,expected_owner:&str,expected_name:&str)->Result<Repository>);
+
+/// Canonical namespaces for already-selected repositories. This display read does
+/// not grant access; callers retain their visibility filtering before page limits.
+pub async fn repository_owner_names(
+    pool: &DbPool,
+    repository_ids: &[i64],
+) -> Result<std::collections::BTreeMap<i64, String>> {
+    let mut ids = repository_ids.to_vec();
+    ids.sort_unstable();
+    ids.dedup();
+    let mut owners = std::collections::BTreeMap::new();
+    for chunk in ids.chunks(500) {
+        let rows = match pool {
+            DbPool::Postgres(pool) => {
+                crate::postgres::repositories::records::repository_owner_names(pool, chunk).await?
+            }
+            DbPool::Sqlite(pool) => {
+                crate::sqlite::repositories::records::repository_owner_names(pool, chunk).await?
+            }
+        };
+        owners.extend(rows);
+    }
+    Ok(owners)
+}

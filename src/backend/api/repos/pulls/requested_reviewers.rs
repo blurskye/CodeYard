@@ -101,7 +101,7 @@ pub async fn list_requested_reviewers(
     headers: HeaderMap,
 ) -> Result<Json<Vec<RequestedReviewer>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
-    let pull_request = crate::backend::db::pull_requests::records::get_pull_request(
+    let pull_request = codeyard_db_repos::pull_requests::records::get_pull_request(
         &state.pool,
         repository.id,
         number,
@@ -115,7 +115,7 @@ pub async fn list_requested_reviewers(
         )
     })?;
 
-    let users = crate::backend::db::pull_requests::reviews::list_pull_request_reviewers(
+    let users = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
         &state.pool,
         pull_request.id,
     )
@@ -124,7 +124,7 @@ pub async fn list_requested_reviewers(
 
     let viewer =
         crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?;
-    let teams = crate::backend::db::pull_requests::team_reviewers::list(
+    let teams = codeyard_db_repos::pull_requests::team_reviewers::list(
         &state.pool,
         repository.id,
         Some(pull_request.id),

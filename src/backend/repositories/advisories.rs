@@ -3,11 +3,11 @@
 use crate::backend::app::AppState;
 use crate::backend::cluster::NodeContext;
 
-use crate::backend::db::credentials::Actor;
-use crate::backend::db::repositories::creation::CreationAdmission;
-use crate::backend::db::repositories::creation::RepositoryCreationOwner;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::queries::credentials::Actor;
+use codeyard_db_repos::repositories::creation::CreationAdmission;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_model::advisories::Refusal;
 use std::path::Path;
 
@@ -48,10 +48,10 @@ async fn private_fork_owned(
     let actor = authority.user_id;
     crate::backend::repositories::access::credential_user(pool, &authority, true).await?;
     anyhow::ensure!(
-        crate::backend::db::advisories::can_administer(pool, actor, repo.id).await?,
+        codeyard_db_security::advisories::can_administer(pool, actor, repo.id).await?,
         Refusal::Denied
     );
-    let advisory = crate::backend::db::advisories::get(pool, Some(actor), repo.id, ghsa)
+    let advisory = codeyard_db_security::advisories::get(pool, Some(actor), repo.id, ghsa)
         .await?
         .ok_or(Refusal::Missing)?;
     anyhow::ensure!(
@@ -69,7 +69,7 @@ async fn private_fork_owned(
             })?;
         crate::backend::repositories::access::credential_user(pool, &authority, true).await?;
         anyhow::ensure!(
-            crate::backend::db::advisories::can_administer(pool, actor, repo.id).await?,
+            codeyard_db_security::advisories::can_administer(pool, actor, repo.id).await?,
             Refusal::Denied
         );
         return Ok(fork);
@@ -92,9 +92,9 @@ async fn private_fork_owned(
     )
     .await?;
     if let Err(error) =
-        crate::backend::db::advisories::attach_fork(pool, authority, repo.id, ghsa, fork.id).await
+        codeyard_db_security::advisories::attach_fork(pool, authority, repo.id, ghsa, fork.id).await
     {
-        match crate::backend::db::repositories::records::delete_unattached_advisory_fork(
+        match codeyard_db_repos::repositories::records::delete_unattached_advisory_fork(
             pool, fork.id,
         )
         .await

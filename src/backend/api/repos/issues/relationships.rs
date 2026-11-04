@@ -6,14 +6,14 @@ use crate::backend::api::repos::forms::authorize_post;
 use crate::backend::api::repos::forms::field;
 use crate::backend::app::AppState;
 
-use crate::backend::db::relationships::Kind;
-use crate::backend::db::relationships::Mutation;
-use crate::backend::db::relationships::Refusal;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_db_identity::relationships::Kind;
+use codeyard_db_identity::relationships::Mutation;
+use codeyard_db_identity::relationships::Refusal;
 use codeyard_webui::pages::repos::issues::RelatedIssue;
 use std::{collections::HashMap, sync::Arc};
 pub(crate) async fn load(ctx: &PageContext, root: i64) -> ResultPage<Vec<RelatedIssue>> {
@@ -25,7 +25,7 @@ pub(crate) async fn load(ctx: &PageContext, root: i64) -> ResultPage<Vec<Related
         Kind::Blocking,
         Kind::Related,
     ] {
-        for link in crate::backend::db::relationships::list(
+        for link in codeyard_db_identity::relationships::list(
             &ctx.state.pool,
             ctx.user.as_ref().map(|u| u.id),
             root,
@@ -64,7 +64,7 @@ pub(crate) async fn native_change(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let repo = repository(&ctx, &owner, &name).await?;
-    let root = crate::backend::db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
+    let root = codeyard_db_repos::issues::get_issue(&ctx.state.pool, repo.record.id, number)
         .await
         .map_err(|_| unavailable(&ctx))?
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
@@ -103,7 +103,7 @@ pub(crate) async fn native_change(
             ))
         }
     };
-    crate::backend::db::relationships::change(
+    codeyard_db_identity::relationships::change(
         &ctx.state.pool,
         ctx.require_user()?.id,
         repo.record.id,

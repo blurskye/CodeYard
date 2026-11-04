@@ -67,7 +67,7 @@ mod tests {
         .unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
         let key = NodeKey::generate();
-        let node = crate::backend::db::cluster::register_own_node(
+        let node = codeyard_db_cluster::cluster::register_own_node(
             &pool,
             &key.public_hex(),
             "core",
@@ -161,20 +161,20 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_environment_claim_fails_instead_of_leaving_an_undeliverable_lease() {
-        use crate::backend::db::environment_values as values;
-        use crate::backend::db::environment_values::Kind;
-        use crate::backend::db::environment_values::Save;
         use crate::backend::notifications::NotificationBroadcaster;
+        use codeyard_db_actions::environment_values as values;
+        use codeyard_db_actions::environment_values::Save;
+        use codeyard_db_orgs::organization_values::Kind;
         use codeyard_support::secrets::SecretEncryptor;
 
         let (root, pool, context) = test_context().await;
-        let owner = crate::backend::db::users::accounts::create_user(&pool, "owner", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "owner", None)
             .await
             .unwrap();
         let repo = crate::backend::repositories::lifecycle::provision(
             (&pool, None),
             root.path(),
-            crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(owner.id),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner.id),
             "project",
             None,
             true,
@@ -191,16 +191,16 @@ mod tests {
         // Both source sets are within their 1 MiB limits, but JSON escapes expand the reply.
         for index in 0..50 {
             let name = format!("SECRET_{index}");
-            crate::backend::db::secrets::create_or_update_secret(
+            codeyard_db_actions::secrets::create_or_update_secret(
                 &pool,
                 &encryptor,
                 repo.id,
                 &name,
                 &value,
                 Some(owner.id),
-                &crate::backend::db::users::accounts::AccountCredential::Session(&{
+                &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&{
                     let session = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-                    crate::backend::db::users::sessions::create_session(
+                    codeyard_db_identity::users::sessions::create_session(
                         &pool,
                         &session,
                         owner.id,
@@ -231,9 +231,9 @@ mod tests {
             .await
             .unwrap();
         }
-        let run = crate::backend::db::ci::enqueue_ci_run(
+        let run = codeyard_db_actions::ci::enqueue_ci_run(
             &pool,
-            crate::backend::db::ci::NewCiRun {
+            codeyard_db_actions::ci::NewCiRun {
                 repo_id: repo.id,
                 triggered_by_id: owner.id,
                 pipeline: "ci",
@@ -277,7 +277,7 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(error.to_string(), CLAIM_TOO_LARGE);
-        let current = crate::backend::db::ci::get_ci_run_by_run_id(&pool, run.run_id)
+        let current = codeyard_db_actions::ci::get_ci_run_by_run_id(&pool, run.run_id)
             .await
             .unwrap()
             .unwrap();
@@ -350,7 +350,7 @@ impl CiHandler {
     /// Whether this core's node may read repositories held by other nodes. Only web and ssh
     /// nodes may, and claim preparation reads each run's workflow that way.
     async fn may_read_repositories(&self) -> Result<bool> {
-        let node = crate::backend::db::cluster::get_node_by_id(
+        let node = codeyard_db_cluster::cluster::get_node_by_id(
             self.context.database()?,
             self.context.node_id,
         )
@@ -418,18 +418,18 @@ impl CiHandler {
             }
             Operation::Storage { run_id } => {
                 let pool = self.context.database()?;
-                let run = crate::backend::db::ci::get_ci_run_by_run_id(pool, run_id)
+                let run = codeyard_db_actions::ci::get_ci_run_by_run_id(pool, run_id)
                     .await?
                     .filter(|run| run.status == "running" && run.worker.as_deref() == Some(&worker))
                     .ok_or_else(|| anyhow::anyhow!("CI run does not belong to this worker"))?;
-                let repo = crate::backend::db::repositories::records::get_repository_by_id(
+                let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
                     pool,
                     run.repo_id,
                 )
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("repository not found"))?;
                 let id = repo.storage_node_id.unwrap_or(self.context.node_id);
-                let node = crate::backend::db::cluster::get_node_by_id(pool, id)
+                let node = codeyard_db_cluster::cluster::get_node_by_id(pool, id)
                     .await?
                     .filter(|node| {
                         node.status == "active" && node.roles.iter().any(|role| role == "storage")
@@ -506,13 +506,13 @@ impl CiHandler {
     async fn refusal(&self, peer: iroh::PublicKey) -> Option<&'static str> {
         let checked = async {
             let pool = self.context.database()?;
-            let serving = crate::backend::db::cluster::get_node_by_id(pool, self.context.node_id)
+            let serving = codeyard_db_cluster::cluster::get_node_by_id(pool, self.context.node_id)
                 .await?
                 .is_some_and(|node| {
                     node.status == "active" && node.public_key == self.context.key.public_hex()
                 });
             let worker =
-                crate::backend::db::cluster::get_node_by_public_key(pool, &peer.to_string())
+                codeyard_db_cluster::cluster::get_node_by_public_key(pool, &peer.to_string())
                     .await?
                     .is_some_and(|node| {
                         node.status == "active" && node.roles.iter().any(|role| role == "runner")
@@ -561,7 +561,7 @@ impl CiHandler {
         }
         if let Ok(pool) = self.context.database() {
             if let Err(error) =
-                crate::backend::db::cluster::touch_node(pool, &peer.to_string()).await
+                codeyard_db_cluster::cluster::touch_node(pool, &peer.to_string()).await
             {
                 tracing::debug!(%error, "could not record a worker's last request");
             }

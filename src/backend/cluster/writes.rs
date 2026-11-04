@@ -24,13 +24,12 @@ pub struct PublisherUnavailable;
 /// through the legacy attempted-write counter while their prepared/apply path is absent.
 pub async fn require_legacy_publisher(pool: &DbPool, repo: i64) -> Result<()> {
     timeout(CONTROL_TIMEOUT, async {
-        let repository =
-            crate::backend::db::repositories::records::get_repository_by_id(pool, repo)
-                .await?
-                .context("repository unavailable")?;
+        let repository = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo)
+            .await?
+            .context("repository unavailable")?;
         if repository.storage_node_id.is_some() {
             ensure!(
-                crate::backend::db::cluster::writes::write_settings(pool)
+                codeyard_db_cluster::cluster::writes::write_settings(pool)
                     .await?
                     .write_quorum
                     .is_none(),
@@ -66,14 +65,14 @@ pub async fn begin(
 ) -> Result<PreparedWrite> {
     let settings = timeout(
         CONTROL_TIMEOUT,
-        crate::backend::db::cluster::writes::write_settings(pool),
+        codeyard_db_cluster::cluster::writes::write_settings(pool),
     )
     .await??;
     ensure!(settings.write_quorum.is_some(), "write quorum is disabled");
     let mut deadline = Instant::now() + Duration::from_secs(settings.write_timeout_seconds as u64);
     let view = timeout_at(
         deadline,
-        crate::backend::db::cluster::writes::recovery_view(pool, repo),
+        codeyard_db_cluster::cluster::writes::recovery_view(pool, repo),
     )
     .await??;
     ensure!(
@@ -92,7 +91,7 @@ pub async fn begin(
         "voters have not applied committed refs"
     );
     ensure!(
-        crate::backend::db::cluster::writes::required_votes(
+        codeyard_db_cluster::cluster::writes::required_votes(
             settings
                 .write_quorum
                 .as_deref()
@@ -103,7 +102,7 @@ pub async fn begin(
     );
     let result = timeout_at(
         deadline,
-        crate::backend::db::cluster::writes::begin_write(pool, repo, primary, term, id, changes),
+        codeyard_db_cluster::cluster::writes::begin_write(pool, repo, primary, term, id, changes),
     )
     .await;
     let record = match result {
@@ -114,7 +113,7 @@ pub async fn begin(
             deadline = Instant::now();
             timeout(
                 CONTROL_TIMEOUT,
-                crate::backend::db::cluster::writes::load_write(pool, id),
+                codeyard_db_cluster::cluster::writes::load_write(pool, id),
             )
             .await
             .map_err(|_| OutcomeUnknown)?
@@ -128,7 +127,7 @@ pub async fn begin(
             && record.term == term
             && record.required_votes == 2
             && record.manifest_hash
-                == crate::backend::db::cluster::writes::manifest_hash(
+                == codeyard_db_cluster::cluster::writes::manifest_hash(
                     repo,
                     primary,
                     term,
@@ -150,7 +149,7 @@ pub async fn collect_votes(pool: &DbPool, write: &PreparedWrite) -> Result<bool>
     loop {
         let record = match timeout_at(
             write.deadline,
-            crate::backend::db::cluster::writes::load_write(pool, &write.record.id),
+            codeyard_db_cluster::cluster::writes::load_write(pool, &write.record.id),
         )
         .await
         {
@@ -187,7 +186,7 @@ pub async fn collect_votes(pool: &DbPool, write: &PreparedWrite) -> Result<bool>
 pub async fn decide(pool: &DbPool, write: &PreparedWrite, commit: bool) -> Result<WriteRecord> {
     let result = timeout(
         CONTROL_TIMEOUT,
-        crate::backend::db::cluster::writes::decide_write(
+        codeyard_db_cluster::cluster::writes::decide_write(
             pool,
             &write.record.id,
             write.record.primary_id,
@@ -201,7 +200,7 @@ pub async fn decide(pool: &DbPool, write: &PreparedWrite, commit: bool) -> Resul
     }
     let record = timeout(
         CONTROL_TIMEOUT,
-        crate::backend::db::cluster::writes::load_write(pool, &write.record.id),
+        codeyard_db_cluster::cluster::writes::load_write(pool, &write.record.id),
     )
     .await
     .map_err(|_| OutcomeUnknown)?
@@ -217,7 +216,7 @@ pub async fn publish(pool: &DbPool, write: &WriteRecord) -> Result<()> {
     ensure!(write.decision == "commit", "write is not committed");
     match timeout(
         CONTROL_TIMEOUT,
-        crate::backend::db::cluster::writes::finish_write(pool, &write.id, write.term),
+        codeyard_db_cluster::cluster::writes::finish_write(pool, &write.id, write.term),
     )
     .await
     {
@@ -230,18 +229,18 @@ pub async fn publish(pool: &DbPool, write: &WriteRecord) -> Result<()> {
 /// these canonical refs, clean aborted preparations and finish before enabling it.
 pub async fn recover(pool: &DbPool, repo: i64, primary: i64, term: i64) -> Result<RecoveryView> {
     timeout(CONTROL_TIMEOUT, async {
-        let view = crate::backend::db::cluster::writes::recovery_view(pool, repo).await?;
+        let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, repo).await?;
         ensure!(
             view.primary_id == primary && view.term == term && !view.serving,
             "recovery requires a fenced term"
         );
         if let Some(write) = &view.unfinished {
             if write.decision == "pending" {
-                crate::backend::db::cluster::writes::decide_write(
+                codeyard_db_cluster::cluster::writes::decide_write(
                     pool, &write.id, primary, term, false,
                 )
                 .await?;
-                return crate::backend::db::cluster::writes::recovery_view(pool, repo).await;
+                return codeyard_db_cluster::cluster::writes::recovery_view(pool, repo).await;
             }
         }
         Ok(view)

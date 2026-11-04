@@ -89,8 +89,8 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::ConfigureDependencySecurity {
-                credential: codeyard::backend::db::users::accounts::OwnedAccountCredential::Token(1, "hash".into()),
-                feature: codeyard::backend::db::repositories::dependencies::Feature::Alerts,
+                credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(1, "hash".into()),
+                feature: codeyard_db_repos::repositories::dependencies::Feature::Alerts,
                 enabled: true,
                 private_consent: false,
             },
@@ -100,8 +100,8 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::PublishDependencyUpdate {
                 prepared: prepared(sha),
                 publication: Box::new(
-                    codeyard::backend::db::repositories::dependencies::Publication {
-                        job: codeyard::backend::db::repositories::dependencies::Job {
+                    codeyard_db_repos::repositories::dependencies::Publication {
+                        job: codeyard_db_repos::repositories::dependencies::Job {
                             repo_id: 1,
                             generation: 1,
                             nonce: Uuid::new_v4().to_string(),
@@ -109,7 +109,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                             updates_actor_id: Some(1),
                         },
                         key: "0".repeat(64),
-                        update: codeyard::backend::db::repositories::dependencies::Update {
+                        update: codeyard_db_repos::repositories::dependencies::Update {
                             branch: "main".into(),
                             base_sha: sha.into(),
                             commit_sha: sha.into(),
@@ -557,7 +557,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     head_branch: Some("topic".into()),
                     head: sha.into(),
                     result: sha.into(),
-                    authority: codeyard::backend::db::credentials::Actor::from(1),
+                    authority: codeyard_db_core::queries::credentials::Actor::from(1),
                 },
             },
             false,

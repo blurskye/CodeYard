@@ -5,7 +5,6 @@ use crate::backend::api::github::Result;
 
 use crate::backend::app::AppState;
 
-use crate::backend::db::api_limits::Budget;
 use axum::{
     extract::Request,
     http::{HeaderMap, StatusCode},
@@ -14,6 +13,7 @@ use axum::{
     routing::{get, MethodRouter},
     Extension, Json,
 };
+use codeyard_db_identity::api_limits::Budget;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -41,9 +41,9 @@ async fn budget(
     consume: bool,
 ) -> Result<(Budget, bool)> {
     let (limit, seconds) = requester.limit(resource);
-    crate::backend::db::api_limits::budget(
+    codeyard_db_identity::api_limits::budget(
         &state.pool,
-        crate::backend::db::api_limits::Request {
+        codeyard_db_identity::api_limits::Request {
             key: &requester.key,
             resource,
             now: chrono::Utc::now().timestamp(),
@@ -142,7 +142,7 @@ pub(super) async fn enforce(
         };
         if let Some(auth) = authentication {
             key = Some(if auth.is_job() {
-                let job = crate::backend::db::ci_tokens::get(&state.pool, auth.token.id)
+                let job = codeyard_db_actions::ci_tokens::get(&state.pool, auth.token.id)
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(crate::backend::api::github::auth::required)?;

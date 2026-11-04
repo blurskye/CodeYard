@@ -8,7 +8,7 @@ use crate::support::{
     native_database as native,
 };
 
-use codeyard::backend::db::users::accounts::AccountCredential;
+use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_model::repositories::DeployKeyError;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
@@ -118,7 +118,7 @@ async fn current_copies(database: &native::PostgresDatabase, repositories: &[i64
                         .fetch_one(&database.raw)
                         .await
                         .unwrap();
-                current &= codeyard::backend::db::cluster::list_replicas(&database.pool, *id)
+                current &= codeyard_db_cluster::cluster::list_replicas(&database.pool, *id)
                     .await
                     .unwrap()
                     .iter()
@@ -137,17 +137,17 @@ async fn current_copies(database: &native::PostgresDatabase, repositories: &[i64
 async fn gists_http_ssh_remote_and_promotion() {
     bundle::install();
     let mut database = native::PostgresDatabase::new().await;
-    codeyard::backend::db::cluster::enable_cluster(&database.pool)
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
         .unwrap();
-    codeyard::backend::db::node_config::upsert_node_configuration(&database.pool, "public", true)
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let alice =
-        codeyard::backend::db::users::accounts::create_user(&database.pool, "gist_alice", None)
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "gist_alice", None)
             .await
             .unwrap();
-    let bob = codeyard::backend::db::users::accounts::create_user(&database.pool, "gist_bob", None)
+    let bob = codeyard_db_identity::users::accounts::create_user(&database.pool, "gist_bob", None)
         .await
         .unwrap();
     sqlx::query("UPDATE users SET is_admin=TRUE WHERE id=$1")
@@ -157,7 +157,7 @@ async fn gists_http_ssh_remote_and_promotion() {
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (key, public) = keypair(root.path(), "alice-key").await;
-    let account_key = codeyard::backend::db::users::ssh_keys::add_ssh_key(
+    let account_key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
         &database.pool,
         alice.id,
         "gists",
@@ -197,11 +197,11 @@ async fn gists_http_ssh_remote_and_promotion() {
     .await;
     let id = created["id"].as_str().unwrap();
     let path = format!("/api/v3/gists/{id}");
-    let metadata = codeyard::backend::db::gists::get(&database.pool, id)
+    let metadata = codeyard_db_repos::gists::get(&database.pool, id)
         .await
         .unwrap()
         .unwrap();
-    let repo = codeyard::backend::db::repositories::records::get_repository_by_id(
+    let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
         &database.pool,
         metadata.repo_id,
     )
@@ -379,13 +379,13 @@ async fn gists_http_ssh_remote_and_promotion() {
     }
     // Gists do not expose ordinary deploy-key administration; imported keys cannot gain access.
     let sessions =
-        codeyard::backend::db::users::sessions::list_user_sessions(&database.pool, alice.id)
+        codeyard_db_identity::users::sessions::list_user_sessions(&database.pool, alice.id)
             .await
             .unwrap();
     let session = &sessions[0].id;
     let fingerprint =
-        codeyard::backend::db::users::ssh_keys::calculate_fingerprint(&deploy_public).unwrap();
-    let deployment = codeyard::backend::db::deploy_keys::NewDeployKey {
+        codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&deploy_public).unwrap();
+    let deployment = codeyard_db_identity::deploy_keys::NewDeployKey {
         repo_id: repo.id,
         title: "legacy".into(),
         fingerprint: fingerprint.clone(),
@@ -394,7 +394,7 @@ async fn gists_http_ssh_remote_and_promotion() {
         created_by_id: alice.id,
     };
     let refusal =
-        codeyard::backend::db::deploy_keys::insert_deploy_key(&database.pool, &deployment, session)
+        codeyard_db_identity::deploy_keys::insert_deploy_key(&database.pool, &deployment, session)
             .await
             .err()
             .unwrap();
@@ -422,7 +422,7 @@ async fn gists_http_ssh_remote_and_promotion() {
     )
     .await;
     let fork_id = fork["id"].as_str().unwrap();
-    let fork_meta = codeyard::backend::db::gists::get(&database.pool, fork_id)
+    let fork_meta = codeyard_db_repos::gists::get(&database.pool, fork_id)
         .await
         .unwrap()
         .unwrap();
@@ -435,17 +435,17 @@ async fn gists_http_ssh_remote_and_promotion() {
         alice.id,
     )
     .await;
-    codeyard::backend::db::cluster::set_replicas(&database.pool, "2")
+    codeyard_db_cluster::cluster::set_replicas(&database.pool, "2")
         .await
         .unwrap();
     current_copies(&database, &[repo.id, fork_meta.repo_id], copy.node_id).await;
     // Simulate a crash after exact Git publication but before final metadata acknowledgement.
     let sha = detached(&disk, stable);
-    codeyard::backend::db::gists::admit(
+    codeyard_db_repos::gists::admit(
         &database.pool,
         alice.id,
         &AccountCredential::Token(
-            codeyard::backend::db::users::tokens::find_token(
+            codeyard_db_identity::users::tokens::find_token(
                 &database.pool,
                 &hex::encode(Sha256::digest(token.as_bytes())),
             )
@@ -455,7 +455,7 @@ async fn gists_http_ssh_remote_and_promotion() {
             .id,
             &hex::encode(Sha256::digest(token.as_bytes())),
         ),
-        &codeyard::backend::db::gists::Admission {
+        &codeyard_db_repos::gists::Admission {
             repo_id: repo.id,
             disk_path: &repo.disk_path,
             storage_node_id: Some(Some(storage.node_id)),
@@ -478,7 +478,7 @@ async fn gists_http_ssh_remote_and_promotion() {
         .unwrap();
     // The fixture cannot hold the child process's mutation guard: advance the version only
     // after publishing so its copy loop cannot advertise the old tree at the new version.
-    assert!(codeyard::backend::db::cluster::bump_write_version(
+    assert!(codeyard_db_cluster::cluster::bump_write_version(
         &database.pool,
         repo.id,
         Some(Some(storage.node_id))
@@ -487,7 +487,7 @@ async fn gists_http_ssh_remote_and_promotion() {
     .unwrap());
     current_copies(&database, &[repo.id, fork_meta.repo_id], copy.node_id).await;
     assert_eq!(
-        codeyard::backend::db::gists::pending(&database.pool, repo.id)
+        codeyard_db_repos::gists::pending(&database.pool, repo.id)
             .await
             .unwrap()
             .unwrap()
@@ -519,12 +519,10 @@ async fn gists_http_ssh_remote_and_promotion() {
         recovered["files"]["recovered.txt"]["content"],
         "published before promotion\n"
     );
-    assert!(
-        codeyard::backend::db::gists::pending(&database.pool, repo.id)
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(codeyard_db_repos::gists::pending(&database.pool, repo.id)
+        .await
+        .unwrap()
+        .is_none());
     api(
         &web,
         Some(&token),
@@ -535,14 +533,14 @@ async fn gists_http_ssh_remote_and_promotion() {
         StatusCode::OK,
     )
     .await;
-    codeyard::backend::db::users::ssh_keys::delete_ssh_key(&database.pool, account_key.id)
+    codeyard_db_identity::users::ssh_keys::delete_ssh_key(&database.pool, account_key.id)
         .await
         .unwrap();
     assert!(!git(root.path(), &["ls-remote", &ssh], None, &key)
         .await
         .status
         .success());
-    let token_id = codeyard::backend::db::users::tokens::find_token(
+    let token_id = codeyard_db_identity::users::tokens::find_token(
         &database.pool,
         &hex::encode(Sha256::digest(token.as_bytes())),
     )
@@ -550,7 +548,7 @@ async fn gists_http_ssh_remote_and_promotion() {
     .unwrap()
     .unwrap()
     .id;
-    codeyard::backend::db::users::tokens::delete_token(&database.pool, alice.id, session, token_id)
+    codeyard_db_identity::users::tokens::delete_token(&database.pool, alice.id, session, token_id)
         .await
         .unwrap();
     assert!(!git(&work, &["push", "origin", "main"], Some(&token), &key)

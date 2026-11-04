@@ -9,11 +9,11 @@ use axum::{
     http::{HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::backend::db::{
-    self,
-    organizations::{NewOrganization, OrganizationProfile},
-    repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
-};
+
+use codeyard_db_orgs::organizations::NewOrganization;
+use codeyard_db_orgs::organizations::OrganizationProfile;
+use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
+use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -70,7 +70,7 @@ async fn contract(pg: bool) {
     f.execute("UPDATE users SET is_admin=true WHERE id=$1", &[site_admin])
         .await;
     let org = applied(
-        db::organizations::create_organization(
+        codeyard_db_orgs::organizations::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("builders", OrganizationProfile::new(None, None).unwrap())

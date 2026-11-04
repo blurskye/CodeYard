@@ -1,11 +1,8 @@
 use crate::support::database::{wait_until_blocked, Database};
-use codeyard::backend::db::{
-    self,
-    users::{
-        accounts,
-        transitions::{self, BanChange},
-    },
-};
+
+use codeyard_db_identity::users::accounts;
+use codeyard_db_identity::users::transitions;
+use codeyard_db_identity::users::transitions::BanChange;
 use std::time::Duration;
 
 async fn concurrent_account_transitions(pg: bool) {
@@ -192,7 +189,7 @@ async fn app_owner_revocation_rechecks_bot_writes(pg: bool) {
     fixture
         .execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin])
         .await;
-    let repo = db::repositories::records::create_repository(
+    let repo = codeyard_db_repos::repositories::records::create_repository(
         fixture.pool(),
         admin,
         "private",
@@ -222,14 +219,20 @@ async fn app_owner_revocation_rechecks_bot_writes(pg: bool) {
             .unwrap();
         assert!(tokio::time::timeout(
             Duration::from_secs(10),
-            db::issues::create_issue(fixture.pool(), repo.id, bot, "Blocked", "Body"),
+            codeyard_db_repos::issues::create_issue(
+                fixture.pool(),
+                repo.id,
+                bot,
+                "Blocked",
+                "Body"
+            ),
         )
         .await
         .expect("late issuer discovery must fail closed, not wait")
         .is_err());
         gate.rollback().await.unwrap();
     }
-    db::issues::create_issue(fixture.pool(), repo.id, bot, "Allowed", "Body")
+    codeyard_db_repos::issues::create_issue(fixture.pool(), repo.id, bot, "Allowed", "Body")
         .await
         .unwrap();
     assert!(matches!(
@@ -238,11 +241,15 @@ async fn app_owner_revocation_rechecks_bot_writes(pg: bool) {
             .unwrap(),
         BanChange::Updated(_)
     ));
-    assert!(
-        db::issues::create_issue(fixture.pool(), repo.id, bot, "Revoked", "Body")
-            .await
-            .is_err()
-    );
+    assert!(codeyard_db_repos::issues::create_issue(
+        fixture.pool(),
+        repo.id,
+        bot,
+        "Revoked",
+        "Body"
+    )
+    .await
+    .is_err());
     assert_eq!(
         fixture
             .scalar("SELECT COUNT(*) FROM issues WHERE repo_id=$1", &[repo.id])

@@ -9,9 +9,9 @@ use crate::backend::api::repos::milestones::milestone_view;
 
 use crate::backend::api::repos::refs::references::resolve_references_or_none;
 
-use crate::backend::db::pull_requests::reviews::DiscussionItem;
 use crate::backend::issues::COMMENTS_PER_PAGE;
 use crate::backend::issues::MAX_COMMENT_PAGE;
+use codeyard_db_repos::pull_requests::reviews::DiscussionItem;
 
 use crate::backend::repositories::store::allowed_merge_methods;
 use crate::backend::repositories::store::repo_store;
@@ -155,7 +155,7 @@ pub(crate) async fn repository(
     };
     let mutable = ctx.user.is_some()
         && !record.is_archived
-        && !crate::backend::db::repository_exports::locked(&ctx.state.pool, record.id)
+        && !codeyard_db_repos::repository_exports::locked(&ctx.state.pool, record.id)
             .await
             .map_err(|_| unavailable(ctx))?;
     let can_write = mutable && access.can_write();
@@ -184,11 +184,11 @@ pub(crate) async fn repository(
     })
 }
 
-pub(crate) use crate::backend::db::discussions::comment_revision;
+pub(crate) use codeyard_db_repos::discussions::comment_revision;
 
 pub(crate) async fn author(ctx: &PageContext, id: i64) -> ResultPage<String> {
     Ok(
-        crate::backend::db::users::accounts::get_user_by_id(&ctx.state.pool, id)
+        codeyard_db_identity::users::accounts::get_user_by_id(&ctx.state.pool, id)
             .await
             .map_err(|_| unavailable(ctx))?
             .map(|user| user.username)
@@ -277,7 +277,7 @@ pub(crate) fn issue_item(
 /// link are shown only to a viewer who can read that repository.
 #[derive(Clone)]
 pub(crate) enum HeadRepository {
-    Readable(crate::backend::db::pull_requests::records::PullRequestHeadDisplay),
+    Readable(codeyard_db_repos::pull_requests::records::PullRequestHeadDisplay),
     /// It exists, but this viewer cannot read it.
     Unreadable,
     Deleted,
@@ -304,11 +304,11 @@ async fn head_for_viewer(
         return Ok(HeadRepository::Unreadable);
     }
     let owner_name =
-        crate::backend::db::repositories::records::repository_owner_name(&ctx.state.pool, head.id)
+        codeyard_db_repos::repositories::records::repository_owner_name(&ctx.state.pool, head.id)
             .await
             .map_err(|_| unavailable(ctx))?;
     Ok(HeadRepository::Readable(
-        crate::backend::db::pull_requests::records::PullRequestHeadDisplay {
+        codeyard_db_repos::pull_requests::records::PullRequestHeadDisplay {
             id: head.id,
             name: head.name,
             owner_name,
@@ -322,7 +322,7 @@ pub(crate) async fn listed_head(
     ctx: &PageContext,
     base_id: i64,
     cache: &mut HashMap<i64, HeadRepository>,
-    head: Option<crate::backend::db::pull_requests::records::PullRequestHeadDisplay>,
+    head: Option<codeyard_db_repos::pull_requests::records::PullRequestHeadDisplay>,
 ) -> ResultPage<HeadRepository> {
     let Some(head) = head else {
         return Ok(HeadRepository::Deleted);
@@ -335,7 +335,7 @@ pub(crate) async fn listed_head(
     }
     let id = head.id;
     let Some(record) =
-        crate::backend::db::repositories::records::get_repository_by_id(&ctx.state.pool, head.id)
+        codeyard_db_repos::repositories::records::get_repository_by_id(&ctx.state.pool, head.id)
             .await
             .map_err(|_| unavailable(ctx))?
     else {
@@ -359,7 +359,7 @@ pub(crate) async fn listed_assignees(
 ) -> ResultPage<HashMap<i64, Vec<String>>> {
     let mut assignees: HashMap<i64, Vec<String>> = HashMap::new();
     for (id, username) in
-        crate::backend::db::assignees::list_item_assignees(&ctx.state.pool, pull_requests, item_ids)
+        codeyard_db_repos::assignees::list_item_assignees(&ctx.state.pool, pull_requests, item_ids)
             .await
             .map_err(|_| unavailable(ctx))?
     {
@@ -517,7 +517,7 @@ pub(crate) async fn named_milestone(
         return Ok(None);
     };
     Ok(
-        crate::backend::db::milestones::get_milestone_by_id(&ctx.state.pool, repo.record.id, id)
+        codeyard_db_repos::milestones::get_milestone_by_id(&ctx.state.pool, repo.record.id, id)
             .await
             .map_err(|_| unavailable(ctx))?
             .map(milestone_view),
@@ -556,27 +556,27 @@ async fn item_with_comparison(
     match kind {
         Kind::Issue => {
             let value =
-                crate::backend::db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
+                codeyard_db_repos::issues::get_issue(&ctx.state.pool, repo.record.id, number)
                     .await
                     .map_err(|_| unavailable(ctx))?
                     .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
             let author = author(ctx, value.author_id).await?;
-            let labels = crate::backend::db::labels::get_issue_labels(
+            let labels = codeyard_db_repos::labels::get_issue_labels(
                 &ctx.state.pool,
                 repo.record.id,
                 value.id,
             )
             .await
             .map_err(|_| unavailable(ctx))?;
-            let assignees = crate::backend::db::assignees::list_assignees(
+            let assignees = codeyard_db_repos::assignees::list_assignees(
                 &ctx.state.pool,
-                crate::backend::db::assignees::AssignedItem::Issue(value.id),
+                codeyard_db_repos::assignees::AssignedItem::Issue(value.id),
             )
             .await
             .map_err(|_| unavailable(ctx))?;
             let milestone = named_milestone(ctx, repo, value.milestone_id).await?;
             let comment_count =
-                crate::backend::db::issues::count_issue_comments(&ctx.state.pool, &[value.id])
+                codeyard_db_repos::issues::count_issue_comments(&ctx.state.pool, &[value.id])
                     .await
                     .map_err(|_| unavailable(ctx))?
                     .first()
@@ -591,7 +591,7 @@ async fn item_with_comparison(
             Ok(shown)
         }
         Kind::Pull => {
-            let value = crate::backend::db::pull_requests::records::get_pull_request(
+            let value = codeyard_db_repos::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
                 repo.record.id,
                 number,
@@ -606,7 +606,7 @@ async fn item_with_comparison(
             }
             let head = match value.head_repo_id {
                 Some(id) if id != repo.record.id => {
-                    crate::backend::db::repositories::records::get_repository_by_id(
+                    codeyard_db_repos::repositories::records::get_repository_by_id(
                         &ctx.state.pool,
                         id,
                     )
@@ -651,7 +651,7 @@ async fn item_with_comparison(
                 _ => false,
             };
             let milestone_id = value.milestone_id;
-            let labels = crate::backend::db::labels::get_pull_request_labels(
+            let labels = codeyard_db_repos::labels::get_pull_request_labels(
                 &ctx.state.pool,
                 repo.record.id,
                 current,
@@ -668,14 +668,14 @@ async fn item_with_comparison(
                 .as_ref()
                 .map(|stack| stack_map(stack, current, restack));
             view_item.stack_candidate = stack_candidate;
-            view_item.assignees = crate::backend::db::assignees::list_assignees(
+            view_item.assignees = codeyard_db_repos::assignees::list_assignees(
                 &ctx.state.pool,
-                crate::backend::db::assignees::AssignedItem::PullRequest(current),
+                codeyard_db_repos::assignees::AssignedItem::PullRequest(current),
             )
             .await
             .map_err(|_| unavailable(ctx))?;
             view_item.comment_count =
-                crate::backend::db::pull_requests::reviews::count_pull_request_comments(
+                codeyard_db_repos::pull_requests::reviews::count_pull_request_comments(
                     &ctx.state.pool,
                     current,
                 )
@@ -683,7 +683,7 @@ async fn item_with_comparison(
                 .map_err(|_| unavailable(ctx))?;
             // A check run or a commit status on the head commit is what makes a green merge box mean
             // something; the merge box says so when there is none.
-            let runs = crate::backend::db::ci::latest_ci_runs_for_commit(
+            let runs = codeyard_db_actions::ci::latest_ci_runs_for_commit(
                 &ctx.state.pool,
                 repo.record.id,
                 &head_sha,
@@ -692,7 +692,7 @@ async fn item_with_comparison(
             )
             .await
             .map_err(|_| unavailable(ctx))?;
-            let statuses = crate::backend::db::repositories::protection::list_commit_statuses(
+            let statuses = codeyard_db_repos::repositories::protection::list_commit_statuses(
                 &ctx.state.pool,
                 repo.record.id,
                 &head_sha,
@@ -701,13 +701,13 @@ async fn item_with_comparison(
             .map_err(|_| unavailable(ctx))?
             .into_iter()
             .filter(|status| {
-                !crate::backend::db::repositories::protection::server_owned_status_context(
+                !codeyard_db_repos::repositories::protection::server_owned_status_context(
                     &status.context,
                 )
             })
             .collect::<Vec<_>>();
             let integration =
-                crate::backend::db::checks::summary(&ctx.state.pool, repo.record.id, &head_sha)
+                codeyard_db_actions::checks::summary(&ctx.state.pool, repo.record.id, &head_sha)
                     .await
                     .map_err(|_| unavailable(ctx))?;
             view_item.check_count = runs.len() as i64
@@ -843,16 +843,16 @@ pub(crate) async fn discussion(
     let locked: bool;
     let lock_reason: Option<String>;
     // The item and the span of time this page covers, for the events that fall in it.
-    let subject: (crate::backend::db::timeline::Subject, i64);
+    let subject: (codeyard_db_repos::timeline::Subject, i64);
     let span: (Option<DateTime<Utc>>, Option<DateTime<Utc>>);
     match kind {
         Kind::Issue => {
             let issue =
-                crate::backend::db::issues::get_issue(&ctx.state.pool, repo.record.id, number)
+                codeyard_db_repos::issues::get_issue(&ctx.state.pool, repo.record.id, number)
                     .await
                     .map_err(|_| unavailable(ctx))?
                     .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
-            let rows = crate::backend::db::issues::list_issue_comments(
+            let rows = codeyard_db_repos::issues::list_issue_comments(
                 &ctx.state.pool,
                 issue.id,
                 fetch,
@@ -869,7 +869,7 @@ pub(crate) async fn discussion(
                 COMMENTS_PER_PAGE,
                 MAX_COMMENT_PAGE,
             );
-            subject = (crate::backend::db::timeline::Subject::Issue, issue.id);
+            subject = (codeyard_db_repos::timeline::Subject::Issue, issue.id);
             span = (
                 (page > 1)
                     .then(|| rows.first().map(|row| row.comment.created_at))
@@ -904,7 +904,7 @@ pub(crate) async fn discussion(
             }
         }
         Kind::Pull => {
-            let pull = crate::backend::db::pull_requests::records::get_pull_request(
+            let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
                 repo.record.id,
                 number,
@@ -914,7 +914,7 @@ pub(crate) async fn discussion(
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
             // The page is a run of Conversation items, so the count, the links and the reviews all
             // agree. The page's span runs from its first item up to the next page's first item.
-            let rows = crate::backend::db::pull_requests::reviews::list_discussion_items(
+            let rows = codeyard_db_repos::pull_requests::reviews::list_discussion_items(
                 &ctx.state.pool,
                 pull.id,
                 fetch,
@@ -933,7 +933,7 @@ pub(crate) async fn discussion(
                 (page > 1).then_some(first).flatten(),
                 rows.get(COMMENTS_PER_PAGE).map(DiscussionItem::created_at),
             );
-            subject = (crate::backend::db::timeline::Subject::PullRequest, pull.id);
+            subject = (codeyard_db_repos::timeline::Subject::PullRequest, pull.id);
             let mut page_reviews = Vec::new();
             locked = pull.locked;
             lock_reason = pull.lock_reason.clone();
@@ -966,18 +966,18 @@ pub(crate) async fn discussion(
             .await?;
         }
     }
-    let max_event_page = (i64::MAX / crate::backend::db::timeline::EVENT_LIMIT) as usize;
+    let max_event_page = (i64::MAX / codeyard_db_repos::timeline::EVENT_LIMIT) as usize;
     let event_page =
         crate::backend::api::repos::paging::number(ctx, "event_page", 1, 1..=max_event_page)?;
-    let event_offset = (event_page as i64 - 1) * crate::backend::db::timeline::EVENT_LIMIT;
-    let mut event_rows = crate::backend::db::timeline::list_events(
+    let event_offset = (event_page as i64 - 1) * codeyard_db_repos::timeline::EVENT_LIMIT;
+    let mut event_rows = codeyard_db_repos::timeline::list_events(
         &ctx.state.pool,
         repo.record.id,
         subject.0.name(),
         subject.1,
         span.0,
         span.1,
-        crate::backend::db::timeline::EVENT_LIMIT + 1,
+        codeyard_db_repos::timeline::EVENT_LIMIT + 1,
         event_offset,
     )
     .await
@@ -985,11 +985,11 @@ pub(crate) async fn discussion(
     let events_next = crate::backend::api::repos::paging::has_next_page(
         event_page,
         event_rows.len(),
-        crate::backend::db::timeline::EVENT_LIMIT as usize,
+        codeyard_db_repos::timeline::EVENT_LIMIT as usize,
         max_event_page,
     )
     .then_some(event_page + 1);
-    event_rows.truncate(crate::backend::db::timeline::EVENT_LIMIT as usize);
+    event_rows.truncate(codeyard_db_repos::timeline::EVENT_LIMIT as usize);
     let events = event_rows
         .into_iter()
         .map(|event| view::Event {
@@ -1001,8 +1001,8 @@ pub(crate) async fn discussion(
         })
         .collect();
     let item = match kind {
-        Kind::Issue => crate::backend::db::assignees::AssignedItem::Issue(subject.1),
-        Kind::Pull => crate::backend::db::assignees::AssignedItem::PullRequest(subject.1),
+        Kind::Issue => codeyard_db_repos::assignees::AssignedItem::Issue(subject.1),
+        Kind::Pull => codeyard_db_repos::assignees::AssignedItem::PullRequest(subject.1),
     };
     let pinned =
         crate::backend::api::repos::issues::pins::pinned_comment(ctx, repo, kind, number, item)
@@ -1038,7 +1038,7 @@ pub(crate) async fn discussion(
         None
     };
     let issue_management = if kind == Kind::Issue {
-        let issue = crate::backend::db::issues::get_issue_by_id(&ctx.state.pool, subject.1)
+        let issue = codeyard_db_repos::issues::get_issue_by_id(&ctx.state.pool, subject.1)
             .await
             .map_err(|_| unavailable(ctx))?
             .ok_or_else(|| unavailable(ctx))?;
@@ -1106,23 +1106,23 @@ pub(crate) async fn render_detail(
     let edit_page = match draft.editing {
         Some(id) => {
             let position = match kind {
-                Kind::Issue => match crate::backend::db::issues::get_issue_comment(&ctx.state.pool, id).await {
+                Kind::Issue => match codeyard_db_repos::issues::get_issue_comment(&ctx.state.pool, id).await {
                     Ok(Some(comment)) if comment.issue_id == shown.id => {
-                        crate::backend::db::issues::issue_comment_position(&ctx.state.pool, id).await
+                        codeyard_db_repos::issues::issue_comment_position(&ctx.state.pool, id).await
                     }
                     _ => Err(anyhow::anyhow!("Comment not found")),
                 },
-                Kind::Pull => match crate::backend::db::pull_requests::reviews::get_pull_request_comment_by_id(
+                Kind::Pull => match codeyard_db_repos::pull_requests::reviews::get_pull_request_comment_by_id(
                     &ctx.state.pool,
                     id,
                 )
                 .await
                 {
                     Ok(Some(comment)) if comment.pull_request_id == shown.id => {
-                        crate::backend::db::pull_requests::reviews::count_discussion_items_through(
+                        codeyard_db_repos::pull_requests::reviews::count_discussion_items_through(
                             &ctx.state.pool,
                             comment.pull_request_id,
-                            crate::backend::db::pull_requests::reviews::DiscussionRef::of_comment(&comment),
+                            codeyard_db_repos::pull_requests::reviews::DiscussionRef::of_comment(&comment),
                         )
                         .await
                     }
@@ -1198,7 +1198,7 @@ pub(crate) async fn render_detail(
     // The label picker lists every label of the repository. A label the item has is removed by
     // clicking it, and any other label is added the same way.
     let mut labels: Vec<_> = if comments.can_triage {
-        crate::backend::db::labels::list_repo_labels_page(
+        codeyard_db_repos::labels::list_repo_labels_page(
             &ctx.state.pool,
             repo.record.id,
             ctx.query.get("label_search").map_or("", String::as_str),
@@ -1221,22 +1221,20 @@ pub(crate) async fn render_detail(
     }
     // Choices are offered only when the viewer may triage.
     let (assignable, milestones): (Vec<String>, Vec<view::Milestone>) = if comments.can_triage {
-        let assignable =
-            if (value.assignees.len() as i64) < crate::backend::db::assignees::MAX_ASSIGNEES {
-                crate::backend::db::assignees::list_assignable_usernames(
-                    &ctx.state.pool,
-                    repo.record.id,
-                )
+        let assignable = if (value.assignees.len() as i64)
+            < codeyard_db_repos::assignees::MAX_ASSIGNEES
+        {
+            codeyard_db_repos::assignees::list_assignable_usernames(&ctx.state.pool, repo.record.id)
                 .await
                 .map_err(|_| unavailable(ctx))?
                 .into_iter()
                 .filter(|name| !value.assignees.contains(name))
                 .collect()
-            } else {
-                Vec::new()
-            };
+        } else {
+            Vec::new()
+        };
         let milestones =
-            crate::backend::db::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
+            codeyard_db_repos::milestones::list_milestone_choices(&ctx.state.pool, repo.record.id)
                 .await
                 .map_err(|_| unavailable(ctx))?
                 .into_iter()
@@ -1254,7 +1252,7 @@ pub(crate) async fn render_detail(
     ));
     let ctx = &ctx;
     let mut reviewer_choices: Vec<String> = if kind == Kind::Pull && repo.view.can_write {
-        crate::backend::db::repositories::access::list_write_access_users(
+        codeyard_db_repos::repositories::access::list_write_access_users(
             &ctx.state.pool,
             repo.record.id,
             -1,
@@ -1268,7 +1266,7 @@ pub(crate) async fn render_detail(
         Vec::new()
     };
     if kind == Kind::Pull && repo.view.can_write {
-        let teams = crate::backend::db::pull_requests::team_reviewers::list(
+        let teams = codeyard_db_repos::pull_requests::team_reviewers::list(
             &ctx.state.pool,
             repo.record.id,
             None,
@@ -1277,7 +1275,7 @@ pub(crate) async fn render_detail(
         .await
         .map_err(|_| unavailable(ctx))?;
         if let Some(owner) =
-            crate::backend::db::ci::ci_repository_owner(&ctx.state.pool, repo.record.id)
+            codeyard_db_actions::ci::ci_repository_owner(&ctx.state.pool, repo.record.id)
                 .await
                 .map_err(|_| unavailable(ctx))?
         {
@@ -1301,7 +1299,7 @@ pub(crate) async fn render_detail(
         _ => Vec::new(),
     };
     if kind == Kind::Issue {
-        crate::backend::db::issues::get_issue_by_id(&ctx.state.pool, value.id)
+        codeyard_db_repos::issues::get_issue_by_id(&ctx.state.pool, value.id)
             .await
             .map_err(|_| unavailable(ctx))?
             .filter(|issue| issue.repo_id == repo.record.id)
@@ -1389,7 +1387,7 @@ async fn fill_merge_blockers(
             .await
             .is_ok_and(|files| !files.is_empty());
     }
-    let Ok(Some(pull_request)) = crate::backend::db::pull_requests::records::get_pull_request(
+    let Ok(Some(pull_request)) = codeyard_db_repos::pull_requests::records::get_pull_request(
         &ctx.state.pool,
         repo.record.id,
         number,
@@ -1471,7 +1469,7 @@ pub(crate) async fn head_choices(
     HashMap<String, String>,
 )> {
     let mut candidates = vec![base.record.clone()];
-    let mut forks = crate::backend::db::repositories::discovery::list_forks(
+    let mut forks = codeyard_db_repos::repositories::discovery::list_forks(
         &ctx.state.pool,
         base.record.id,
         100,
@@ -1482,7 +1480,7 @@ pub(crate) async fn head_choices(
     // The user's own fork and an explicitly selected head stay reachable beyond the first
     // page. The batch below still checks read access for each of them.
     let own_fork = match &ctx.user {
-        Some(user) => crate::backend::db::repositories::discovery::get_user_fork(
+        Some(user) => codeyard_db_repos::repositories::discovery::get_user_fork(
             &ctx.state.pool,
             user.id,
             base.record.id,
@@ -1493,7 +1491,7 @@ pub(crate) async fn head_choices(
     };
     let selected = match draft.head_repo.parse::<i64>() {
         Ok(id) => {
-            crate::backend::db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
+            codeyard_db_repos::repositories::records::get_repository_by_id(&ctx.state.pool, id)
                 .await
                 .map_err(|_| unavailable(ctx))?
         }
@@ -1511,7 +1509,7 @@ pub(crate) async fn head_choices(
     let mut readable = Vec::new();
     for ids in ids.chunks(100) {
         readable.extend(
-            crate::backend::db::repositories::access::readable_repository_ids(
+            codeyard_db_repos::repositories::access::readable_repository_ids(
                 &ctx.state.pool,
                 ctx.user.as_ref().map(|user| user.id),
                 ids,
@@ -1546,7 +1544,7 @@ pub(crate) async fn head_choices(
         .map(|candidate| candidate.id)
         .collect::<Vec<_>>();
     let mut owners =
-        crate::backend::db::repositories::records::repository_owner_names(&ctx.state.pool, &ids)
+        codeyard_db_repos::repositories::records::repository_owner_names(&ctx.state.pool, &ids)
             .await
             .map_err(|_| unavailable(ctx))?;
     let mut repositories = Vec::new();
@@ -1602,7 +1600,7 @@ mod tests {
             unreachable!()
         };
         sqlx::query("INSERT INTO node_configuration(id, setup_completed) VALUES(1, TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(sqlite).await.unwrap();
-        let owner = crate::backend::db::users::accounts::create_user(&pool, "alice", None)
+        let owner = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();
@@ -1610,7 +1608,7 @@ mod tests {
             crate::backend::repositories::lifecycle::provision(
                 (&pool, None),
                 root.path(),
-                crate::backend::db::repositories::creation::RepositoryCreationOwner::personal(
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
                     owner.id,
                 ),
                 name,
@@ -1642,12 +1640,12 @@ mod tests {
         .unwrap();
         let repo = repository(&ctx, "alice", "proj").await.unwrap();
         let private =
-            crate::backend::db::repositories::records::get_repository(&pool, "alice", "vault")
+            codeyard_db_repos::repositories::records::get_repository(&pool, "alice", "vault")
                 .await
                 .unwrap()
                 .unwrap();
         let display =
-            |id, name: &str| crate::backend::db::pull_requests::records::PullRequestHeadDisplay {
+            |id, name: &str| codeyard_db_repos::pull_requests::records::PullRequestHeadDisplay {
                 id,
                 name: name.into(),
                 owner_name: Some("alice".into()),

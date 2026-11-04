@@ -140,15 +140,15 @@ pub(crate) async fn visibility_post(
     let result = crate::backend::identity::profiles::save(
         &ctx.state.pool,
         user.id,
-        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
-        &crate::backend::db::users::profiles::ProfilePatch {
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
+        &codeyard_db_identity::users::profiles::ProfilePatch {
             primary_visibility: (!form.contains_key("public_address")).then_some(visibility),
             // Showing the primary address replaces a chosen secondary one.
             email: form
                 .get("public_address")
                 .map(String::as_str)
                 .or((visibility == "public").then_some("")),
-            ..crate::backend::db::users::profiles::ProfilePatch::default()
+            ..codeyard_db_identity::users::profiles::ProfilePatch::default()
         },
     )
     .await
@@ -180,7 +180,7 @@ pub(crate) async fn secondary_post(
     match crate::backend::identity::emails::change(
         &ctx.state.pool,
         user.id,
-        &crate::backend::db::users::accounts::AccountCredential::Session(&session),
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
         &[address],
         !remove,
     )
@@ -249,8 +249,9 @@ pub(crate) async fn notifications_post(
     let wanted = field(&form, "email_notifications") == "yes";
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
-    match crate::backend::db::email::set_email_notifications(
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+    match codeyard_db_identity::email::set_email_notifications(
         &ctx.state.pool,
         user.id,
         &credential,

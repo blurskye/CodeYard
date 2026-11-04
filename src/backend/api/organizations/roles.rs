@@ -1,9 +1,9 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::organizations::organization::Fields;
 
-use crate::backend::db::organizations::roles::RoleTarget;
-use crate::backend::db::organizations::OrganizationOutcome;
 use axum::{http::StatusCode, response::Response};
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations::roles::RoleTarget;
 use codeyard_webui::pages::orgs as view;
 
 pub(super) struct Command {
@@ -88,7 +88,7 @@ pub(super) async fn panel(
 ) -> Result<view::RolePanel, Response> {
     let definitions = project(
         ctx,
-        crate::backend::db::organizations::roles::catalog(&ctx.state.pool, actor, org).await,
+        codeyard_db_orgs::organizations::roles::catalog(&ctx.state.pool, actor, org).await,
     )?;
     let selected = if let Some(value) = ctx.query.get("role") {
         value
@@ -116,7 +116,7 @@ pub(super) async fn panel(
     let limit = crate::backend::api::organizations::organization::PAGE_LIMIT;
     let mut users = project(
         ctx,
-        crate::backend::db::organizations::roles::users(
+        codeyard_db_orgs::organizations::roles::users(
             &ctx.state.pool,
             actor,
             org,
@@ -130,7 +130,7 @@ pub(super) async fn panel(
     users.truncate(limit as usize);
     let mut teams = project(
         ctx,
-        crate::backend::db::organizations::roles::teams(
+        codeyard_db_orgs::organizations::roles::teams(
             &ctx.state.pool,
             actor,
             org,
@@ -193,7 +193,7 @@ pub(super) async fn apply(
     org: i64,
     command: Command,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
-    crate::backend::db::organizations::roles::change(
+    codeyard_db_orgs::organizations::roles::change(
         &ctx.state.pool,
         ctx.database_actor(actor),
         org,
