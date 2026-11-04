@@ -9859,6 +9859,7 @@ dependencies = [
  "aws-credential-types",
  "aws-sdk-s3",
  "aws-smithy-types",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "codeyard-db-core",
@@ -9875,6 +9876,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]

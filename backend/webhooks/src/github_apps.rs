@@ -32,11 +32,7 @@ fn accepts(
         && codeyard_identity::github_apps::event_permission(&permissions, event))
 }
 
-pub(super) async fn has_subscription(
-    pool: &DbPool,
-    repo: i64,
-    event: &str,
-) -> anyhow::Result<bool> {
+pub async fn has_subscription(pool: &DbPool, repo: i64, event: &str) -> anyhow::Result<bool> {
     for subscription in codeyard_db_identity::github_app_hooks::for_repository(pool, repo).await? {
         if accepts(&subscription, event)? {
             return Ok(true);

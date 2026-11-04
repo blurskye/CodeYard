@@ -18,7 +18,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Variables that switch cluster mode on. With none of them set, `serve` runs as a
 /// plain single node and opens no cluster socket.
-const SWITCHES: [&str; 11] = [
+pub(crate) const SWITCHES: [&str; 11] = [
     "CLUSTER_PEERS",
     "NODE_KEY",
     "NODE_KEY_FILE",
@@ -192,3 +192,5 @@ pub fn default_tcp_advertise(bound: SocketAddr) -> Vec<SocketAddr> {
         vec![bound]
     }
 }
+
+use tracing::warn;

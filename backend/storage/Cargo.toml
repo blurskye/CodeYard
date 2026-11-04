@@ -5,6 +5,8 @@ edition.workspace = true
 license = "LGPL-3.0-or-later"
 
 [dependencies]
+uuid = { workspace = true, features = ["v4"] }
+base64.workspace = true
 anyhow.workspace = true
 aws-credential-types.workspace = true
 aws-sdk-s3.workspace = true

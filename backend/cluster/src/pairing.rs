@@ -4,6 +4,8 @@
 //! - an invite ticket from `cluster invite`, redeemed by `cluster join`;
 //! - the same ticket kept as `CLUSTER_JOIN_TOKEN` (reusable, for autoscaling);
 //! - a declared list of keys in `CLUSTER_NODES`, applied by core nodes at startup.
+use crate::link::read_to_end_within;
+use crate::link::Link;
 use crate::transport::NodeAddress;
 use crate::transport::Relay;
 use crate::transport::ALPN_PAIR;
@@ -15,8 +17,6 @@ use anyhow::Context;
 use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use codeyard_cluster::link::read_to_end_within;
-use codeyard_cluster::link::Link;
 use codeyard_db_cluster::cluster::Authority;
 use codeyard_db_cluster::cluster::DeclaredMember;
 use codeyard_db_cluster::cluster::JoinRequest;

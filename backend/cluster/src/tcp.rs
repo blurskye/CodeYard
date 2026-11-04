@@ -20,7 +20,7 @@ pub async fn dial(
         .await
         .with_context(|| format!("cannot connect to {address}"))?;
     tune(&socket);
-    let config = codeyard_cluster::tls::client_config(key, node, alpn)?;
+    let config = crate::tls::client_config(key, node, alpn)?;
     let stream = TlsConnector::from(config)
         .connect(ServerName::IpAddress(address.ip().into()), socket)
         .await

@@ -172,7 +172,7 @@ pub async fn issue_selected(
                 format!(
                     "{}{}",
                     codeyard_support::tokens::ACTIONS_PREFIX,
-                    codeyard_ci::runtime::secret()
+                    crate::runtime::secret()
                 ),
             )
         })
@@ -291,9 +291,9 @@ pub async fn issue_selected(
     Ok(GithubTokens {
         workflows,
         oidc_jobs,
-        oidc_url: codeyard_ci::runtime::oidc_url(),
+        oidc_url: crate::runtime::oidc_url(),
         act: values.get("act").cloned().unwrap_or_default(),
         act_limited,
-        completion_secret: codeyard_ci::runtime::secret(),
+        completion_secret: crate::runtime::secret(),
     })
 }

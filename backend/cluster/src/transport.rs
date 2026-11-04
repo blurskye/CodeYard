@@ -1,11 +1,11 @@
 //! The iroh endpoint: protocol names, relay choice, binding, and the rule that only
 //! active cluster members may connect.
+use crate::link::Link;
+use crate::pairing::PairingHandler;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
-use codeyard_cluster::link::Link;
-use codeyard_cluster::pairing::PairingHandler;
 use codeyard_db_core::DbPool;
 use codeyard_support::node_identity::NodeKey;
 use futures_util::stream::FuturesUnordered;
