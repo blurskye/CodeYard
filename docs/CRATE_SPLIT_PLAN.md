@@ -121,7 +121,9 @@ and results stay the same. A stage can be the last one.
    back. The store, CI engine and inbound cluster handlers remain in the app. Their
    boundary includes CI admission, workflow discovery, push dispatch, buffered RPC,
    streamed Git sessions and replica publication. This exceeds the approved five
-   small traits. The simpler cuts above move independent operations first.
+   small traits. The simpler cuts above move independent operations first. Next,
+   move wire records and node context below the store before introducing CI and
+   publication interfaces.
 7. **API.** Source extraction complete: HTTP plumbing, GitHub REST (one crate,
    with folders named for its operation categories), repository HTTP, GraphQL and
    the remaining routes are separate crates. Shared helpers have one direct lower
@@ -134,8 +136,8 @@ and results stay the same. A stage can be the last one.
    committed before workspace, Clippy and WASM checks begin. Broker
    tests now live in `backend/app/tests/git_broker.rs` and link the app library
    with REST through one `AppState`. Hook barriers have one shared owner.
-   The earlier split passed workspace, Clippy and WASM checks. The new service
-   cuts await the combined builder checks. Runtime tests remain for the lead.
+   All workspace targets, Clippy with warnings denied and the web WASM target
+   check clean. Runtime tests remain for the lead.
 
 ## Move only: no behaviour change
 
