@@ -1385,20 +1385,7 @@ async fn unread_repository_downloads_are_bounded(router: &axum::Router) {
 
 #[test]
 fn web_node_uses_remote_storage_and_rpc_checks_every_request() {
-    // This exhaustive contract drives every RPC operation through one deep async state,
-    // which outgrows the default 2 MiB test stack in debug builds.
-    std::thread::Builder::new()
-        .stack_size(32 << 20)
-        .spawn(|| {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(Box::pin(remote_web_contract()))
-        })
-        .unwrap()
-        .join()
-        .unwrap();
+    crate::support::large_stack::run(remote_web_contract);
 }
 
 async fn remote_web_contract() {

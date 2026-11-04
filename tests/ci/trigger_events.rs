@@ -704,31 +704,14 @@ async fn workflow_run_contract(pg: bool) {
     f.finish().await;
 }
 
-/// Runs the contract on its own 32 MiB thread: its deep async state outgrows the default
-/// 2 MiB test stack in debug builds.
-fn workflow_run_contract_on_a_large_stack(pg: bool) {
-    std::thread::Builder::new()
-        .stack_size(32 << 20)
-        .spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(Box::pin(workflow_run_contract(pg)))
-        })
-        .unwrap()
-        .join()
-        .unwrap();
-}
-
 #[test]
 fn sqlite_workflow_run_events() {
-    workflow_run_contract_on_a_large_stack(false);
+    crate::support::large_stack::run(|| workflow_run_contract(false));
 }
 
 #[test]
 fn postgres_workflow_run_events() {
-    workflow_run_contract_on_a_large_stack(true);
+    crate::support::large_stack::run(|| workflow_run_contract(true));
 }
 
 #[tokio::test]

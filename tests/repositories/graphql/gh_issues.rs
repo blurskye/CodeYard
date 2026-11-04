@@ -132,6 +132,7 @@ fn keys(value: &Value, names: &[&str]) {
 }
 
 async fn contract(pg: bool) {
+    crate::support::fake_webui_bundle::install();
     let f = Database::new(pg).await;
     f.complete_setup().await;
     let alice = f.actor("gh-issues-alice").await;
@@ -1234,11 +1235,12 @@ async fn contract(pg: bool) {
     );
 }
 
-#[tokio::test]
-async fn sqlite_gh_issues_queries() {
-    contract(false).await;
+// The contract's debug-build future outgrows the default test stack.
+#[test]
+fn sqlite_gh_issues_queries() {
+    crate::support::large_stack::run(|| contract(false));
 }
-#[tokio::test]
-async fn postgres_gh_issues_queries() {
-    contract(true).await;
+#[test]
+fn postgres_gh_issues_queries() {
+    crate::support::large_stack::run(|| contract(true));
 }

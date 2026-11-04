@@ -10,6 +10,7 @@ pub mod git_remote;
 pub mod git_server;
 pub mod github_spec;
 pub mod http_client;
+pub mod large_stack;
 pub mod logs;
 pub mod native_database;
 pub mod organizations;
