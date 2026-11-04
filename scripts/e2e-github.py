@@ -24,6 +24,8 @@ import subprocess
 import threading
 import time
 import urllib.parse
+import urllib.request
+import urllib.error
 import uuid
 
 import jsonschema
@@ -495,6 +497,56 @@ jobs:
                 assert expect in result.stdout + result.stderr, (expect, result.stdout, result.stderr)
             return result
         return None
+
+    def postgres_failover(self):
+        if os.environ.get("E2E_CHECK_PG_RESTART") != "1":
+            return
+        data = os.environ.get("GITSERV_TEST_POSTGRES_DATA")
+        if not data:
+            assert os.environ.get("E2E_REQUIRE_PG_RESTART") != "1", "owned PostgreSQL restart fixture is required"
+            return
+        data = Path(data).resolve()
+        marker = os.environ.get("GITSERV_TEST_POSTGRES_MARKER", "")
+        assert marker and (data.parent / ".codeyard-owned-postgres").read_text().strip() == marker, "PostgreSQL is not owned by this test"
+        options = os.environ["GITSERV_TEST_POSTGRES_OPTIONS"]
+        pg_ctl = shutil.which("pg_ctl")
+        assert pg_ctl, "pg_ctl is required for the owned crash test"
+        with self.check("PostgreSQL crash during gh issue create and pool recovery"):
+            before = self.gh("issue", "create", "-R", REPO, "--title", "Acknowledged before PostgreSQL crash", "--body", "durable").stdout.strip()
+            results = []
+            worker = threading.Thread(target=lambda: results.append(self.gh("issue", "create", "-R", REPO,
+                "--title", "Concurrent PostgreSQL crash", "--body", "in flight", ok=(0, 1))))
+            worker.start()
+            stopped = False
+            try:
+                subprocess.run([pg_ctl, "-D", str(data), "-m", "immediate", "-w", "-t", "60", "stop"], check=True, capture_output=True, timeout=65)
+                stopped = True
+                try:
+                    urllib.request.urlopen(self.base + "/ready", timeout=5)
+                except urllib.error.HTTPError as error:
+                    assert error.code == 503
+                else:
+                    raise AssertionError("readiness did not fail while PostgreSQL was stopped")
+            finally:
+                if stopped:
+                    subprocess.run([pg_ctl, "-D", str(data), "-l", str(data.parent / "restart.log"), "-o", options, "-w", "-t", "60", "start"], check=True, capture_output=True, timeout=65)
+                worker.join(timeout=120)
+                assert not worker.is_alive(), "gh did not stop after the database crash"
+            assert results, "the concurrent gh request did not return"
+            deadline = time.monotonic() + 60
+            while True:
+                try:
+                    with urllib.request.urlopen(self.base + "/ready", timeout=5) as response:
+                        assert response.status == 200
+                    break
+                except (urllib.error.URLError, TimeoutError):
+                    assert time.monotonic() < deadline, "readiness did not recover without restarting Codeyard"
+            previous = before.rstrip("/").rsplit("/", 1)[1]
+            assert self.gh("issue", "view", previous, "-R", REPO, "--json", "title", "--jq", ".title").stdout.strip() == "Acknowledged before PostgreSQL crash"
+            if results[0].returncode == 0:
+                number = results[0].stdout.strip().rstrip("/").rsplit("/", 1)[1]
+                assert self.gh("issue", "view", number, "-R", REPO, "--json", "title", "--jq", ".title").stdout.strip() == "Concurrent PostgreSQL crash"
+            self.gh("issue", "create", "-R", REPO, "--title", "Pool recovered without restart", "--body", "after crash")
 
     def sweep_account(self):
         self.step("gh auth token", "auth", "token", "--hostname", HOST, expect=self.credentials["alice"].strip())
@@ -1010,6 +1062,7 @@ def main():
                               client.apis_and_values, client.workflows):
                 with client.check(operation.__name__ + " setup and remaining checks"):
                     operation()
+            client.postgres_failover()
             with client.check("signed webhook schemas"):
                 check_deliveries(receiver, secret, directory, finished_runs=not args.skip_runs)
             if args.skip_runs:

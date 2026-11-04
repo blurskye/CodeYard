@@ -981,3 +981,64 @@ engine_pair!(
     postgres_new_repositories_use_both_voters,
     new_repositories_use_both_voters
 );
+
+async fn acknowledged_push_is_advertised_when_the_primary_listener_disappears(pool: &DbPool) {
+    use axum::{
+        body::{to_bytes, Body},
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+    let stores = Stores::new(pool).await;
+    let (result, _, _) = stores.push(pool).await;
+    assert!(result.unwrap().success());
+    let serving = &stores.contexts[1];
+    match pool {
+        DbPool::Postgres(raw) => {
+            sqlx::query("UPDATE nodes SET roles=$2 WHERE id=$1")
+                .bind(serving.node_id)
+                .bind(vec!["web", "storage"])
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+        DbPool::Sqlite(raw) => {
+            sqlx::query("UPDATE nodes SET roles=$2 WHERE id=$1")
+                .bind(serving.node_id)
+                .bind("[\"web\",\"storage\"]")
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+    }
+    let router = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
+        pool.clone(),
+        serving.repos_path.clone(),
+        Arc::new(
+            codeyard_storage::ObjectStore::open(&serving.repos_path, None)
+                .await
+                .unwrap(),
+        ),
+        None,
+        CiConfig::default(),
+        Some(serving.clone()),
+    ));
+    stores.listeners[0].stop().await;
+    let response = router
+        .oneshot(
+            Request::builder()
+                .uri("/quorum-owner/quorum.git/info/refs?service=git-upload-pack")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+    assert!(String::from_utf8_lossy(&body).contains(&stores.new));
+    stores.stop().await;
+}
+engine_pair!(
+    sqlite_acknowledged_push_survives_primary_loss,
+    postgres_acknowledged_push_survives_primary_loss,
+    acknowledged_push_is_advertised_when_the_primary_listener_disappears
+);

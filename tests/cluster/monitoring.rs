@@ -352,3 +352,58 @@ async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
         database.finish().await;
     }
 }
+
+#[tokio::test]
+async fn metrics_include_drain_progress_and_quorum_refusals() {
+    for pg in [false, true] {
+        let mut database = Database::new(pg).await;
+        database.complete_setup().await;
+        let root = tempfile::tempdir().unwrap();
+        let mut state = state(&database, root.path()).await;
+        state.metrics_token_hash = Some(token_hash("drain-scrape"));
+        let key = codeyard_support::node_identity::NodeKey::generate();
+        let node = codeyard_db_cluster::cluster::register_own_node(
+            database.pool(),
+            &key.public_hex(),
+            "draining",
+            &["storage".into()],
+            "test",
+        )
+        .await
+        .unwrap();
+        database
+            .execute(
+                "UPDATE nodes SET state='draining',drain_total=7,drain_completed=3 WHERE id=$1",
+                &[node.id],
+            )
+            .await;
+        let before = codeyard_cluster_core::writes::quorum_failures();
+        assert!(codeyard_cluster_core::writes::begin(
+            database.pool(),
+            -1,
+            -1,
+            1,
+            &uuid::Uuid::new_v4().to_string(),
+            &[]
+        )
+        .await
+        .is_err());
+        assert!(codeyard_cluster_core::writes::quorum_failures() > before);
+        let (_, _, body) = get(
+            &create_router(state),
+            "/metrics",
+            Some("Bearer drain-scrape"),
+        )
+        .await;
+        assert!(body.contains(&format!(
+            "codeyard_drain_repositories_total{{node_id=\"{}\",state=\"draining\"}} 7",
+            node.id
+        )));
+        assert!(body.contains(&format!(
+            "codeyard_drain_repositories_completed{{node_id=\"{}\",state=\"draining\"}} 3",
+            node.id
+        )));
+        assert!(body.contains("# TYPE codeyard_quorum_failures_total counter"));
+        database.finish().await;
+    }
+}

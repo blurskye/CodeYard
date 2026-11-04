@@ -79,6 +79,9 @@ native_operation!(crate::postgres::cluster::assign_replica_family,
 pub type PrimaryReplicaRow = (i64, String, Option<i64>, Option<i64>, i64, bool);
 
 pub struct NewJoinToken<'a> {
+    pub leader: Option<i64>,
+    pub authority: Option<&'a codeyard_db_core::queries::credentials::Actor>,
+    pub max_uses: Option<i32>,
     /// Hex SHA-256 of the invite secret; the secret itself is never stored.
     pub token_hash: &'a str,
     pub roles: &'a [String],

@@ -7,7 +7,7 @@ use axum::{
 use codeyard_support::{node_identity::NodeKey, token_hash::token_hash};
 use tower::ServiceExt;
 
-async fn node(db: &Database, name: &str, free: i64) -> i64 {
+pub(super) async fn node(db: &Database, name: &str, free: i64) -> i64 {
     let key = NodeKey::generate();
     let node = codeyard_db_cluster::cluster::register_own_node(
         db.pool(),
@@ -198,6 +198,136 @@ async fn drain_capacity_and_authority_are_checked_through_rest_on_both_engines()
                 .state,
             "active"
         );
+        db.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn provisioning_api_limits_invitation_uses_and_rejects_request_commands() {
+    use codeyard_cluster_core::{
+        pairing::JoinTicket,
+        transport::{IrohDialer, NodeAddress, Relay},
+    };
+    use codeyard_repos_core::context::NodeContext;
+    use std::sync::Arc;
+    for pg in [false, true] {
+        let mut db = Database::new(pg).await;
+        db.complete_setup().await;
+        let root = tempfile::tempdir().unwrap();
+        let admin = db.actor("provision-admin").await;
+        db.execute("UPDATE users SET is_admin=true WHERE id=$1", &[admin])
+            .await;
+        let credential = token(&db, admin).await;
+        let key = NodeKey::generate();
+        let node = codeyard_db_cluster::cluster::register_own_node(
+            db.pool(),
+            &key.public_hex(),
+            "core",
+            &["web".into()],
+            "test",
+        )
+        .await
+        .unwrap();
+        let address = NodeAddress {
+            tcp: vec!["127.0.0.1:9".parse().unwrap()],
+            ..Default::default()
+        };
+        codeyard_db_cluster::cluster::record_node_heartbeat(
+            db.pool(),
+            &key.public_hex(),
+            "test",
+            &serde_json::to_string(&address).unwrap(),
+            None,
+        )
+        .await
+        .unwrap();
+        let context = NodeContext {
+            pool: Some(db.pool().clone()),
+            rpc: Arc::new(codeyard_repos_rpc::RpcFactory),
+            iroh: IrohDialer::new(Relay::Off, key.clone()),
+            key,
+            node_id: node.id,
+            repos_path: root.path().to_owned(),
+            peers: Default::default(),
+            unreachable: Default::default(),
+            ci_replicas: Default::default(),
+        };
+        let state = codeyard_app::app::AppState::new(
+            db.pool().clone(),
+            root.path().to_owned(),
+            Arc::new(
+                codeyard_storage::ObjectStore::open(root.path(), None)
+                    .await
+                    .unwrap(),
+            ),
+            None,
+            codeyard_ci::config::CiConfig::default(),
+            Some(context.clone()),
+        );
+        let router = codeyard_api_rest::create_router(state);
+        let add = |body: &str| {
+            Request::builder()
+                .method("POST")
+                .uri("/api/admin/nodes")
+                .header(header::CONTENT_TYPE, "application/json")
+                .header(header::AUTHORIZATION, format!("Bearer {credential}"))
+                .body(Body::from(body.to_owned()))
+                .unwrap()
+        };
+        let response = router
+            .clone()
+            .oneshot(add(r#"{"role":"runner","count":2,"command":"false"}"#))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM join_tokens", &[]).await, 0);
+        let response = router
+            .clone()
+            .oneshot(add(r#"{"role":"runner","count":2}"#))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::CREATED);
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 64 * 1024).await.unwrap())
+                .unwrap();
+        let ticket = JoinTicket::decode(body["ticket"].as_str().unwrap()).unwrap();
+        for index in 0..3 {
+            let key = NodeKey::generate();
+            let outcome = codeyard_db_cluster::cluster::join_with_token(
+                db.pool(),
+                codeyard_db_cluster::cluster::JoinRequest {
+                    token_hash: &ticket.secret_hash(),
+                    public_key: &key.public_hex(),
+                    name: &format!("joined-{index}"),
+                    roles: Some(&["runner".into()]),
+                    version: "test",
+                },
+            )
+            .await
+            .unwrap();
+            if index < 2 {
+                assert!(matches!(
+                    outcome,
+                    codeyard_db_core::models::JoinOutcome::Joined(_)
+                ));
+            } else {
+                assert!(matches!(
+                    outcome,
+                    codeyard_db_core::models::JoinOutcome::InvalidToken
+                ));
+            }
+        }
+        db.execute("UPDATE users SET is_admin=false WHERE id=$1", &[admin])
+            .await;
+        assert_eq!(
+            router
+                .oneshot(add(r#"{"role":"runner","count":2}"#))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        context.iroh.close().await;
         db.finish().await;
     }
 }

@@ -88,6 +88,19 @@ async fn fetch(
         .prefix(TEMP_PREFIX)
         .tempfile_in(copies)?;
     let mut output = tokio::fs::File::from_std(pack.reopen()?);
+    let rate: u64 = std::env::var("REPLICA_BANDWIDTH_BYTES_PER_SECOND")
+        .map(|value| value.parse())
+        .unwrap_or(Ok(50 * 1024 * 1024))?;
+    ensure!(
+        (1024..=1024 * 1024 * 1024).contains(&rate),
+        "invalid replica bandwidth limit"
+    );
+    let mut limited = Throttled {
+        inner: &mut output,
+        rate,
+        wait: None,
+        reserved: 0,
+    };
     let mut input = tokio::io::empty();
     let mut errors = tokio::io::sink();
     let (listing, status) = tokio::select! {
@@ -105,12 +118,13 @@ async fn fetch(
             },
             GitStreams {
                 input: &mut input,
-                output: &mut output,
+                output: &mut limited,
                 errors: &mut errors,
             },
         ) => downloaded?,
     };
     ensure!(status.success(), "the primary could not make a pack");
+    drop(limited);
     output.flush().await?;
     drop(output);
     let listing: Listing = serde_json::from_value(listing)?;
@@ -395,5 +409,88 @@ mod tests {
     #[tokio::test]
     async fn pack_failure_does_not_trigger_an_unrelated_full_retry() {
         assert_eq!(failed_copy(true).await, 1);
+    }
+}
+
+/// All replica streams in this process share one bandwidth budget, including fork families.
+struct Throttled<'a> {
+    inner: &'a mut tokio::fs::File,
+    rate: u64,
+    wait: Option<std::pin::Pin<Box<tokio::time::Sleep>>>,
+    reserved: usize,
+}
+
+impl tokio::io::AsyncWrite for Throttled<'_> {
+    fn poll_write(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        use std::future::Future;
+        use std::task::Poll;
+        static NEXT: std::sync::LazyLock<std::sync::Mutex<tokio::time::Instant>> =
+            std::sync::LazyLock::new(|| std::sync::Mutex::new(tokio::time::Instant::now()));
+        let this = self.get_mut();
+        if bytes.is_empty() {
+            return Poll::Ready(Ok(0));
+        }
+        if this.wait.is_none() {
+            let mut next = NEXT.lock().unwrap_or_else(|error| error.into_inner());
+            let ready = (*next).max(tokio::time::Instant::now());
+            this.reserved = bytes.len().min(32 * 1024);
+            let nanos = (this.reserved as u64)
+                .saturating_mul(1_000_000_000)
+                .div_ceil(this.rate);
+            *next = ready + std::time::Duration::from_nanos(nanos);
+            this.wait = Some(Box::pin(tokio::time::sleep_until(ready)));
+        }
+        if this
+            .wait
+            .as_mut()
+            .expect("reserved transfer budget")
+            .as_mut()
+            .poll(cx)
+            .is_pending()
+        {
+            return Poll::Pending;
+        }
+        let result = std::pin::Pin::new(&mut *this.inner)
+            .poll_write(cx, &bytes[..bytes.len().min(this.reserved)]);
+        if result.is_ready() {
+            this.wait = None;
+        }
+        result
+    }
+    fn poll_flush(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut *self.get_mut().inner).poll_flush(cx)
+    }
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut *self.get_mut().inner).poll_shutdown(cx)
+    }
+}
+
+#[cfg(test)]
+mod bandwidth_tests {
+    use super::*;
+    #[tokio::test]
+    async fn replica_output_obeys_its_bandwidth_budget() {
+        let file = tempfile::tempfile().unwrap();
+        let mut file = tokio::fs::File::from_std(file);
+        let mut output = Throttled {
+            inner: &mut file,
+            rate: 32 * 1024,
+            wait: None,
+            reserved: 0,
+        };
+        let started = std::time::Instant::now();
+        output.write_all(&[0u8; 64 * 1024]).await.unwrap();
+        output.flush().await.unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_millis(900));
     }
 }

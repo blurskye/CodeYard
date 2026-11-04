@@ -480,9 +480,24 @@ pub async fn switch_write_family(
     {
         return Ok(false);
     }
+    for (member, _) in &controls {
+        let moving_elsewhere: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_moves WHERE repository_id=$1 AND target_node_id<>$2)")
+            .bind(member).bind(target).fetch_one(&mut *tx).await?;
+        if moving_elsewhere {
+            return Ok(false);
+        }
+    }
     let mut voters = voters.to_vec();
     voters.sort_unstable();
     for node in &voters {
+        let allocating: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM nodes WHERE id=$1 AND state='active')")
+                .bind(node)
+                .fetch_one(&mut *tx)
+                .await?;
+        if !allocating {
+            return Ok(false);
+        }
         if !active_node(&mut tx, *node).await? {
             return Ok(false);
         }
@@ -496,6 +511,19 @@ pub async fn switch_write_family(
         // Replacing failed voters must not silently lower the denominator.
         if voters.len() < voter_count(&mut tx, *repo, control.term).await? {
             return Ok(false);
+        }
+    }
+    for (repo, control) in &controls {
+        for node in &voters {
+            let retained: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_voters WHERE repository_id=$1 AND node_id=$2 AND term=$3)")
+                .bind(repo).bind(node).bind(control.term).fetch_one(&mut *tx).await?;
+            if !retained {
+                let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_replicas WHERE repository_id=$1 AND node_id=$2 AND applied_version=$3)")
+                    .bind(repo).bind(node).bind(control.committed_version).fetch_one(&mut *tx).await?;
+                if !current {
+                    return Ok(false);
+                }
+            }
         }
     }
     for (repo, control) in controls {

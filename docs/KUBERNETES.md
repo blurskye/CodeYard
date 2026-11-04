@@ -29,6 +29,7 @@ secrets:
   existingSecret: codeyard-config
 config:
   publicUrl: https://git.example.com
+  databasePoolSize: 7
   s3:
     endpoint: https://objects.example.net
     publicEndpoint: https://objects.example.net
@@ -107,12 +108,16 @@ need an explicit pod restart. Do not delete storage PVCs on uninstall.
 
 Web/storage probes use `/ready`; SSH currently has TCP probes only and database-free
 runners have no health listener/probes. SIGTERM performs the bounded server shutdown;
-100 seconds is allowed without a preStop drain endpoint. Disruption budgets do not
+100 seconds is allowed; use the nodes page or drain API before removing pods. Disruption budgets do not
 guarantee Git durability. Runner/KEDA scale-down can interrupt active jobs during
 shutdown; it is not idle-only draining. Storage must **never**
 autoscale down: first move and verify every primary and replica assignment elsewhere.
-Automatic rebalancing, safe online mixed-version upgrades and cluster-wide backup/restore
-are not provided. Replication still has the [asynchronous loss window](CLUSTER.md#replicas).
+Provisioning, scaling policies and rebalancing are written but await verification.
+Safe online mixed-version upgrades and cluster-wide backup/restore remain incomplete. Replication still has the [asynchronous loss window](CLUSTER.md#replicas).
 
 `scripts/test-helm.sh` checks lint and default/all-feature/NodePort renders against strict
 native schemas, skipping missing CRD schemas. It never contacts a Kubernetes cluster.
+
+Use session pooling when placing PgBouncer in front of a complete cluster. Set
+`config.databasePoolSize` to the per-process budget and allow additional sessions for
+serving locks and notifications. See the [PgBouncer checks](CLUSTER.md#pgbouncer-check).

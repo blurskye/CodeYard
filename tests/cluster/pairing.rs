@@ -107,6 +107,9 @@ impl Core {
             self.key.public_key(),
             NodeAddress::of(&self.address),
             &InviteOptions {
+                leader: None,
+                authority: None,
+                max_uses: None,
                 roles: roles(role_list),
                 reusable,
                 requires_approval: approve,
@@ -431,6 +434,9 @@ async fn a_reusable_invite_admits_many_nodes_within_its_roles() {
     codeyard_db_cluster::cluster::create_join_token(
         &db.pool,
         NewJoinToken {
+            leader: None,
+            authority: None,
+            max_uses: None,
             token_hash: &expired.secret_hash(),
             roles: &["web".to_owned()],
             reusable: true,
@@ -867,6 +873,9 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
         key_a.public_key(),
         reported,
         &InviteOptions {
+            leader: None,
+            authority: None,
+            max_uses: None,
             roles: roles("storage,ssh"),
             reusable: false,
             requires_approval: false,
@@ -950,6 +959,9 @@ async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
             .await
             .unwrap(),
         &InviteOptions {
+            leader: None,
+            authority: None,
+            max_uses: None,
             roles: roles("web"),
             reusable: false,
             requires_approval: true,
@@ -1117,6 +1129,9 @@ async fn membership_contract(pool: &DbPool) {
             codeyard_db_cluster::cluster::create_join_token(
                 pool,
                 NewJoinToken {
+                    leader: None,
+                    authority: None,
+                    max_uses: None,
                     token_hash: &hash,
                     roles: &roles,
                     reusable,

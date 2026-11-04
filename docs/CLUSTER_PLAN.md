@@ -27,6 +27,19 @@ and copy now use the same quorum path; builder verification is pending.
 Not complete: drain acceptance, PostgreSQL failover acceptance, cluster-aware backup,
 provisioning, automatic scaling, rebalancing, rolling upgrades and measured load limits.
 
+Current acceptance status (runtime checks are still pending):
+
+- 1: hiding switch built; source checks pass.
+- 2: shared S3 enforcement built; the planned storage-node object backend is missing.
+- 3: quorum initialization and copy source checks pass; voter replacement checks await compilation.
+- 4: drain source checks pass; runtime acceptance pending.
+- 5: quorum and drain metrics source checks pass; pool waiters remain unavailable (`NaN`).
+- 6: bounded invitations and environment-only provisioning written; checks pending.
+- 7: lease leader, policy settings, pause and dry run written; checks pending.
+- 8: mover and bandwidth limit written; checks pending.
+- 9: pool configuration and owned PostgreSQL crash checks written; Helm, pool and load runs pending.
+- 10–12: not completed; existing production controls still need the cluster acceptance checks.
+
 ## A. Checks on what exists
 
 Run these first, on the builder, against real servers. Each has a pass condition. A check

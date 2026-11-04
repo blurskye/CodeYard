@@ -1232,11 +1232,39 @@ CREATE TABLE node_drain_repositories (
     PRIMARY KEY(node_id,repository_id,target_node_id)
 );
 
+CREATE TABLE repository_moves (
+    repository_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    source_node_id BIGINT NOT NULL REFERENCES nodes(id),
+    target_node_id BIGINT NOT NULL REFERENCES nodes(id),
+    targets JSONB NOT NULL,
+    terms JSONB NOT NULL
+);
+CREATE TABLE repository_move_nodes (
+    node_id BIGINT PRIMARY KEY REFERENCES nodes(id),
+    repository_id BIGINT NOT NULL REFERENCES repository_moves(repository_id) ON DELETE CASCADE
+);
+
+CREATE TABLE cluster_scaling_policies (
+    role TEXT PRIMARY KEY CHECK (role IN ('web','ssh','storage','runner')),
+    configuration JSONB NOT NULL CHECK (configuration->>'role'=role AND octet_length(configuration::text)<=4096),
+    last_action_at TIMESTAMPTZ,
+    trigger_since TIMESTAMPTZ
+);
+
+CREATE TABLE cluster_leases (
+    name TEXT PRIMARY KEY,
+    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    expires_at TIMESTAMPTZ NOT NULL,
+    evaluated_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS join_tokens (
     id BIGSERIAL PRIMARY KEY,
     token_hash TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),
     roles TEXT[] NOT NULL CHECK (cardinality(roles) > 0 AND roles <@ ARRAY['web', 'ssh', 'storage', 'runner']),
     reusable BOOLEAN NOT NULL DEFAULT FALSE,
+    created_by_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    max_uses INTEGER CHECK (max_uses IS NULL OR max_uses BETWEEN 1 AND 1000),
     requires_approval BOOLEAN NOT NULL DEFAULT FALSE,
     expires_at TIMESTAMPTZ NOT NULL,
     uses INTEGER NOT NULL DEFAULT 0 CHECK (uses >= 0),

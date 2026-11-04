@@ -35,24 +35,52 @@ fn name_conflict(error: sqlx::Error, name: &str) -> anyhow::Error {
 }
 
 pub async fn create_join_token(pool: &SqlitePool, token: NewJoinToken<'_>) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO join_tokens (token_hash, roles, reusable, requires_approval, expires_at)
-         VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ','now',printf('%+d seconds',?5)))",
-    )
-    .bind(token.token_hash)
-    .bind(serde_json::to_string(token.roles)?)
-    .bind(token.reusable)
-    .bind(token.requires_approval)
-    .bind(token.lifetime_seconds)
-    .execute(pool)
-    .await?;
+    anyhow::ensure!(
+        token
+            .max_uses
+            .is_none_or(|count| (1..=1000).contains(&count)),
+        "invalid node count"
+    );
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if let Some(actor) = token.authority {
+        anyhow::ensure!(
+            codeyard_db_identity::sqlite::users::transitions::active_administrator(&mut tx, actor)
+                .await?,
+            crate::drain::Refusal::Denied
+        );
+    }
+    if let Some(leader) = token.leader {
+        anyhow::ensure!(token.roles.len() == 1, "scaling requires one role");
+        crate::sqlite::scaling::permit_invite(
+            &mut tx,
+            leader,
+            &token.roles[0],
+            token
+                .max_uses
+                .ok_or_else(|| anyhow!("scaling requires a bounded node count"))?,
+        )
+        .await?;
+    }
+    if let Some(actor) = token.authority {
+        anyhow::ensure!(
+            codeyard_db_identity::sqlite::users::transitions::active_administrator(&mut tx, actor)
+                .await?,
+            crate::drain::Refusal::Denied
+        );
+    }
+    let id: i64 = sqlx::query_scalar("INSERT INTO join_tokens (token_hash,roles,reusable,requires_approval,expires_at,max_uses,created_by_id) VALUES($1,$2,$3,$4,strftime('%Y-%m-%dT%H:%M:%fZ','now',printf('%+d seconds',$5)),$6,$7) RETURNING id")
+        .bind(token.token_hash).bind(serde_json::to_string(token.roles)?).bind(token.reusable)
+        .bind(token.requires_approval).bind(token.lifetime_seconds).bind(token.max_uses).bind(token.authority.map(|actor| actor.user_id)).fetch_one(&mut *tx).await?;
+    sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'node.invite','join_token',$2,$3)")
+        .bind(token.authority.map(|actor| actor.user_id)).bind(id).bind(serde_json::json!({"roles":token.roles,"count":token.max_uses}).to_string()).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
 pub async fn list_join_tokens(pool: &SqlitePool) -> Result<Vec<JoinInvite>> {
     Ok(sqlx::query_as::<_, JoinInvite>(&format!(
         "SELECT id, roles, reusable, requires_approval, expires_at, uses, created_at
-         FROM join_tokens WHERE expires_at > {NOW} AND (reusable OR uses = 0) ORDER BY id"
+         FROM join_tokens WHERE expires_at > {NOW} AND (reusable OR uses = 0) AND (max_uses IS NULL OR uses<max_uses) ORDER BY id"
     ))
     .fetch_all(pool)
     .await?)
@@ -130,9 +158,21 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
     if let Some(node) = known {
         return Ok(JoinOutcome::AlreadyMember(node));
     }
+    let creator: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT created_by_id FROM join_tokens WHERE token_hash=$1",
+    )
+    .bind(request.token_hash)
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+    if let Some(creator) = creator {
+        if !active_admin(&mut tx, creator).await? {
+            return Ok(JoinOutcome::InvalidToken);
+        }
+    }
     let token = sqlx::query_as::<_, (String, bool)>(&format!(
         "UPDATE join_tokens SET uses = uses + 1
-         WHERE token_hash = ?1 AND expires_at > {NOW} AND (reusable OR uses = 0)
+         WHERE token_hash = ?1 AND expires_at > {NOW} AND (reusable OR uses = 0) AND (max_uses IS NULL OR uses<max_uses)
          RETURNING roles, requires_approval"
     ))
     .bind(request.token_hash)
@@ -434,7 +474,7 @@ pub async fn read_candidates(
     uuid: &str,
     previous: i64,
 ) -> Result<Vec<(i64, bool)>> {
-    Ok(sqlx::query_as("WITH repository AS (SELECT id,storage_node_id,write_version FROM repositories WHERE substr(disk_path,-40)=$1||'.git'), candidates AS (SELECT storage_node_id AS node_id,1 AS moved,write_version AS applied_version FROM repository UNION ALL SELECT rr.node_id,0,rr.applied_version FROM repository r JOIN repository_replicas rr ON rr.repository_id=r.id WHERE rr.node_id IS NOT r.storage_node_id AND rr.applied_version>=0 AND rr.applied_version=r.write_version) SELECT c.node_id,c.moved FROM candidates c JOIN nodes n ON n.id=c.node_id WHERE c.node_id<>$2 AND n.status='active' AND EXISTS(SELECT 1 FROM json_each(n.roles) WHERE value='storage') AND n.disk_free IS NOT NULL AND julianday(n.last_seen) BETWEEN julianday('now','-60 seconds') AND julianday('now') ORDER BY c.moved DESC,c.applied_version DESC,c.node_id LIMIT 1000")
+    Ok(sqlx::query_as("WITH repository AS (SELECT id,storage_node_id,write_version FROM repositories WHERE substr(disk_path,-40)=$1||'.git'), candidates AS (SELECT storage_node_id AS node_id,1 AS moved,write_version AS applied_version FROM repository UNION ALL SELECT rr.node_id,0,rr.applied_version FROM repository r JOIN repository_replicas rr ON rr.repository_id=r.id WHERE rr.node_id IS NOT r.storage_node_id AND rr.applied_version>=0 AND rr.applied_version=r.write_version UNION SELECT v.node_id,0,v.applied_version FROM repository r JOIN repository_voters v ON v.repository_id=r.id JOIN repository_write_control wc ON wc.repository_id=r.id WHERE v.node_id IS NOT r.storage_node_id AND wc.serving=1 AND v.term=wc.term AND v.applied_version=wc.committed_version) SELECT c.node_id,c.moved FROM candidates c JOIN nodes n ON n.id=c.node_id WHERE c.node_id<>$2 AND n.status='active' AND EXISTS(SELECT 1 FROM json_each(n.roles) WHERE value='storage') AND n.disk_free IS NOT NULL AND julianday(n.last_seen) BETWEEN julianday('now','-60 seconds') AND julianday('now') ORDER BY c.moved DESC,c.applied_version DESC,c.node_id LIMIT 1000")
         .bind(uuid).bind(previous).fetch_all(pool).await?)
 }
 
@@ -601,7 +641,7 @@ pub async fn assign_replica_family(
     if members.is_empty() || members.iter().any(|row| row.1 != Some(primary)) {
         return Ok(ids);
     }
-    let draining: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM node_drain_repositories w JOIN repositories r ON r.id=w.repository_id WHERE r.storage_node_id=$1)")
+    let draining: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM node_drain_repositories w JOIN repositories r ON r.id=w.repository_id WHERE r.storage_node_id=$1) OR EXISTS(SELECT 1 FROM repository_moves m JOIN repositories r ON r.id=m.repository_id WHERE r.storage_node_id=$1)")
         .bind(primary).fetch_one(&mut *tx).await?;
     if draining {
         return Ok(ids);
@@ -665,7 +705,7 @@ pub async fn list_replicas(pool: &SqlitePool, repo_id: i64) -> Result<Vec<(i64, 
 
 /// The fork family of the repository bound as `?1`. It walks forks in both directions: each
 /// member adds its forks and its source. `UNION` stops the walk at repositories it has found.
-const FORK_FAMILY: &str = "WITH RECURSIVE family(id) AS (
+pub(crate) const FORK_FAMILY: &str = "WITH RECURSIVE family(id) AS (
          SELECT ?1
          UNION
          SELECT r.id FROM family f
@@ -813,6 +853,11 @@ pub async fn promote_repository(
             write_version,
         });
     }
+    let moving_elsewhere: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_moves WHERE repository_id=$1 AND target_node_id<>$2)")
+        .bind(repo_id).bind(to).fetch_one(&mut *tx).await?;
+    if moving_elsewhere {
+        return Ok(PromoteOutcome::Moved);
+    }
     // A repository moved to a node that is down would have no primary to serve it.
     let target = node_at_db_time(&mut tx, to).await?;
     if !target.is_some_and(|node| node.state == "active" && node.is_serving_storage()) {
@@ -867,6 +912,13 @@ async fn promote_family(
     let primary = node_at_db_time(&mut tx, from).await?;
     if automatic && primary.is_none_or(|node| node.status != "active" || node.is_online()) {
         return Ok(FamilyOutcome::Refused);
+    }
+    for (member, _, _) in &members {
+        let moving_elsewhere: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_moves WHERE repository_id=$1 AND target_node_id<>$2)")
+            .bind(member).bind(to).fetch_one(&mut *tx).await?;
+        if moving_elsewhere {
+            return Ok(FamilyOutcome::Refused);
+        }
     }
     // The taker must be reporting in too, or the family would move onto a node that is down.
     let target = node_at_db_time(&mut tx, to).await?;

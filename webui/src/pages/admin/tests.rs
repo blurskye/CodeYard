@@ -297,6 +297,7 @@ fn site_settings_change_the_signup_mode_and_the_ai_crawler_policy() {
     crate::tests::in_scope(|| {
         let output = html(admin_settings_page(
             AdminSettings {
+                scaling: Vec::new(),
                 private: true,
                 ai_crawlers: "block".into(),
                 osv_base_url: "https://osv-vulnerabilities.storage.googleapis.com".into(),
@@ -320,6 +321,7 @@ fn site_settings_change_the_signup_mode_and_the_ai_crawler_policy() {
         assert!(chosen(&output, "block"));
         let public = html(admin_settings_page(
             AdminSettings {
+                scaling: Vec::new(),
                 private: false,
                 ai_crawlers: "allow".into(),
                 osv_base_url: "https://osv-vulnerabilities.storage.googleapis.com".into(),

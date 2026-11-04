@@ -22,6 +22,9 @@ async fn oversized_invites_are_refused_before_persisting_tokens() {
             ..Default::default()
         },
         &InviteOptions {
+            leader: None,
+            authority: None,
+            max_uses: None,
             roles: "storage".parse().unwrap(),
             reusable: false,
             requires_approval: false,

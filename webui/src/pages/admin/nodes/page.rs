@@ -30,6 +30,7 @@ pub struct Node {
 #[serde(deny_unknown_fields)]
 pub struct Page {
     pub csrf_token: String,
+    pub join_ticket: Option<String>,
     pub nodes: Vec<Node>,
     pub next_after: Option<String>,
     pub has_previous: bool,
@@ -57,6 +58,24 @@ pub fn render(page: Page) -> Element {
                         h2 { "Mode: single-node" }
                         p { class: "identity-admin-hint", "This installation is one server. Runners can join from other machines. To run web, storage or ssh on separate machines, turn on cluster mode on this server (it needs PostgreSQL):" }
                         {command_block("codeyard cluster enable")}
+                    }
+                }
+                if page.cluster_enabled {
+                    div { class: "identity-admin-box node-setup",
+                        h2 { "Add nodes" }
+                        form { method: "post", action: "/admin/nodes/add",
+                            {crate::pages::fields::csrf(&page.csrf_token)}
+                            label { "Role" select { name: "role",
+                                option { value: "runner", "runner" } option { value: "storage", "storage" }
+                                option { value: "web", "web" } option { value: "ssh", "ssh" }
+                            } }
+                            label { "Count" input { name: "count", r#type: "number", min: "1", max: "1000", value: "1", required: true } }
+                            button { r#type: "submit", class: "btn btn-sm", "Create join token" }
+                        }
+                        if let Some(ticket) = &page.join_ticket {
+                            p { "This ticket expires in one hour and admits only the requested number of nodes. Store it privately." }
+                            {command_block(ticket)}
+                        }
                     }
                 }
                 if page.nodes.is_empty() {
@@ -165,6 +184,7 @@ mod tests {
     fn each_node_gets_the_action_its_status_allows() {
         let page = Page {
             csrf_token: "csrf-marker".into(),
+            join_ticket: None,
             next_after: None,
             has_previous: false,
             nodes: vec![
@@ -180,7 +200,7 @@ mod tests {
         assert!(html.contains("/admin/nodes/store-2/approve"));
         assert!(html.contains("/admin/nodes/store-3/approve"));
         assert!(html.contains("Offline"));
-        assert_eq!(html.matches("csrf-marker").count(), 3);
+        assert_eq!(html.matches("csrf-marker").count(), 4);
         // The model is what the browser hydrates from.
         let json = serde_json::to_string(&page).unwrap();
         assert_eq!(serde_json::from_str::<Page>(&json).unwrap(), page);
@@ -196,6 +216,7 @@ mod tests {
             Some("Repository 4 is waiting for a current replacement copy.".into());
         let html = dioxus_ssr::render_element(render(Page {
             csrf_token: "drain-csrf".into(),
+            join_ticket: None,
             nodes: vec![draining],
             next_after: None,
             has_previous: false,
@@ -213,6 +234,7 @@ mod tests {
     fn the_header_has_the_administration_tabs_and_the_node_count() {
         let html = dioxus_ssr::render_element(render(Page {
             csrf_token: String::new(),
+            join_ticket: None,
             nodes: vec![],
             message: None,
             cluster_enabled: true,
@@ -229,6 +251,7 @@ mod tests {
     fn an_empty_installation_says_so_and_shows_the_runner_pair() {
         let html = dioxus_ssr::render_element(render(Page {
             csrf_token: String::new(),
+            join_ticket: None,
             nodes: vec![],
             message: None,
             cluster_enabled: true,
@@ -252,6 +275,7 @@ mod tests {
     fn single_node_mode_shows_the_mode_and_the_enable_command() {
         let html = dioxus_ssr::render_element(render(Page {
             csrf_token: String::new(),
+            join_ticket: None,
             nodes: vec![node("runner-1", "active", false)],
             next_after: None,
             has_previous: false,

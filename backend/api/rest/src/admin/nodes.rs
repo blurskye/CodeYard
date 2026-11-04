@@ -22,6 +22,8 @@ use std::sync::Arc;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/admin/nodes", get(show))
+        .route("/admin/nodes/add", post(add_nodes))
+        .route("/api/admin/nodes", post(api_add_nodes))
         .route("/admin/nodes/:name/approve", post(approve))
         .route("/admin/nodes/:name/revoke", post(revoke))
         .route("/admin/nodes/:name/drain", post(drain))
@@ -44,6 +46,15 @@ async fn show(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
 }
 
 async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) -> Response {
+    render_invite(ctx, status, message, None).await
+}
+
+async fn render_invite(
+    ctx: &PageContext,
+    status: StatusCode,
+    message: Option<String>,
+    join_ticket: Option<String>,
+) -> Response {
     let Some(administrator) = ctx.administrator() else {
         return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
     };
@@ -79,6 +90,7 @@ async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) 
     };
     let model = view::Page {
         csrf_token: ctx.csrf_token.clone(),
+        join_ticket,
         cluster_enabled,
         next_after,
         has_previous: !after.is_empty(),
@@ -207,6 +219,7 @@ fn drain_error(error: &anyhow::Error) -> (StatusCode, String, Option<i64>) {
         Some(Refusal::Denied) => (StatusCode::FORBIDDEN, error.to_string(), None),
         Some(Refusal::Invalid) => (StatusCode::UNPROCESSABLE_ENTITY, error.to_string(), None),
         Some(Refusal::Missing) => (StatusCode::NOT_FOUND, error.to_string(), None),
+        Some(Refusal::Busy) => (StatusCode::CONFLICT, error.to_string(), None),
         Some(Refusal::Offline) => (StatusCode::CONFLICT, error.to_string(), None),
         Some(Refusal::Capacity { missing_bytes }) => (
             StatusCode::CONFLICT,
@@ -239,7 +252,8 @@ async fn change_drain(
     let user = ctx.user.as_ref().expect("mutation guard checked account");
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let actor = (user.id, session).into();
-    match codeyard_cluster::drain::change(&ctx.state.pool, Some(&actor), &name, cancel).await {
+    match codeyard_cluster::drain::change(&ctx.state.pool, Some(&actor), &name, cancel, None).await
+    {
         Ok(_) => ctx.redirect("/admin/nodes"),
         Err(error) => {
             let (status, message, _) = drain_error(&error);
@@ -271,17 +285,46 @@ async fn api_change_drain(
     cancel: bool,
 ) -> Response {
     use axum::response::IntoResponse;
-    let auth =
-        match codeyard_identity::github_auth::authenticate(state.as_ref(), &headers, true).await {
-            Ok(Some(auth)) => auth,
-            _ => {
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    axum::Json(serde_json::json!({"message":"Requires authentication"})),
-                )
-                    .into_response()
+    let auth = match administrator_token(&state, &headers).await {
+        Ok(auth) => auth,
+        Err(response) => return response,
+    };
+    match codeyard_cluster::drain::change(
+        &state.pool,
+        Some(&auth.database_actor()),
+        &name,
+        cancel,
+        None,
+    )
+    .await
+    {
+        Ok(node) => (StatusCode::ACCEPTED, axum::Json(node)).into_response(),
+        Err(error) => {
+            let (status, message, missing) = drain_error(&error);
+            let mut body = serde_json::json!({"message":message});
+            if let Some(bytes) = missing {
+                body["missing_bytes"] = bytes.into();
             }
-        };
+            (status, axum::Json(body)).into_response()
+        }
+    }
+}
+
+async fn administrator_token(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<codeyard_identity::github_auth::Authentication, Response> {
+    use axum::response::IntoResponse;
+    let auth = match codeyard_identity::github_auth::authenticate(state, headers, true).await {
+        Ok(Some(auth)) => auth,
+        _ => {
+            return Err((
+                StatusCode::UNAUTHORIZED,
+                axum::Json(serde_json::json!({"message":"Requires authentication"})),
+            )
+                .into_response())
+        }
+    };
     if !auth.user.is_admin
         || !matches!(
             codeyard_identity::github_apps::authority(&state.pool, auth.token.id).await,
@@ -292,23 +335,119 @@ async fn api_change_drain(
             Ok(None)
         )
     {
-        return (
+        return Err((
             StatusCode::FORBIDDEN,
             axum::Json(serde_json::json!({"message":"Administrator access is required."})),
         )
+            .into_response());
+    }
+    Ok(auth)
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AddNodes {
+    role: String,
+    count: i32,
+}
+
+async fn api_add_nodes(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    axum::Json(input): axum::Json<AddNodes>,
+) -> Response {
+    use axum::response::IntoResponse;
+    let auth = match administrator_token(&state, &headers).await {
+        Ok(auth) => auth,
+        Err(response) => return response,
+    };
+    if !matches!(input.role.as_str(), "web" | "ssh" | "storage" | "runner")
+        || !(1..=1000).contains(&input.count)
+    {
+        return (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            axum::Json(serde_json::json!({"message":"Invalid node role or count."})),
+        )
             .into_response();
     }
-    match codeyard_cluster::drain::change(&state.pool, Some(&auth.database_actor()), &name, cancel)
-        .await
+    let Some(context) = &state.cluster else {
+        return (
+            StatusCode::CONFLICT,
+            axum::Json(serde_json::json!({"message":"Cluster transport is unavailable."})),
+        )
+            .into_response();
+    };
+    match codeyard_cluster::provision::add(
+        context,
+        Some(&auth.database_actor()),
+        &input.role,
+        input.count,
+    )
+    .await
     {
-        Ok(node) => (StatusCode::ACCEPTED, axum::Json(node)).into_response(),
+        Ok(added) => (StatusCode::CREATED, axum::Json(added)).into_response(),
         Err(error) => {
-            let (status, message, missing) = drain_error(&error);
-            let mut body = serde_json::json!({"message":message});
-            if let Some(bytes) = missing {
-                body["missing_bytes"] = bytes.into();
-            }
-            (status, axum::Json(body)).into_response()
+            let (status, message, _) = drain_error(&error);
+            (status, axum::Json(serde_json::json!({"message":message}))).into_response()
+        }
+    }
+}
+
+async fn add_nodes(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Form(form): Form<HashMap<String, String>>,
+) -> Response {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    if let Err(response) = mutation_guard(&ctx, &form, true) {
+        return response;
+    }
+    let role = form.get("role").map(String::as_str).unwrap_or("");
+    let count = form
+        .get("count")
+        .and_then(|count| count.parse::<i32>().ok())
+        .unwrap_or(0);
+    if !matches!(role, "web" | "ssh" | "storage" | "runner") || !(1..=1000).contains(&count) {
+        return render(
+            &ctx,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            Some("Invalid node role or count.".into()),
+        )
+        .await;
+    }
+    let Some(context) = &ctx.state.cluster else {
+        return render(
+            &ctx,
+            StatusCode::CONFLICT,
+            Some("Cluster transport is unavailable.".into()),
+        )
+        .await;
+    };
+    let actor = (
+        ctx.user
+            .as_ref()
+            .expect("mutation guard checked account")
+            .id,
+        codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    )
+        .into();
+    match codeyard_cluster::provision::add(context, Some(&actor), role, count).await {
+        Ok(added) => {
+            render_invite(
+                &ctx,
+                StatusCode::CREATED,
+                Some(format!("Provisioning: {}", added.provisioning)),
+                Some(added.ticket),
+            )
+            .await
+        }
+        Err(error) => {
+            let (status, message, _) = drain_error(&error);
+            render(&ctx, status, Some(message)).await
         }
     }
 }

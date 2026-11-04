@@ -56,6 +56,8 @@ config:
   experimentalCluster: true
   # Storage readiness reserve in bytes (1 GiB).
   storageMinFreeBytes: "1073741824"
+  # PostgreSQL connections per core process (1–1000).
+  databasePoolSize: 20
   s3:
     # Internal S3-compatible API origin.
     endpoint: ""
@@ -67,7 +69,7 @@ config:
     region: us-east-1
   # Additional non-secret environment variables, shared only by core nodes.
   extraEnv: []
-# Allow the server's bounded SIGTERM shutdown to finish; no drain HTTP endpoint exists.
+# Allow the server's bounded SIGTERM shutdown to finish; drain nodes before removing pods.
 terminationGracePeriodSeconds: 100
 # Temporary /data capacity for stateless nodes, not storage repository disks.
 scratchSizeLimit: 4Gi

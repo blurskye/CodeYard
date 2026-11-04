@@ -33,6 +33,7 @@ use tracing::info;
 use tracing::warn;
 use uuid::Uuid;
 pub mod promote;
+pub mod rebalance;
 mod transfer;
 
 #[cfg(test)]

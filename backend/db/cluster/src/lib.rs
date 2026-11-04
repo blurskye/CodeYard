@@ -13,3 +13,7 @@ pub mod postgres;
 pub mod sqlite;
 
 pub mod drain;
+
+pub mod scaling;
+
+pub mod rebalance;

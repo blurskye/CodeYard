@@ -33,7 +33,9 @@ use tracing::info;
 use tracing::warn;
 pub mod ci;
 pub mod drain;
+pub mod provision;
 pub mod replicas;
+pub mod scaling;
 pub mod tcp;
 pub mod worker;
 
@@ -540,6 +542,7 @@ async fn heartbeat(
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // The first tick is immediate and `start` has just reported.
     ticker.tick().await;
+    let mut scaling = tokio::task::JoinSet::new();
     loop {
         ticker.tick().await;
         // Read again each time: iroh may have learned new addresses since the last report.
@@ -547,9 +550,22 @@ async fn heartbeat(
         if let Err(error) = report_alive(&pool, key, hint, storage_path.as_deref()).await {
             warn!(%error, "could not record this node's heartbeat");
         }
+        while let Some(result) = scaling.try_join_next() {
+            if !matches!(result, Ok(Ok(()))) {
+                warn!(?result, "cluster scaling pass failed");
+            }
+        }
+        if scaling.is_empty() {
+            let context = context.clone();
+            scaling.spawn(async move { crate::scaling::step(&context).await });
+        }
         match tokio::time::timeout(Duration::from_secs(10), async {
             drain::step(&context).await?;
-            events.maintain_drains().await
+            events.maintain_drains().await?;
+            if storage_path.is_some() {
+                crate::replicas::rebalance::step(&context).await?;
+            }
+            Ok::<_, anyhow::Error>(())
         })
         .await
         {

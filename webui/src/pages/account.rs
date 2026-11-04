@@ -466,6 +466,7 @@ mod tests {
         pages.push((
             Page::AdminSettings {
                 model: AdminSettings {
+                    scaling: Vec::new(),
                     private: true,
                     ai_crawlers: "block".into(),
                     osv_base_url: "https://osv-vulnerabilities.storage.googleapis.com".into(),

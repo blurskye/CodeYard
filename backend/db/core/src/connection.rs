@@ -206,15 +206,33 @@ mod shutdown_tests {
     }
 }
 
+fn postgres_pool_size(raw: Option<&str>) -> Result<u32> {
+    let size = raw
+        .unwrap_or("20")
+        .parse::<u32>()
+        .map_err(|_| anyhow::anyhow!("DATABASE_POOL_SIZE must be between 1 and 1000"))?;
+    anyhow::ensure!(
+        (1..=1000).contains(&size),
+        "DATABASE_POOL_SIZE must be between 1 and 1000"
+    );
+    Ok(size)
+}
+
 pub async fn init_db(database_url: &str) -> Result<DbPool> {
     // Never trace credential-bearing URLs or connection options.
     if database_url.starts_with("postgres://") || database_url.starts_with("postgresql://") {
         info!("Connecting to PostgreSQL");
         let options = postgres_options(database_url)?;
+        let configured_pool = match std::env::var("DATABASE_POOL_SIZE") {
+            Ok(raw) => Some(raw),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(_) => bail!("DATABASE_POOL_SIZE must be between 1 and 1000"),
+        };
         // A request that cannot get a connection in 5 seconds fails instead of hanging
         // for the 30-second default while the database is down.
         return Ok(PgPoolOptions::new()
-            .max_connections(20)
+            .max_connections(postgres_pool_size(configured_pool.as_deref())?)
+            .test_before_acquire(true)
             .acquire_timeout(Duration::from_secs(5))
             .connect_with(options)
             .await?
@@ -337,6 +355,19 @@ mod safe_logging_tests {
             .unwrap()
             .is_err());
             peer.await.unwrap();
+        }
+    }
+
+    #[test]
+    fn postgres_pool_size_is_bounded_without_echoing_input() {
+        assert_eq!(postgres_pool_size(None).unwrap(), 20);
+        assert_eq!(postgres_pool_size(Some("1")).unwrap(), 1);
+        assert_eq!(postgres_pool_size(Some("1000")).unwrap(), 1000);
+        for raw in ["0", "1001", "-1", "private-value", ""] {
+            assert_eq!(
+                postgres_pool_size(Some(raw)).unwrap_err().to_string(),
+                "DATABASE_POOL_SIZE must be between 1 and 1000"
+            );
         }
     }
 

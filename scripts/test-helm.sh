@@ -16,7 +16,7 @@ resource() {
 
 helm lint "$chart"
 helm lint "$chart" -f "$chart/ci/all-values.yaml"
-helm template codeyard "$chart" > "$work/default.yaml"
+helm template codeyard "$chart" --set config.databasePoolSize=7 > "$work/default.yaml"
 helm template codeyard "$chart" --namespace forge -f "$chart/ci/all-values.yaml" > "$work/all.yaml"
 helm template codeyard "$chart" --namespace forge -f "$chart/ci/all-values.yaml" \
     --set ssh.service.type=NodePort --set ssh.service.nodePort=30222 \
@@ -25,6 +25,8 @@ helm template codeyard "$chart" --namespace forge -f "$chart/ci/all-values.yaml"
 for file in default all nodeport; do
     kubeconform -strict -ignore-missing-schemas -summary < "$work/$file.yaml"
 done
+
+grep -q 'DATABASE_POOL_SIZE: "7"' "$work/default.yaml"
 
 # The small install needs only web, repository storage and their configuration.
 [[ -n $(resource "$work/default.yaml" Deployment codeyard-web) ]]

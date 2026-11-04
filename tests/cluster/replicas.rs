@@ -4359,7 +4359,7 @@ async fn draining_storage_waits_for_copy_then_promotes_without_losing_git_data()
         .save("main", "README.md", "unborn", b"drain survives\n")
         .await;
     let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
-    codeyard_cluster::drain::change(&database.pool, None, "store-a", false)
+    codeyard_cluster::drain::change(&database.pool, None, "store-a", false, None)
         .await
         .unwrap();
     codeyard_cluster::drain::step(&primary.context)
@@ -4388,9 +4388,74 @@ async fn draining_storage_waits_for_copy_then_promotes_without_losing_git_data()
     assert_eq!(current.drain_completed, current.drain_total);
     let current = RepoStore::from_disk_path(primary_path(&copy, uuid).to_str().unwrap());
     assert_eq!(current.refs().await.unwrap()["refs/heads/main"], commit);
-    codeyard_cluster::drain::change(&database.pool, None, "store-a", true)
+    codeyard_cluster::drain::change(&database.pool, None, "store-a", true, None)
         .await
         .unwrap();
+    copy.shutdown().await;
+    primary.shutdown().await;
+}
+
+#[tokio::test]
+async fn rebalance_reserves_nodes_and_resumes_retirement_after_a_busy_reader() {
+    let database = native::PostgresDatabase::new().await;
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
+    let destination = start_storage(&database.pool, root.path(), "store-c").await;
+    let repo = create_repository(&database.pool, &primary, "rebalanced").await;
+    let commit = repo
+        .save("main", "README.md", "unborn", b"rebalanced bytes\n")
+        .await;
+    assert_current(&primary, &copy, &repo).await;
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
+    let DbPool::Postgres(raw) = &database.pool else {
+        unreachable!()
+    };
+    sqlx::query("UPDATE nodes SET disk_total=1073741824,disk_free=CASE WHEN id=$1 THEN 107374182 WHEN id=$2 THEN 858993459 ELSE 966367641 END")
+        .bind(primary.context.node_id).bind(copy.context.node_id).execute(raw).await.unwrap();
+    codeyard_cluster::replicas::rebalance::step(&primary.context)
+        .await
+        .unwrap();
+    assert_eq!(
+        primary_of(&database.pool, repo.id()).await,
+        primary.context.node_id
+    );
+    assert!(
+        codeyard_db_cluster::rebalance::plan(&database.pool, copy.context.node_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    pass(&destination).await;
+    let original = primary_path(&primary, uuid);
+    let busy = codeyard_git::locks::read(&original).await;
+    assert!(
+        codeyard_cluster::replicas::rebalance::step(&primary.context)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        primary_of(&database.pool, repo.id()).await,
+        destination.context.node_id
+    );
+    assert!(original.exists());
+    assert!(
+        codeyard_db_cluster::rebalance::plan(&database.pool, primary.context.node_id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    drop(busy);
+    codeyard_cluster::replicas::rebalance::step(&primary.context)
+        .await
+        .unwrap();
+    assert!(!original.exists());
+    pass(&destination).await;
+    let current = RepoStore::from_disk_path(primary_path(&destination, uuid).to_str().unwrap());
+    assert_eq!(current.refs().await.unwrap()["refs/heads/main"], commit);
+    destination.shutdown().await;
     copy.shutdown().await;
     primary.shutdown().await;
 }

@@ -7,3 +7,7 @@ pub mod metrics;
 pub mod node_config;
 
 pub mod drain;
+
+pub mod scaling;
+
+pub mod rebalance;

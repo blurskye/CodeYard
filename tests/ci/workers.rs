@@ -610,6 +610,9 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         core_key.public_key(),
         codeyard_cluster_core::transport::NodeAddress::of(&endpoint.addr()),
         &codeyard_cluster_core::pairing::InviteOptions {
+            leader: None,
+            authority: None,
+            max_uses: None,
             roles: "runner".parse().unwrap(),
             reusable: true,
             requires_approval: false,

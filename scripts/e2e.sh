@@ -365,6 +365,10 @@ client_password = secrets.token_hex(32)
 backend = ' '.join(f'{key}={quote(value)}' for key, value in
                    [('host', host), ('port', port), ('dbname', database),
                     ('user', user), ('password', password)])
+mode = os.environ.get('E2E_PGBOUNCER_MODE', 'transaction')
+if mode not in ('transaction', 'session'):
+    raise SystemExit('E2E_PGBOUNCER_MODE must be transaction or session')
+pool_size = 2 if mode == 'transaction' else 96
 config = f'''[databases]
 fixture = {backend}
 [pgbouncer]
@@ -373,8 +377,8 @@ listen_port = {int(os.environ['E2E_POOL_PORT'])}
 unix_socket_dir =
 auth_type = scram-sha-256
 auth_file = {root / 'users.txt'}
-pool_mode = transaction
-default_pool_size = 2
+pool_mode = {mode}
+default_pool_size = {pool_size}
 max_client_conn = 100
 max_prepared_statements = 200
 ignore_startup_parameters = extra_float_digits,options
@@ -1795,7 +1799,9 @@ t_github_clients() {
         --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})')
     put gh_bob_token "$token"
     [[ -z $CI_RUNS_UNAVAILABLE ]] || skip=(--skip-runs "$CI_RUNS_UNAVAILABLE")
-    "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" "${skip[@]}" || rc=$?
+    local check_postgres=0
+    if [[ $ROUND == postgres || $ROUND == cluster ]]; then check_postgres=1; fi
+    E2E_CHECK_PG_RESTART=$check_postgres "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" "${skip[@]}" || rc=$?
     id=$(get gh_run_id)
     [[ $id =~ ^[0-9a-f-]{36}$ ]]
     if [[ $ROUND == sqlite ]]; then
@@ -2710,6 +2716,29 @@ t_cluster_approve_worker() {
     done
 }
 
+t_cluster_drain_worker() {
+    local sha id deadline=$((SECONDS + 45))
+    cluster_cli web1 drain ci1
+    until [[ $(pg_query "SELECT state FROM nodes WHERE name='ci1'") == drained ]]; do
+        ((SECONDS < deadline)) || { echo 'runner drain did not finish' >&2; return 1; }
+        as anon req GET /ready --accept json --json-eq status=ready
+    done
+    git_with_token read clone -q "$BASE/alice/ci-demo.git" "$RUN/clone-drain"
+    cd "$RUN/clone-drain"
+    git_as alice commit -q --allow-empty -m 'Queued while the runner is drained'
+    git_with_token write push -q origin main
+    sha=$(git_as alice rev-parse HEAD)
+    id=$(pg_query "SELECT run_id FROM ci_runs WHERE head_sha='$sha' AND event='push'")
+    [[ $id =~ ^[0-9a-f-]{36}$ ]]
+    for _ in 1 2 3 4 5; do
+        as anon req GET /ready --accept json --json-eq status=ready
+        [[ $(pg_query "SELECT status FROM ci_runs WHERE run_id='$id'") == queued ]]
+    done
+    cluster_cli web1 drain ci1 --cancel
+    wait_ci_run "$id"
+    assert_ci_worker "$id"
+}
+
 t_cluster_shutdown() { # inline: attempt every stop even when one fails
     local node failed=0
     for node in ci1 store1 store2 web1; do
@@ -2928,6 +2957,7 @@ run_cluster_round() {
     step -f 'replica: a person promotes store1 again by hand' t_replica_hand_back
     step -f 'revocation: live ci1 cannot claim two new runs; both stay queued' t_cluster_revoke_worker
     step 'revocation: approving ci1 runs the queued work' t_cluster_approve_worker
+    step 'drain: a drained runner takes no new jobs and cancel resumes claims' t_cluster_drain_worker
     # Shutdown is still checked after a required step fails.
     ROUND_BLOCKED=0
     step -i 'shutdown: every node exits with status 0 and no log has a panic' t_cluster_shutdown

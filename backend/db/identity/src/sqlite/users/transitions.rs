@@ -131,6 +131,24 @@ pub async fn active_admin_session(
     }
 }
 
+/// Live site administration through an original session or personal-token credential.
+pub async fn active_administrator(
+    tx: &mut Transaction<'_, Sqlite>,
+    actor: &codeyard_db_core::queries::credentials::Actor,
+) -> Result<bool> {
+    let Some(credential) = actor.credential() else {
+        return Ok(false);
+    };
+    Ok(active_admin(tx, actor.user_id).await?
+        && codeyard_db_core::queries::sqlite::users::transitions::credential_live(
+            tx,
+            actor.user_id,
+            &credential,
+            true,
+        )
+        .await?)
+}
+
 pub async fn active_admin(tx: &mut Transaction<'_, Sqlite>, actor: i64) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, bool>(
         "SELECT is_admin AND NOT is_banned AND NOT must_change_password FROM users WHERE id = ?1",

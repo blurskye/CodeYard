@@ -50,6 +50,15 @@ async fn settings_response(
             )
         }
     };
+    let scaling = match codeyard_db_cluster::scaling::policies(&ctx.state.pool).await {
+        Ok(policies) => policies,
+        Err(_) => {
+            return ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load scaling policies.",
+            )
+        }
+    };
     let private = config.as_ref().is_some_and(|config| config.is_private());
     let ai_crawlers = config.map_or_else(|| BLOCK.to_owned(), |config| config.ai_crawlers);
     ctx.page_model_status(
@@ -58,6 +67,7 @@ async fn settings_response(
         Page::Identity(account::Page::AdminSettings {
             model: AdminSettings {
                 private,
+                scaling,
                 ai_crawlers,
                 osv_base_url: submitted
                     .map(|form| field(form, "osv_base_url").to_owned())
@@ -87,6 +97,7 @@ pub(crate) async fn settings_get(
         Err(response) => return response,
     };
     let message = match ctx.query.get("saved").map(String::as_str) {
+        Some("scaling") => Some("Scaling policy saved."),
         Some("crawlers") => Some("AI crawler setting saved."),
         Some("signup") => Some("Sign-up setting saved."),
         Some("vulnerabilities") => Some("Vulnerability sources saved."),
@@ -111,6 +122,50 @@ pub(crate) async fn settings_post(
     }
     let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let actor = ctx.user.as_ref().expect("admin guard").id;
+    if form.contains_key("scaling_role") {
+        let number = |name| field(&form, name).parse::<i64>().ok();
+        let policy = (|| {
+            Some(codeyard_model::cluster::ScalingPolicy {
+                role: field(&form, "scaling_role").into(),
+                minimum: i32::try_from(number("scaling_minimum")?).ok()?,
+                maximum: i32::try_from(number("scaling_maximum")?).ok()?,
+                step: i32::try_from(number("scaling_step")?).ok()?,
+                cooldown_seconds: number("scaling_cooldown")?,
+                trigger_threshold: number("scaling_threshold")?,
+                trigger_seconds: number("scaling_duration")?,
+                idle_seconds: number("scaling_idle")?,
+                dry_run: form.contains_key("scaling_dry_run"),
+                paused: form.contains_key("scaling_paused"),
+            })
+        })();
+        let Some(policy) = policy.filter(|policy| policy.validate().is_ok()) else {
+            return settings_response(
+                &ctx,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Some("Invalid scaling policy."),
+                Some(&form),
+            )
+            .await;
+        };
+        let authority = (actor, session).into();
+        return match codeyard_db_cluster::scaling::save(&ctx.state.pool, &authority, &policy).await
+        {
+            Ok(()) => ctx.redirect("/admin/settings?saved=scaling"),
+            Err(error) => {
+                settings_response(
+                    &ctx,
+                    if error.is::<codeyard_db_cluster::drain::Refusal>() {
+                        StatusCode::FORBIDDEN
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    },
+                    Some("Unable to save scaling policy."),
+                    Some(&form),
+                )
+                .await
+            }
+        };
+    }
     if form.contains_key("osv_base_url") {
         let ecosystems = field(&form, "osv_ecosystems")
             .split(',')

@@ -923,11 +923,39 @@ CREATE TABLE node_drain_repositories (
     PRIMARY KEY(node_id,repository_id,target_node_id)
 );
 
+CREATE TABLE repository_moves (
+    repository_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    source_node_id BIGINT NOT NULL REFERENCES nodes(id),
+    target_node_id BIGINT NOT NULL REFERENCES nodes(id),
+    targets TEXT CHECK (json_valid(targets)) NOT NULL,
+    terms TEXT CHECK (json_valid(terms)) NOT NULL
+);
+CREATE TABLE repository_move_nodes (
+    node_id BIGINT PRIMARY KEY REFERENCES nodes(id),
+    repository_id BIGINT NOT NULL REFERENCES repository_moves(repository_id) ON DELETE CASCADE
+);
+
+CREATE TABLE cluster_scaling_policies (
+    role TEXT PRIMARY KEY CHECK (role IN ('web','ssh','storage','runner')),
+    configuration TEXT NOT NULL CHECK (length(configuration)<=4096 AND json_valid(configuration) AND json_extract(configuration,'$.role')=role),
+    last_action_at TEXT,
+    trigger_since TEXT
+);
+
+CREATE TABLE cluster_leases (
+    name TEXT PRIMARY KEY,
+    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    expires_at TEXT NOT NULL,
+    evaluated_at TEXT
+);
+
 CREATE TABLE join_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
     token_hash TEXT NOT NULL UNIQUE CHECK (length(token_hash)=64 AND token_hash NOT GLOB '*[^0-9a-f]*'),
     roles TEXT NOT NULL CHECK (json_valid(roles) AND json_type(roles)='array' AND json_array_length(roles)>0),
     reusable INTEGER NOT NULL DEFAULT 0 CHECK (reusable IN (0,1)),
+    created_by_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    max_uses INTEGER CHECK (max_uses IS NULL OR max_uses BETWEEN 1 AND 1000),
     requires_approval INTEGER NOT NULL DEFAULT 0 CHECK (requires_approval IN (0,1)),
     expires_at TEXT NOT NULL,
     uses INTEGER NOT NULL DEFAULT 0 CHECK (typeof(uses)='integer' AND uses>=0),

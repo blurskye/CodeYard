@@ -8,6 +8,7 @@ mod pairing;
 mod quorum;
 mod quorum_sql;
 mod replicas;
+mod scaling;
 mod search;
 #[path = "../support/mod.rs"]
 mod support;

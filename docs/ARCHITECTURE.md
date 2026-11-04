@@ -282,8 +282,9 @@ Cluster startup requires shared S3 storage for files. Single node remains suppor
 Node membership (`pending`, `active`, `revoked`) is separate from allocation state
 (`active`, `draining`, `drained`). Drain admission reserves complete fork families and
 15% free space in one transaction; the existing copier and promoter advance the work.
-The panel, REST and CLI use `cluster::drain::change`. These new initialization and drain
-paths await builder verification; [Cluster readiness](CLUSTER_PLAN.md) tracks acceptance.
+The panel, REST and CLI use `cluster::drain::change`. Initialization and drain source checks pass; runtime acceptance is pending.
+Provisioning, lease-led scaling, rebalancing and pool configuration are written and
+await checks. [Cluster readiness](CLUSTER_PLAN.md) tracks acceptance.
 
 ### Roles and shared state
 

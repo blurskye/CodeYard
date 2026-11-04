@@ -59,7 +59,7 @@ existing push path.
 Empty repositories initialize a canonical HEAD on both voters before serving starts.
 Fork and template objects are staged privately; their refs publish through the same
 quorum coordinator as pushes, after live source and destination authority checks.
-A missing voter refuses creation. These initialization changes await builder verification.
+A missing voter refuses creation. Source checks pass for initialization; runtime acceptance is still pending.
 
 ## Monitoring
 
@@ -217,8 +217,46 @@ Storage with write quorum needs two active replacement voters. An offline node u
 Each node resumes its drain during heartbeats. Core nodes also finish idle runner drains;
 running jobs retain their normal timeout, and the drain cancels remaining jobs after
 `CI_RUN_TIMEOUT_SECONDS`. `CLUSTER_DRAIN_MAX_REPOSITORIES` bounds a preflight (default
-10,000, maximum 1,000,000); node lists support at most 1,000 nodes. The new drain paths
-and metrics await builder and runtime verification.
+10,000, maximum 1,000,000); node lists support at most 1,000 nodes. Source checks pass for drain and its metrics. Runtime acceptance is still pending.
+
+## Provisioning and automatic scaling
+
+The nodes page and `POST /api/admin/nodes` accept one role (`web`, `ssh`, `storage` or
+`runner`) and a count from 1 to 1,000. They return a private one-hour join ticket with
+that maximum use count. A ticket issued by an administrator stops admitting machines
+if that account is removed or demoted. A request cannot supply a command.
+
+`NODE_PROVISION_COMMAND`, set only in the server environment, optionally starts machines.
+It receives `CODEYARD_NODE_ROLE`, `CODEYARD_NODE_COUNT` and `CLUSTER_JOIN_TOKEN` in its
+environment. Its output is bounded and redacted; `NODE_PROVISION_TIMEOUT_SECONDS`
+(default 300, maximum 3,600) bounds it and its child processes. A failed or timed-out
+command may have created machines already; the response preserves the ticket and
+reports `failed` or `unknown`. Check the provider before retrying.
+
+Site settings hold one scaling policy per role. All start paused and in dry-run mode,
+with minimum 0, maximum 10, step 1 and a five-minute cooldown. One database lease leader
+evaluates every minute, using database time. Storage adds nodes after aggregate reported
+free space stays below 20% for ten minutes. Runners add nodes when a queued job is older
+than two minutes, and runner-only nodes may drain after fifteen idle minutes. Storage
+never drains automatically. Web and SSH policies enforce their minimum only.
+Outstanding bounded invitations count toward the maximum. Dry runs record decisions
+without adding or draining; pausing prevents new decisions. Provisioning needs the
+operator command to create machines. Operators or their provider automation stop and
+revoke drained machines; drained memberships still count toward the maximum.
+These provisioning and scaling changes await builder and runtime verification.
+
+## Rebalancing
+
+The mover selects repositories on disks over 80% full and destinations below 60%,
+smallest first and then oldest last-push time. Fork families move together. Capacity
+reservations and unique node slots allow one move per participating node. It uses the
+existing copier and promoter, waits for current copies, and then retires the source.
+Quorum moves replace voters without reducing their count and briefly fence writes while
+both new terms reconstruct. Busy readers leave retirement pending for another pass.
+
+`REPLICA_BANDWIDTH_BYTES_PER_SECOND` limits all replica streams in one process (default
+50 MiB/s, range 1 KiB/s–1 GiB/s). `replicas=all` disables rebalancing because every disk
+must retain every repository. These mover changes await builder and runtime verification.
 
 ## Storage nodes
 
@@ -456,6 +494,18 @@ two-connection transaction pool and checks login, issues, SSH/HTTP push and clon
 round also runs by default. It stops both processes and drops its database on exit; set
 `E2E_KEEP=1` to retain logs (the private pool configuration contains database credentials).
 
+For a complete cluster, use PgBouncer **session** pooling: serving advisory locks and
+notification listeners own sessions. Budget backend connections for every process's
+configured pool plus these dedicated sessions. The small transaction-pool round above
+checks ordinary API/Git traffic only. Run the session setup with
+`E2E_PGBOUNCER_MODE=session E2E_DATABASES=pgbouncer bash scripts/e2e.sh`.
+
+`builder-test.sh` marks its disposable PostgreSQL. PostgreSQL and cluster GitHub-client
+rounds crash that owned database during `gh issue create`, check `/ready` goes 503 then
+200 without restarting Codeyard, and verify every acknowledged issue remains. They never
+restart an external database. `E2E_REQUIRE_PG_RESTART=1` makes a missing owned fixture a
+failure. The new crash and session-pool checks await execution.
+
 ## One-cell benchmark
 
 Run `GITSERV_TEST_DATABASE_URL=postgres://... bash scripts/bench-cell.sh` with an already
@@ -478,7 +528,10 @@ logs and fixture credentials for diagnosis. Neither script should target product
 The cluster assumes one PostgreSQL primary shared by every web, SSH and storage node.
 Making that database highly available (Patroni, a managed service, a standby you
 promote) is the operator's job; Codeyard does not route reads to database replicas.
-Each process keeps a pool of 20 connections, which is not configurable yet. The cluster
+`DATABASE_POOL_SIZE` sets each process's PostgreSQL pool (1–1,000, default 20), with
+a five-second acquisition deadline and connection validation before reuse. Lost
+connections reconnect through `DATABASE_URL`; writes with an uncertain result are
+not automatically replayed. The cluster
 has not been load tested, so size it from your own measurements.
 
 Replicas are asynchronous: there are no synchronous writes across nodes and no

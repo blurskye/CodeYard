@@ -223,7 +223,10 @@ impl JoinTicket {
     }
 }
 
-pub struct InviteOptions {
+pub struct InviteOptions<'a> {
+    pub leader: Option<i64>,
+    pub authority: Option<&'a codeyard_db_core::queries::credentials::Actor>,
+    pub max_uses: Option<i32>,
     pub roles: NodeRoles,
     /// A reusable invite admits any number of nodes until it expires.
     pub reusable: bool,
@@ -238,7 +241,7 @@ pub async fn create_invite(
     pool: &DbPool,
     node: PublicKey,
     address: NodeAddress,
-    options: &InviteOptions,
+    options: &InviteOptions<'_>,
 ) -> Result<JoinTicket> {
     ensure!(
         !options.expires_in.is_zero() && options.expires_in <= MAX_INVITE_LIFETIME,
@@ -248,6 +251,9 @@ pub async fn create_invite(
     codeyard_db_cluster::cluster::create_join_token(
         pool,
         NewJoinToken {
+            leader: options.leader,
+            authority: options.authority,
+            max_uses: options.max_uses,
             token_hash: &ticket.secret_hash(),
             roles: &options.roles.names(),
             reusable: options.reusable,

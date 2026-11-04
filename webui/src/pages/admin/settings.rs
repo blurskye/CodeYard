@@ -8,6 +8,8 @@ use dioxus::prelude::*;
 pub struct AdminSettings {
     /// A private node reviews each signup request. A public one lets anyone register.
     pub private: bool,
+    #[serde(default)]
+    pub scaling: Vec<codeyard_model::cluster::ScalingPolicy>,
     /// `block` or `allow`.
     pub ai_crawlers: String,
     pub osv_base_url: String,
@@ -66,6 +68,27 @@ pub fn admin_settings_page(
                     label {"Enabled ecosystems (comma-separated)" DraftInput {name:"osv_ecosystems",initial_value:model.osv_ecosystems,maxlength:Some(256)}}
                     p {"npm, PyPI, crates.io, Go, Maven, RubyGems, Packagist, NuGet, Pub, Hex. Empty disables downloads. Mirrors must provide <ecosystem>/all.zip. Sync runs every six hours."}
                     button {r#type:"submit",class:"btn","Save vulnerability sources"}
+                }
+            }
+            section { class: "identity-admin-panel",
+                h2 { "Automatic scaling" }
+                p { "Policies start paused and in dry-run mode. Storage nodes never scale down automatically. The maximum includes outstanding invitations." }
+                for policy in &model.scaling {
+                    form { method: "post", action: "/admin/settings",
+                        {csrf(token)}
+                        h3 { "{policy.role}" }
+                        input { r#type: "hidden", name: "scaling_role", value: policy.role.clone() }
+                        label { "Minimum nodes" input { r#type: "number", name: "scaling_minimum", min: "0", max: "1000", value: policy.minimum.to_string(), required: true } }
+                        label { "Maximum nodes" input { r#type: "number", name: "scaling_maximum", min: "0", max: "1000", value: policy.maximum.to_string(), required: true } }
+                        label { "Step" input { r#type: "number", name: "scaling_step", min: "1", max: "1000", value: policy.step.to_string(), required: true } }
+                        label { "Cooldown (seconds)" input { r#type: "number", name: "scaling_cooldown", min: "60", max: "86400", value: policy.cooldown_seconds.to_string(), required: true } }
+                        label { "Trigger (storage free percent, or runner queue age in seconds)" input { r#type: "number", name: "scaling_threshold", min: "1", max: "3600", value: policy.trigger_threshold.to_string(), required: true } }
+                        label { "Trigger duration (seconds)" input { r#type: "number", name: "scaling_duration", min: "0", max: "86400", value: policy.trigger_seconds.to_string(), required: true } }
+                        label { "Runner idle time (seconds)" input { r#type: "number", name: "scaling_idle", min: "60", max: "86400", value: policy.idle_seconds.to_string(), required: true } }
+                        label { input { r#type: "checkbox", name: "scaling_paused", checked: policy.paused } "Paused" }
+                        label { input { r#type: "checkbox", name: "scaling_dry_run", checked: policy.dry_run } "Dry run" }
+                        button { r#type: "submit", class: "btn", "Save scaling policy" }
+                    }
                 }
             }
             SelectSetting { token: token.to_owned(), name: "node_mode", title: "Sign-up", label: "Who can join",

@@ -9,20 +9,13 @@ pub async fn change(
     authority: Option<&Actor>,
     name: &str,
     cancel: bool,
+    leader: Option<i64>,
 ) -> Result<ClusterNode> {
     let limit = crate::drain::repository_limit()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if let Some(actor) = authority {
-        let credential = actor.credential().ok_or(Refusal::Denied)?;
         ensure!(
-            codeyard_db_identity::sqlite::users::transitions::active_admin(&mut tx, actor.user_id)
-                .await?
-                && codeyard_db_core::queries::sqlite::users::transitions::credential_live(
-                    &mut tx,
-                    actor.user_id,
-                    &credential,
-                    true
-                )
+            codeyard_db_identity::sqlite::users::transitions::active_administrator(&mut tx, actor)
                 .await?,
             Refusal::Denied
         );
@@ -34,6 +27,9 @@ pub async fn change(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(Refusal::Missing)?;
+    if let Some(leader) = leader {
+        crate::sqlite::scaling::permit_drain(&mut tx, leader, name).await?;
+    }
     if cancel {
         sqlx::query("DELETE FROM node_drain_repositories WHERE node_id=$1")
             .bind(node.id)
@@ -46,6 +42,13 @@ pub async fn change(
         .execute(&mut *tx)
         .await?;
     } else if node.state == "active" {
+        let moving: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM repository_move_nodes WHERE node_id=$1)",
+        )
+        .bind(node.id)
+        .fetch_one(&mut *tx)
+        .await?;
+        ensure!(!moving, Refusal::Busy);
         ensure!(node.is_online(), Refusal::Offline);
         let nodes: Vec<ClusterNode> = sqlx::query_as("SELECT *,strftime('%Y-%m-%dT%H:%M:%f000Z','now') AS observed_at FROM nodes ORDER BY id LIMIT 1001")
             .fetch_all(&mut *tx).await?;
@@ -70,7 +73,14 @@ pub async fn change(
         )
         .fetch_one(&mut *tx)
         .await?;
-        let targets = crate::drain::plan(node.id, &nodes, &repos, &copies, &pending, quorum)?;
+        let targets = crate::drain::plan(
+            node.id,
+            &nodes,
+            &repos,
+            &copies,
+            &pending,
+            if quorum { 2 } else { 1 },
+        )?;
         for (repo, target) in targets {
             sqlx::query("INSERT INTO node_drain_repositories(node_id,repository_id,target_node_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
                 .bind(node.id).bind(repo).bind(target).execute(&mut *tx).await?;

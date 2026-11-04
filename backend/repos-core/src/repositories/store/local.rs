@@ -676,10 +676,10 @@ pub(super) async fn recover_term(
         } else {
             let primary = crate::repositories::store::primary_path(root, uuid);
             let mirror = crate::cluster::replicas::copy_path(root, uuid);
-            if tokio::fs::try_exists(&primary).await? {
-                primary
-            } else {
+            if tokio::fs::try_exists(&mirror).await? {
                 mirror
+            } else {
+                primary
             }
         };
         let parent = target.parent().context("invalid term path")?;

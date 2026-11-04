@@ -1849,3 +1849,57 @@ engine_pair!(
     postgres_input_and_config,
     input_and_config
 );
+
+async fn replacement_voter_must_have_current_copy_at_the_switch(pool: &DbPool) {
+    use codeyard_db_cluster::cluster::writes as journal;
+    let fixture = setup(pool, 2, "2").await;
+    let replacement = node(pool, "replacement").await;
+    let voters = [fixture.voters[1], replacement];
+    assert!(!journal::switch_write_family(
+        pool,
+        fixture.repo,
+        fixture.primary,
+        &[(fixture.repo, 1)],
+        replacement,
+        &voters
+    )
+    .await
+    .unwrap());
+    assert_eq!(
+        journal::recovery_view(pool, fixture.repo)
+            .await
+            .unwrap()
+            .term,
+        1
+    );
+    codeyard_db_cluster::cluster::insert_replica(pool, fixture.repo, replacement, fixture.primary)
+        .await
+        .unwrap();
+    assert!(codeyard_db_cluster::cluster::set_applied_version(
+        pool,
+        fixture.repo,
+        replacement,
+        fixture.primary,
+        0
+    )
+    .await
+    .unwrap());
+    assert!(journal::switch_write_family(
+        pool,
+        fixture.repo,
+        fixture.primary,
+        &[(fixture.repo, 1)],
+        replacement,
+        &voters
+    )
+    .await
+    .unwrap());
+    let view = journal::recovery_view(pool, fixture.repo).await.unwrap();
+    assert_eq!(view.term, 2);
+    assert!(!view.serving);
+}
+engine_pair!(
+    sqlite_replacement_voter_current_at_switch,
+    postgres_replacement_voter_current_at_switch,
+    replacement_voter_must_have_current_copy_at_the_switch
+);

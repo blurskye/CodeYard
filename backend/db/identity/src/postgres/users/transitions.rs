@@ -192,6 +192,24 @@ pub async fn active_admin_session(
     }
 }
 
+/// Live site administration through an original session or personal-token credential.
+pub async fn active_administrator(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &codeyard_db_core::queries::credentials::Actor,
+) -> Result<bool> {
+    let Some(credential) = actor.credential() else {
+        return Ok(false);
+    };
+    Ok(active_admin(tx, actor.user_id).await?
+        && codeyard_db_core::queries::postgres::users::transitions::credential_live(
+            tx,
+            actor.user_id,
+            &credential,
+            true,
+        )
+        .await?)
+}
+
 pub async fn active_admin(tx: &mut Transaction<'_, Postgres>, actor: i64) -> Result<bool> {
     lock_accounts_shared(tx, &[actor]).await?;
     // Serialize authority changes without blocking CI notification foreign keys.

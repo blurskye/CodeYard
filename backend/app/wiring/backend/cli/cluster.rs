@@ -245,6 +245,9 @@ pub async fn run(
             })?;
             let address = own_address(pool, &key).await?;
             let options = InviteOptions {
+                leader: None,
+                authority: None,
+                max_uses: None,
                 roles: roles.clone(),
                 reusable: *reusable,
                 requires_approval: *approve,
@@ -300,7 +303,7 @@ pub async fn run(
             _ => bail!("no node is named '{name}'; `codeyard cluster list` shows the names"),
         },
         Command::Drain { name, cancel } => {
-            let node = codeyard_cluster::drain::change(pool, None, name, *cancel).await?;
+            let node = codeyard_cluster::drain::change(pool, None, name, *cancel, None).await?;
             println!(
                 "{}: {} ({}/{} repositories)",
                 node.name, node.state, node.drain_completed, node.drain_total

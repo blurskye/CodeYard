@@ -10,12 +10,13 @@ pub async fn change(
     authority: Option<&Actor>,
     name: &str,
     cancel: bool,
+    leader: Option<i64>,
 ) -> Result<ClusterNode> {
     let name = codeyard_cluster_core::pairing::normalize_name(name)
         .map_err(|_| codeyard_db_cluster::drain::Refusal::Invalid)?;
     tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        codeyard_db_cluster::drain::change(pool, authority, &name, cancel),
+        codeyard_db_cluster::drain::change(pool, authority, &name, cancel, leader),
     )
     .await?
 }

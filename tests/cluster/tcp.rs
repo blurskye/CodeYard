@@ -299,6 +299,9 @@ async fn pairing_over_tcp_admits_a_valid_ticket_and_refuses_a_bad_one() {
             ..Default::default()
         },
         &InviteOptions {
+            leader: None,
+            authority: None,
+            max_uses: None,
             roles: "storage".parse().unwrap(),
             reusable: false,
             requires_approval: false,

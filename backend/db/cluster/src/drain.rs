@@ -10,6 +10,8 @@ pub enum Refusal {
     Denied,
     #[error("Node not found.")]
     Missing,
+    #[error("The node is rebalancing a repository. Retry after that move finishes.")]
+    Busy,
     #[error("Invalid node name.")]
     Invalid,
     #[error("The node is offline; use cluster promote --all-from instead.")]
@@ -40,7 +42,7 @@ pub(crate) fn repository_limit() -> Result<i64> {
 
 native_operation!(crate::postgres::drain::change, crate::sqlite::drain::change,
     /// Admission, capacity reservation, state and audit share one transaction.
-    fn change(pool: &DbPool, authority: Option<&Actor>, name: &str, cancel: bool) -> Result<ClusterNode>);
+    fn change(pool: &DbPool, authority: Option<&Actor>, name: &str, cancel: bool, leader: Option<i64>) -> Result<ClusterNode>);
 native_operation!(crate::postgres::drain::record_capacity, crate::sqlite::drain::record_capacity,
     fn record_capacity(pool: &DbPool, key: &str, total: i64) -> Result<()>);
 native_operation!(crate::postgres::drain::work, crate::sqlite::drain::work,
@@ -68,7 +70,7 @@ pub(crate) fn plan(
     repositories: &[Repository],
     copies: &[(i64, i64, i64)],
     pending: &[(i64, i64)],
-    quorum: bool,
+    wanted: usize,
 ) -> Result<Vec<(i64, i64)>> {
     let mut space = BTreeMap::new();
     for node in nodes
@@ -131,7 +133,7 @@ pub(crate) fn plan(
             candidates.push((node, needed, free));
         }
         candidates.sort_by_key(|(node, needed, free)| (*needed, std::cmp::Reverse(*free), *node));
-        let count = if quorum { 2 } else { 1 };
+        let count = wanted;
         let selected: Vec<_> = candidates
             .iter()
             .filter(|(_, needed, free)| needed <= free)
