@@ -1,8 +1,3 @@
-#![allow(
-    clippy::result_large_err,
-    reason = "Page handlers return the original response error by value."
-)]
-
 pub mod api_shared;
 
 pub mod app;
