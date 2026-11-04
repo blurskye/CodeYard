@@ -404,6 +404,29 @@ async fn prepared_before(path: &Path, write: &WriteRecord) -> Result<bool> {
     Ok(true)
 }
 
+// Git's native rename handles file/directory transitions that update-ref cannot lock together.
+fn branch_namespace_rename(changes: &[RefChange]) -> Option<(&RefChange, &RefChange)> {
+    let mut branches = changes
+        .iter()
+        .filter(|change| change.kind == "oid" && change.name.starts_with("refs/heads/"));
+    let (first, second) = (branches.next()?, branches.next()?);
+    if branches.next().is_some() {
+        return None;
+    }
+    let (old, new) = if first.new_target.is_none() {
+        (first, second)
+    } else {
+        (second, first)
+    };
+    (old.new_target.is_none()
+        && old.old_target.is_some()
+        && new.old_target.is_none()
+        && new.new_target == old.old_target
+        && (old.name.starts_with(&format!("{}/", new.name))
+            || new.name.starts_with(&format!("{}/", old.name))))
+    .then_some((old, new))
+}
+
 /// Strictly index the complete retained pack before pinning any proposed object.
 async fn retain_write(path: &Path, write: &WriteRecord, limits: WriteLimits) -> Result<()> {
     let directory = preparation_path(path, write)?;
@@ -454,8 +477,9 @@ async fn retain_write(path: &Path, write: &WriteRecord, limits: WriteLimits) -> 
     let committed = write.decision == "commit";
     git_process::blocking_until(std::time::Instant::now() + limits.timeout, move || {
         let repo = git2::Repository::open_bare(repository)?;
+        let renamed = branch_namespace_rename(&changes).map(|(old, _)| old.name.as_str());
         let mut created = Vec::new();
-        for change in changes {
+        for change in &changes {
             let actual = match repo.find_reference(&change.name) {
                 Ok(reference) => Some(reference_target(&reference, &change.kind)?),
                 Err(error) if error.code() == git2::ErrorCode::NotFound => None,
@@ -482,18 +506,21 @@ async fn retain_write(path: &Path, write: &WriteRecord, limits: WriteLimits) -> 
                                 break;
                             }
                             match repo.find_reference(parent) {
+                                Ok(_) if renamed == Some(parent) => {}
                                 Ok(_) => anyhow::bail!("reference namespace conflict"),
                                 Err(error) if error.code() == git2::ErrorCode::NotFound => {}
                                 Err(error) => return Err(error.into()),
                             }
                         }
-                        ensure!(
-                            repo.references_glob(&format!("{}/*", change.name))?
-                                .next()
-                                .is_none(),
-                            "reference namespace conflict"
-                        );
-                        created.push(change.name);
+                        for reference in
+                            repo.references_glob(&format!("{}/*", change.name))?.take(2)
+                        {
+                            ensure!(
+                                reference?.name().is_some_and(|name| renamed == Some(name)),
+                                "reference namespace conflict"
+                            );
+                        }
+                        created.push(&change.name);
                     }
                 }
             }
@@ -670,11 +697,15 @@ impl NodeContext {
             Ok::<_, anyhow::Error>(())
         })
         .await??;
+        // The deleted name may now traverse a ref file rather than a directory.
+        // Syncing the new name and packed-refs covers the namespace replacement.
+        let renamed = branch_namespace_rename(&current.changes).map(|(old, _)| old.name.as_str());
         sync_refs(
             path,
             current
                 .changes
                 .iter()
+                .filter(|change| renamed != Some(change.name.as_str()))
                 .map(|change| change.name.clone())
                 .collect(),
         )
@@ -857,12 +888,52 @@ fn reference_target(reference: &git2::Reference<'_>, kind: &str) -> Result<Strin
 }
 
 pub(super) async fn apply_refs(path: &Path, write: &WriteRecord, limit: Duration) -> Result<()> {
+    let renamed = branch_namespace_rename(&write.changes);
+    if let Some((old, new)) = renamed {
+        let owned_path = path.to_owned();
+        let name = new.name.clone();
+        let target = new.new_target.clone();
+        let applied = tokio::task::spawn_blocking(move || -> Result<bool> {
+            let repo = git2::Repository::open_bare(owned_path)?;
+            let reference = repo.find_reference(&name);
+            match reference {
+                Ok(reference) => Ok(reference.target().map(|oid| oid.to_string()) == target),
+                Err(error) if error.code() == git2::ErrorCode::NotFound => Ok(false),
+                Err(error) => Err(error.into()),
+            }
+        })
+        .await??;
+        if !applied {
+            // The SQL decision is durable; interrupted application replays the same rename.
+            tokio::time::timeout(
+                limit,
+                crate::backend::git::publish_branch_rename(
+                    path,
+                    old.name
+                        .strip_prefix("refs/heads/")
+                        .context("invalid branch")?,
+                    new.name
+                        .strip_prefix("refs/heads/")
+                        .context("invalid branch")?,
+                    old.old_target.as_deref().context("missing rename target")?,
+                ),
+            )
+            .await??;
+        }
+    }
+    let renamed = renamed.map(|(old, new)| (old.name.clone(), new.name.clone()));
     let owned_path = path.to_owned();
     let changes = write.changes.clone();
     let script = tokio::task::spawn_blocking(move || -> Result<String> {
         let repo = git2::Repository::open_bare(owned_path)?;
         let mut script = String::from("start\noption no-deref\n");
         for change in changes {
+            if renamed
+                .as_ref()
+                .is_some_and(|(old, new)| change.name == *old || change.name == *new)
+            {
+                continue;
+            }
             let actual = match repo.find_reference(&change.name) {
                 Ok(reference) => Some(reference_target(&reference, &change.kind)?),
                 Err(error) if error.code() == git2::ErrorCode::NotFound => None,

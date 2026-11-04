@@ -94,6 +94,33 @@ impl LocalStore {
         Ok(true)
     }
 
+    pub(super) async fn publish_quorum_head<F>(
+        &self,
+        pool: &db::DbPool,
+        repo: i64,
+        target: &str,
+        authorize: F,
+    ) -> Result<bool, RepoError>
+    where
+        F: std::future::Future<Output = Result<(), RepoError>>,
+    {
+        if self.quorum_context(pool, repo).await?.is_none() {
+            return Ok(false);
+        }
+        let old = self
+            .head_target()
+            .await?
+            .ok_or_else(|| unavailable("Detached HEAD requires recovery"))?;
+        let changes = [WriteRef {
+            name: "HEAD".into(),
+            kind: "symbolic".into(),
+            old_target: Some(old),
+            new_target: Some(target.to_owned()),
+        }];
+        self.publish_quorum_refs(pool, repo, &changes, authorize)
+            .await
+    }
+
     #[expect(
         clippy::too_many_arguments,
         reason = "The repository, actor, updates and both guards are each needed before the quorum vote."

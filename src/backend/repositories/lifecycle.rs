@@ -512,6 +512,19 @@ async fn provision_stored_owned(
     let storage_node_id = placement::storage_node(context, source)
         .await
         .map_err(git_storage_error)?;
+    if storage_node_id.is_some()
+        && db::cluster::writes::write_settings(pool)
+            .await
+            .map_err(|_| unavailable())?
+            .write_quorum
+            .is_some()
+    {
+        // The ref journal requires an existing serving term on both voters.
+        return Err(StorageError {
+            kind: LifecycleFailure::Unavailable,
+            message: "Repository initialization and copy are unavailable with write quorum.",
+        });
+    }
     let root = std::path::absolute(repos_path).map_err(|_| unavailable())?;
     let location = super::store::primary_path(&root, Uuid::new_v4());
     let disk_path = location.to_str().ok_or_else(unavailable)?;
