@@ -4,6 +4,7 @@ use anyhow::ensure;
 use anyhow::Result;
 use codeyard_cluster::settings::Settings;
 use codeyard_cluster::transport::NodeAddress;
+use codeyard_cluster::worker::{resolve, CorePeer};
 use codeyard_support::node_identity::load_or_create;
 use std::collections::HashMap;
 use std::path::Path;
@@ -209,5 +210,3 @@ mod tests {
         assert_eq!(peers[1].address.tcp[0].port(), 7445);
     }
 }
-
-use codeyard_cluster::worker::{resolve, CorePeer};

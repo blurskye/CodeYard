@@ -10,6 +10,7 @@ use tokio::io::AsyncRead;
 use tokio::sync::OwnedMutexGuard;
 use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::Semaphore;
+pub mod files;
 pub mod local;
 pub mod range;
 pub mod s3;
@@ -443,5 +444,3 @@ mod tests {
         }
     }
 }
-
-pub mod files;

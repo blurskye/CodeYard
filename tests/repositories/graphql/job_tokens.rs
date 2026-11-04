@@ -1,6 +1,5 @@
 //! The GraphQL boundary must not widen the REST job-token policy.
 use super::*;
-use codeyard_app::ci;
 use codeyard_app::repositories;
 use codeyard_model::node_id;
 use codeyard_webhooks::payloads;

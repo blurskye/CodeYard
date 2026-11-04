@@ -8,7 +8,6 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 
-use codeyard_app::ci;
 use codeyard_app::repositories;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
