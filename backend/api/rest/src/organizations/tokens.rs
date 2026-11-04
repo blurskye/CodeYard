@@ -38,7 +38,13 @@ pub(super) fn router() -> Router<Arc<AppState>> {
     reason = "HTML adapters preserve complete Axum responses under the PageContext contract."
 )]
 async fn require_owner(ctx: &PageContext, actor: i64, org: i64) -> Result<(), Response> {
-    match super::get_organization_role(&ctx.state.pool, actor, org).await {
+    match codeyard_db_orgs::organizations::membership::get_organization_role(
+        &ctx.state.pool,
+        actor,
+        org,
+    )
+    .await
+    {
         Ok(OrganizationOutcome::Applied(OrgRole::Owner)) => Ok(()),
         Ok(OrganizationOutcome::Applied(_)) => Err(ctx.error(
             StatusCode::FORBIDDEN,

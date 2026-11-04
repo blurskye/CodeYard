@@ -79,7 +79,7 @@ async fn actor(
 }
 
 async fn organization(state: &AppState, name: &str) -> Result<Organization> {
-    super::get_public_organization(&state.pool, name)
+    codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, name)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)
@@ -97,24 +97,33 @@ async fn selected(
             .ok()
             .filter(|id| *id > 0)
             .ok_or_else(Error::missing)?;
-        let team = super::get_public_team_by_id(&state.pool, actor, id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        let org = super::get_public_organization_by_id(&state.pool, team.team.org_id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let team =
+            codeyard_db_orgs::organizations::teams::get_public_team_by_id(&state.pool, actor, id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+        let org = codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+            &state.pool,
+            team.team.org_id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
         // The legacy route names no organization, so the request middleware cannot apply
         // its token policy.
         crate::auth::refuse_classic(state, auth.token.id, org.id).await?;
         Ok((org, team))
     } else {
         let org = organization(state, &params["org"]).await?;
-        let team = super::get_public_team(&state.pool, actor, org.id, &params["team_slug"])
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let team = codeyard_db_orgs::organizations::teams::get_public_team(
+            &state.pool,
+            actor,
+            org.id,
+            &params["team_slug"],
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
         Ok((org, team))
     }
 }
@@ -143,7 +152,7 @@ pub(super) async fn summary(
     org: &str,
     permission: i16,
 ) -> Result<Value> {
-    let parent = super::get_team_parent(&state.pool, team.id)
+    let parent = codeyard_db_orgs::organizations::teams::get_team_parent(&state.pool, team.id)
         .await
         .map_err(Error::unavailable)?;
     Ok(team_value(team, org, permission, parent.as_ref()))
@@ -173,10 +182,11 @@ async fn parent(
         let slug = value
             .as_str()
             .ok_or_else(|| Error::validation("Team", "parent_team_slug", "invalid"))?;
-        let parent = super::get_public_team(&state.pool, actor, org, slug)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(|| Error::validation("Team", "parent_team_slug", "invalid"))?;
+        let parent =
+            codeyard_db_orgs::organizations::teams::get_public_team(&state.pool, actor, org, slug)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(|| Error::validation("Team", "parent_team_slug", "invalid"))?;
         return Ok(Some(Some(parent.team.id)));
     }
     Ok(None)
@@ -198,7 +208,12 @@ async fn document(
     value["repos_count"] = json!(public.repository_count);
     value["created_at"] = json!(team.created_at);
     value["updated_at"] = json!(team.updated_at);
-    let public_repos = super::count_organization_profile_repositories(&state.pool, org.id, None)
+    let public_repos =
+        codeyard_db_orgs::organizations::access::count_organization_profile_repositories(
+            &state.pool,
+            org.id,
+            None,
+        )
         .await
         .map_err(Error::unavailable)?;
     let has_organization_projects =
@@ -378,9 +393,13 @@ async fn create(
     // Only owners and admins create teams. Checking first keeps the maintainer and repository
     // names below from telling anyone else which accounts and private repositories exist; the
     // creation checks again.
-    match super::get_organization_role(&state.pool, auth.user.id, org.id)
-        .await
-        .map_err(Error::unavailable)?
+    match codeyard_db_orgs::organizations::membership::get_organization_role(
+        &state.pool,
+        auth.user.id,
+        org.id,
+    )
+    .await
+    .map_err(Error::unavailable)?
     {
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(role)
             if codeyard_db_core::queries::organizations::administers(role) => {}
@@ -426,14 +445,23 @@ async fn create(
         .map_err(|_| Error::validation("Team", "name", "invalid"))?
         .with_members_and_repositories(maintainers, repositories);
     let team = outcome(
-        super::create_organization_team(&state.pool, writer(&auth), org.id, &new)
-            .await
-            .map_err(team_error)?,
-    )?;
-    let public = super::get_public_team_by_id(&state.pool, auth.user.id, team.id)
+        codeyard_db_orgs::organizations::teams::create_organization_team(
+            &state.pool,
+            writer(&auth),
+            org.id,
+            &new,
+        )
         .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+        .map_err(team_error)?,
+    )?;
+    let public = codeyard_db_orgs::organizations::teams::get_public_team_by_id(
+        &state.pool,
+        auth.user.id,
+        team.id,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(Error::missing)?;
     Ok((
         StatusCode::CREATED,
         Json(document(&state, &org, &public).await?),
@@ -452,9 +480,14 @@ async fn team(
     let (org, mut public) = selected(&state, &auth, &params).await?;
     if method == Method::DELETE {
         outcome(
-            super::delete_organization_team(&state.pool, writer(&auth), org.id, public.team.id)
-                .await
-                .map_err(Error::unavailable)?,
+            codeyard_db_orgs::organizations::teams::delete_organization_team(
+                &state.pool,
+                writer(&auth),
+                org.id,
+                public.team.id,
+            )
+            .await
+            .map_err(Error::unavailable)?,
         )?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
@@ -466,7 +499,7 @@ async fn team(
         let parent = parent(&state, auth.user.id, org.id, &input).await?;
         let profile = profile(&input, false, parent)?;
         let team = outcome(
-            super::update_organization_team(
+            codeyard_db_orgs::organizations::teams::update_organization_team(
                 &state.pool,
                 writer(&auth),
                 org.id,
@@ -477,10 +510,14 @@ async fn team(
             .map_err(team_error)?,
         )?;
         // The counts and the parent follow a new parent, so the whole team is read again.
-        public = super::get_public_team_by_id(&state.pool, auth.user.id, team.id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        public = codeyard_db_orgs::organizations::teams::get_public_team_by_id(
+            &state.pool,
+            auth.user.id,
+            team.id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
     }
     Ok(Json(document(&state, &org, &public).await?).into_response())
 }
@@ -497,16 +534,20 @@ async fn list(
     let (state, actor, org_id) = (&*state, auth.user.id, org.id);
     let (rows, more) = page
         .collect(move |after| async move {
-            let rows =
-                match super::list_organization_teams(&state.pool, actor, org_id, batch(after)?)
-                    .await
-                    .map_err(Error::unavailable)?
-                {
-                    codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(
-                        rows,
-                    ) => rows,
-                    _ => return Err(Error::missing()),
-                };
+            let rows = match codeyard_db_orgs::organizations::teams::list_organization_teams(
+                &state.pool,
+                actor,
+                org_id,
+                batch(after)?,
+            )
+            .await
+            .map_err(Error::unavailable)?
+            {
+                codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(rows) => {
+                    rows
+                }
+                _ => return Err(Error::missing()),
+            };
             let next = next_after(&rows, BATCH, |row| row.team.id);
             Ok::<_, Error>((rows, next))
         })
@@ -537,10 +578,16 @@ async fn children(
     let (state, actor, org_id, team) = (&*state, auth.user.id, org.id, public.team.id);
     let (rows, more) = page
         .collect(move |after| async move {
-            let rows = super::list_child_teams(&state.pool, actor, org_id, team, batch(after)?)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
+            let rows = codeyard_db_orgs::organizations::teams::list_child_teams(
+                &state.pool,
+                actor,
+                org_id,
+                team,
+                batch(after)?,
+            )
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
             let next = next_after(&rows, BATCH, |row| row.id);
             Ok::<_, Error>((rows, next))
         })
@@ -560,9 +607,14 @@ async fn user_teams(
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::GET).await?;
     let (offset, limit) = page.window()?;
-    let rows = super::list_user_teams(&state.pool, auth.user.id, offset as i64, (limit + 1) as i64)
-        .await
-        .map_err(Error::unavailable)?;
+    let rows = codeyard_db_orgs::organizations::teams::list_user_teams(
+        &state.pool,
+        auth.user.id,
+        offset as i64,
+        (limit + 1) as i64,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let more = rows.len() > limit;
     let mut items = Vec::new();
     for team in rows.into_iter().take(limit) {
@@ -577,16 +629,23 @@ async fn user_teams(
         {
             continue;
         }
-        let Some(org) = super::get_public_organization_by_id(&state.pool, team.org_id)
-            .await
-            .map_err(Error::unavailable)?
+        let Some(org) = codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+            &state.pool,
+            team.org_id,
+        )
+        .await
+        .map_err(Error::unavailable)?
         else {
             continue;
         };
         // A team hidden or deleted since the list was read is left out.
-        let Some(public) = super::get_public_team_by_id(&state.pool, auth.user.id, team.id)
-            .await
-            .map_err(Error::unavailable)?
+        let Some(public) = codeyard_db_orgs::organizations::teams::get_public_team_by_id(
+            &state.pool,
+            auth.user.id,
+            team.id,
+        )
+        .await
+        .map_err(Error::unavailable)?
         else {
             continue;
         };
@@ -634,7 +693,7 @@ async fn members(
     let (state, actor, org_id, team) = (&*state, auth.user.id, org.id, public.team.id);
     let (rows, more) = page
         .collect(move |after| async move {
-            let rows = super::list_team_members_by_role(
+            let rows = codeyard_db_orgs::organizations::teams::list_team_members_by_role(
                 &state.pool,
                 actor,
                 org_id,
@@ -704,7 +763,7 @@ async fn team_member(
             }
         })?;
     if method == Method::DELETE {
-        match super::remove_organization_team_member(
+        match codeyard_db_orgs::organizations::teams::remove_organization_team_member(
             &state.pool,
             writer(&auth),
             org.id,
@@ -721,9 +780,13 @@ async fn team_member(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     let (role, membership_state) = if method == Method::PUT {
-        let target_role = super::get_organization_role(&state.pool, user.id, org.id)
-            .await
-            .map_err(Error::unavailable)?;
+        let target_role = codeyard_db_orgs::organizations::membership::get_organization_role(
+            &state.pool,
+            user.id,
+            org.id,
+        )
+        .await
+        .map_err(Error::unavailable)?;
         let input = input(request).await?;
         let mut role = codeyard_db_orgs::organizations::teams::TeamRole::parse(
             string(&input, "role")?.unwrap_or("member"),
@@ -736,7 +799,7 @@ async fn team_member(
                 return Err(Error::missing());
             }
             let invitation = outcome(
-                super::invite_team_member(
+                codeyard_db_orgs::organizations::team_invitations::invite_team_member(
                     &state.pool,
                     writer(&auth),
                     org.id,
@@ -767,7 +830,7 @@ async fn team_member(
             role = codeyard_db_orgs::organizations::teams::TeamRole::Maintainer;
         }
         let row = outcome(
-            super::add_organization_team_member(
+            codeyard_db_orgs::organizations::teams::add_organization_team_member(
                 &state.pool,
                 writer(&auth),
                 org.id,
@@ -783,7 +846,7 @@ async fn team_member(
         let pending = if legacy_member {
             None
         } else {
-            super::pending_team_membership(
+            codeyard_db_orgs::organizations::team_invitations::pending_team_membership(
                 &state.pool,
                 auth.user.id,
                 org.id,
@@ -796,7 +859,7 @@ async fn team_member(
         match pending {
             Some(role) => (role, "pending"),
             None => {
-                let member = super::get_team_member(
+                let member = codeyard_db_orgs::organizations::teams::get_team_member(
                     &state.pool,
                     auth.user.id,
                     org.id,
@@ -840,9 +903,15 @@ async fn invitations(
     let (rows, more) = page
         .collect(move |after| async move {
             let rows = outcome(
-                super::list_team_invitations(&state.pool, actor, org_id, team, batch(after)?)
-                    .await
-                    .map_err(Error::unavailable)?,
+                codeyard_db_orgs::organizations::team_invitations::list_team_invitations(
+                    &state.pool,
+                    actor,
+                    org_id,
+                    team,
+                    batch(after)?,
+                )
+                .await
+                .map_err(Error::unavailable)?,
             )?;
             let next = next_after(&rows, BATCH, |row| row.invitation.id);
             Ok::<_, Error>((rows, next))
@@ -919,7 +988,7 @@ async fn repositories(
     let (state, credential, org_id, team) = (&*state, &auth, org.id, public.team.id);
     let (rows, more) = page
         .collect(move |after| async move {
-            let rows = super::list_public_team_repositories(
+            let rows = codeyard_db_orgs::organizations::teams::list_public_team_repositories(
                 &state.pool,
                 credential.user.id,
                 org_id,
@@ -997,7 +1066,7 @@ async fn repository(
             .map_err(|_| Error::unavailable(()))?,
         };
         outcome(
-            super::grant_organization_team_repository(
+            codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
                 &state.pool,
                 writer(&auth),
                 org.id,
@@ -1011,7 +1080,7 @@ async fn repository(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     if method == Method::DELETE {
-        match super::revoke_organization_team_repository(
+        match codeyard_db_orgs::organizations::teams::revoke_organization_team_repository(
             &state.pool,
             writer(&auth),
             org.id,
@@ -1027,7 +1096,7 @@ async fn repository(
         }
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let grant = super::get_public_team_repository(
+    let grant = codeyard_db_orgs::organizations::teams::get_public_team_repository(
         &state.pool,
         auth.user.id,
         org.id,

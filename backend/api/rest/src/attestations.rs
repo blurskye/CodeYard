@@ -52,10 +52,13 @@ fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
 
 async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Response> {
     let (org, repo, repo_chrome, title, base) = if let Some(name) = params.get("org") {
-        let org = super::get_public_organization(&ctx.state.pool, name)
-            .await
-            .map_err(|error| failure(ctx, error))?
-            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Organization not found."))?;
+        let org = codeyard_db_orgs::organizations::profiles::get_public_organization(
+            &ctx.state.pool,
+            name,
+        )
+        .await
+        .map_err(|error| failure(ctx, error))?
+        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Organization not found."))?;
         (
             Some(Owner::Organization(org.id)),
             None,
@@ -291,7 +294,12 @@ async fn remove(
     };
     // Recheck the exact route scope, not just whether the actor can write some other repository.
     let org = if let Some(org) = params.get("org") {
-        match super::get_public_organization(&ctx.state.pool, org).await {
+        match codeyard_db_orgs::organizations::profiles::get_public_organization(
+            &ctx.state.pool,
+            org,
+        )
+        .await
+        {
             Ok(Some(org)) => Owner::Organization(org.id),
             Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
             Err(error) => return failure(&ctx, error),

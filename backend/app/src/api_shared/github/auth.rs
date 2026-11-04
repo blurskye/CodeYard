@@ -14,10 +14,14 @@ pub struct Authentication {
     pub user: User,
 }
 
+tokio::task_local! {
+    pub static REQUEST_CONTEXT: std::sync::Arc<RequestContext>;
+}
+
 pub struct RequestContext {
-    authorization: Vec<axum::http::HeaderValue>,
-    authentication: tokio::sync::OnceCell<Option<Authentication>>,
-    public_only: std::sync::atomic::AtomicBool,
+    pub authorization: Vec<axum::http::HeaderValue>,
+    pub authentication: tokio::sync::OnceCell<Option<Authentication>>,
+    pub public_only: std::sync::atomic::AtomicBool,
 }
 
 pub fn context(headers: &HeaderMap) -> Option<std::sync::Arc<RequestContext>> {

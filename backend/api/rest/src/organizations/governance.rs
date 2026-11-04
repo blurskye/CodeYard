@@ -1,7 +1,5 @@
 //! Exceptional audited ingress: explicit IDs, current verified staff, no tenant reads.
 
-use super::list_ownerless_organizations;
-use super::recover_suspended_organization_owner;
 use crate::organizations::organization::Fields;
 use crate::organizations::INDEX;
 use axum::extract::rejection::FormRejection;
@@ -14,6 +12,8 @@ use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations::recovery::list_ownerless_organizations;
+use codeyard_db_orgs::organizations::recovery::recover_suspended_organization_owner;
 use std::sync::Arc;
 
 pub(super) const RECOVERY: &str = "/admin/organizations/recovery";

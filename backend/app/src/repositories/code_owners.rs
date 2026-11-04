@@ -2,7 +2,7 @@
 //! Parsing and matching are pure. Resolving owners reads users and teams.
 use crate::cluster::context::NodeContext;
 use crate::repositories::store::repo_store;
-use crate::storage::range::ByteRange;
+use crate::storage::range::ByteRange as BlobRange;
 use codeyard_db_core::models::Repository;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
@@ -360,7 +360,10 @@ pub async fn resolve_owners<'a>(
         let Some(org_id) = repository.owner_org_id else {
             break;
         };
-        for (team, id) in super::team_members_by_names(pool, org_id, teams).await? {
+        for (team, id) in
+            codeyard_db_orgs::organizations::teams::team_members_by_names(pool, org_id, teams)
+                .await?
+        {
             members += 1;
             anyhow::ensure!(
                 members <= MAX_REVIEWERS,

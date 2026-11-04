@@ -4,6 +4,7 @@ use super::{
     *,
 };
 use codeyard_db_repos::projects as store;
+use codeyard_model::node_id;
 
 macro_rules! document {
     ($name:literal) => {

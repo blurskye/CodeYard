@@ -202,7 +202,11 @@ async fn catalog(
                     value["updated_at"] = json!(user.updated_at.to_rfc3339());
                     value
                 } else {
-                    let Some(org) = super::get_public_organization_by_id(&state.pool, id)
+                    let Some(org) =
+                        codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+                            &state.pool,
+                            id,
+                        )
                         .await
                         .map_err(Error::unavailable)?
                     else {

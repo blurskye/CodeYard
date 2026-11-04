@@ -1,5 +1,6 @@
 //! Payloads in the shape GitHub documents for each event, as far as this data model has the
 //! fields. Fields without a Codeyard counterpart are left out rather than invented.
+use codeyard_model::node_id;
 
 use codeyard_db_core::models::CommitComment;
 use codeyard_db_core::models::DeployKey;

@@ -7,7 +7,7 @@ use codeyard_app::repositories::store::types::GitSession;
 use codeyard_app::repositories::store::types::MergeMethod;
 use codeyard_app::repositories::store::types::MergeRequest;
 use codeyard_app::repositories::store::types::RestackMove;
-use codeyard_app::storage::range::ByteRange;
+use codeyard_app::storage::range::ByteRange as BlobRange;
 use uuid::Uuid;
 
 fn prepared(sha: &str) -> codeyard_app::repositories::store::editor::PreparedFile {

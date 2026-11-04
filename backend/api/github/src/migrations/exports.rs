@@ -91,7 +91,7 @@ async fn scope(
     }
     let org = match params.get("org") {
         Some(name) => Some(
-            super::get_public_organization(&state.pool, name)
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, name)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?
@@ -179,10 +179,13 @@ async fn document(
             .map(|time| time.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
     };
     let owner = if let Some(id) = row.owner_org_id {
-        let org = super::get_public_organization_by_id(&state.pool, id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org = codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+            &state.pool,
+            id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
         let mut owner =
             codeyard_app::webhooks::payloads::person(&codeyard_app::webhooks::payloads::Person {
                 id,

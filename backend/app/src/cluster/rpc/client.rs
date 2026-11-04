@@ -14,6 +14,7 @@ use crate::cluster::rpc::wire::TIMEOUT;
 use crate::cluster::rpc::RpcHandler;
 use crate::cluster::transport::NodeAddress;
 use anyhow::Result;
+use codeyard_db_core::limits::MAX_JSON;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use tokio::io::AsyncWriteExt;

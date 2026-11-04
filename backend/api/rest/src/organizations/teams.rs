@@ -173,18 +173,33 @@ pub(super) async fn apply(
     use crate::organizations::organization::unit;
     let pool = &ctx.state.pool;
     let result = match command {
-        Command::Create(input) => {
-            super::create_organization_team(pool, ctx.database_actor(actor), org, &input)
-                .await
-                .map(unit)
-        }
+        Command::Create(input) => codeyard_db_orgs::organizations::teams::create_organization_team(
+            pool,
+            ctx.database_actor(actor),
+            org,
+            &input,
+        )
+        .await
+        .map(unit),
         Command::Edit { team, profile } => {
-            super::update_organization_team(pool, ctx.database_actor(actor), org, team, &profile)
-                .await
-                .map(unit)
+            codeyard_db_orgs::organizations::teams::update_organization_team(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                team,
+                &profile,
+            )
+            .await
+            .map(unit)
         }
         Command::Delete { team } => {
-            super::delete_organization_team(pool, ctx.database_actor(actor), org, team).await
+            codeyard_db_orgs::organizations::teams::delete_organization_team(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                team,
+            )
+            .await
         }
         Command::AddMember {
             team,
@@ -194,19 +209,13 @@ pub(super) async fn apply(
             let Some(user) = target(ctx, &username).await? else {
                 return Ok(OrganizationOutcome::Denied);
             };
-            match super::get_organization_role(pool, user, org).await {
-                Ok(OrganizationOutcome::Applied(_)) => super::add_organization_team_member(
-                    pool,
-                    ctx.database_actor(actor),
-                    org,
-                    team,
-                    user,
-                    role,
-                )
-                .await
-                .map(unit),
-                Ok(_) => {
-                    let result = super::invite_team_member(
+            match codeyard_db_orgs::organizations::membership::get_organization_role(
+                pool, user, org,
+            )
+            .await
+            {
+                Ok(OrganizationOutcome::Applied(_)) => {
+                    codeyard_db_orgs::organizations::teams::add_organization_team_member(
                         pool,
                         ctx.database_actor(actor),
                         org,
@@ -214,7 +223,20 @@ pub(super) async fn apply(
                         user,
                         role,
                     )
-                    .await;
+                    .await
+                    .map(unit)
+                }
+                Ok(_) => {
+                    let result =
+                        codeyard_db_orgs::organizations::team_invitations::invite_team_member(
+                            pool,
+                            ctx.database_actor(actor),
+                            org,
+                            team,
+                            user,
+                            role,
+                        )
+                        .await;
                     if let Ok(OrganizationOutcome::Applied(invitation)) = &result {
                         codeyard_notifications::create::organization_invitation(
                             pool,
@@ -230,14 +252,20 @@ pub(super) async fn apply(
             }
         }
         Command::RemoveMember { team, user } => {
-            super::remove_organization_team_member(pool, ctx.database_actor(actor), org, team, user)
-                .await
+            codeyard_db_orgs::organizations::teams::remove_organization_team_member(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                team,
+                user,
+            )
+            .await
         }
         Command::Grant {
             team,
             repo,
             permission,
-        } => super::grant_organization_team_repository(
+        } => codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
             pool,
             ctx.database_actor(actor),
             org,
@@ -248,7 +276,7 @@ pub(super) async fn apply(
         .await
         .map(unit),
         Command::Revoke { team, repo } => {
-            super::revoke_organization_team_repository(
+            codeyard_db_orgs::organizations::teams::revoke_organization_team_repository(
                 pool,
                 ctx.database_actor(actor),
                 org,
@@ -302,7 +330,14 @@ async fn repository_rows(
     org: i64,
     page: OrganizationPage,
 ) -> Result<Vec<OrganizationRepository>, Response> {
-    match super::list_organization_repositories(&ctx.state.pool, actor, org, page).await {
+    match codeyard_db_orgs::organizations::access::list_organization_repositories(
+        &ctx.state.pool,
+        actor,
+        org,
+        page,
+    )
+    .await
+    {
         Ok(OrganizationOutcome::Applied(rows)) => Ok(rows),
         Ok(_) => Err(not_found(ctx)),
         Err(_) => Err(unavailable(ctx)),
@@ -330,7 +365,7 @@ pub(super) async fn detail(
         .ok_or_else(|| invalid(ctx))?;
     // A one-row scoped seek works independently of the teams-list cursor. Never
     // scan/truncate all teams or use an unscoped persistence read for this ID.
-    let selected = match super::list_organization_teams(
+    let selected = match codeyard_db_orgs::organizations::teams::list_organization_teams(
         &ctx.state.pool,
         actor,
         org,
@@ -351,22 +386,12 @@ pub(super) async fn detail(
     let (repositories_cursor, repo_page) =
         crate::organizations::organization::cursor(ctx, "team_repositories_after")
             .ok_or_else(|| invalid(ctx))?;
-    let members =
-        match super::list_organization_team_members(&ctx.state.pool, actor, org, team, member_page)
-            .await
-        {
-            Ok(OrganizationOutcome::Applied(values)) => values,
-            Ok(_) => return Err(not_found(ctx)),
-            Err(_) => return Err(unavailable(ctx)),
-        };
-    // This operation filters foreign/inactive/private repositories by effective
-    // actor READ before LIMIT; team visibility alone never reveals grant IDs.
-    let repositories = match super::list_organization_team_repositories(
+    let members = match codeyard_db_orgs::organizations::teams::list_organization_team_members(
         &ctx.state.pool,
         actor,
         org,
         team,
-        repo_page,
+        member_page,
     )
     .await
     {
@@ -374,6 +399,22 @@ pub(super) async fn detail(
         Ok(_) => return Err(not_found(ctx)),
         Err(_) => return Err(unavailable(ctx)),
     };
+    // This operation filters foreign/inactive/private repositories by effective
+    // actor READ before LIMIT; team visibility alone never reveals grant IDs.
+    let repositories =
+        match codeyard_db_orgs::organizations::teams::list_organization_team_repositories(
+            &ctx.state.pool,
+            actor,
+            org,
+            team,
+            repo_page,
+        )
+        .await
+        {
+            Ok(OrganizationOutcome::Applied(values)) => values,
+            Ok(_) => return Err(not_found(ctx)),
+            Err(_) => return Err(unavailable(ctx)),
+        };
     Ok(Some(view::TeamDetail {
         team: crate::organizations::organization::team_view(selected.team, selected.member_count),
         more_members: members.len() as i64 == crate::organizations::organization::PAGE_LIMIT,
@@ -427,16 +468,21 @@ pub(super) async fn public_show(
         return public_team_not_found(&ctx);
     };
     let pool = &ctx.state.pool;
-    let org = match super::get_public_organization(pool, &name).await {
+    let org = match codeyard_db_orgs::organizations::profiles::get_public_organization(pool, &name)
+        .await
+    {
         Ok(Some(org)) => org,
         Ok(None) => return public_team_not_found(&ctx),
         Err(_) => return unavailable(&ctx),
     };
-    let public = match super::get_public_team(pool, actor, org.id, &slug).await {
-        Ok(Some(public)) => public,
-        Ok(None) => return public_team_not_found(&ctx),
-        Err(_) => return unavailable(&ctx),
-    };
+    let public =
+        match codeyard_db_orgs::organizations::teams::get_public_team(pool, actor, org.id, &slug)
+            .await
+        {
+            Ok(Some(public)) => public,
+            Ok(None) => return public_team_not_found(&ctx),
+            Err(_) => return unavailable(&ctx),
+        };
     let show_repositories = ctx
         .query
         .get("tab")
@@ -447,12 +493,15 @@ pub(super) async fn public_show(
     };
     let team_id = public.team.id;
     let (members, repositories, more, after) = if show_repositories {
-        let rows =
-            match super::list_public_team_repositories(pool, actor, org.id, team_id, page).await {
-                Ok(Some(rows)) => rows,
-                Ok(None) => return public_team_not_found(&ctx),
-                Err(_) => return unavailable(&ctx),
-            };
+        let rows = match codeyard_db_orgs::organizations::teams::list_public_team_repositories(
+            pool, actor, org.id, team_id, page,
+        )
+        .await
+        {
+            Ok(Some(rows)) => rows,
+            Ok(None) => return public_team_not_found(&ctx),
+            Err(_) => return unavailable(&ctx),
+        };
         let more = rows.len() as i64 == crate::organizations::organization::PAGE_LIMIT;
         let after = rows.last().map_or(after, |row| row.id);
         let repositories: Vec<view::RepositoryGrant> = rows
@@ -466,7 +515,11 @@ pub(super) async fn public_show(
             .collect();
         (Vec::new(), repositories, more, after)
     } else {
-        let rows = match super::list_public_team_members(pool, actor, org.id, team_id, page).await {
+        let rows = match codeyard_db_orgs::organizations::teams::list_public_team_members(
+            pool, actor, org.id, team_id, page,
+        )
+        .await
+        {
             Ok(Some(rows)) => rows,
             Ok(None) => return public_team_not_found(&ctx),
             Err(_) => return unavailable(&ctx),

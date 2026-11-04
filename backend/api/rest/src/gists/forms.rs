@@ -1,3 +1,4 @@
+use super::*;
 use crate::gists::credential;
 use crate::gists::error;
 use crate::gists::number;

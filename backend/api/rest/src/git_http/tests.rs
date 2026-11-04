@@ -1,3 +1,4 @@
+use super::*;
 use crate::git_http::authorize_repository;
 use crate::git_http::info_refs;
 use crate::git_http::repository;

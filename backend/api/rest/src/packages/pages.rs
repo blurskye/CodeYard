@@ -93,10 +93,13 @@ async fn record_owner(ctx: &PageContext, package: &Package) -> Result<Owner, Res
             .map_err(|error| failure(ctx, error))?
             .map(|user| user.username)
     } else if let Some(org) = package.owner_org_id {
-        super::get_public_organization_by_id(&ctx.state.pool, org)
-            .await
-            .map_err(|error| failure(ctx, error))?
-            .map(|org| org.name)
+        codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+            &ctx.state.pool,
+            org,
+        )
+        .await
+        .map_err(|error| failure(ctx, error))?
+        .map(|org| org.name)
     } else {
         None
     }

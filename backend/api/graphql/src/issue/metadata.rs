@@ -1,4 +1,4 @@
-use super::search;
+use super::*;
 use crate::arguments::Arguments;
 use crate::connection::Page;
 use crate::issue::list;

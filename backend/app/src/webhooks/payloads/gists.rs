@@ -10,6 +10,7 @@ use codeyard_git::gist_types::GistRevision;
 use codeyard_git::objects::TreeObjectEntry;
 use codeyard_model::http_config::http_clone_base;
 use codeyard_model::http_config::link_origin;
+use codeyard_model::node_id;
 use codeyard_model::urls::api_url;
 use serde_json::json;
 use serde_json::Value;

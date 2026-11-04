@@ -1,4 +1,5 @@
 //! Typed mutation entry points; implementations delegate to the shared domain operations.
+use super::*;
 use crate::bindings::fields;
 use crate::bindings::Object;
 

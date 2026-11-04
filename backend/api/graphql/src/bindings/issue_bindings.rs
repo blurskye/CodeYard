@@ -1,4 +1,5 @@
 //! Bindings for issue management and relationship mutations.
+use super::*;
 use crate::bindings::connection;
 use crate::bindings::fields;
 use crate::bindings::issue_payload;

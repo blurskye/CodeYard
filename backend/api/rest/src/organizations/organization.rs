@@ -273,7 +273,13 @@ pub(super) async fn selected(
     actor: i64,
     org: i64,
 ) -> Result<OrganizationMetadata, Response> {
-    match super::get_organization_metadata(&ctx.state.pool, actor, org).await {
+    match codeyard_db_orgs::organizations::profiles::get_organization_metadata(
+        &ctx.state.pool,
+        actor,
+        org,
+    )
+    .await
+    {
         Ok(Applied(value)) => Ok(value),
         Ok(_) => Err(not_found(ctx)),
         Err(_) => Err(unavailable(ctx)),
@@ -348,7 +354,13 @@ pub(super) async fn respond_with_hook_draft(
     // The same role check every write makes; the page only chooses which controls to show.
     let can_recover = ctx.administrator().is_some();
     let (can_manage, is_owner) = match org {
-        Some(org) => match super::get_organization_role(&ctx.state.pool, actor, org).await {
+        Some(org) => match codeyard_db_orgs::organizations::membership::get_organization_role(
+            &ctx.state.pool,
+            actor,
+            org,
+        )
+        .await
+        {
             Ok(Applied(role)) => (administers(role), role == OrgRole::Owner),
             Ok(_) => return not_found(ctx),
             Err(_) => return unavailable(ctx),
@@ -395,7 +407,13 @@ pub(super) async fn respond_with_hook_draft(
     // Only the overview offers organization deletion.
     let owned_repositories = match org {
         Some(org) if is_owner && tab == "overview" => {
-            match super::count_organization_repositories(&ctx.state.pool, actor, org).await {
+            match codeyard_db_orgs::organizations::deletion::count_organization_repositories(
+                &ctx.state.pool,
+                actor,
+                org,
+            )
+            .await
+            {
                 Ok(Applied(count)) => count,
                 _ => return unavailable(ctx),
             }
@@ -418,7 +436,13 @@ pub(super) async fn respond_with_hook_draft(
     // The picker needs names only, so profile text stays out of refusal pages.
     let mut ownerless_next = None;
     let ownerless_organizations = if org.is_none() && can_recover {
-        match super::list_ownerless_organizations(&ctx.state.pool, actor, ownerless_page).await {
+        match codeyard_db_orgs::organizations::recovery::list_ownerless_organizations(
+            &ctx.state.pool,
+            actor,
+            ownerless_page,
+        )
+        .await
+        {
             Ok(Applied(values)) => {
                 if values.len() as i64 == PAGE_LIMIT {
                     ownerless_next = values.last().map(|v|format!("{INDEX}?after={after}&invitations_after={invitations_after}&ownerless_after={}",v.id));
@@ -544,8 +568,13 @@ pub(super) async fn respond_with_hook_draft(
         model.teams_cursor = team_after;
         if model.tab == "members" {
             model.members =
-                match super::list_organization_members(&ctx.state.pool, actor, org, member_page)
-                    .await
+                match codeyard_db_orgs::organizations::membership::list_organization_members(
+                    &ctx.state.pool,
+                    actor,
+                    org,
+                    member_page,
+                )
+                .await
                 {
                     Ok(Applied(values)) => {
                         model.members_after = values.last().map(|v| v.id).unwrap_or(member_after);
@@ -569,7 +598,7 @@ pub(super) async fn respond_with_hook_draft(
                 Ok(value) => value,
                 Err(response) => return response,
             };
-            model.teams = match super::list_organization_teams(
+            model.teams = match codeyard_db_orgs::organizations::teams::list_organization_teams(
                 &ctx.state.pool,
                 actor,
                 org,
@@ -778,25 +807,28 @@ pub(super) async fn respond_with_hook_draft(
             let Some((outside_after, _)) = cursor(ctx, "outside_after") else {
                 return invalid(ctx);
             };
-            model.pending_invitations = match super::list_organization_invitations(
-                &ctx.state.pool,
-                actor,
-                org,
-                invitations_page,
-            )
-            .await
-            {
-                Ok(Applied(values)) => {
-                    if values.len() as i64 == PAGE_LIMIT {
-                        model.pending_invitations_next = values.last().map(|v|format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&failed_invitations_after={failed_after}&invitations_after={}",v.id));
+            model.pending_invitations =
+                match codeyard_db_orgs::organizations::invitations::list_organization_invitations(
+                    &ctx.state.pool,
+                    actor,
+                    org,
+                    invitations_page,
+                )
+                .await
+                {
+                    Ok(Applied(values)) => {
+                        if values.len() as i64 == PAGE_LIMIT {
+                            model.pending_invitations_next = values.last().map(|v|format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&failed_invitations_after={failed_after}&invitations_after={}",v.id));
+                        }
+                        match crate::organizations::membership::project_invitations(ctx, values)
+                            .await
+                        {
+                            Ok(invitations) => invitations,
+                            Err(response) => return response,
+                        }
                     }
-                    match crate::organizations::membership::project_invitations(ctx, values).await {
-                        Ok(invitations) => invitations,
-                        Err(response) => return response,
-                    }
-                }
-                _ => return unavailable(ctx),
-            };
+                    _ => return unavailable(ctx),
+                };
             if is_owner {
                 let Some((blocks_after, _)) = cursor(ctx, "blocks_after") else {
                     return invalid(ctx);
@@ -854,29 +886,32 @@ pub(super) async fn respond_with_hook_draft(
                 after: failed_after,
                 ..Default::default()
             };
-            model.failed_invitations = match super::invitation_page(
-                &ctx.state.pool,
-                actor,
-                org,
-                &filter,
-                (0, PAGE_LIMIT),
-            )
-            .await
-            {
-                Ok(Applied(values)) => {
-                    if values.len() as i64 == PAGE_LIMIT {
-                        model.failed_invitations_next = values.last().map(|v| format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={}", v.id));
+            model.failed_invitations =
+                match codeyard_db_orgs::organizations::invitations::invitation_page(
+                    &ctx.state.pool,
+                    actor,
+                    org,
+                    &filter,
+                    (0, PAGE_LIMIT),
+                )
+                .await
+                {
+                    Ok(Applied(values)) => {
+                        if values.len() as i64 == PAGE_LIMIT {
+                            model.failed_invitations_next = values.last().map(|v| format!("{INDEX}/{org}?tab=members&members_after={member_after}&teams_after={team_after}&invitations_after={invitations_after}&failed_invitations_after={}", v.id));
+                        }
+                        match crate::organizations::membership::project_invitations(ctx, values)
+                            .await
+                        {
+                            Ok(invitations) => invitations,
+                            Err(response) => return response,
+                        }
                     }
-                    match crate::organizations::membership::project_invitations(ctx, values).await {
-                        Ok(invitations) => invitations,
-                        Err(response) => return response,
-                    }
-                }
-                _ => return unavailable(ctx),
-            };
+                    _ => return unavailable(ctx),
+                };
         }
     } else {
-        model.invitations = match super::list_received_organization_invitations(
+        model.invitations = match codeyard_db_orgs::organizations::invitations::list_received_organization_invitations(
             &ctx.state.pool,
             actor,
             invitations_page,
@@ -907,7 +942,13 @@ pub(super) async fn respond_with_hook_draft(
             return invalid(ctx);
         }
         model.organizations =
-            match super::list_actor_organizations(&ctx.state.pool, actor, page).await {
+            match codeyard_db_orgs::organizations::profiles::list_actor_organizations(
+                &ctx.state.pool,
+                actor,
+                page,
+            )
+            .await
+            {
                 Ok(Applied(values)) => {
                     model.after = values.last().map(|v| v.id).unwrap_or(after);
                     model.more_organizations = values.len() as i64 == PAGE_LIMIT;
@@ -1079,9 +1120,15 @@ async fn apply(
             let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Session(
                 ctx.session_id.as_deref().unwrap_or(""),
             );
-            super::update_organization_profile(pool, actor, &credential, org, &profile)
-                .await
-                .map(unit)
+            codeyard_db_orgs::organizations::profiles::update_organization_profile(
+                pool,
+                actor,
+                &credential,
+                org,
+                &profile,
+            )
+            .await
+            .map(unit)
         }
         Command::Membership(command) => {
             // An unknown username is the one Missing that the form reports by name.
@@ -1251,10 +1298,14 @@ pub(super) async fn mutate(
     );
     let organization_deleted = matches!(&command, Command::Delete);
     let outcome = match command {
-        Command::Create(input) => super::create_organization(&ctx.state.pool, actor, &input)
-            .await
-            .map(unit)
-            .map_err(|_| unavailable(&ctx)),
+        Command::Create(input) => codeyard_db_orgs::organizations::profiles::create_organization(
+            &ctx.state.pool,
+            actor,
+            &input,
+        )
+        .await
+        .map(unit)
+        .map_err(|_| unavailable(&ctx)),
         command => {
             apply(
                 &ctx,

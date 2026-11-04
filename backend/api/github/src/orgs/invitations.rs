@@ -73,9 +73,10 @@ async fn documents(
         .iter()
         .map(|invite| invite.id)
         .collect::<Vec<_>>();
-    let counts = super::invitation_team_counts(&state.pool, &ids)
-        .await
-        .map_err(Error::unavailable)?;
+    let counts =
+        codeyard_db_orgs::organizations::invitations::invitation_team_counts(&state.pool, &ids)
+            .await
+            .map_err(Error::unavailable)?;
     Ok(invitations
         .iter()
         .map(|invite| {
@@ -125,7 +126,7 @@ async fn create(
         ));
     }
     let invitation = outcome(
-        super::create_organization_invitation(
+        codeyard_db_orgs::organizations::invitations::create_organization_invitation(
             &state.pool,
             actor.database_actor(),
             org.id,
@@ -166,7 +167,7 @@ async fn listing(
     let (org, actor) = context(state, headers, name, false).await?;
     let (offset, limit) = page.window()?;
     let invitations = outcome(
-        super::invitation_page(
+        codeyard_db_orgs::organizations::invitations::invitation_page(
             &state.pool,
             actor.user.id,
             org.id,
@@ -262,7 +263,7 @@ async fn cancel(
 ) -> Result<StatusCode> {
     let (org, actor) = context(&state, &headers, &params["org"], true).await?;
     outcome(
-        super::cancel_invitation_id(
+        codeyard_db_orgs::organizations::invitations::cancel_invitation_id(
             &state.pool,
             actor.database_actor(),
             org.id,
@@ -284,7 +285,7 @@ async fn teams(
     let (org, actor) = context(&state, &headers, &params["org"], false).await?;
     let (offset, limit) = page.window()?;
     let teams = outcome(
-        super::invitation_teams(
+        codeyard_db_orgs::organizations::invitations::invitation_teams(
             &state.pool,
             actor.user.id,
             org.id,

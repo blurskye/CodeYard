@@ -146,10 +146,13 @@ async fn list(
                 }
             }
             Listing::Organization | Listing::UserOrganization => {
-                let org = super::get_public_organization(&state.pool, param("org")?)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .ok_or_else(Error::missing)?;
+                let org = codeyard_db_orgs::organizations::profiles::get_public_organization(
+                    &state.pool,
+                    param("org")?,
+                )
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
                 let public = if matches!(listing, Listing::UserOrganization) {
                     let user = codeyard_db_identity::users::accounts::get_user_by_username(
                         &state.pool,
@@ -165,9 +168,13 @@ async fn list(
                         ));
                     }
                     if !matches!(
-                        super::get_organization_metadata(&state.pool, user.id, org.id)
-                            .await
-                            .map_err(Error::unavailable)?,
+                        codeyard_db_orgs::organizations::profiles::get_organization_metadata(
+                            &state.pool,
+                            user.id,
+                            org.id
+                        )
+                        .await
+                        .map_err(Error::unavailable)?,
                         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
                     ) {
                         return Err(Error::missing());

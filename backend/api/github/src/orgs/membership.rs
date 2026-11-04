@@ -73,7 +73,7 @@ async fn set(
     .map_err(Error::unavailable)?;
     let membership = if active.is_empty() {
         let invitation = outcome(
-            super::set_organization_invitation_by_owner(
+            codeyard_db_orgs::organizations::invitations::set_organization_invitation_by_owner(
                 &state.pool,
                 actor.database_actor(),
                 org.id,
@@ -93,7 +93,7 @@ async fn set(
         membership_document(&org, &user, &invitation.role, "pending")
     } else {
         let member = outcome(
-            super::update_organization_member_role_by_owner(
+            codeyard_db_orgs::organizations::membership::update_organization_member_role_by_owner(
                 &state.pool,
                 actor.database_actor(),
                 org.id,
@@ -124,7 +124,7 @@ async fn remove(
         .await
         .map_err(Error::unavailable)?
         .map_or(-1, |user| user.id);
-    let result = super::remove_member_or_invitation_by_owner(
+    let result = codeyard_db_orgs::organizations::membership::remove_member_or_invitation_by_owner(
         &state.pool,
         actor.database_actor(),
         org.id,

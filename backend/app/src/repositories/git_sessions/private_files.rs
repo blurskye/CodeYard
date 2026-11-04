@@ -10,6 +10,8 @@ use std::fs::File;
 use std::fs::Metadata;
 use std::fs::OpenOptions;
 use std::io::ErrorKind;
+use std::os::fd::AsRawFd;
+use std::os::unix::fs::DirBuilderExt;
 use std::os::unix::fs::FileTypeExt;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::fs::OpenOptionsExt;

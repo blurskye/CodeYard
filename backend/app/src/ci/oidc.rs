@@ -1,6 +1,9 @@
 //! OIDC identities come from admitted workflows and live job credentials, never request claims.
 use anyhow::Context;
 use base64::Engine;
+use rsa::pkcs8::DecodePrivateKey;
+use rsa::signature::{SignatureEncoding, Signer};
+use rsa::traits::PublicKeyParts;
 
 use anyhow::Result;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;

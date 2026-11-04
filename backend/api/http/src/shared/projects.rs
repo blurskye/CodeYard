@@ -85,7 +85,7 @@ pub async fn sidebar(
                     .username
             }
             Owner::Organization(id) => {
-                super::get_public_organization_by_id(pool, id)
+                codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(pool, id)
                     .await?
                     .ok_or(codeyard_model::project_query::Refusal::Missing)?
                     .name
@@ -113,9 +113,12 @@ pub async fn sidebar(
 
 pub async fn owner(ctx: &PageContext, params: &Params) -> anyhow::Result<(Owner, String, String)> {
     if let Some(name) = params.get("org") {
-        let org = super::get_public_organization(&ctx.state.pool, name)
-            .await?
-            .ok_or(codeyard_model::project_query::Refusal::Missing)?;
+        let org = codeyard_db_orgs::organizations::profiles::get_public_organization(
+            &ctx.state.pool,
+            name,
+        )
+        .await?
+        .ok_or(codeyard_model::project_query::Refusal::Missing)?;
         let base = format!(
             "/orgs/{}/projects",
             codeyard_webui::encode_component(&org.name)

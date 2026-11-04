@@ -23,7 +23,7 @@ use codeyard_app::repositories::store::editor::MAX_EDITOR_BYTES;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_app::repositories::store::types::BlobBytes;
 use codeyard_app::repositories::store::RepoStore;
-use codeyard_app::storage::range::ByteRange;
+use codeyard_app::storage::range::ByteRange as BlobRange;
 use codeyard_git::error::RepoError;
 use codeyard_git::repository::PREVIEW_BYTES;
 use codeyard_git::repository::PREVIEW_LINES;

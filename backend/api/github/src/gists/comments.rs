@@ -1,3 +1,4 @@
+use super::*;
 use crate::gists::create;
 use crate::gists::failure;
 use crate::gists::handlers;

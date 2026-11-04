@@ -66,13 +66,15 @@ fn unavailable<E>(_: E) -> HookError {
 
 /// Maps a refused hook write to what the form or API shows.
 fn write_error(owner: HookOwner, error: anyhow::Error) -> HookError {
-    if let Some(invalid) = error.downcast_ref::<hooks::InvalidEvents>() {
+    if let Some(invalid) =
+        error.downcast_ref::<codeyard_db_core::queries::webhooks::InvalidEvents>()
+    {
         HookError::Invalid(invalid.0)
     } else if error.is::<hooks::HookLimit>() {
         HookError::Invalid(
             "This owner's webhook limit has been reached. Remove an existing hook first.",
         )
-    } else if error.is::<hooks::HookExists>() {
+    } else if error.is::<codeyard_db_core::queries::webhooks::HookExists>() {
         HookError::Invalid(match owner {
             HookOwner::Repository(_) => "Hook already exists on this repository",
             HookOwner::Organization(_) => "Hook already exists on this organization",
@@ -96,7 +98,7 @@ pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<
                 .map_err(unavailable)?
         }
         HookOwner::Organization(org) => matches!(
-            super::get_organization_role(pool, actor.id, org)
+            codeyard_db_orgs::organizations::membership::get_organization_role(pool, actor.id, org)
                 .await
                 .map_err(unavailable)?,
             OrganizationOutcome::Applied(OrgRole::Owner)
@@ -237,7 +239,7 @@ pub async fn save_with_revision(
                     "Choose a new secret or remove the saved secret",
                 ));
             }
-            let mut patch = hooks::WebhookPatch::from(&fields);
+            let mut patch = codeyard_db_core::queries::webhooks::WebhookPatch::from(&fields);
             patch.expected_updated = expected_updated;
             patch.clear_secret = form.clear_secret;
             patch.clear_password = form.clear_password;
@@ -275,7 +277,7 @@ pub async fn update(
     patch: &HookPatch,
 ) -> Result<(), HookError> {
     authorize(pool, actor, owner).await?;
-    let fields = hooks::WebhookPatch {
+    let fields = codeyard_db_core::queries::webhooks::WebhookPatch {
         username: patch
             .username
             .as_deref()
@@ -510,10 +512,11 @@ async fn ping_payload(
             )
         }
         HookOwner::Organization(id) => {
-            let org = super::get_public_organization_by_id(pool, id)
-                .await
-                .map_err(unavailable)?
-                .ok_or(HookError::NotFound)?;
+            let org =
+                codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(pool, id)
+                    .await
+                    .map_err(unavailable)?
+                    .ok_or(HookError::NotFound)?;
             payload["organization"] = crate::webhooks::payloads::organization(&org);
             codeyard_model::urls::api_url(&format!(
                 "/orgs/{}/hooks/{}",

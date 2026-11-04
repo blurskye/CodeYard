@@ -132,7 +132,7 @@ pub(super) fn outcome<T>(value: OrganizationOutcome<T>) -> Result<T> {
 }
 
 pub(super) async fn target(state: &AppState, name: &str) -> Result<Organization> {
-    super::get_public_organization(&state.pool, name)
+    codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, name)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)
@@ -151,9 +151,13 @@ async fn owner_actor(
         .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(state, name).await?;
     let role = outcome(
-        super::get_organization_role(&state.pool, actor.user.id, org.id)
-            .await
-            .map_err(Error::unavailable)?,
+        codeyard_db_orgs::organizations::membership::get_organization_role(
+            &state.pool,
+            actor.user.id,
+            org.id,
+        )
+        .await
+        .map_err(Error::unavailable)?,
     )?;
     if role != codeyard_db_core::models::OrgRole::Owner {
         return Err(Error::new(
@@ -433,9 +437,13 @@ async fn check(
     if !public {
         let is_member = if let Some(actor) = &actor {
             matches!(
-                super::get_organization_role(&state.pool, actor.user.id, org.id)
-                    .await
-                    .map_err(Error::unavailable)?,
+                codeyard_db_orgs::organizations::membership::get_organization_role(
+                    &state.pool,
+                    actor.user.id,
+                    org.id
+                )
+                .await
+                .map_err(Error::unavailable)?,
                 OrganizationOutcome::Applied(_)
             )
         } else {
@@ -576,9 +584,13 @@ async fn membership(
     let org = target(&state, &name).await?;
     // Unlike /user/memberships, this read requires membership even for an invitee.
     if !matches!(
-        super::get_organization_role(&state.pool, actor.user.id, org.id)
-            .await
-            .map_err(Error::unavailable)?,
+        codeyard_db_orgs::organizations::membership::get_organization_role(
+            &state.pool,
+            actor.user.id,
+            org.id
+        )
+        .await
+        .map_err(Error::unavailable)?,
         OrganizationOutcome::Applied(_)
     ) {
         return Err(Error::missing());
@@ -641,10 +653,13 @@ async fn own_memberships(
     let has_next = rows.len() > limit;
     let mut values = Vec::new();
     for row in rows.into_iter().take(limit) {
-        let org = super::get_public_organization_by_id(&state.pool, row.org_id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org = codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+            &state.pool,
+            row.org_id,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
         values.push(membership_document(
             &org,
             &actor.user,
@@ -674,9 +689,14 @@ async fn accept(
     }
     let org = target(&state, &name).await?;
     let member = outcome(
-        super::accept_organization_invitation(&state.pool, actor.database_actor(), org.id, None)
-            .await
-            .map_err(Error::unavailable)?,
+        codeyard_db_orgs::organizations::invitations::accept_organization_invitation(
+            &state.pool,
+            actor.database_actor(),
+            org.id,
+            None,
+        )
+        .await
+        .map_err(Error::unavailable)?,
     )?;
     Ok(Json(membership_document(
         &org,

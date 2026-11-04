@@ -1,6 +1,7 @@
 //! Runner credentials use cluster pairing unchanged; removal has its own hash domain.
 use crate::cluster::context::NodeContext;
 use crate::cluster::pairing::JoinTicket;
+use anyhow::Context;
 use anyhow::Result;
 use serde::Deserialize;
 use serde::Serialize;

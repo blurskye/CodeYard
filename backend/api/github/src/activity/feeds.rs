@@ -73,7 +73,7 @@ async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
         let mut after = 0;
         loop {
             let rows = crate::orgs::outcome(
-                super::list_actor_organizations(
+                codeyard_db_orgs::organizations::profiles::list_actor_organizations(
                     &state.pool,
                     viewer.user.id,
                     codeyard_db_orgs::organizations::OrganizationPage::new(after, 100)
@@ -189,14 +189,21 @@ async fn feed(
             return Err(Error::missing());
         }
         let scope = if let Some(org) = params.get("org") {
-            let org = super::get_public_organization(&state.pool, org)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
+            let org = codeyard_db_orgs::organizations::profiles::get_public_organization(
+                &state.pool,
+                org,
+            )
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
             if !matches!(
-                super::get_organization_metadata(&state.pool, user.id, org.id)
-                    .await
-                    .map_err(Error::unavailable)?,
+                codeyard_db_orgs::organizations::profiles::get_organization_metadata(
+                    &state.pool,
+                    user.id,
+                    org.id
+                )
+                .await
+                .map_err(Error::unavailable)?,
                 codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
             ) {
                 return Err(Error::missing());

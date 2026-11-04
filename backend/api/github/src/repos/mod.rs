@@ -136,10 +136,11 @@ async fn create(
         .transpose()
         .map_err(|error| Error::invalid(error.to_string()))?;
     let target = if let Some(org) = params.and_then(|Path(params)| params.get("org").cloned()) {
-        let org = super::get_public_organization(&state.pool, &org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org =
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, &org)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(org.id)
     } else {
         codeyard_db_repos::repositories::creation::RepositoryTarget::Personal(actor.user.id)
@@ -552,10 +553,11 @@ async fn list(
                 .ok_or_else(Error::missing)?;
         RepositoryList::User(user.id)
     } else if let Some(org) = params.get("org") {
-        let org = super::get_public_organization(&state.pool, org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org =
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, org)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         RepositoryList::Organization(org.id)
     } else if let (Some(owner), Some(name)) = (params.get("owner"), params.get("repo")) {
         let (repo, _) = repository(&state, &headers, owner, name, false).await?;

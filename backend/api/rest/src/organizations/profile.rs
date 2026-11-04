@@ -21,7 +21,9 @@ const TAB_PAGE_LIMIT: i64 = 30;
 
 pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Response {
     let pool = &ctx.state.pool;
-    let org = match super::get_public_organization(pool, name).await {
+    let org = match codeyard_db_orgs::organizations::profiles::get_public_organization(pool, name)
+        .await
+    {
         Ok(Some(org)) => org,
         // The same answer as an unknown user, so the two cannot be told apart.
         Ok(None) => {
@@ -38,36 +40,52 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
     };
     let viewer = ctx.user.as_ref().map(|user| user.id);
     let repository_count =
-        match super::count_organization_profile_repositories(pool, org.id, viewer).await {
+        match codeyard_db_orgs::organizations::access::count_organization_profile_repositories(
+            pool, org.id, viewer,
+        )
+        .await
+        {
             Ok(count) => count,
             Err(_) => return unavailable(ctx),
         };
     // Only owners and admins are offered the management page; members are counted, others are not.
     let (manage, member_count, team_count) = match viewer {
-        Some(actor) => match super::get_organization_role(pool, actor, org.id).await {
-            Ok(OrganizationOutcome::Applied(role)) => {
-                let members = match super::count_organization_members(pool, actor, org.id).await {
+        Some(actor) => {
+            match codeyard_db_orgs::organizations::membership::get_organization_role(
+                pool, actor, org.id,
+            )
+            .await
+            {
+                Ok(OrganizationOutcome::Applied(role)) => {
+                    let members = match codeyard_db_orgs::organizations::membership::count_organization_members(pool, actor, org.id).await {
                     Ok(OrganizationOutcome::Applied(count)) => Some(count),
                     Ok(_) => None,
                     Err(_) => return unavailable(ctx),
                 };
-                let teams = match members {
-                    Some(_) => match super::count_organization_teams(pool, actor, org.id).await {
-                        Ok(OrganizationOutcome::Applied(count)) => Some(count),
-                        Ok(_) => None,
-                        Err(_) => return unavailable(ctx),
-                    },
-                    None => None,
-                };
-                (
-                    codeyard_db_core::queries::organizations::administers(role),
-                    members,
-                    teams,
-                )
+                    let teams = match members {
+                        Some(_) => {
+                            match codeyard_db_orgs::organizations::teams::count_organization_teams(
+                                pool, actor, org.id,
+                            )
+                            .await
+                            {
+                                Ok(OrganizationOutcome::Applied(count)) => Some(count),
+                                Ok(_) => None,
+                                Err(_) => return unavailable(ctx),
+                            }
+                        }
+                        None => None,
+                    };
+                    (
+                        codeyard_db_core::queries::organizations::administers(role),
+                        members,
+                        teams,
+                    )
+                }
+                Ok(_) => (false, None, None),
+                Err(_) => return unavailable(ctx),
             }
-            Ok(_) => (false, None, None),
-            Err(_) => return unavailable(ctx),
-        },
+        }
         None => (false, None, None),
     };
     // The member list, the member count and the team list are for members only, so a
@@ -98,7 +116,7 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
                 page
             };
             let rows =
-                match super::list_organization_profile_repositories(pool, org.id, viewer, page)
+                match codeyard_db_orgs::organizations::access::list_organization_profile_repositories(pool, org.id, viewer, page)
                     .await
                 {
                     Ok(rows) => rows,
@@ -116,7 +134,11 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
             let Some((after, page)) = cursor_with_limit(ctx, "after", TAB_PAGE_LIMIT) else {
                 return invalid(ctx);
             };
-            let rows = match super::list_organization_members(pool, actor, org.id, page).await {
+            let rows = match codeyard_db_orgs::organizations::membership::list_organization_members(
+                pool, actor, org.id, page,
+            )
+            .await
+            {
                 Ok(OrganizationOutcome::Applied(rows)) => rows,
                 _ => return unavailable(ctx),
             };
@@ -139,7 +161,11 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
             let Some((after, page)) = cursor_with_limit(ctx, "after", TAB_PAGE_LIMIT) else {
                 return invalid(ctx);
             };
-            let rows = match super::list_organization_teams(pool, actor, org.id, page).await {
+            let rows = match codeyard_db_orgs::organizations::teams::list_organization_teams(
+                pool, actor, org.id, page,
+            )
+            .await
+            {
                 Ok(OrganizationOutcome::Applied(rows)) => rows,
                 _ => return unavailable(ctx),
             };

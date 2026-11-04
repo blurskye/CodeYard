@@ -117,9 +117,13 @@ pub(super) async fn populate(
     )
     .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
     let owner = matches!(
-        super::get_organization_role(&ctx.state.pool, actor, org)
-            .await
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
+        codeyard_db_orgs::organizations::membership::get_organization_role(
+            &ctx.state.pool,
+            actor,
+            org
+        )
+        .await
+        .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
         Applied(OrgRole::Owner)
     );
     form.properties_owner_org_id = org.to_string();

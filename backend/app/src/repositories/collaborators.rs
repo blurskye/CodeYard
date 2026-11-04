@@ -75,7 +75,7 @@ pub async fn list(
     }
     if let Some(org) = repository.owner_org_id {
         let member = matches!(
-            super::get_organization_role(pool, actor, org)
+            codeyard_db_orgs::organizations::membership::get_organization_role(pool, actor, org)
                 .await
                 .map_err(|_| Error::Unavailable)?,
             codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)

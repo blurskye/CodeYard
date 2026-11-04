@@ -1,5 +1,6 @@
 //! Router-level tests: the composed app's health, asset, error and form
 //! redirect behaviour, checked through `create_router` without a database.
+use super::*;
 use crate::cancel_on_shutdown;
 use crate::create_router;
 use crate::run_web_listener;

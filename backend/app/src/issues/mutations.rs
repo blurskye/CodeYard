@@ -96,26 +96,28 @@ pub async fn close_duplicate(
         let user = crate::issues::actor(&pool, actor.user_id).await?;
         let (repository, owner) = crate::issues::repository(&pool, repo).await?;
         let (previous, saved) =
-            super::close_duplicate_with_previous(&pool, actor, repo, issue, duplicate)
-                .await
-                .map_err(|error| {
-                    use codeyard_db_repos::issues::management::Refusal;
-                    match error.downcast_ref::<Refusal>() {
-                        Some(Refusal::Missing) => OperationError::Missing {
-                            code: "not_found",
-                            message: error.to_string(),
-                        },
-                        Some(Refusal::Denied) => OperationError::Denied {
-                            code: "forbidden",
-                            message: error.to_string(),
-                        },
-                        Some(_) => OperationError::Invalid {
-                            code: "validation_error",
-                            message: error.to_string(),
-                        },
-                        None => database_error(error),
-                    }
-                })?;
+            codeyard_db_repos::issues::management::close_duplicate_with_previous(
+                &pool, actor, repo, issue, duplicate,
+            )
+            .await
+            .map_err(|error| {
+                use codeyard_db_repos::issues::management::Refusal;
+                match error.downcast_ref::<Refusal>() {
+                    Some(Refusal::Missing) => OperationError::Missing {
+                        code: "not_found",
+                        message: error.to_string(),
+                    },
+                    Some(Refusal::Denied) => OperationError::Denied {
+                        code: "forbidden",
+                        message: error.to_string(),
+                    },
+                    Some(_) => OperationError::Invalid {
+                        code: "validation_error",
+                        message: error.to_string(),
+                    },
+                    None => database_error(error),
+                }
+            })?;
         if previous.state != saved.state {
             after_update(
                 &pool,

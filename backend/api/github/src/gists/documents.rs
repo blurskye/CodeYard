@@ -1,3 +1,4 @@
+use super::*;
 use crate::gists::failure;
 use crate::gists::failure_store;
 use crate::gists::fork;

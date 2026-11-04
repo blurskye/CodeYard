@@ -43,7 +43,7 @@ async fn account(state: &AppState, installation: &Installation) -> Result<Value>
                 .ok_or_else(Error::missing)?,
         ));
     }
-    let org = super::get_public_organization_by_id(
+    let org = codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
         &state.pool,
         installation.org_id.ok_or_else(Error::missing)?,
     )
@@ -243,10 +243,11 @@ pub(super) async fn find_installation(
         )
         .await
     } else if let Some(org) = params.get("org") {
-        let org = super::get_public_organization(&state.pool, org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org =
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, org)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         codeyard_db_identity::github_apps::account_installation(
             &state.pool,
             app.id,
@@ -744,8 +745,17 @@ async fn target_installation(state: &AppState, app: i64, body: &Value) -> Result
     .map_err(Error::unavailable)?
     .filter(|user| id.is_none_or(|id| id == user.id));
     let org = match (login, id) {
-        (Some(login), _) => super::get_public_organization(&state.pool, login).await,
-        (None, Some(id)) => super::get_public_organization_by_id(&state.pool, id).await,
+        (Some(login), _) => {
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, login)
+                .await
+        }
+        (None, Some(id)) => {
+            codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+                &state.pool,
+                id,
+            )
+            .await
+        }
         (None, None) => Ok(None),
     }
     .map_err(Error::unavailable)?

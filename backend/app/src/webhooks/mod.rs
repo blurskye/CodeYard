@@ -6,6 +6,7 @@ use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::DbPool;
 use codeyard_db_repos::webhooks::HookOwner;
+use codeyard_model::webhook_events as events;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -391,7 +392,9 @@ where
         return Value::Null;
     }
     if let Some(org) = current.owner_org_id {
-        match super::get_public_organization_by_id(pool, org).await {
+        match codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(pool, org)
+            .await
+        {
             Ok(Some(org)) => {
                 payload["organization"] = crate::webhooks::payloads::organization(&org)
             }

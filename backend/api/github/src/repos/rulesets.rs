@@ -124,10 +124,13 @@ impl Scope {
         let Owner::Organization(org) = owner else {
             return Err(Error::missing());
         };
-        let org = super::get_public_organization_by_id(&state.pool, org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org = codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+            &state.pool,
+            org,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
         Ok((
             org.name.clone(),
             format!("/orgs/{}", codeyard_webui::encode_component(&org.name)),

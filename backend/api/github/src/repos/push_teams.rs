@@ -38,7 +38,7 @@ pub(super) async fn documents(
     .map_err(Error::unavailable)?;
     let mut values = Vec::new();
     for row in rows {
-        if super::get_team_by_id(&state.pool, actor, row.team.id)
+        if codeyard_db_orgs::organizations::teams::get_team_by_id(&state.pool, actor, row.team.id)
             .await
             .map_err(Error::unavailable)?
             .is_none()

@@ -1,4 +1,5 @@
 //! The fields selected by cli/cli's api/query_builder.go and repository commands.
+use super::*;
 use crate::bindings::connection;
 use crate::bindings::fields;
 use crate::bindings::objects;

@@ -8,9 +8,7 @@ use codeyard_db_core::models::User;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 
-tokio::task_local! {
-    static REQUEST_CONTEXT: std::sync::Arc<RequestContext>;
-}
+use codeyard_app::api_shared::github::auth::REQUEST_CONTEXT;
 
 /// Header-based adapters share one verified identity without letting a public-only audience
 /// borrow account authority. The scope is request-local and is not inherited by spawned tasks.
@@ -600,7 +598,7 @@ async fn personal(
     let organization = |name: &str| {
         let name = name.to_owned();
         async move {
-            super::get_public_organization(&state.pool, &name)
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, &name)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)
@@ -754,10 +752,12 @@ async fn classic_policy(
         .await
         .map_err(Error::unavailable)?
         .and_then(|repo| repo.owner_org_id),
-        ["orgs" | "organizations", name, ..] => super::get_public_organization(&state.pool, name)
-            .await
-            .map_err(Error::unavailable)?
-            .map(|org| org.id),
+        ["orgs" | "organizations", name, ..] => {
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, name)
+                .await
+                .map_err(Error::unavailable)?
+                .map(|org| org.id)
+        }
         _ => None,
     };
     match org {

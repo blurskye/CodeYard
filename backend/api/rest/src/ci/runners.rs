@@ -167,10 +167,16 @@ async fn render(
     };
     let (title, back, groups) = match scope {
         Scope::Organization(org) => {
-            let org = match super::get_public_organization_by_id(&ctx.state.pool, org).await {
-                Ok(Some(org)) => org,
-                _ => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
-            };
+            let org =
+                match codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+                    &ctx.state.pool,
+                    org,
+                )
+                .await
+                {
+                    Ok(Some(org)) => org,
+                    _ => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
+                };
             let groups = match native::list_groups(
                 &ctx.state.pool,
                 actor,

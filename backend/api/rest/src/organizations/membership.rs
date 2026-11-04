@@ -150,7 +150,7 @@ impl Command {
                     };
                     Self::Invite {
                         username,
-                        role: super::parse_organization_role(
+                        role: codeyard_db_orgs::organizations::membership::parse_organization_role(
                             codeyard_api_http::shared::user::responses::field(form, "role"),
                         )
                         .map_err(|_| ())?,
@@ -160,7 +160,7 @@ impl Command {
                 }
                 "member-role" => Self::ChangeRole {
                     user: crate::organizations::organization::id(form, "user_id")?,
-                    role: super::parse_organization_role(
+                    role: codeyard_db_orgs::organizations::membership::parse_organization_role(
                         codeyard_api_http::shared::user::responses::field(form, "role"),
                     )
                     .map_err(|_| ())?,
@@ -241,7 +241,11 @@ pub(super) async fn apply(
             };
             if user.is_none() && email.is_none() {
                 // Only an owner or admin may learn that the name is unknown; anyone else is refused.
-                return match super::get_organization_role(pool, actor, org).await {
+                return match codeyard_db_orgs::organizations::membership::get_organization_role(
+                    pool, actor, org,
+                )
+                .await
+                {
                     Ok(OrganizationOutcome::Applied(role))
                         if codeyard_db_core::queries::organizations::administers(role) =>
                     {
@@ -262,15 +266,16 @@ pub(super) async fn apply(
                     ),
                 ),
             };
-            let outcome = super::create_organization_invitation(
-                pool,
-                ctx.database_actor(actor),
-                org,
-                &input,
-                false,
-            )
-            .await
-            .map_err(|_| unavailable(ctx))?;
+            let outcome =
+                codeyard_db_orgs::organizations::invitations::create_organization_invitation(
+                    pool,
+                    ctx.database_actor(actor),
+                    org,
+                    &input,
+                    false,
+                )
+                .await
+                .map_err(|_| unavailable(ctx))?;
             if let OrganizationOutcome::Applied(invitation) = &outcome {
                 organization_invitation(
                     pool,
@@ -283,19 +288,43 @@ pub(super) async fn apply(
             return Ok(unit(outcome));
         }
         Command::CancelInvitation { user } => {
-            super::cancel_organization_invitation(pool, ctx.database_actor(actor), org, user).await
+            codeyard_db_orgs::organizations::invitations::cancel_organization_invitation(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                user,
+            )
+            .await
         }
         Command::CancelInvitationId { invitation } => {
-            super::cancel_invitation_id(pool, ctx.database_actor(actor), org, invitation, false)
-                .await
+            codeyard_db_orgs::organizations::invitations::cancel_invitation_id(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                invitation,
+                false,
+            )
+            .await
         }
         Command::ChangeRole { user, role } => {
-            super::update_organization_member_role(pool, ctx.database_actor(actor), org, user, role)
-                .await
-                .map(unit)
+            codeyard_db_orgs::organizations::membership::update_organization_member_role(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                user,
+                role,
+            )
+            .await
+            .map(unit)
         }
         Command::Remove { user } => {
-            super::remove_organization_member(pool, ctx.database_actor(actor), org, user).await
+            codeyard_db_orgs::organizations::membership::remove_organization_member(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                user,
+            )
+            .await
         }
         Command::Block { username } => {
             let Some(user) = target(ctx, &username).await? else {
@@ -321,7 +350,13 @@ pub(super) async fn apply(
             .await
         }
         Command::ConvertOutside { user } => {
-            super::convert_to_outside_collaborator(pool, ctx.database_actor(actor), org, user).await
+            codeyard_db_orgs::organizations::membership::convert_to_outside_collaborator(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                user,
+            )
+            .await
         }
         Command::RemoveOutside { user } => {
             codeyard_db_orgs::organizations::outside::remove(

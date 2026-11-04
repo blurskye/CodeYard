@@ -132,7 +132,12 @@ async fn show(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
-    let organization = match super::get_public_organization(&ctx.state.pool, &params["org"]).await {
+    let organization = match codeyard_db_orgs::organizations::profiles::get_public_organization(
+        &ctx.state.pool,
+        &params["org"],
+    )
+    .await
+    {
         Ok(Some(org)) => org,
         Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
         Err(error) => return failure(&ctx, error),

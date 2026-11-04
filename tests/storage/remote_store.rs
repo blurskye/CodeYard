@@ -30,7 +30,7 @@ use codeyard_app::repositories::store::types::MergeRequest;
 use codeyard_app::repositories::store::types::MAX_ARCHIVE_RESPONSE_BYTES;
 use codeyard_app::repositories::store::types::MAX_BLOB_RESPONSE_BYTES;
 use codeyard_app::repositories::store::RepoStore;
-use codeyard_app::storage::range::ByteRange;
+use codeyard_app::storage::range::ByteRange as BlobRange;
 use codeyard_app::storage::ObjectStore;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;

@@ -134,7 +134,7 @@ pub(crate) async fn rule_responses(
             .await
             .map_err(|_| storage_unavailable())?
         {
-            if super::get_team_by_id(pool, actor, team.team.id)
+            if codeyard_db_orgs::organizations::teams::get_team_by_id(pool, actor, team.team.id)
                 .await
                 .map_err(|_| storage_unavailable())?
                 .is_some()
@@ -203,7 +203,7 @@ pub(crate) async fn authorized_rule_responses(
     // Secret team names stay with the people who may see the team, as in `rule_responses`.
     let mut teams = std::collections::HashMap::new();
     for (id, name) in snapshot.teams {
-        if super::get_team_by_id(pool, viewer, id)
+        if codeyard_db_orgs::organizations::teams::get_team_by_id(pool, viewer, id)
             .await
             .map_err(|_| storage_unavailable())?
             .is_some()

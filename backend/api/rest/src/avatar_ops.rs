@@ -169,9 +169,11 @@ pub async fn set_org_avatar(
     org: i64,
     file: Option<Uuid>,
 ) -> Result<(), AvatarError> {
-    match super::set_organization_avatar(pool, actor.id, org, file)
-        .await
-        .map_err(unavailable)?
+    match codeyard_db_orgs::organizations::profiles::set_organization_avatar(
+        pool, actor.id, org, file,
+    )
+    .await
+    .map_err(unavailable)?
     {
         OrganizationOutcome::Applied(_) => Ok(()),
         OrganizationOutcome::Missing => Err(AvatarError::NotFound),

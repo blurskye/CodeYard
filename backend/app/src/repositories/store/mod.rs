@@ -30,7 +30,7 @@ use crate::repositories::store::types::UpstreamMerge;
 use crate::repositories::store::types::MAX_ARCHIVE_RESPONSE_BYTES;
 use crate::repositories::store::types::MAX_COMMIT_OFFSET;
 use crate::repositories::store::types::MAX_COMMIT_PAGE_SIZE;
-use crate::storage::range::ByteRange;
+use crate::storage::range::ByteRange as BlobRange;
 use codeyard_db_core::models::Repository;
 use codeyard_git as git;
 use codeyard_git::error::invalid_ref;

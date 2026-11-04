@@ -571,7 +571,7 @@ async fn hovercard_subject(
             )
         }
         "organization" => {
-            super::get_public_organization_by_id(pool, id)
+            codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(pool, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;

@@ -135,13 +135,17 @@ async fn organization(
     if write {
         auth.require_write()?;
     }
-    let org = super::get_public_organization(&state.pool, name)
+    let org = codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, name)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    match super::get_organization_role(&state.pool, auth.user.id, org.id)
-        .await
-        .map_err(Error::unavailable)?
+    match codeyard_db_orgs::organizations::membership::get_organization_role(
+        &state.pool,
+        auth.user.id,
+        org.id,
+    )
+    .await
+    .map_err(Error::unavailable)?
     {
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(role)
             if codeyard_db_core::queries::organizations::administers(role) => {}

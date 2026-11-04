@@ -210,10 +210,11 @@ async fn scope(
         auth.require_write()?;
     }
     let scope = if let Some(org) = p.get("org") {
-        let org = super::get_public_organization(&state.pool, org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org =
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, org)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         Scope::Organization(org.id)
     } else {
         let owner = p.get("owner").ok_or_else(Error::missing)?;

@@ -1,4 +1,5 @@
 //! Open scanners submit SARIF; queued uploads survive restarts and commit atomically.
+use crate::webhooks::payloads;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;

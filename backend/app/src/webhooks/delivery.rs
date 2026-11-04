@@ -1,5 +1,6 @@
 //! One webhook request: signed, sent with a timeout and no redirects, retried on server
 //! errors and timeouts, and recorded with what was sent and what came back.
+use hmac::Mac;
 
 use crate::webhooks::outbound::Refusal;
 use base64::Engine as _;

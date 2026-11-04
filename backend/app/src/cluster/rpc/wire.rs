@@ -11,7 +11,7 @@ use crate::repositories::store::types::MergeMethod;
 use crate::repositories::store::types::MergeRequest;
 use crate::repositories::store::types::PullBranchUpdate;
 use crate::repositories::store::types::RestackMove;
-use crate::storage::range::ByteRange;
+use crate::storage::range::ByteRange as BlobRange;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::limits::MAX_JSON;

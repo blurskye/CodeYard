@@ -3,6 +3,7 @@ use crate::cluster::context::NodeContext;
 use crate::cluster::transport::NodeAddress;
 use crate::cluster::Settings;
 use anyhow::ensure;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_support::node_identity::load_or_create;
 use codeyard_support::node_identity::parse_public_key;

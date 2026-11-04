@@ -2,6 +2,7 @@ use super::{applied, call, db, json, node_id, query, request};
 use axum::{http::StatusCode, Router};
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::lifecycle;
+use codeyard_model::node_id;
 pub(super) async fn exercise(
     state: &AppState,
     router: &Router,

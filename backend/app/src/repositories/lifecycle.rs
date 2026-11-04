@@ -1,5 +1,6 @@
 //! Creating repositories: the authorized database row, then its Git storage.
 use chrono::Datelike;
+use tracing::Instrument;
 
 use crate::cluster::context::NodeContext;
 use crate::repositories::store::editor::UploadFile;
@@ -980,9 +981,10 @@ pub(crate) async fn transfer_target(
             user.username,
         ));
     }
-    if let Some(org) = super::get_public_organization(pool, handle)
-        .await
-        .map_err(|_| unavailable())?
+    if let Some(org) =
+        codeyard_db_orgs::organizations::profiles::get_public_organization(pool, handle)
+            .await
+            .map_err(|_| unavailable())?
     {
         return Ok((
             codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(org.id),
@@ -1113,9 +1115,11 @@ pub async fn fork_into(
         }
         codeyard_db_repos::repositories::creation::RepositoryTarget::Organization(id) => {
             let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) =
-                super::get_organization_metadata(pool, actor, id)
-                    .await
-                    .map_err(|_| unavailable())?
+                codeyard_db_orgs::organizations::profiles::get_organization_metadata(
+                    pool, actor, id,
+                )
+                .await
+                .map_err(|_| unavailable())?
             else {
                 return Err(StorageError {
                     kind: LifecycleFailure::Denied,

@@ -1,5 +1,6 @@
 use super::{call, db, json, node_id, query, request};
 use axum::{http::StatusCode, Router};
+use codeyard_model::node_id;
 pub(super) async fn exercise(
     pool: &codeyard_db_core::DbPool,
     router: &Router,

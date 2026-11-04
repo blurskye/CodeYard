@@ -10,6 +10,7 @@ use crate::cluster::replicas::promote::Silent;
 use crate::cluster::replicas::promote::TAKE_OVER_AFTER;
 use crate::storage::local::remove_stale_temporaries;
 use crate::storage::local::STALE_AFTER;
+use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::models::HeldReplica;
 use codeyard_db_core::models::ReplicaSetting;

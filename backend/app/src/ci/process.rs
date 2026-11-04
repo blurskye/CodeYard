@@ -6,6 +6,7 @@ use codeyard_actions::process::ProcessGroup;
 use codeyard_actions::process::KILL_GRACE;
 #[cfg(test)]
 use codeyard_actions::process::OMITTED_LINE;
+use futures_util::FutureExt;
 use std::future::Future;
 use std::process::ExitStatus;
 use std::process::Stdio;

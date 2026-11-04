@@ -173,10 +173,13 @@ pub(crate) async fn load(
         }
     }
     if let Some(org) = repo.owner_org_id {
-        can_propose &= super::get_public_organization_by_id(&ctx.state.pool, org)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .is_some();
+        can_propose &= codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+            &ctx.state.pool,
+            org,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .is_some();
     }
     Ok(Some(Box::new(IssueSuggestions {
         enabled,

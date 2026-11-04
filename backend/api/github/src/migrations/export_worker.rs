@@ -543,10 +543,11 @@ async fn organization(
 ) -> Result<()> {
     use codeyard_db_core::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::OrganizationPage;
-    let record = super::get_public_organization_by_id(&state.pool, org)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let record =
+        codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(&state.pool, org)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
     let origin = codeyard_model::http_config::link_origin();
     let url = format!("{origin}{}", codeyard_webui::profile_path(&record.name));
     archive.person(json!({"id":record.id,"login":record.name,"html_url":url,"url":url,"type":"Organization","name":record.display_name,"description":record.description,"created_at":record.created_at,"updated_at":record.updated_at}));
@@ -554,9 +555,14 @@ async fn organization(
     loop {
         let page = OrganizationPage::new(after, 100).map_err(Error::unavailable)?;
         let OrganizationOutcome::Applied(rows) =
-            super::list_organization_members(&state.pool, actor, org, page)
-                .await
-                .map_err(Error::unavailable)?
+            codeyard_db_orgs::organizations::membership::list_organization_members(
+                &state.pool,
+                actor,
+                org,
+                page,
+            )
+            .await
+            .map_err(Error::unavailable)?
         else {
             return Err(Error::missing());
         };
@@ -590,9 +596,14 @@ async fn teams(
     loop {
         let page = OrganizationPage::new(after, 100).map_err(Error::unavailable)?;
         let OrganizationOutcome::Applied(rows) =
-            super::list_organization_teams(&state.pool, actor, org, page)
-                .await
-                .map_err(Error::unavailable)?
+            codeyard_db_orgs::organizations::teams::list_organization_teams(
+                &state.pool,
+                actor,
+                org,
+                page,
+            )
+            .await
+            .map_err(Error::unavailable)?
         else {
             return Err(Error::missing());
         };
@@ -623,7 +634,7 @@ async fn teams(
             loop {
                 let page = OrganizationPage::new(member_after, 100).map_err(Error::unavailable)?;
                 let OrganizationOutcome::Applied(members) =
-                    super::list_direct_organization_team_members(
+                    codeyard_db_orgs::organizations::teams::list_direct_organization_team_members(
                         &state.pool,
                         actor,
                         org,
@@ -653,7 +664,7 @@ async fn teams(
                 let page =
                     OrganizationPage::new(repository_after, 100).map_err(Error::unavailable)?;
                 let OrganizationOutcome::Applied(repositories) =
-                    super::list_direct_organization_team_repositories(
+                    codeyard_db_orgs::organizations::teams::list_direct_organization_team_repositories(
                         &state.pool,
                         actor,
                         org,

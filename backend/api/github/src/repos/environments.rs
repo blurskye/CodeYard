@@ -79,10 +79,14 @@ pub(super) async fn document(
                 }
                 Some(team) => {
                     let can_see = match viewer {
-                        Some(viewer) => super::get_team_by_id(&state.pool, viewer, team.team.id)
-                            .await
-                            .map_err(Error::unavailable)?
-                            .is_some(),
+                        Some(viewer) => codeyard_db_orgs::organizations::teams::get_team_by_id(
+                            &state.pool,
+                            viewer,
+                            team.team.id,
+                        )
+                        .await
+                        .map_err(Error::unavailable)?
+                        .is_some(),
                         None => false,
                     };
                     can_see.then(|| codeyard_app::webhooks::payloads::team(&team))

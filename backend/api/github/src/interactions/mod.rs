@@ -62,7 +62,7 @@ pub(super) async fn resolve(
     Ok(match scope {
         ScopeName::User => InteractionScope::User(actor.id),
         ScopeName::Organization(name) => InteractionScope::Organization(
-            super::get_public_organization(&state.pool, &name)
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, &name)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?

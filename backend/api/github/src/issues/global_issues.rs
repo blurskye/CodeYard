@@ -40,7 +40,7 @@ async fn run(
         .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let viewer = auth.user.id;
     if let Some(name) = &organization {
-        super::get_public_organization(&state.pool, name)
+        codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, name)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;

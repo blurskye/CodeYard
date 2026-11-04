@@ -55,10 +55,11 @@ async fn scope(
         if write {
             authentication.require_write()?;
         }
-        let org = super::get_public_organization(&state.pool, org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org =
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, org)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         Ok((authentication, Scope::Organization(org.id)))
     } else {
         let (repo, authentication) =

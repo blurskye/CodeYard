@@ -40,10 +40,11 @@ pub(super) fn project_error(error: anyhow::Error) -> Error {
 
 async fn owner(state: &AppState, params: &Params, numeric: bool) -> Result<(Owner, String)> {
     if let Some(name) = params.get("org") {
-        let org = super::get_public_organization(&state.pool, name)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
+        let org =
+            codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, name)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
         Ok((Owner::Organization(org.id), org.name))
     } else {
         let name = params

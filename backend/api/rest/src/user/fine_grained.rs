@@ -150,9 +150,12 @@ fn group_label(group: Group) -> &'static str {
 async fn owner_name(ctx: &PageContext, user: &User, org: Option<i64>) -> anyhow::Result<String> {
     Ok(match org {
         None => user.username.clone(),
-        Some(org) => super::get_public_organization_by_id(&ctx.state.pool, org)
-            .await?
-            .map_or_else(|| "Deleted organization".to_owned(), |org| org.name),
+        Some(org) => codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+            &ctx.state.pool,
+            org,
+        )
+        .await?
+        .map_or_else(|| "Deleted organization".to_owned(), |org| org.name),
     })
 }
 
@@ -219,7 +222,13 @@ async fn organizations_of(
 ) -> anyhow::Result<Vec<super::OrganizationMetadata>> {
     let page = OrganizationPage::new(after, 100).map_err(|_| anyhow::anyhow!("page"))?;
     Ok(
-        match super::list_actor_organizations(&ctx.state.pool, user.id, page).await? {
+        match codeyard_db_orgs::organizations::profiles::list_actor_organizations(
+            &ctx.state.pool,
+            user.id,
+            page,
+        )
+        .await?
+        {
             OrganizationOutcome::Applied(orgs) => orgs,
             _ => Vec::new(),
         },
@@ -235,7 +244,12 @@ async fn owner_of(ctx: &PageContext, draft: &Draft, user: &User) -> anyhow::Resu
         return Ok(None);
     };
     Ok(matches!(
-        super::get_organization_role(&ctx.state.pool, user.id, id).await?,
+        codeyard_db_orgs::organizations::membership::get_organization_role(
+            &ctx.state.pool,
+            user.id,
+            id
+        )
+        .await?,
         OrganizationOutcome::Applied(_)
     )
     .then_some(Owner::Organization(id)))

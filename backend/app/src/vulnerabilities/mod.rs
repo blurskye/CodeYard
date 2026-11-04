@@ -4,6 +4,7 @@ use anyhow::ensure;
 use anyhow::Result;
 use codeyard_git::error::ErrorKind;
 use codeyard_model::repositories::Package;
+use codeyard_model::versions;
 use codeyard_model::vulnerabilities::ecosystem;
 use codeyard_model::vulnerabilities::in_range;
 use codeyard_model::vulnerabilities::name;

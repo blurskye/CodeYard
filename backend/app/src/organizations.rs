@@ -17,7 +17,10 @@ pub async fn convert_to_outside(
     let _permit = CONVERSION_SLOTS
         .try_acquire()
         .map_err(|_| anyhow::anyhow!("Organization conversion admission is full"))?;
-    super::convert_to_outside_collaborator(pool, actor, org, target).await
+    codeyard_db_orgs::organizations::membership::convert_to_outside_collaborator(
+        pool, actor, org, target,
+    )
+    .await
 }
 
 /// Deletes repositories first, then the organization. A partial failure leaves the remaining
@@ -29,26 +32,31 @@ pub async fn delete(
 ) -> anyhow::Result<OrganizationOutcome<()>> {
     let actor = actor.into();
     let repositories =
-        match super::list_organization_deletion_repositories(&state.pool, actor.clone(), org)
-            .await?
+        match codeyard_db_orgs::organizations::deletion::list_organization_deletion_repositories(
+            &state.pool,
+            actor.clone(),
+            org,
+        )
+        .await?
         {
             Applied(repositories) => repositories,
             other => return Ok(other.map(|_| ())),
         };
     for repository in repositories {
-        let deleted = match super::delete_organization_repository(
-            &state.pool,
-            actor.clone(),
-            org,
-            repository,
-        )
-        .await?
-        {
-            Applied(deleted) => deleted,
-            other => return Ok(other.map(|_| ())),
-        };
+        let deleted =
+            match codeyard_db_orgs::organizations::deletion::delete_organization_repository(
+                &state.pool,
+                actor.clone(),
+                org,
+                repository,
+            )
+            .await?
+            {
+                Applied(deleted) => deleted,
+                other => return Ok(other.map(|_| ())),
+            };
         crate::repositories::lifecycle::remove_deleted_repository(state.cluster.as_ref(), &deleted)
             .await?;
     }
-    super::delete_organization(&state.pool, actor, org).await
+    codeyard_db_orgs::organizations::deletion::delete_organization(&state.pool, actor, org).await
 }
