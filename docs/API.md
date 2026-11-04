@@ -849,7 +849,7 @@ and workflow automations are not available.
 
 `POST /api/graphql` accepts the same Bearer or token credentials as `/api/v3` and
 exposes the vendored GitHub schema through introspection. The compile-time types and
-resolver traits live in `crates/codeyard-github-graphql`; regenerate them with
+resolver traits live in `backend/api/github-graphql`; regenerate them with
 `python3 scripts/github-graphql-types.py` after changing the SDL, never by hand.
 The generator's `--check` mode is part of the release gate. Resolvers delegate writes
 to shared native operations, including their live permissions, notifications, hooks

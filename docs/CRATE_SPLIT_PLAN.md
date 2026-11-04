@@ -22,7 +22,7 @@ backend/
     identity/ orgs/ repos/ actions/ security/ cluster/     queries by domain
   repositories/                repository store, pull requests, Git sessions
   ci/                          queue, workers, tokens
-    runner/                    the Actions runner (today crates/codeyard-actions)
+    runner/                    the Actions runner
   cluster/                     cluster and node
   identity/                    login, tokens, keys
   notifications/               notifications, email, webhooks
@@ -30,7 +30,7 @@ backend/
     http/                      shared HTTP plumbing (config, context, CSRF, errors, sessions)
     github/                    one crate: the router, the generated route table and one
                                folder per GitHub category (actions/, issues/, pulls/, repos/, ...)
-    github-graphql/            generated GraphQL types (today crates/codeyard-github-graphql)
+    github-graphql/            generated GraphQL types
     graphql/                   our GraphQL resolvers
     repos/                     web and Git HTTP for repositories
     (rest)                     the remaining routes
@@ -89,9 +89,8 @@ and results stay the same. A stage can be the last one.
 0. **Measure.** `cargo build --timings` once, and once more after touching a leaf file.
    Also check which linker the builder uses and whether the 11 integration test binaries
    (each linking the whole library) can become fewer. Decide the GraphQL question here.
-1. **Layout.** Create `backend/`, move `crates/codeyard-actions` to `backend/ci/runner` and
-   `crates/codeyard-github-graphql` to `backend/api/github-graphql`. Update paths in
-   scripts, `Containerfile`, docs and `AGENTS.md`.
+1. **Layout.** Complete: the runner is in `backend/ci/runner` and generated
+   GraphQL types are in `backend/api/github-graphql`; build and generation paths follow them.
 2. **`webui`.** Check also `--target wasm32-unknown-unknown` with the `web` feature.
 3. **`support` and `git`.** Moved to `backend/support/` and `backend/git/`; server
    dependencies cut. Integration build and tests are pending.

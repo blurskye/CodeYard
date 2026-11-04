@@ -126,7 +126,7 @@ debug = false
 
 [workspace]
 resolver = "2"
-members = ["crates/codeyard-actions", "crates/codeyard-github-graphql", "webui", "backend/support", "backend/git", "backend/model", "backend/db/core"]
+members = ["backend/ci/runner", "backend/api/github-graphql", "webui", "backend/support", "backend/git", "backend/model", "backend/db/core"]
 default-members = [".", "webui", "backend/support", "backend/git", "backend/model", "backend/db/core"]
 
 [workspace.package]
@@ -140,8 +140,8 @@ undocumented_unsafe_blocks = "deny"
 allow_attributes_without_reason = "deny"
 
 [workspace.dependencies]
-codeyard-actions = { path = "crates/codeyard-actions" }
-codeyard-github-graphql = { path = "crates/codeyard-github-graphql" }
+codeyard-actions = { path = "backend/ci/runner" }
+codeyard-github-graphql = { path = "backend/api/github-graphql" }
 codeyard-db-core = { path = "backend/db/core" }
 codeyard-model = { path = "backend/model" }
 codeyard-support = { path = "backend/support" }

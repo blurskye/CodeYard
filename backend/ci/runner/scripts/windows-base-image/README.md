@@ -16,7 +16,7 @@ or supply a properly licensed image as needed. macOS is not supported.
 3. Run (the output must not already exist):
 
    ```sh
-   bash crates/codeyard-actions/scripts/windows-base-image/build.sh \
+   bash backend/ci/runner/scripts/windows-base-image/build.sh \
      --accept-license /srv/iso/windows-server-2025-eval.iso /srv/images/windows.qcow2
    ```
 
