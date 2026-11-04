@@ -963,7 +963,7 @@ pub async fn transfer(
         })
 }
 
-pub(crate) async fn transfer_target(
+pub async fn transfer_target(
     pool: &codeyard_db_core::DbPool,
     handle: &str,
 ) -> Result<

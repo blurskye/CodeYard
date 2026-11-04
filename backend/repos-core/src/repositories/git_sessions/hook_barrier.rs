@@ -5,11 +5,11 @@ use std::sync::LazyLock;
 use std::sync::Mutex;
 use tokio::sync::oneshot;
 
-pub(super) struct Barrier {
-    pub(super) entered: oneshot::Sender<()>,
-    pub(super) release: oneshot::Receiver<()>,
+pub struct Barrier {
+    pub entered: oneshot::Sender<()>,
+    pub release: oneshot::Receiver<()>,
 }
-pub(super) static BARRIERS: LazyLock<Mutex<HashMap<(PathBuf, bool), Barrier>>> =
+pub static BARRIERS: LazyLock<Mutex<HashMap<(PathBuf, bool), Barrier>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub(crate) async fn before_authorize(operation: &Operation, post: bool) {

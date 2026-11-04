@@ -58,33 +58,33 @@ pub struct Gateway {
 }
 
 pub struct Operation {
-    pub(super) credential: ReceiveCredential,
-    pub(super) actor_id: i64,
-    pub(super) repo_id: i64,
-    pub(super) owner: String,
-    pub(super) path: PathBuf,
-    pub(super) publication_lease: Option<Arc<codeyard_git::locks::PublicationLease>>,
+    pub credential: ReceiveCredential,
+    pub actor_id: i64,
+    pub repo_id: i64,
+    pub owner: String,
+    pub path: PathBuf,
+    pub publication_lease: Option<Arc<codeyard_git::locks::PublicationLease>>,
     // Only the broker holds the generated hook directory's lifetime.
     pub hooks: TempDir,
-    pub(super) state: Mutex<HookState>,
+    pub state: Mutex<HookState>,
 }
 
 #[derive(Default)]
-pub(super) struct HookState {
-    pub(super) proposed: Option<Vec<RefUpdate>>,
-    pub(super) previous_refs: Vec<String>,
-    pub(super) secret_bypasses: Vec<codeyard_repos::push_protection::ApprovedBypass>,
-    pub(super) post_started: bool,
-    pub(super) dispatch_failed: bool,
+pub struct HookState {
+    pub proposed: Option<Vec<RefUpdate>>,
+    pub previous_refs: Vec<String>,
+    pub secret_bypasses: Vec<codeyard_repos::push_protection::ApprovedBypass>,
+    pub post_started: bool,
+    pub dispatch_failed: bool,
     // Acquired in pre-receive through the description already inherited by the child.
     // Released only when Git reports completed publication, before post-receive follow-up.
-    pub(super) publication: Option<Arc<codeyard_git::locks::PublicationGuard>>,
-    pub(super) ref_change: Option<crate::repositories::store::local::RefChange>,
-    pub(super) quorum: bool,
-    pub(super) quorum_started: bool,
-    pub(super) quorum_unknown: bool,
-    pub(super) writes: Vec<codeyard_db_core::models::WriteRecord>,
-    pub(super) transaction: Option<usize>,
+    pub publication: Option<Arc<codeyard_git::locks::PublicationGuard>>,
+    pub ref_change: Option<crate::repositories::store::local::RefChange>,
+    pub quorum: bool,
+    pub quorum_started: bool,
+    pub quorum_unknown: bool,
+    pub writes: Vec<codeyard_db_core::models::WriteRecord>,
+    pub transaction: Option<usize>,
 }
 
 struct ActiveOperation {
@@ -755,12 +755,7 @@ impl Gateway {
     /// repositories root. Git sessions run against this path.
     pub(super) async fn bare_path(&self, repo: &Repository) -> Result<PathBuf> {
         let root = self.repos_root.clone();
-        let store = match self
-            .ci
-            .cluster
-            .as_ref()
-            .filter(|_| repo.storage_node_id.is_some())
-        {
+        let store = match self.ci.cluster().filter(|_| repo.storage_node_id.is_some()) {
             Some(context) => context.repository_store(repo, true).await?,
             None => repo_store(repo, self.ci.cluster()),
         };
@@ -1259,12 +1254,3 @@ async fn framed_output<R: AsyncRead + Unpin, E: AsyncRead + Unpin, W: AsyncWrite
     }
     Ok(())
 }
-
-// Keep disposable SQL fixture setup outside production backend source. This
-// remains a private unit-test module, never an application DB access path.
-#[cfg(test)]
-#[path = "policy_tests.rs"]
-pub mod policy_tests;
-#[cfg(test)]
-#[path = "quorum_tests.rs"]
-mod quorum_tests;

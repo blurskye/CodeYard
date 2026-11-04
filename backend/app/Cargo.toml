@@ -70,6 +70,7 @@ uuid = { workspace = true, features = ["v4"] }
 zip.workspace = true
 
 [dev-dependencies]
+codeyard-repos-rpc.workspace = true
 codeyard-actions.workspace = true
 codeyard-db-actions.workspace = true
 codeyard-db-identity.workspace = true

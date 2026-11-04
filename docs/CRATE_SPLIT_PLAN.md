@@ -124,7 +124,8 @@ and results stay the same. A stage can be the last one.
    `backend/repos-core/` owns the concrete store, Git sessions, publication checks
    and workflow readers. `backend/repos-rpc/` owns repository RPC handlers. `backend/ci-engine/` owns admission,
    queues, workers and pull-request refresh. Receive hooks use a lower resource trait. Local RPC fallback uses an injected factory.
-   Code-owner resolution lives in the CI engine. Store fixtures are an integration target. Cluster startup,
+   Code-owner resolution lives in the CI engine. Store fixtures are an integration target.
+   Receive fixtures share the composed broker integration target. Cluster startup,
    replica maintenance and CI request handling live in `backend/cluster/`; transport
    and quorum primitives live in `backend/cluster/core/`. Document readers
    use resource-access traits implemented by `AppState`. Token authentication lives

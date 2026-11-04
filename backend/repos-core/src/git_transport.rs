@@ -24,15 +24,12 @@ use codeyard_db_core::models::RefChange;
 use codeyard_db_core::models::WriteRecord;
 use codeyard_git::error::RepoError;
 use codeyard_git::repository::process as git_process;
+use serde_json::Value;
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
-
-#[cfg(test)]
-#[path = "write_tests.rs"]
-mod tests;
 
 /// A session the node accepted: the link it runs on and its first reply.
 type Opened = (Link, Reply);
@@ -309,7 +306,7 @@ pub fn write_targets(write: &WriteRecord) -> Result<Vec<String>> {
     Ok(targets)
 }
 
-fn preparation_path(path: &Path, write: &WriteRecord) -> Result<PathBuf> {
+pub fn preparation_path(path: &Path, write: &WriteRecord) -> Result<PathBuf> {
     codeyard_db_cluster::cluster::writes::validate_id(&write.id)?;
     Ok(path.join("codeyard-writes").join(&write.id))
 }
@@ -321,7 +318,7 @@ pub async fn create_preparation(path: &Path, write: &WriteRecord) -> Result<Path
     Ok(directory)
 }
 
-fn pin_names(write: &WriteRecord) -> Result<Vec<(String, String)>> {
+pub fn pin_names(write: &WriteRecord) -> Result<Vec<(String, String)>> {
     Ok(write_targets(write)?
         .into_iter()
         .enumerate()

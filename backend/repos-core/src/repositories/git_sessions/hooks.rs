@@ -147,7 +147,7 @@ fn admit_updates(
 }
 
 impl Gateway {
-    pub(super) async fn reference_transaction(
+    pub async fn reference_transaction(
         self: &Arc<Self>,
         operation: &Arc<Operation>,
         phase: crate::repositories::git_sessions::protocol::TransactionPhase,
@@ -375,7 +375,7 @@ impl Gateway {
         }
     }
 
-    pub(super) async fn complete_quorum(&self, operation: &Operation) -> Result<bool> {
+    pub async fn complete_quorum(&self, operation: &Operation) -> Result<bool> {
         use codeyard_cluster_core::writes::OutcomeUnknown;
         let writes = {
             let state = operation
