@@ -258,6 +258,32 @@ impl Stores {
         refs
     }
 
+    async fn store(&self, pool: &DbPool) -> RepoStore {
+        let row = db::repositories::records::get_repository_by_id(pool, self.fixture.repo)
+            .await
+            .unwrap()
+            .unwrap();
+        self.contexts[0]
+            .repository_store(&row, false)
+            .await
+            .unwrap()
+    }
+
+    fn heads(&self) -> Vec<String> {
+        self.paths
+            .iter()
+            .map(|path| {
+                git2::Repository::open_bare(path)
+                    .unwrap()
+                    .find_reference("HEAD")
+                    .unwrap()
+                    .symbolic_target()
+                    .unwrap()
+                    .to_owned()
+            })
+            .collect()
+    }
+
     async fn stop(&self) {
         for listener in &self.listeners {
             listener.stop().await;
@@ -537,18 +563,289 @@ async fn stale_writer_is_refused(pool: &DbPool) {
     stores.stop().await;
 }
 
+async fn rename_is_one_write(pool: &DbPool) {
+    let stores = Stores::new(pool).await;
+    let f = &stores.fixture;
+    let store = stores.store(pool).await;
+    let renamed = "refs/heads/renamed";
+    assert_eq!(
+        store
+            .rename_branch_as(pool, f.repo, f.owner, "main", "renamed")
+            .await
+            .unwrap(),
+        stores.old
+    );
+    let refs = stores.refs().await;
+    assert_eq!(refs[0], refs[1]);
+    assert!(!refs[0].contains_key(MAIN));
+    assert_eq!(refs[0][renamed], stores.old);
+    assert_eq!(stores.heads(), vec![renamed; 2]);
+    let write = last_write(pool, f.repo).await;
+    assert!(write.finished);
+    assert_eq!(write.votes.len(), 2);
+    assert_eq!(write.base_version, 0);
+    for reference in [MAIN, renamed, "HEAD"] {
+        assert!(write.changes.iter().any(|change| change.name == reference));
+    }
+    assert!(write
+        .changes
+        .iter()
+        .any(|change| change.name.starts_with("refs/codeyard/publications/")));
+    assert_eq!(
+        db::repositories::records::get_repository_by_id(pool, f.repo)
+            .await
+            .unwrap()
+            .unwrap()
+            .default_branch,
+        "renamed"
+    );
+    assert_eq!(
+        db::repositories::protection::branch_redirect(pool, f.repo, "main")
+            .await
+            .unwrap()
+            .as_deref(),
+        Some("renamed")
+    );
+
+    stores.listeners[1].stop().await;
+    set_timeout(pool, 1).await.unwrap();
+    let before = writes::recovery_view(pool, f.repo).await.unwrap();
+    let error = timeout(
+        WAIT,
+        store.rename_branch_as(pool, f.repo, f.owner, "renamed", "failed"),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
+    assert_eq!(error.message, "write quorum unavailable");
+    assert_eq!(stores.refs().await, refs);
+    assert_eq!(stores.heads(), vec![renamed; 2]);
+    let write = last_write(pool, f.repo).await;
+    assert_eq!(write.decision, "abort");
+    assert_eq!(write.votes.len(), 1);
+    let after = writes::recovery_view(pool, f.repo).await.unwrap();
+    assert_eq!(after.refs, before.refs);
+    assert_eq!(after.committed_version, before.committed_version);
+    assert_eq!(
+        db::repositories::records::get_repository_by_id(pool, f.repo)
+            .await
+            .unwrap()
+            .unwrap()
+            .default_branch,
+        "renamed"
+    );
+    assert!(
+        db::repositories::protection::branch_redirect(pool, f.repo, "renamed")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    stores.stop().await;
+}
+
+async fn namespace_rename_uses_both_stores(pool: &DbPool) {
+    let stores = Stores::new(pool).await;
+    let f = &stores.fixture;
+    let store = stores.store(pool).await;
+    for (old, new) in [("main", "main/topic"), ("main/topic", "main")] {
+        store
+            .rename_branch_as(pool, f.repo, f.owner, old, new)
+            .await
+            .unwrap();
+        let refs = stores.refs().await;
+        let reference = format!("refs/heads/{new}");
+        assert_eq!(refs[0], refs[1]);
+        assert_eq!(refs[0][&reference], stores.old);
+        assert!(!refs[0].contains_key(&format!("refs/heads/{old}")));
+        assert_eq!(stores.heads(), vec![reference; 2]);
+        let write = last_write(pool, f.repo).await;
+        assert!(write.finished);
+        assert_eq!(write.votes.len(), 2);
+    }
+    stores.listeners[1].stop().await;
+    set_timeout(pool, 1).await.unwrap();
+    let refs = stores.refs().await;
+    assert!(timeout(
+        WAIT,
+        store.rename_branch_as(pool, f.repo, f.owner, "main", "main/failed"),
+    )
+    .await
+    .unwrap()
+    .is_err());
+    assert_eq!(stores.refs().await, refs);
+    assert_eq!(stores.heads(), vec![MAIN; 2]);
+    assert_eq!(last_write(pool, f.repo).await.decision, "abort");
+    stores.stop().await;
+}
+
+async fn default_branch_uses_both_stores(pool: &DbPool) {
+    let stores = Stores::new(pool).await;
+    let f = &stores.fixture;
+    let store = stores.store(pool).await;
+    store
+        .create_branch_as(pool, f.repo, f.owner, "other", &stores.old)
+        .await
+        .unwrap();
+    store
+        .set_default_branch_as(pool, f.repo, f.owner, "other")
+        .await
+        .unwrap();
+    let other = "refs/heads/other";
+    assert_eq!(stores.heads(), vec![other; 2]);
+    let write = last_write(pool, f.repo).await;
+    assert!(write.finished);
+    assert_eq!(write.votes.len(), 2);
+    assert_eq!(write.changes.len(), 1);
+    assert_eq!(write.changes[0].name, "HEAD");
+    assert_eq!(write.changes[0].old_target.as_deref(), Some(MAIN));
+    assert_eq!(write.changes[0].new_target.as_deref(), Some(other));
+    assert_eq!(
+        db::repositories::records::get_repository_by_id(pool, f.repo)
+            .await
+            .unwrap()
+            .unwrap()
+            .default_branch,
+        "other"
+    );
+
+    // A metadata refusal compensates HEAD through the same journal on both voters.
+    let error = store
+        .patch_repository_as(
+            pool,
+            f.repo,
+            f.owner,
+            "main",
+            &db::repositories::records::RepositoryChanges {
+                merge_methods: db::repositories::records::MergeMethodUpdate {
+                    merge: Some(false),
+                    squash: Some(false),
+                    rebase: Some(false),
+                },
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.kind,
+        codeyard::backend::repositories::store::ErrorKind::Invalid
+    );
+    assert_eq!(stores.heads(), vec![other; 2]);
+    let restored = writes::recovery_view(pool, f.repo).await.unwrap();
+    assert_eq!(
+        restored
+            .refs
+            .iter()
+            .find(|value| value.name == "HEAD")
+            .unwrap()
+            .target,
+        other
+    );
+    assert!(last_write(pool, f.repo).await.finished);
+
+    stores.listeners[1].stop().await;
+    set_timeout(pool, 1).await.unwrap();
+    let refs = stores.refs().await;
+    let error = timeout(
+        WAIT,
+        store.set_default_branch_as(pool, f.repo, f.owner, "main"),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
+    assert_eq!(error.message, "write quorum unavailable");
+    assert_eq!(stores.refs().await, refs);
+    assert_eq!(stores.heads(), vec![other; 2]);
+    let write = last_write(pool, f.repo).await;
+    assert_eq!(write.decision, "abort");
+    assert_eq!(write.votes.len(), 1);
+    let after = writes::recovery_view(pool, f.repo).await.unwrap();
+    assert_eq!(after.refs, restored.refs);
+    assert_eq!(after.committed_version, restored.committed_version);
+    assert_eq!(
+        db::repositories::records::get_repository_by_id(pool, f.repo)
+            .await
+            .unwrap()
+            .unwrap()
+            .default_branch,
+        "other"
+    );
+    stores.stop().await;
+}
+
+async fn new_repositories_stay_refused(pool: &DbPool) {
+    use codeyard::backend::repositories::lifecycle::{self, LifecycleFailure};
+    let stores = Stores::new(pool).await;
+    let f = &stores.fixture;
+    let source = db::repositories::records::get_repository_by_id(pool, f.repo)
+        .await
+        .unwrap()
+        .unwrap();
+    for voter_down in [false, true] {
+        if voter_down {
+            stores.listeners[1].stop().await;
+        }
+        for (name, source) in [("new-empty", None), ("new-copy", Some(&source))] {
+            let error = lifecycle::provision(
+                (pool, Some(&stores.contexts[0])),
+                &stores.contexts[0].repos_path,
+                db::repositories::creation::RepositoryCreationOwner::personal(f.owner),
+                name,
+                None,
+                false,
+                source,
+            )
+            .await
+            .unwrap_err();
+            assert_eq!(error.kind, LifecycleFailure::Unavailable);
+            assert_eq!(
+                error.message,
+                "Repository initialization and copy are unavailable with write quorum."
+            );
+        }
+    }
+    let query = "SELECT COUNT(*) FROM repositories WHERE owner_user_id=$1";
+    let count: i64 = match pool {
+        DbPool::Postgres(raw) => sqlx::query_scalar(query)
+            .bind(f.owner)
+            .fetch_one(raw)
+            .await
+            .unwrap(),
+        DbPool::Sqlite(raw) => sqlx::query_scalar(query)
+            .bind(f.owner)
+            .fetch_one(raw)
+            .await
+            .unwrap(),
+    };
+    assert_eq!(count, 1);
+    for context in &stores.contexts {
+        assert_eq!(std::fs::read_dir(&context.repos_path).unwrap().count(), 1);
+        assert_eq!(
+            std::fs::read_dir(context.repos_path.join("terms"))
+                .unwrap()
+                .count(),
+            1
+        );
+    }
+    stores.stop().await;
+}
+
 macro_rules! engine_pair {
     ($sqlite:ident, $postgres:ident, $contract:ident) => {
-        #[tokio::test]
-        async fn $sqlite() {
-            let database = native::NativeDatabase::new().await;
-            $contract(&database.pool).await;
+        #[test]
+        fn $sqlite() {
+            crate::support::large_stack::run(|| async {
+                let database = native::NativeDatabase::new().await;
+                $contract(&database.pool).await;
+            });
         }
-        #[tokio::test]
-        async fn $postgres() {
-            let mut database = native::PostgresDatabase::new().await;
-            $contract(&database.pool).await;
-            database.finish().await;
+        #[test]
+        fn $postgres() {
+            crate::support::large_stack::run(|| async {
+                let mut database = native::PostgresDatabase::new().await;
+                $contract(&database.pool).await;
+                database.finish().await;
+            });
         }
     };
 }
@@ -576,4 +873,24 @@ engine_pair!(
     sqlite_stale_writer_is_refused,
     postgres_stale_writer_is_refused,
     stale_writer_is_refused
+);
+engine_pair!(
+    sqlite_rename_is_one_write,
+    postgres_rename_is_one_write,
+    rename_is_one_write
+);
+engine_pair!(
+    sqlite_namespace_rename_uses_both_stores,
+    postgres_namespace_rename_uses_both_stores,
+    namespace_rename_uses_both_stores
+);
+engine_pair!(
+    sqlite_default_branch_uses_both_stores,
+    postgres_default_branch_uses_both_stores,
+    default_branch_uses_both_stores
+);
+engine_pair!(
+    sqlite_new_repositories_stay_refused,
+    postgres_new_repositories_stay_refused,
+    new_repositories_stay_refused
 );

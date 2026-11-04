@@ -34,6 +34,7 @@ impl LocalStore {
         old: &str,
         new: &str,
     ) -> Result<String, RepoError> {
+        self.admitted_path(false).await?;
         let actor = authority.user_id;
         let old_ref = git::branch_ref(old).ok_or_else(|| super::super::invalid_ref("branch"))?;
         let new_ref = git::branch_ref(new).ok_or_else(|| super::super::invalid_ref("branch"))?;
@@ -70,7 +71,8 @@ impl LocalStore {
         let advertised_default = git::repository::default_branch(self.path())
             .await
             .map_err(RepoError::from)?;
-        let _change = begin_ref_change(pool, repo, self.path(), self.node_id).await?;
+        let _change = self.begin_publisher_change(pool, repo).await?;
+        let quorum = self.quorum_context(pool, repo).await?.is_some();
         let updates = vec![
             git::PublicationUpdate {
                 reference: old_ref.clone(),
@@ -85,27 +87,67 @@ impl LocalStore {
         ];
         let held = publication.clone();
         let username = user.username;
-        self.blocking(move |path| {
-            let _held = held;
-            git::prepare_branch_publications(
-                path,
-                repo,
-                git::PublicationActor::User(actor),
-                &username,
-                &updates,
+        let planned = self
+            .blocking(move |path| {
+                let _held = held;
+                if quorum {
+                    git::plan_branch_publications(
+                        path,
+                        repo,
+                        git::PublicationActor::User(actor),
+                        &username,
+                        &updates,
+                    )
+                } else {
+                    git::prepare_branch_publications(
+                        path,
+                        repo,
+                        git::PublicationActor::User(actor),
+                        &username,
+                        &updates,
+                    )?;
+                    Ok(Vec::new())
+                }
+            })
+            .await?;
+        let mut changes = vec![
+            oid_change(&old_ref, Some(&target), None),
+            oid_change(&new_ref, None, Some(&target)),
+        ];
+        changes.extend(planned.iter().map(|change| {
+            oid_change(
+                &change.reference,
+                change.old.as_deref(),
+                change.new.as_deref(),
             )
-        })
-        .await?;
+        }));
+        if advertised_default.as_deref() == Some(old) {
+            changes.push(db::models::RefChange {
+                name: "HEAD".into(),
+                kind: "symbolic".into(),
+                old_target: Some(old_ref.clone()),
+                new_target: Some(new_ref.clone()),
+            });
+        }
         self.rename_authority(pool, repo, &authority, old, new)
             .await?;
-        publication
-            .scope(git::publish_branch_rename(self.path(), old, new, &target))
-            .await
-            .map_err(RepoError::from)?;
-        let followup = async {
+        if !publication
+            .scope(self.publish_quorum_refs(pool, repo, &changes, async {
+                self.rename_authority(pool, repo, &authority, old, new)
+                    .await?;
+                Ok(())
+            }))
+            .await?
+        {
+            publication
+                .scope(git::publish_branch_rename(self.path(), old, new, &target))
+                .await
+                .map_err(RepoError::from)?;
             if advertised_default.as_deref() == Some(old) {
                 self.set_head_target(&new_ref).await?;
             }
+        }
+        let followup = async {
             db::repositories::protection::rename_branch_settings(pool, actor, repo, old, new)
                 .await
                 .map_err(|_| RepoError::applied_followup_failed())?;
