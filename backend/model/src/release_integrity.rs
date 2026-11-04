@@ -221,6 +221,8 @@ impl Attestation {
     }
 }
 
+pub const MAX_ASSET_BYTES: usize = codeyard_support::object_limits::MAX_OBJECT_BYTES as usize;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,4 +259,3 @@ mod tests {
         assert!(tampered.verify(&key.public_hex()).is_err());
     }
 }
-pub const MAX_ASSET_BYTES: usize = codeyard_support::object_limits::MAX_OBJECT_BYTES as usize;
