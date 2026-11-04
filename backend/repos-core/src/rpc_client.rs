@@ -398,7 +398,7 @@ impl NodeContext {
     /// other than `primary` whose copy has applied the repository's current write version.
     /// Only looked up after such a failure. Each node is paired with
     /// whether it is the primary that moved.
-    pub(crate) async fn read_copies(&self, repository: Uuid, primary: i64) -> Vec<(i64, bool)> {
+    pub async fn read_copies(&self, repository: Uuid, primary: i64) -> Vec<(i64, bool)> {
         let Ok(pool) = self.database() else {
             return self
                 .ci_replicas

@@ -117,13 +117,14 @@ and results stay the same. A stage can be the last one.
 6. **Services.** Repository policy, imports, lockfile parsing, traffic,
    templates and Git editor preparation live in `backend/repos/`. CI configuration,
    credentials, logs and environment values live in `backend/ci/`. Membership,
-   transport, settings and quorum writes live in `backend/cluster/`. Webhook payloads,
+   transport, settings and quorum writes live in `backend/cluster/core/`. Webhook payloads,
    subscriptions and delivery live in `backend/webhooks/`. `identity`, `notifications`
    and `ssh` are extracted. Repository authority, identity mail links and delivery
    helpers have one lower owner.
    `backend/repos-core/` owns the concrete store, Git sessions, publication checks
-   and workflow readers. `backend/repos-rpc/` owns repository RPC handlers. `backend/ci-engine/` owns admission,
-   queues, workers and pull-request refresh. Receive hooks use a lower resource trait. Local RPC fallback uses an injected factory.
+   and workflow readers. `backend/repos-rpc/` owns repository RPC handlers.
+   `backend/ci-engine/` owns admission, queues, workers and pull-request refresh.
+   Receive hooks use a lower resource trait. Local RPC fallback uses an injected factory.
    Code-owner resolution lives in the CI engine. Store fixtures are an integration target.
    Receive fixtures share the composed broker integration target. Cluster startup,
    replica maintenance and CI request handling live in `backend/cluster/`; transport

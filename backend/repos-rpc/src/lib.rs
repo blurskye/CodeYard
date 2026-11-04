@@ -327,14 +327,7 @@ impl codeyard_repos_core::local_rpc::LocalRpc for RpcHandler {
         request: &'a Request,
     ) -> futures_util::future::BoxFuture<
         'a,
-        Result<
-            (
-                codeyard_repos_core::repositories::store::RepoStore,
-                bool,
-                tokio::sync::OwnedRwLockReadGuard<()>,
-            ),
-            codeyard_git::error::RepoError,
-        >,
+        Result<codeyard_repos_core::local_rpc::LocalCopy, codeyard_git::error::RepoError>,
     > {
         Box::pin(self.own_copy(request))
     }

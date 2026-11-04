@@ -137,7 +137,7 @@ impl RepoStore {
         ))
     }
 
-    pub(crate) fn for_ci_run(mut self, id: i64, worker: &str) -> Self {
+    pub fn for_ci_run(mut self, id: i64, worker: &str) -> Self {
         if let Backend::Remote(remote) = &mut self.0 {
             remote.for_ci_run(id, worker);
         }
@@ -435,7 +435,7 @@ impl RepoStore {
 
     /// A repository directory on storage node `node_id`. Its writes stop once the
     /// repository has been promoted to another node.
-    pub(crate) fn on_node(disk_path: &str, node_id: i64) -> RepoStore {
+    pub fn on_node(disk_path: &str, node_id: i64) -> RepoStore {
         RepoStore(Backend::Local(
             crate::repositories::store::local::LocalStore::new(disk_path, Some(Some(node_id))),
         ))
@@ -560,7 +560,7 @@ impl RepoStore {
     }
 
     /// Wait for this request's coalesced scan to be published, including on a remote primary.
-    pub(crate) async fn refresh_storage_size_now(
+    pub async fn refresh_storage_size_now(
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,
@@ -1805,7 +1805,7 @@ impl RepoStore {
         clippy::too_many_arguments,
         reason = "The store forwards the dependency-security request's explicit fields."
     )]
-    pub(crate) async fn configure_dependency_security_as(
+    pub async fn configure_dependency_security_as(
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,

@@ -43,7 +43,7 @@ where
     emit_checked(pool, repo, event, user_ids, None, build).await
 }
 
-pub(crate) async fn emit_repository_dispatch(
+pub async fn emit_repository_dispatch(
     pool: &DbPool,
     repo: &Repository,
     actor: i64,
