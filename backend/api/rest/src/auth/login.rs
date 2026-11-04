@@ -1,6 +1,3 @@
-use crate::user::fine_grained::crate::auth::AuthMode;
-use crate::user::fine_grained::fields::preserved_values;
-use crate::user::fine_grained::fields::FormValues;
 use crate::user::responses::api_error;
 use crate::user::responses::optional_field;
 use crate::user::responses::public_api_message;
@@ -25,6 +22,9 @@ use codeyard_identity::login::PasswordCredentials;
 use codeyard_identity::registration::RegistrationOutcome;
 use codeyard_identity::setup::SetupInput;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::auth::AuthMode;
+use codeyard_webui::pages::fields::preserved_values;
+use codeyard_webui::pages::fields::FormValues;
 use std::sync::Arc;
 
 pub(crate) fn auth_mode(path: &str, mode: Option<&str>) -> AuthMode {

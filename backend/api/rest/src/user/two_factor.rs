@@ -2,9 +2,6 @@
 //! Each form posts to a POST-only URL; a rejected form shows the settings tab again.
 
 use crate::auth::errors::two_factor_failure;
-use crate::user::fine_grained::settings::Settings;
-use crate::user::fine_grained::settings::TwoFactor;
-use crate::user::fine_grained::settings::TwoFactorSetup;
 use crate::user::profile::load_settings;
 use crate::user::profile::settings_response;
 use crate::user::responses::mutation_guard;
@@ -24,6 +21,9 @@ use codeyard_identity::two_factor::TwoFactorError;
 use codeyard_support::secrets::SecretEncryptor;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::settings::Settings;
+use codeyard_webui::pages::settings::TwoFactor;
+use codeyard_webui::pages::settings::TwoFactorSetup;
 use std::sync::Arc;
 
 fn encryptor(ctx: &PageContext) -> Result<&SecretEncryptor, TwoFactorError> {

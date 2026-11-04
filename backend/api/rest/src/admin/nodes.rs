@@ -1,5 +1,4 @@
 //! Admin nodes page: the cluster's members, with approve and revoke.
-use crate::user::fine_grained::admin::nodes as view;
 use crate::user::responses::mutation_guard;
 use crate::user::responses::require_account;
 use axum::extract::Path;
@@ -16,6 +15,7 @@ use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_webui::app::Page;
 use codeyard_webui::components::format_bytes;
+use codeyard_webui::pages::admin::nodes as view;
 use std::collections::HashMap;
 use std::sync::Arc;
 

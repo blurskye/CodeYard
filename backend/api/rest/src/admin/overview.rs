@@ -1,5 +1,4 @@
 //! The admin overview page: waiting sign-up requests and the activity charts.
-use crate::user::fine_grained::admin::Admin;
 use crate::user::responses::require_account;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -11,6 +10,7 @@ use codeyard_app::app::AppState;
 use codeyard_webui::components::charts::normalize_days;
 use codeyard_webui::components::charts::DailyActivity;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::admin::Admin;
 use std::sync::Arc;
 
 async fn load_admin(ctx: &PageContext, days: i32) -> Result<Admin, Response> {

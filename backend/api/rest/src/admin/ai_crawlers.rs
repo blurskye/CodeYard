@@ -1,7 +1,6 @@
 //! The site settings page: the sign-up mode and the site-wide AI crawler setting.
 
 use crate::crawlers::BLOCK;
-use crate::user::fine_grained::admin::AdminSettings;
 use crate::user::responses::mutation_guard;
 use crate::user::responses::require_account;
 use axum::extract::Form;
@@ -16,6 +15,7 @@ use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::admin::AdminSettings;
 use std::sync::Arc;
 
 /// The site settings page. A refused save shows the page again with the message.

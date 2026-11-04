@@ -1,4 +1,3 @@
-use crate::user::fine_grained::orgs::actions as view;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::Form;
 use axum::extract::Path;
@@ -16,6 +15,7 @@ use codeyard_db_orgs::organization_values as values;
 use codeyard_db_orgs::organization_values::Kind;
 use codeyard_db_orgs::organization_values::Save;
 use codeyard_db_orgs::organization_values::ValueError;
+use codeyard_webui::pages::orgs::actions as view;
 use std::collections::HashMap;
 use std::sync::Arc;
 

@@ -5,7 +5,6 @@ use codeyard_db_core::DbPool;
 use codeyard_model::advisories::Refusal;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::json;
 use serde_json::Value;
 
 /// Only lightweight filter metadata is streamed; complete documents are loaded for this page.
@@ -416,10 +415,4 @@ native_operation!(crate::postgres::dependabot_alerts::update,crate::sqlite::depe
 native_operation!(crate::postgres::dependabot_alerts::organization_repositories,crate::sqlite::dependabot_alerts::organization_repositories,
     fn organization_repositories(pool:&DbPool,actor:i64,org:i64)->Result<Vec<i64>>);
 
-use codeyard_db_core::queries::dependabot_alerts::matches;
-
 use codeyard_db_core::queries::dependabot_alerts::Alert;
-
-use codeyard_db_core::queries::dependabot_alerts::published;
-
-use codeyard_db_core::queries::dependabot_alerts::ecosystem;

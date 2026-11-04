@@ -1,10 +1,4 @@
 //! The signed-in user's own issues and pull requests: `/issues` and `/pulls`.
-use crate::user::fine_grained::dashboard::RepositoryChoice;
-use crate::user::fine_grained::dashboard::RepositoryChoices;
-use crate::user::fine_grained::dashboard::WorkItem;
-use crate::user::fine_grained::dashboard::WorkList;
-use crate::user::fine_grained::repos::issues::Kind;
-use crate::user::fine_grained::repos::issues::Label;
 use axum::extract::OriginalUri;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -18,6 +12,12 @@ use codeyard_db_repos::issues::IssueRelation;
 use codeyard_db_repos::pull_requests::records::PullRequestRelation;
 use codeyard_webui::app::Page;
 use codeyard_webui::components::relative_time;
+use codeyard_webui::pages::dashboard::RepositoryChoice;
+use codeyard_webui::pages::dashboard::RepositoryChoices;
+use codeyard_webui::pages::dashboard::WorkItem;
+use codeyard_webui::pages::dashboard::WorkList;
+use codeyard_webui::pages::repos::issues::Kind;
+use codeyard_webui::pages::repos::issues::Label;
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {

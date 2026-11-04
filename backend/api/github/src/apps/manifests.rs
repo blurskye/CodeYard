@@ -1,6 +1,4 @@
 //! One-time, session-bound manifest conversion. Only public verification keys persist.
-use crate::apps::super::Error;
-use crate::apps::super::Result;
 use crate::apps::installations::app_value;
 use axum::extract::Path;
 use axum::extract::State;
@@ -10,6 +8,8 @@ use codeyard_app::app::AppState;
 use codeyard_app::webhooks::settings::HookError;
 use codeyard_app::webhooks::settings::HookForm;
 use codeyard_db_identity::github_apps::App;
+use codeyard_model::github_error::Error;
+use codeyard_model::github_error::Result;
 use codeyard_support::token_hash::token_hash;
 use serde_json::json;
 use serde_json::Value;

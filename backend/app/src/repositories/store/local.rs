@@ -1,13 +1,13 @@
 //! The local store: the bare repository is a directory on this machine. Each
 //! method runs the matching Git code, moving blocking libgit2 work off the async
 //! threads and turning failures into [`RepoError`]s.
-use crate::cluster::writes::oid_change;
 use crate::repositories::protection::check_branch_write;
 use crate::repositories::protection::BranchWrite;
 use crate::repositories::protection::History;
 use crate::repositories::protection::Refusal;
 use crate::repositories::protection::WriteVia;
 use crate::repositories::store::editor::FileWrite;
+use crate::repositories::store::local::writes::oid_change;
 use crate::repositories::store::types::allowed_merge_methods;
 use crate::repositories::store::types::AsyncMergePublication;
 use crate::repositories::store::types::BlobBytes;

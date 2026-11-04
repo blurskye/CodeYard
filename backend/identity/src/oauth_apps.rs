@@ -164,6 +164,8 @@ pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_model::oauth_apps::allows;
+    use codeyard_model::oauth_apps::write_scope;
 
     #[test]
     fn code_scanning_and_security_configuration_scopes_are_narrow() {
@@ -301,8 +303,4 @@ mod tests {
     }
 }
 
-use codeyard_model::oauth_apps::allows;
-
 use codeyard_model::oauth_apps::has_scope;
-
-use codeyard_model::oauth_apps::write_scope;

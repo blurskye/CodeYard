@@ -191,15 +191,17 @@ fn voting_and_apply_are_storage_only_and_never_fail_over() {
             id: uuid::Uuid::new_v4().to_string(),
         },
     ] {
-        assert!(
-            crate::cluster::repository::authorize_operation(&["storage".into()], &operation)
-                .is_ok()
-        );
+        assert!(crate::cluster::rpc::repository::authorize_operation(
+            &["storage".into()],
+            &operation
+        )
+        .is_ok());
         for role in ["web", "ssh", "runner"] {
-            assert!(
-                crate::cluster::repository::authorize_operation(&[role.into()], &operation)
-                    .is_err()
-            );
+            assert!(crate::cluster::rpc::repository::authorize_operation(
+                &[role.into()],
+                &operation
+            )
+            .is_err());
         }
         assert!(!operation.is_read_only());
         assert_eq!(operation_body_limit(&operation), 0);

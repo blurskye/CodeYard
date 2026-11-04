@@ -868,5 +868,3 @@ use codeyard_model::fine_grained::PERMISSIONS;
 use codeyard_model::fine_grained::allows;
 
 use codeyard_model::fine_grained::catalog;
-
-use codeyard_model::fine_grained::permission;

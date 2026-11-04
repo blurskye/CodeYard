@@ -2,7 +2,6 @@
 //! it. The same rows back the REST personal-access-token endpoints.
 
 use crate::organizations::organization::Fields;
-use crate::user::fine_grained::orgs as view;
 use axum::extract::rejection::FormRejection;
 use axum::extract::Form;
 use axum::extract::Path;
@@ -20,6 +19,7 @@ use codeyard_db_core::queries::fine_grained_tokens::Policy;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_identity::fine_grained::MAX_DAYS;
 use codeyard_model::fine_grained::catalog;
+use codeyard_webui::pages::orgs as view;
 use serde_json::Map;
 use serde_json::Value;
 use std::collections::HashMap;

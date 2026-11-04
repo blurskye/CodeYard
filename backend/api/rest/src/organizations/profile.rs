@@ -7,14 +7,14 @@ use crate::organizations::organization::invalid;
 use crate::organizations::organization::public_view;
 use crate::organizations::organization::team_view;
 use crate::organizations::organization::unavailable;
-use crate::user::fine_grained::orgs::OrganizationProfile;
-use crate::user::fine_grained::orgs::Team;
 use crate::users::profile::profile_repositories;
 use axum::http::StatusCode;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::orgs::OrganizationProfile;
+use codeyard_webui::pages::orgs::Team;
 
 /// Rows per page of each tab.
 const TAB_PAGE_LIMIT: i64 = 30;
@@ -159,7 +159,7 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
             || (member_count.is_some()
                 && (settings.members_can_create_public_repositories
                     || settings.members_can_create_private_repositories)),
-        contacts: crate::user::fine_grained::orgs::ProfileContacts {
+        contacts: codeyard_webui::pages::orgs::ProfileContacts {
             company: settings.company.unwrap_or_default(),
             email: settings.email.unwrap_or_default(),
             twitter_username: settings.twitter_username.unwrap_or_default(),

@@ -2,9 +2,6 @@
 //! and roles. Every handler rechecks administrator authority in its identity call.
 use crate::admin::signup_requests::load_requests;
 use crate::admin::signup_requests::signup_decision;
-use crate::user::fine_grained::admin::AccountMetadata;
-use crate::user::fine_grained::admin::AdminUsers;
-use crate::user::fine_grained::fields::preserved_values;
 use crate::user::responses::mutation_guard;
 use crate::user::responses::optional_field;
 use crate::user::responses::public_api_message;
@@ -27,6 +24,9 @@ use codeyard_app::app::AppState;
 use codeyard_identity::credentials::PasswordAccount;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::admin::AccountMetadata;
+use codeyard_webui::pages::admin::AdminUsers;
+use codeyard_webui::pages::fields::preserved_values;
 use std::sync::Arc;
 
 /// Accounts per page on the users page.

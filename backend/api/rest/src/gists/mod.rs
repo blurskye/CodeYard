@@ -1,5 +1,4 @@
 //! Native gist pages and forms share the Git-backed domain with the GitHub API.
-use crate::user::fine_grained::gists as view;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -14,6 +13,7 @@ use codeyard_app::repositories::store::gists::GistCredential;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_webui::app::Page as AppPage;
+use codeyard_webui::pages::gists as view;
 use std::sync::Arc;
 
 mod forms;

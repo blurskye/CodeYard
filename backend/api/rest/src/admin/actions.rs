@@ -1,6 +1,5 @@
 //! The admin Actions page: whether workflows run on this site, the limits on each run and the
 //! runner image.
-use crate::user::fine_grained::admin::actions as view;
 use crate::user::responses::mutation_guard;
 use crate::user::responses::require_account;
 use axum::extract::DefaultBodyLimit;
@@ -18,6 +17,7 @@ use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
 use codeyard_db_actions::actions::ActionsSettings;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::admin::actions as view;
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {

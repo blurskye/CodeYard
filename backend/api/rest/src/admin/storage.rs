@@ -1,5 +1,4 @@
 //! Admin storage overview page.
-use crate::user::fine_grained::admin::storage as view;
 use crate::user::responses::require_account;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -11,6 +10,7 @@ use axum::Router;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::admin::storage as view;
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {

@@ -359,7 +359,7 @@ mod fixture {
                 let status = receive_session(
                     pool,
                     ci,
-                    crate::repositories::ReceiveSession {
+                    crate::repositories::git_sessions::ReceiveSession {
                         repo_id,
                         path: &path,
                         // Unit tests are not the application, so CI names the built binary.
@@ -2104,7 +2104,7 @@ mod fixture {
             .unwrap()
             .unwrap()
             .unwrap_err();
-        assert!(error.is::<crate::repositories::PostReceiveFailed>());
+        assert!(error.is::<crate::repositories::git_sessions::PostReceiveFailed>());
         assert!(git2::Repository::open_bare(&fixture.path)
             .unwrap()
             .find_reference("refs/heads/spare")

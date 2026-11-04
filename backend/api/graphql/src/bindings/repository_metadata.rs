@@ -1,8 +1,6 @@
 //! Fields exported by gh's repository JSON selection.
 use crate::bindings::fields;
 use crate::bindings::Object;
-use crate::bindings::Option;
-use crate::bindings::Vec;
 use crate::node;
 
 impl gql::LanguageResolver for Object {

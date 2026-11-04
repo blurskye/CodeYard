@@ -1,13 +1,3 @@
-use crate::user::fine_grained::fields::preserved_values;
-use crate::user::fine_grained::fields::FormValues;
-use crate::user::fine_grained::settings::settings_tab;
-use crate::user::fine_grained::settings::EmailVerification;
-use crate::user::fine_grained::settings::Key;
-use crate::user::fine_grained::settings::SecondaryEmail;
-use crate::user::fine_grained::settings::Settings;
-use crate::user::fine_grained::settings::Token;
-use crate::user::fine_grained::settings::TwoFactor;
-use crate::user::fine_grained::users::Profile;
 use crate::user::responses::mutation_guard;
 use crate::user::responses::public_api_message;
 use crate::user::responses::require_account;
@@ -27,6 +17,16 @@ use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
 use codeyard_identity::profiles::ProfileError;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::fields::preserved_values;
+use codeyard_webui::pages::fields::FormValues;
+use codeyard_webui::pages::settings::settings_tab;
+use codeyard_webui::pages::settings::EmailVerification;
+use codeyard_webui::pages::settings::Key;
+use codeyard_webui::pages::settings::SecondaryEmail;
+use codeyard_webui::pages::settings::Settings;
+use codeyard_webui::pages::settings::Token;
+use codeyard_webui::pages::settings::TwoFactor;
+use codeyard_webui::pages::users::Profile;
 use std::sync::Arc;
 
 pub(crate) fn profile_failure(error: ProfileError) -> (StatusCode, Json<ApiError>) {
@@ -262,7 +262,7 @@ pub(crate) async fn load_settings(
         })?;
         let more = users.len() > 100;
         users.truncate(100);
-        crate::user::fine_grained::settings::BlockedAccounts {
+        codeyard_webui::pages::settings::BlockedAccounts {
             interaction: Some(
                 codeyard_api_http::shared::user::interactions::panel(
                     &ctx.state.pool,

@@ -1,7 +1,6 @@
 //! Organization settings, bounded native commands and authorized page projections.
 
 use crate::organizations::INDEX;
-use crate::user::fine_grained::orgs as view;
 use axum::extract::rejection::FormRejection;
 use axum::extract::Form;
 use axum::extract::State;
@@ -17,6 +16,7 @@ use codeyard_db_core::queries::organizations::OrganizationOutcome::*;
 use codeyard_db_identity::interactions::InteractionScope;
 use codeyard_db_orgs::organizations::*;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::orgs as view;
 use std::collections::HashMap;
 use std::sync::Arc;
 

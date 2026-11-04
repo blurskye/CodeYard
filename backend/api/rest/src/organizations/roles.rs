@@ -1,10 +1,10 @@
 use crate::organizations::organization::Fields;
-use crate::user::fine_grained::orgs as view;
 use axum::http::StatusCode;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::roles::RoleTarget;
+use codeyard_webui::pages::orgs as view;
 
 pub(super) struct Command {
     target: RoleTarget,

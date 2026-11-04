@@ -1,4 +1,3 @@
-use crate::user::fine_grained::orgs::code_security as view;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -12,6 +11,7 @@ use codeyard_api_http::context::PageContext;
 use codeyard_api_http::render::redirect_response;
 use codeyard_app::app::AppState;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::orgs::code_security as view;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;

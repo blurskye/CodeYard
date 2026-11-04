@@ -11,7 +11,13 @@ pub async fn organization_invitation(
     let Some(user_id) = invitation.user_id else {
         return;
     };
-    let name = match super::get_organization_metadata(pool, actor, invitation.org_id).await {
+    let name = match codeyard_db_orgs::organizations::profiles::get_organization_metadata(
+        pool,
+        actor,
+        invitation.org_id,
+    )
+    .await
+    {
         Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(metadata)) => {
             metadata.name
         }

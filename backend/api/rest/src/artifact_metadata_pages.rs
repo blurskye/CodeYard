@@ -1,5 +1,4 @@
 //! Browser inventory reads share the metadata repository authority and bounded database projections.
-use crate::user::fine_grained::artifact_metadata as view;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -14,6 +13,7 @@ use codeyard_db_repos::artifact_metadata::Record;
 use codeyard_db_repos::artifact_metadata::Refusal;
 use codeyard_webui::app::Page as AppPage;
 use codeyard_webui::encode_component;
+use codeyard_webui::pages::artifact_metadata as view;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;

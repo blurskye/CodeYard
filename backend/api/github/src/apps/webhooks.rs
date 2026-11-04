@@ -1,7 +1,4 @@
 //! JWT-authorized app webhook configuration, history and real background redelivery.
-use crate::apps::super::api_url;
-use crate::apps::super::Error;
-use crate::apps::super::Result;
 use crate::apps::installations::jwt;
 use axum::extract::Path;
 use axum::extract::Query;
@@ -19,6 +16,9 @@ use codeyard_app::webhooks::settings::HookForm;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::queries::webhooks::WebhookPatch;
 use codeyard_db_identity::github_app_hooks::Delivery;
+use codeyard_model::github_error::Error;
+use codeyard_model::github_error::Result;
+use codeyard_model::urls::api_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Map;

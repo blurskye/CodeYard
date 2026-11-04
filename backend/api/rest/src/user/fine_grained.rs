@@ -1,13 +1,5 @@
 //! Settings pages for fine-grained personal access tokens. Every change goes through
 //! `identity::fine_grained`, which checks the session, the owner and the policy.
-use crate::user::fine_grained::settings::fine_grained::Choice;
-use crate::user::fine_grained::settings::fine_grained::Choices;
-use crate::user::fine_grained::settings::fine_grained::Detail;
-use crate::user::fine_grained::settings::fine_grained::Draft;
-use crate::user::fine_grained::settings::fine_grained::Model;
-use crate::user::fine_grained::settings::fine_grained::Row;
-use crate::user::fine_grained::settings::fine_grained::View;
-use crate::user::fine_grained::settings::fine_grained::BASE;
 use crate::user::responses::mutation_guard;
 use crate::user::responses::require_account;
 use axum::extract::rejection::FormRejection;
@@ -42,6 +34,14 @@ use codeyard_model::fine_grained::Group;
 use codeyard_model::fine_grained::PERMISSIONS;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::settings::fine_grained::Choice;
+use codeyard_webui::pages::settings::fine_grained::Choices;
+use codeyard_webui::pages::settings::fine_grained::Detail;
+use codeyard_webui::pages::settings::fine_grained::Draft;
+use codeyard_webui::pages::settings::fine_grained::Model;
+use codeyard_webui::pages::settings::fine_grained::Row;
+use codeyard_webui::pages::settings::fine_grained::View;
+use codeyard_webui::pages::settings::fine_grained::BASE;
 use serde_json::Map;
 use serde_json::Value;
 use std::collections::HashMap;

@@ -6,8 +6,6 @@ use crate::bindings::fields;
 use crate::bindings::objects;
 use crate::bindings::scalars;
 use crate::bindings::Object;
-use crate::bindings::Option;
-use crate::bindings::Vec;
 use async_graphql::ID;
 use classic_fields;
 use list_fields;

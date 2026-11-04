@@ -3,8 +3,6 @@ use crate::bindings::connection;
 use crate::bindings::fields;
 use crate::bindings::issue_fields;
 use crate::bindings::Object;
-use crate::bindings::Option;
-use crate::bindings::Vec;
 use async_graphql::ID;
 
 macro_rules! collaboration_fields {

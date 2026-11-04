@@ -5,7 +5,6 @@ use crate::organizations::organization::not_found;
 use crate::organizations::organization::unavailable;
 use crate::organizations::organization::Fields;
 use crate::organizations::organization::INVALID_FORM;
-use crate::user::fine_grained::orgs as view;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -16,6 +15,7 @@ use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_orgs::organizations::*;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::orgs as view;
 use std::sync::Arc;
 
 // Refusals that name the rule a field broke. Other malformed input gets INVALID_FORM.

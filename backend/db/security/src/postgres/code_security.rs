@@ -269,8 +269,6 @@ pub async fn repository_settings(pool: &PgPool, repo: i64) -> Result<Option<Repo
 
 use codeyard_db_core::queries::postgres::code_security::apply_repository;
 
-use codeyard_db_core::queries::postgres::code_security::repositories;
-
 use codeyard_db_core::queries::postgres::code_security::readable;
 
 use codeyard_db_core::queries::postgres::code_security::configuration;

@@ -1,6 +1,5 @@
 use crate::organizations::organization::Fields;
 use crate::organizations::INDEX;
-use crate::user::fine_grained::orgs::private_registries as view;
 use axum::extract::rejection::FormRejection;
 use axum::extract::Form;
 use axum::extract::Path;
@@ -14,6 +13,7 @@ use codeyard_app::app::AppState;
 use codeyard_db_actions::private_registries::Configuration;
 use codeyard_db_actions::private_registries::RegistryError;
 use codeyard_db_core::queries::secrets::SecretsError;
+use codeyard_webui::pages::orgs::private_registries as view;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::BTreeMap;

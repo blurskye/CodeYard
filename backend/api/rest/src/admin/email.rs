@@ -1,5 +1,4 @@
 //! Admin email settings and test-mail forms.
-use crate::user::fine_grained::admin::email as view;
 use crate::user::responses::mutation_guard;
 use crate::user::responses::require_account;
 use axum::extract::DefaultBodyLimit;
@@ -21,6 +20,7 @@ use codeyard_model::mail_config::Security;
 use codeyard_model::mail_config::SmtpConfig;
 use codeyard_model::mail_config::Source;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::admin::email as view;
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {

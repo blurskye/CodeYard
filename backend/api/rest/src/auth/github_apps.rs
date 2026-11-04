@@ -2,7 +2,6 @@
 use crate::auth::github_apps::manifests::manifest_approve;
 use crate::auth::github_apps::manifests::manifest_preview;
 use crate::auth::github_apps::manifests::manifest_start;
-use crate::user::fine_grained::auth::apps::Model;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -21,6 +20,7 @@ use codeyard_db_identity::github_apps::App;
 use codeyard_support::token_hash::token_hash;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::auth::apps::Model;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;

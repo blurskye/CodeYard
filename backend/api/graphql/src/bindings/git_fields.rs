@@ -2,8 +2,6 @@
 use crate::bindings::connection;
 use crate::bindings::fields;
 use crate::bindings::Object;
-use crate::bindings::Option;
-use crate::bindings::Vec;
 use crate::node;
 use async_graphql::ID;
 

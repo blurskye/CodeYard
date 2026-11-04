@@ -1,8 +1,5 @@
 use crate::discovery::dashboard_cards;
 use crate::discovery::unavailable;
-use crate::user::fine_grained::discovery as view;
-use crate::user::fine_grained::discovery::HomeModel;
-use crate::user::fine_grained::discovery::SharedRepositoryCard;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::Uri;
@@ -11,6 +8,9 @@ use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_webui::app::Page as AppPage;
+use codeyard_webui::pages::discovery as view;
+use codeyard_webui::pages::discovery::HomeModel;
+use codeyard_webui::pages::discovery::SharedRepositoryCard;
 use std::sync::Arc;
 
 pub(super) async fn home(

@@ -1,7 +1,5 @@
 use crate::bindings::fields;
 use crate::bindings::Object;
-use crate::bindings::Option;
-use crate::bindings::Vec;
 use crate::node;
 
 impl gql::SearchResultItemConnectionResolver for Object {

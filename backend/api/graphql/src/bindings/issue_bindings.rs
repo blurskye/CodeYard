@@ -3,7 +3,6 @@ use crate::bindings::connection;
 use crate::bindings::fields;
 use crate::bindings::issue_payload;
 use crate::bindings::Object;
-use crate::bindings::Option;
 use async_graphql::ID;
 
 impl gql::LinkedBranchResolver for Object {

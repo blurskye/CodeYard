@@ -513,5 +513,3 @@ pub async fn heartbeat(
 }
 
 use codeyard_db_core::queries::sqlite::secret_scanning::save_settings_on_connection;
-
-use codeyard_db_core::queries::sqlite::secret_scanning::settings;

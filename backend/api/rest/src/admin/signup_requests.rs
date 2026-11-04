@@ -1,9 +1,9 @@
-use crate::user::fine_grained::admin::Signup;
-use crate::user::fine_grained::admin::SIGNUP_REQUESTS_PER_PAGE;
 use crate::user::responses::require_account;
 use axum::http::StatusCode;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
+use codeyard_webui::pages::admin::Signup;
+use codeyard_webui::pages::admin::SIGNUP_REQUESTS_PER_PAGE;
 
 pub(crate) fn signup_decision(action: &str) -> Option<codeyard_identity::accounts::SignupDecision> {
     match action.trim().to_ascii_lowercase().as_str() {

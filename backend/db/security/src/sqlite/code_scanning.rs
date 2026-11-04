@@ -13,16 +13,14 @@ use crate::code_scanning::OrganizationAlert;
 use crate::code_scanning::Refusal;
 use crate::code_scanning::Run;
 use crate::code_scanning::Upload;
-use crate::code_scanning::UploadStatus;
 use crate::code_scanning::ANALYSIS_COLUMNS;
-use crate::sqlite::code_scanning::list::analysis;
 use anyhow::ensure;
 use anyhow::Result;
 use sqlx::SqliteConnection;
 use sqlx::SqlitePool;
-mod list;
-mod pulls;
-mod read;
+pub(crate) mod list;
+pub(crate) mod pulls;
+pub(crate) mod read;
 
 pub async fn enqueue(pool: &SqlitePool, input: &NewUpload<'_>) -> Result<Upload> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;

@@ -1,4 +1,3 @@
-use crate::user::fine_grained::packages as view;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::Path;
 use axum::extract::State;
@@ -18,6 +17,7 @@ use codeyard_db_repos::packages::Package;
 use codeyard_db_repos::packages::Permission;
 use codeyard_db_repos::packages::Refusal;
 use codeyard_webui::app::Page as AppPage;
+use codeyard_webui::pages::packages as view;
 use std::collections::HashMap;
 use std::sync::Arc;
 

@@ -3,8 +3,6 @@
 use sha2::Digest;
 
 use crate::auth::errors::database_failure;
-use crate::user::fine_grained::settings::AccountSession;
-use crate::user::fine_grained::settings::SessionPagination;
 use crate::user::profile::settings_result;
 use crate::user::responses::mutation_guard;
 use axum::extract::Form;
@@ -20,6 +18,8 @@ use codeyard_api_http::error::ApiFailure;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
+use codeyard_webui::pages::settings::AccountSession;
+use codeyard_webui::pages::settings::SessionPagination;
 use sha2::Sha256;
 use std::sync::Arc;
 

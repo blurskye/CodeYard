@@ -1,4 +1,3 @@
-use crate::user::fine_grained::notifications as view;
 use axum::extract::OriginalUri;
 use axum::extract::Query;
 use axum::extract::State;
@@ -21,6 +20,7 @@ use codeyard_db_repos::notifications::records::NotificationInbox;
 use codeyard_db_repos::notifications::records::NotificationInboxAction;
 use codeyard_db_repos::notifications::records::NotificationView;
 use codeyard_db_repos::notifications::records::ViewCounts;
+use codeyard_webui::pages::notifications as view;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::collections::HashMap;

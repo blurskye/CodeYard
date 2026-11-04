@@ -1,5 +1,4 @@
 //! Discovery routes and safe repository-card projection.
-use crate::user::fine_grained::discovery::RepositoryCard;
 use axum::extract::DefaultBodyLimit;
 use axum::http::StatusCode;
 use axum::response::Response;
@@ -8,6 +7,7 @@ use axum::Router;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_webui::components::languages::LanguageShare;
+use codeyard_webui::pages::discovery::RepositoryCard;
 use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::sync::Arc;

@@ -108,6 +108,7 @@ native_operation!(crate::postgres::attestations::delete, crate::sqlite::attestat
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_db_core::queries::attestations::valid_digest;
 
     #[test]
     fn digests_are_lowercase_hex_of_the_named_length() {
@@ -117,5 +118,3 @@ mod tests {
         assert!(!valid_digest(&format!("sha256:{}", "A".repeat(64))));
     }
 }
-
-use codeyard_db_core::queries::attestations::valid_digest;

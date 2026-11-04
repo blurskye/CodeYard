@@ -1,5 +1,5 @@
-use crate::user::fine_grained::ci as view;
-use crate::user::fine_grained::repos::actions as view_actions;
+use codeyard_webui::pages::ci as view;
+use codeyard_webui::pages::repos::actions as view_actions;
 use serde::Deserialize;
 use serde::Serialize;
 

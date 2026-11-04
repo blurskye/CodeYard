@@ -3,12 +3,12 @@
 use crate::organizations::organization::unavailable;
 use crate::organizations::organization::unit;
 use crate::organizations::organization::Fields;
-use crate::user::fine_grained::orgs as view;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_notifications::create::organization_invitation;
+use codeyard_webui::pages::orgs as view;
 use std::collections::HashMap;
 
 pub(super) async fn project(

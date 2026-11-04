@@ -6,8 +6,8 @@
 pub mod outbox;
 pub mod send;
 
+use codeyard_db_identity::mail_config as config;
 use codeyard_model::http_config::public_origin;
-use codeyard_support::secrets::SecretEncryptor;
 
 use codeyard_db_core::DbPool;
 use tracing::warn;
@@ -48,6 +48,7 @@ pub async fn notify_user(pool: &DbPool, notification: &codeyard_db_core::models:
 mod tests {
     use super::*;
     use codeyard_db_identity::email::NewEmailSettings;
+    use codeyard_support::secrets::SecretEncryptor;
 
     struct Fixture {
         _directory: tempfile::TempDir,
@@ -126,9 +127,12 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(source, config::Source::Database);
+        assert_eq!(source, codeyard_model::mail_config::Source::Database);
         assert_eq!(saved.host, "mail.example.com");
-        assert_eq!((saved.port, saved.security), (2525, config::Security::Tls));
+        assert_eq!(
+            (saved.port, saved.security),
+            (2525, codeyard_model::mail_config::Security::Tls)
+        );
         assert_eq!(saved.password.as_deref(), Some("s3cret"));
         assert!(config::is_configured(&f.pool).await);
 

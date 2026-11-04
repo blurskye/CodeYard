@@ -2,7 +2,6 @@
 //! pending token and this page; the session is created only once a code checks out.
 
 use crate::auth::login::append_auth_cookie;
-use crate::user::fine_grained::auth::AuthMode;
 use crate::user::responses::public_api_message;
 use crate::user::responses::safe_redirect;
 use crate::user::responses::within_bounds;
@@ -21,6 +20,7 @@ use codeyard_app::app::AppState;
 use codeyard_identity::login::LoginError;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::auth::AuthMode;
 use std::sync::Arc;
 
 /// The second-factor page as the password step renders it. Nothing is signed in yet.

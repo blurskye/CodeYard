@@ -1,5 +1,4 @@
 //! Project pages and plain forms use the same project operations as REST.
-use crate::user::fine_grained::projects as view;
 use crate::user::responses::mutation_guard;
 use axum::extract::Form;
 use axum::extract::Path;
@@ -17,6 +16,7 @@ use codeyard_app::app::AppState;
 use codeyard_db_repos::projects::Content;
 use codeyard_db_repos::projects::NewView;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::projects as view;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;

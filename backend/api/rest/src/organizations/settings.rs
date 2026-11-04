@@ -1,7 +1,6 @@
 //! Session-bound, bounded owner controls for the same organization policies used by REST.
 
 use crate::organizations::organization::Fields;
-use crate::user::fine_grained::orgs as view;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::State;
@@ -13,6 +12,7 @@ use axum::routing::post;
 use axum::Router;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
+use codeyard_webui::pages::orgs as view;
 use serde_json::Map;
 use serde_json::Value;
 use std::collections::HashSet;

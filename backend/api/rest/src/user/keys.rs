@@ -1,4 +1,3 @@
-use crate::user::fine_grained::fields::may_be_private_key;
 use crate::user::profile::settings_response;
 use crate::user::profile::settings_result;
 use crate::user::responses::mutation_guard;
@@ -18,6 +17,7 @@ use codeyard_api_http::shared::user::responses::field;
 use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
 use codeyard_identity::keys::KeyError;
+use codeyard_webui::pages::fields::may_be_private_key;
 use std::sync::Arc;
 
 pub(crate) fn key_failure(error: KeyError) -> (StatusCode, Json<ApiError>) {

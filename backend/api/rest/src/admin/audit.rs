@@ -1,8 +1,5 @@
 //! The audit log page: recorded administrative changes, newest first, filtered by the kind of
 //! change and the actor.
-use crate::user::fine_grained::admin::AdminAudit;
-use crate::user::fine_grained::admin::AuditEntry;
-use crate::user::fine_grained::admin::AUDIT_ENTRIES_PER_PAGE;
 use crate::user::responses::require_account;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -13,6 +10,9 @@ use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::admin::AdminAudit;
+use codeyard_webui::pages::admin::AuditEntry;
+use codeyard_webui::pages::admin::AUDIT_ENTRIES_PER_PAGE;
 use std::sync::Arc;
 
 /// Details that say nothing are left out of the page.

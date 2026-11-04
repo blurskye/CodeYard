@@ -1,5 +1,4 @@
 //! Native runner settings and credential redemption; the REST adapter shares the same DAOs.
-use crate::user::fine_grained::runners as view;
 use axum::body::Body;
 use axum::extract::DefaultBodyLimit;
 use axum::extract::Path;
@@ -26,6 +25,7 @@ use codeyard_db_actions::runners::Selection;
 use codeyard_db_core::queries::runners::Refusal;
 use codeyard_db_core::queries::runners::Scope;
 use codeyard_webui::app::Page;
+use codeyard_webui::pages::runners as view;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;

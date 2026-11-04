@@ -1,7 +1,6 @@
 use crate::discovery::stars::star_order_and_text;
 use crate::discovery::stars::star_sort;
 use crate::discovery::stars::starred_page;
-use crate::user::fine_grained::users;
 use crate::user::profile::load_profile;
 use crate::users::activity::ActivityQuery;
 use axum::extract::Path;
@@ -14,6 +13,7 @@ use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_webui::pages::account;
+use codeyard_webui::pages::users;
 use std::sync::Arc;
 
 /// The Stars tab: how many of the user's stars the viewer can read, and the open page of them when

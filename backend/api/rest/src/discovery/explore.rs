@@ -1,8 +1,6 @@
 use crate::discovery::page_number;
 use crate::discovery::repository_cards;
 use crate::discovery::unavailable;
-use crate::user::fine_grained::discovery as view;
-use crate::user::fine_grained::discovery::ExploreModel;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
@@ -14,6 +12,8 @@ use codeyard_db_repos::repositories::records::RepositoryFilter;
 use codeyard_db_repos::repositories::records::RepositoryKind;
 use codeyard_db_repos::repositories::records::RepositorySort;
 use codeyard_webui::app::Page as AppPage;
+use codeyard_webui::pages::discovery as view;
+use codeyard_webui::pages::discovery::ExploreModel;
 use std::collections::HashMap;
 use std::sync::Arc;
 

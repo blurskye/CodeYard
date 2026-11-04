@@ -1,4 +1,3 @@
-use crate::user::fine_grained::repos::actions as view_actions;
 use axum::extract::OriginalUri;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -11,6 +10,7 @@ use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::runs::DispatchRequest;
+use codeyard_webui::pages::repos::actions as view_actions;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;

@@ -1,7 +1,6 @@
 //! Session-bound property controls. The larger body budget is isolated from other organization forms.
 
 use crate::organizations::organization::Fields;
-use crate::user::fine_grained::orgs as view;
 use anyhow::ensure;
 use anyhow::Result;
 use axum::extract::DefaultBodyLimit;
@@ -17,6 +16,7 @@ use axum::Router;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_webui::pages::orgs as view;
 use std::collections::HashSet;
 use std::sync::Arc;
 use OrganizationOutcome::Applied;
