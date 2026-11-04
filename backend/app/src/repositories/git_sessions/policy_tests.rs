@@ -1550,11 +1550,11 @@ mod fixture {
             Arc::new(tokio::sync::Notify::new()),
             Some(crate::cluster::context::NodeContext {
                 pool: Some(fixture.pool.clone()),
-                iroh: crate::cluster::transport::IrohDialer::with_endpoint(
-                    crate::cluster::transport::Relay::Off,
+                iroh: codeyard_cluster::transport::IrohDialer::with_endpoint(
+                    codeyard_cluster::transport::Relay::Off,
                     key.clone(),
-                    crate::cluster::transport::bind_client(
-                        &crate::cluster::transport::Relay::Off,
+                    codeyard_cluster::transport::bind_client(
+                        &codeyard_cluster::transport::Relay::Off,
                         &key,
                     )
                     .await

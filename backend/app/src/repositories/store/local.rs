@@ -87,10 +87,10 @@ async fn require_legacy_publisher(
     pool: &codeyard_db_core::DbPool,
     repo: i64,
 ) -> Result<(), RepoError> {
-    crate::cluster::writes::require_legacy_publisher(pool, repo)
+    codeyard_cluster::writes::require_legacy_publisher(pool, repo)
         .await
         .map_err(|error| {
-            if error.is::<crate::cluster::writes::PublisherUnavailable>() {
+            if error.is::<codeyard_cluster::writes::PublisherUnavailable>() {
                 RepoError::new(ErrorKind::Unavailable, error.to_string())
             } else {
                 RepoError::authority_unavailable()
@@ -669,7 +669,7 @@ pub(super) async fn recover_term(
     let _lock = git::locks::lock(&target).await;
     let _readers = git::locks::exclusive(&target).await;
     let view =
-        crate::cluster::writes::recover(pool, repository, view.primary_id, view.term).await?;
+        codeyard_cluster::writes::recover(pool, repository, view.primary_id, view.term).await?;
     let target_store = LocalStore::new(target.to_str().context("invalid term path")?, None);
     if !tokio::fs::try_exists(&target).await? {
         let previous = term_path(root, uuid, view.term - 1);

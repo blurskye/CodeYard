@@ -525,8 +525,8 @@ async fn replica_rules_hold_on_postgres() {
     check_replica_rules(&database.pool).await;
 }
 
-fn settings(name: &str) -> codeyard_app::cluster::Settings {
-    codeyard_app::cluster::Settings::from_lookup(&|key| match key {
+fn settings(name: &str) -> codeyard_cluster::settings::Settings {
+    codeyard_cluster::settings::Settings::from_lookup(&|key| match key {
         "IROH_BIND" => Some("127.0.0.1:0".into()),
         "NODE_NAME" => Some(name.into()),
         _ => None,
@@ -1115,7 +1115,7 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
             pool,
             &node.endpoint().unwrap().id().to_string(),
             "test",
-            &serde_json::to_string(&codeyard_app::cluster::transport::NodeAddress::of(
+            &serde_json::to_string(&codeyard_cluster::transport::NodeAddress::of(
                 &node.endpoint().unwrap().addr()
             ))
             .unwrap(),
@@ -1957,8 +1957,8 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     let mut context = primary.context.clone();
     context.pool = None;
     context.node_id = 0;
-    context.iroh = codeyard_app::cluster::transport::IrohDialer::new(
-        codeyard_app::cluster::transport::Relay::Off,
+    context.iroh = codeyard_cluster::transport::IrohDialer::new(
+        codeyard_cluster::transport::Relay::Off,
         key.clone(),
     );
     context.key = key;
@@ -2391,7 +2391,7 @@ async fn clear_heartbeat(pool: &DbPool, key: &str) {
 }
 
 async fn cluster_revoke(pool: &DbPool, name: &str) {
-    codeyard_app::cluster::pairing::revoke(
+    codeyard_cluster::pairing::revoke(
         pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         name,

@@ -1,7 +1,7 @@
 //! The iroh endpoint: protocol names, relay choice, binding, and the rule that only
 //! active cluster members may connect.
-use crate::cluster::link::Link;
-use crate::cluster::pairing::PairingHandler;
+use codeyard_cluster::link::Link;
+use codeyard_cluster::pairing::PairingHandler;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
@@ -202,7 +202,7 @@ impl EndpointHooks for MembersOnly {
 /// Used at handshake and immediately before every repository request.
 /// An active member whose roles the installation's mode allows: in single-node mode only
 /// runners connect, so a node joined for another role is refused on its next request.
-pub(crate) async fn active_member(pool: &DbPool, peer: PublicKey) -> Result<bool> {
+pub async fn active_member(pool: &DbPool, peer: PublicKey) -> Result<bool> {
     codeyard_db_cluster::cluster::is_admitted_node(pool, &peer.to_string()).await
 }
 
@@ -288,7 +288,7 @@ impl IrohDialer {
         }
     }
 
-    pub(crate) fn with_identity_lock(mut self, lock: std::fs::File) -> Self {
+    pub fn with_identity_lock(mut self, lock: std::fs::File) -> Self {
         self._identity_lock = Some(Arc::new(lock));
         self
     }
@@ -347,7 +347,7 @@ pub async fn dial_node(
             tokio::time::sleep(std::time::Duration::from_millis(index.min(5) as u64 * 200)).await;
             tokio::time::timeout(
                 DIAL_TIMEOUT,
-                Box::pin(crate::cluster::tcp::dial(
+                Box::pin(crate::tcp::dial(
                     iroh.key(),
                     *tcp_address,
                     node,
@@ -417,7 +417,7 @@ pub async fn accept_stream(connection: &Connection) -> Option<Link> {
     ))
 }
 
-pub(crate) fn connection_slot(
+pub fn connection_slot(
     connection: &Connection,
 ) -> Result<tokio::sync::OwnedSemaphorePermit> {
     static CONNECTIONS: OnceLock<Arc<Semaphore>> = OnceLock::new();
@@ -431,7 +431,7 @@ pub(crate) fn connection_slot(
         })
 }
 
-pub(crate) fn peer_header_slot(
+pub fn peer_header_slot(
     registry: &Mutex<HashMap<PublicKey, Arc<Semaphore>>>,
     peer: PublicKey,
 ) -> Result<tokio::sync::OwnedSemaphorePermit> {

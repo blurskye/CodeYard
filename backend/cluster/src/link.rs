@@ -38,7 +38,7 @@ impl fmt::Debug for Link {
 }
 
 impl Link {
-    pub(super) fn quic(
+    pub fn quic(
         peer: PublicKey,
         alpn: &[u8],
         reader: impl AsyncRead + Send + Unpin + 'static,

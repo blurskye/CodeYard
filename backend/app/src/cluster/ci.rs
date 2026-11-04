@@ -5,7 +5,7 @@ use crate::ci::queue::Request;
 use crate::ci::queue::RunQueue;
 use crate::ci::queue::CORE_UNAVAILABLE;
 use crate::cluster::context::NodeContext;
-use crate::cluster::link::Link;
+use codeyard_cluster::link::Link;
 use anyhow::ensure;
 use anyhow::Result;
 use iroh::endpoint::Connection;
@@ -50,8 +50,8 @@ mod tests {
     use super::*;
     use codeyard_ci::config::CiConfig;
     use codeyard_ci::config::CiExecutionMode;
-    use crate::cluster::transport::IrohDialer;
-    use crate::cluster::transport::Relay;
+    use codeyard_cluster::transport::IrohDialer;
+    use codeyard_cluster::transport::Relay;
     use codeyard_support::node_identity::NodeKey;
 
     async fn test_context() -> (tempfile::TempDir, codeyard_db_core::DbPool, NodeContext) {
@@ -126,7 +126,7 @@ mod tests {
         frame.extend_from_slice(&header);
         let mut link = Link::tcp(
             context.key.public_key(),
-            crate::cluster::transport::ALPN_EVENTS,
+            codeyard_cluster::transport::ALPN_EVENTS,
             std::io::Cursor::new(frame),
             tokio::io::sink(),
         );
@@ -432,7 +432,7 @@ impl CiHandler {
                         node.status == "active" && node.roles.iter().any(|role| role == "storage")
                     })
                     .ok_or_else(|| anyhow::anyhow!(CORE_UNAVAILABLE))?;
-                let peer = crate::cluster::worker::CorePeer {
+                let peer = codeyard_cluster::worker::CorePeer {
                     target: None,
                     public_key: node.public_key,
                     address: serde_json::from_str(
@@ -596,7 +596,7 @@ impl CiHandler {
     }
 
     async fn answer_link(&self, mut link: Link) -> Result<()> {
-        let _header = crate::cluster::transport::peer_header_slot(&self.headers, link.peer)?;
+        let _header = codeyard_cluster::transport::peer_header_slot(&self.headers, link.peer)?;
         tokio::time::timeout(std::time::Duration::from_secs(90), async {
             // A busy core refuses at once, as pairing does, so the client asks another
             // core instead of waiting in a queue. Hold admission through the reply write, and
@@ -623,10 +623,10 @@ impl CiHandler {
 
 impl ProtocolHandler for CiHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        let Ok(_connection) = crate::cluster::transport::connection_slot(&connection) else {
+        let Ok(_connection) = codeyard_cluster::transport::connection_slot(&connection) else {
             return Ok(());
         };
-        while let Some(link) = crate::cluster::transport::accept_stream(&connection).await {
+        while let Some(link) = codeyard_cluster::transport::accept_stream(&connection).await {
             if let Err(error) = self.serve_link(link).await {
                 tracing::warn!(%error, "CI queue RPC failed");
                 connection.close(500u32.into(), b"CI request failed");

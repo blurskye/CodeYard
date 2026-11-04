@@ -221,14 +221,14 @@ impl Gateway {
                 let repository = crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
                 let view = journal::recovery_view(&self.pool, repo.id).await?;
                 let id = uuid::Uuid::new_v4().to_string();
-                let write = match crate::cluster::writes::begin(
+                let write = match codeyard_cluster::writes::begin(
                     &self.pool, repo.id, primary, view.term, &id, &changes,
                 )
                 .await
                 {
                     Ok(write) => write,
                     Err(error) => {
-                        if error.is::<crate::cluster::writes::OutcomeUnknown>() {
+                        if error.is::<codeyard_cluster::writes::OutcomeUnknown>() {
                             operation
                                 .state
                                 .lock()
@@ -256,7 +256,7 @@ impl Gateway {
                     .scope(cluster.prepare_push_write(repository, &operation.path, write.record()))
                     .await;
                 let votes = prepared.is_ok()
-                    && crate::cluster::writes::collect_votes(&self.pool, &write)
+                    && codeyard_cluster::writes::collect_votes(&self.pool, &write)
                         .await
                         .unwrap_or(false);
                 // Recheck after network and disk waits, immediately before the decision.
@@ -286,7 +286,7 @@ impl Gateway {
                     .await?;
                     Ok::<_, anyhow::Error>(())
                 };
-                let decided = crate::cluster::writes::decide(
+                let decided = codeyard_cluster::writes::decide(
                     &self.pool,
                     &write,
                     votes && authorized.await.is_ok(),
@@ -331,7 +331,7 @@ impl Gateway {
                 if write.decision == "commit" {
                     ensure!(
                         phase == TransactionPhase::Committed,
-                        crate::cluster::writes::OutcomeUnknown
+                        codeyard_cluster::writes::OutcomeUnknown
                     );
                     let (repo, _) = self.operation_repository(operation).await?;
                     let repository =
@@ -355,7 +355,7 @@ impl Gateway {
                     .await?;
                     ensure!(
                         aborted.decision == "abort",
-                        crate::cluster::writes::OutcomeUnknown
+                        codeyard_cluster::writes::OutcomeUnknown
                     );
                     let (repo, _) = self.operation_repository(operation).await?;
                     let repository =
@@ -379,7 +379,7 @@ impl Gateway {
     }
 
     pub(super) async fn complete_quorum(&self, operation: &Operation) -> Result<bool> {
-        use crate::cluster::writes::OutcomeUnknown;
+        use codeyard_cluster::writes::OutcomeUnknown;
         let writes = {
             let state = operation
                 .state
@@ -730,7 +730,7 @@ impl Gateway {
                 )
                 .await;
             if let Err(error) = result {
-                if error.is::<crate::cluster::writes::OutcomeUnknown>() {
+                if error.is::<codeyard_cluster::writes::OutcomeUnknown>() {
                     operation
                         .state
                         .lock()

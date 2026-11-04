@@ -16,9 +16,9 @@ use codeyard_ci::config::CiExecutionMode;
 use codeyard_app::ci::runner_credentials::JitConfig;
 
 use codeyard_app::cluster::context::NodeContext;
-use codeyard_app::cluster::transport::Listen;
-use codeyard_app::cluster::transport::NodeAddress;
-use codeyard_app::cluster::transport::Relay;
+use codeyard_cluster::transport::Listen;
+use codeyard_cluster::transport::NodeAddress;
+use codeyard_cluster::transport::Relay;
 use codeyard_support::node_identity::NodeKey;
 
 use codeyard_storage::ObjectStore;
@@ -94,8 +94,8 @@ async fn token(
     )
 }
 async fn pair(ticket: &str, key: &NodeKey, name: &str) {
-    let ticket = codeyard_app::cluster::pairing::JoinTicket::decode(ticket).unwrap();
-    let joined = codeyard_app::cluster::pairing::join(&ticket, key, &Relay::Off, name, None)
+    let ticket = codeyard_cluster::pairing::JoinTicket::decode(ticket).unwrap();
+    let joined = codeyard_cluster::pairing::join(&ticket, key, &Relay::Off, name, None)
         .await
         .unwrap();
     assert!(joined.newly_joined);
@@ -134,7 +134,7 @@ async fn contract(pg: bool) {
     );
     let root = tempfile::tempdir().unwrap();
     let key = NodeKey::generate();
-    let endpoint = codeyard_app::cluster::transport::bind(
+    let endpoint = codeyard_cluster::transport::bind(
         &Listen {
             bind: "127.0.0.1:0".parse().unwrap(),
             relay: Relay::Off,
@@ -145,9 +145,9 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let core = codeyard_app::cluster::transport::router(
+    let core = codeyard_cluster::transport::router(
         endpoint,
-        codeyard_app::cluster::pairing::PairingHandler::new(f.pool().clone()),
+        codeyard_cluster::pairing::PairingHandler::new(f.pool().clone()),
     )
     .spawn();
     codeyard_app::cluster::wait_for_address(core.endpoint()).await;
@@ -172,7 +172,7 @@ async fn contract(pg: bool) {
     .unwrap();
     let context = NodeContext {
         pool: Some(f.pool().clone()),
-        iroh: codeyard_app::cluster::transport::IrohDialer::new(Relay::Off, key.clone()),
+        iroh: codeyard_cluster::transport::IrohDialer::new(Relay::Off, key.clone()),
         key,
         node_id: node.id,
         repos_path: root.path().to_owned(),
@@ -1018,8 +1018,8 @@ async fn contract(pg: bool) {
             pair(&config.ticket, &jit_key, &config.node_name).await;
         }
         let retry_key = NodeKey::generate();
-        assert!(codeyard_app::cluster::pairing::join(
-            &codeyard_app::cluster::pairing::JoinTicket::decode(&config.ticket).unwrap(),
+        assert!(codeyard_cluster::pairing::join(
+            &codeyard_cluster::pairing::JoinTicket::decode(&config.ticket).unwrap(),
             &retry_key,
             &Relay::Off,
             "second-use",
@@ -1146,8 +1146,8 @@ async fn contract(pg: bool) {
     )
     .await;
     let expired_key = NodeKey::generate();
-    assert!(codeyard_app::cluster::pairing::join(
-        &codeyard_app::cluster::pairing::JoinTicket::decode(&registration_tokens[0]).unwrap(),
+    assert!(codeyard_cluster::pairing::join(
+        &codeyard_cluster::pairing::JoinTicket::decode(&registration_tokens[0]).unwrap(),
         &expired_key,
         &Relay::Off,
         "expired",

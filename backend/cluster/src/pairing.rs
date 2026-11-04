@@ -4,12 +4,12 @@
 //! - an invite ticket from `cluster invite`, redeemed by `cluster join`;
 //! - the same ticket kept as `CLUSTER_JOIN_TOKEN` (reusable, for autoscaling);
 //! - a declared list of keys in `CLUSTER_NODES`, applied by core nodes at startup.
-use crate::cluster::link::read_to_end_within;
-use crate::cluster::link::Link;
-use crate::cluster::transport::NodeAddress;
-use crate::cluster::transport::Relay;
-use crate::cluster::transport::ALPN_PAIR;
-use crate::cluster::transport::CLOSE_UNAVAILABLE;
+use codeyard_cluster::link::read_to_end_within;
+use codeyard_cluster::link::Link;
+use crate::transport::NodeAddress;
+use crate::transport::Relay;
+use crate::transport::ALPN_PAIR;
+use crate::transport::CLOSE_UNAVAILABLE;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::ensure;
@@ -54,7 +54,7 @@ const MAX_TICKET_LEN: usize = 4096;
 const HASH_CONTEXT: &[u8] = b"codeyard join token v1\0";
 /// A pairing request or answer is a few hundred bytes; anything bigger is refused.
 const MAX_MESSAGE: usize = 4096;
-pub(crate) const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(15);
+pub const EXCHANGE_TIMEOUT: Duration = Duration::from_secs(15);
 /// After answering, wait this long for the peer to hang up so the answer is delivered.
 const HANGUP_WAIT: Duration = Duration::from_secs(3);
 /// Pairing is open to keys we do not know yet, so only a few run at a time.
@@ -315,7 +315,7 @@ pub async fn join(
     }
     // The dialer opens an iroh endpoint only if a peer needs one, so a ticket with TCP
     // addresses alone opens no socket.
-    let iroh = crate::cluster::transport::IrohDialer::new(relay.clone(), key.clone());
+    let iroh = crate::transport::IrohDialer::new(relay.clone(), key.clone());
     let reply = request_join(&iroh, ticket, &name, roles).await;
     iroh.close().await;
     match reply? {
@@ -348,7 +348,7 @@ fn membership(
 }
 
 async fn request_join(
-    iroh: &crate::cluster::transport::IrohDialer,
+    iroh: &crate::transport::IrohDialer,
     ticket: &JoinTicket,
     name: &str,
     roles: Option<&NodeRoles>,
@@ -361,7 +361,7 @@ async fn request_join(
     })?;
     // dial_node bounds each attempt itself, so the join needs no timeout of its own.
     let mut link =
-        crate::cluster::transport::dial_node(iroh, ticket.node, &ticket.address, ALPN_PAIR)
+        crate::transport::dial_node(iroh, ticket.node, &ticket.address, ALPN_PAIR)
             .await
             .context("could not reach the cluster node named in the ticket")?;
     let answer = tokio::time::timeout(EXCHANGE_TIMEOUT, async {
@@ -417,7 +417,7 @@ impl PairingHandler {
     /// Serves the pairing request on `link`. The exchange must finish by `deadline`, which
     /// the caller set before it waited for the stream. `_slot` is held until the exchange
     /// and the wait for the peer to hang up are over.
-    pub(crate) async fn serve_link(
+    pub async fn serve_link(
         &self,
         mut link: Link,
         deadline: tokio::time::Instant,
@@ -527,7 +527,7 @@ impl ProtocolHandler for PairingHandler {
         let deadline = tokio::time::Instant::now() + EXCHANGE_TIMEOUT;
         match tokio::time::timeout_at(
             deadline,
-            crate::cluster::transport::accept_stream(&connection),
+            crate::transport::accept_stream(&connection),
         )
         .await
         {

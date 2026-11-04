@@ -249,11 +249,11 @@ fn line(text: &str) -> LogLine {
 async fn client(key: &codeyard_support::node_identity::NodeKey) -> NodeContext {
     NodeContext {
         pool: None,
-        iroh: codeyard_app::cluster::transport::IrohDialer::with_endpoint(
-            codeyard_app::cluster::transport::Relay::Off,
+        iroh: codeyard_cluster::transport::IrohDialer::with_endpoint(
+            codeyard_cluster::transport::Relay::Off,
             key.clone(),
-            codeyard_app::cluster::transport::bind_client(
-                &codeyard_app::cluster::transport::Relay::Off,
+            codeyard_cluster::transport::bind_client(
+                &codeyard_cluster::transport::Relay::Off,
                 key,
             )
             .await
@@ -464,10 +464,10 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     )
     .await
     .unwrap();
-    let endpoint = codeyard_app::cluster::transport::bind(
-        &codeyard_app::cluster::transport::Listen {
+    let endpoint = codeyard_cluster::transport::bind(
+        &codeyard_cluster::transport::Listen {
             bind: "127.0.0.1:0".parse().unwrap(),
-            relay: codeyard_app::cluster::transport::Relay::Off,
+            relay: codeyard_cluster::transport::Relay::Off,
             advertise: vec![],
         },
         &core_key,
@@ -477,8 +477,8 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     .unwrap();
     let context = NodeContext {
         pool: Some(pool.clone()),
-        iroh: codeyard_app::cluster::transport::IrohDialer::with_endpoint(
-            codeyard_app::cluster::transport::Relay::Off,
+        iroh: codeyard_cluster::transport::IrohDialer::with_endpoint(
+            codeyard_cluster::transport::Relay::Off,
             core_key.clone(),
             endpoint.clone(),
         ),
@@ -520,16 +520,16 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         context: Some(context.clone()),
         notifications,
     };
-    let router = codeyard_app::cluster::transport::router(
+    let router = codeyard_cluster::transport::router(
         endpoint.clone(),
-        codeyard_app::cluster::pairing::PairingHandler::new(pool.clone()),
+        codeyard_cluster::pairing::PairingHandler::new(pool.clone()),
     )
     .accept(
-        codeyard_app::cluster::transport::ALPN_RPC,
+        codeyard_cluster::transport::ALPN_RPC,
         codeyard_app::cluster::rpc::RpcHandler::new(context.clone()),
     )
     .accept(
-        codeyard_app::cluster::transport::ALPN_EVENTS,
+        codeyard_cluster::transport::ALPN_EVENTS,
         codeyard_app::cluster::ci::CiHandler::new(context.clone(), queue),
     )
     .spawn();
@@ -538,7 +538,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         pool,
         &core_key.public_hex(),
         "test",
-        &serde_json::to_string(&codeyard_app::cluster::transport::NodeAddress::of(
+        &serde_json::to_string(&codeyard_cluster::transport::NodeAddress::of(
             &endpoint.addr(),
         ))
         .unwrap(),
@@ -610,11 +610,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     )
     .await
     .unwrap();
-    let ticket = codeyard_app::cluster::pairing::create_invite(
+    let ticket = codeyard_cluster::pairing::create_invite(
         pool,
         core_key.public_key(),
-        codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
-        &codeyard_app::cluster::pairing::InviteOptions {
+        codeyard_cluster::transport::NodeAddress::of(&endpoint.addr()),
+        &codeyard_cluster::pairing::InviteOptions {
             roles: "runner".parse().unwrap(),
             reusable: true,
             requires_approval: false,
@@ -623,7 +623,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     )
     .await
     .unwrap();
-    let settings = codeyard_app::cluster::Settings::from_lookup(&|name| match name {
+    let settings = codeyard_cluster::settings::Settings::from_lookup(&|name| match name {
         "CLUSTER_JOIN_TOKEN" => Some(ticket.encode()),
         "NODE_NAME" => Some("ci-worker".into()),
         _ => None,
@@ -636,7 +636,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap();
     first_worker.iroh.close().await;
     // Restart without the token, using only the persisted key and core address.
-    let settings = codeyard_app::cluster::Settings::from_lookup(&|name| match name {
+    let settings = codeyard_cluster::settings::Settings::from_lookup(&|name| match name {
         "IROH_BIND" => Some("127.0.0.1:0".into()),
         "NODE_NAME" => Some("ci-worker".into()),
         _ => None,
@@ -674,10 +674,10 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         preferred: Default::default(),
         context: worker.clone(),
         peers: vec![
-            codeyard_app::cluster::worker::CorePeer {
+            codeyard_cluster::worker::CorePeer {
                 target: None,
                 public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
-                address: codeyard_app::cluster::transport::NodeAddress {
+                address: codeyard_cluster::transport::NodeAddress {
                     addrs: vec!["127.0.0.1:9".parse().unwrap()],
                     relays: vec![],
                     tcp: vec![],
@@ -702,7 +702,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap()
         .connect(
             peer.endpoint_addr().unwrap(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -713,7 +713,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap()
         .connect(
             peer.endpoint_addr().unwrap(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -759,10 +759,10 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     // An obsolete, unreachable placement from a claim is refreshed through the core.
     let mut stale_claim = claimed.clone();
     stale_claim.storage_node_id = Some(core_node.id + 100_000);
-    stale_claim.storage_peer = Some(codeyard_app::cluster::worker::CorePeer {
+    stale_claim.storage_peer = Some(codeyard_cluster::worker::CorePeer {
         target: None,
         public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
-        address: codeyard_app::cluster::transport::NodeAddress {
+        address: codeyard_cluster::transport::NodeAddress {
             tcp: vec!["127.0.0.1:1".parse().unwrap()],
             ..Default::default()
         },
@@ -921,7 +921,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap()
         .connect(
             peer.endpoint_addr().unwrap(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -978,7 +978,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .unwrap()
         .connect(
             peer.endpoint_addr().unwrap(),
-            codeyard_app::cluster::transport::ALPN_EVENTS,
+            codeyard_cluster::transport::ALPN_EVENTS,
         )
         .await
         .unwrap();
@@ -1258,7 +1258,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     assert_eq!(storage_claim.run.id, storage_run.id);
     let cached_storage = remote.store(&storage_claim).unwrap();
     assert_eq!(cached_storage.blob_by_id(&blob).await.unwrap(), workflow);
-    codeyard_app::cluster::pairing::revoke(
+    codeyard_cluster::pairing::revoke(
         pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "ci-core",
@@ -1267,7 +1267,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     .unwrap();
     let revoked = cached_storage.blob_by_id(&blob).await.unwrap_err();
     assert!(revoked.is_storage_node_unavailable(), "{revoked:?}");
-    codeyard_app::cluster::pairing::approve(
+    codeyard_cluster::pairing::approve(
         pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "ci-core",
@@ -1280,7 +1280,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .await
         .unwrap());
 
-    codeyard_app::cluster::pairing::revoke(
+    codeyard_cluster::pairing::revoke(
         pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "ci-worker",
@@ -1636,10 +1636,10 @@ async fn worker_only_cli_has_no_database_or_listeners_and_stops_on_sigterm() {
     let state_dir = root.path().join("state");
     std::fs::create_dir(&state_dir).unwrap();
     std::fs::write(state_dir.join("node.key"), key.secret_hex()).unwrap();
-    let peer = codeyard_app::cluster::worker::CorePeer {
+    let peer = codeyard_cluster::worker::CorePeer {
         target: None,
         public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
-        address: codeyard_app::cluster::transport::NodeAddress {
+        address: codeyard_cluster::transport::NodeAddress {
             addrs: vec!["127.0.0.1:9".parse().unwrap()],
             relays: vec![],
             tcp: vec![],
@@ -2458,14 +2458,14 @@ async fn actions_history_survives_a_stalled_git_preflight() {
     let run = fixture.queue_run().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
-        .alpns(vec![codeyard_app::cluster::transport::ALPN_RPC.to_vec()])
+        .alpns(vec![codeyard_cluster::transport::ALPN_RPC.to_vec()])
         .bind()
         .await
         .unwrap();
     let (reads, _started) = mpsc::unbounded_channel();
     let router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
             StalledWorkflowReads(reads),
         )
         .spawn();
@@ -2483,7 +2483,7 @@ async fn actions_history_survives_a_stalled_git_preflight() {
         fixture.pool(),
         &endpoint.id().to_string(),
         "test",
-        &serde_json::to_string(&codeyard_app::cluster::transport::NodeAddress::of(
+        &serde_json::to_string(&codeyard_cluster::transport::NodeAddress::of(
             &endpoint.addr(),
         ))
         .unwrap(),
@@ -2546,14 +2546,14 @@ async fn stalled_repository_reads_do_not_occupy_workflow_parsing_slots() {
     let fixture = ci_fixture().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
-        .alpns(vec![codeyard_app::cluster::transport::ALPN_RPC.to_vec()])
+        .alpns(vec![codeyard_cluster::transport::ALPN_RPC.to_vec()])
         .bind()
         .await
         .unwrap();
     let (reads, mut started) = mpsc::unbounded_channel();
     let router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
             StalledWorkflowReads(reads),
         )
         .spawn();
@@ -2561,10 +2561,10 @@ async fn stalled_repository_reads_do_not_occupy_workflow_parsing_slots() {
     let context = fixture.worker.clone();
     context.remember_peer(
         100_000,
-        codeyard_app::cluster::worker::CorePeer {
+        codeyard_cluster::worker::CorePeer {
             target: None,
             public_key: endpoint.id().to_string(),
-            address: codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
+            address: codeyard_cluster::transport::NodeAddress::of(&endpoint.addr()),
         },
     );
     let store = RepoStore::remote(Uuid::new_v4(), 100_000, &context);
@@ -2928,7 +2928,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
             pool,
             &key.public_hex(),
             "test",
-            &serde_json::to_string(&codeyard_app::cluster::transport::NodeAddress::of(
+            &serde_json::to_string(&codeyard_cluster::transport::NodeAddress::of(
                 &context.iroh.endpoint().await.unwrap().addr(),
             ))
             .unwrap(),
@@ -3095,7 +3095,7 @@ async fn database_workers_recheck_membership_before_consuming_runs() {
                 )
                 .await
                 .unwrap();
-                codeyard_app::cluster::pairing::approve(
+                codeyard_cluster::pairing::approve(
                     pool,
                     codeyard_db_cluster::cluster::Authority::Operator,
                     &node.name,
@@ -4338,7 +4338,7 @@ struct CiFixture {
     requests: Arc<AtomicUsize>,
     authorized: mpsc::UnboundedReceiver<()>,
     worker: NodeContext,
-    peer: codeyard_app::cluster::worker::CorePeer,
+    peer: codeyard_cluster::worker::CorePeer,
     owner: i64,
     repo: i64,
     sha: String,
@@ -4390,10 +4390,10 @@ async fn ci_fixture() -> CiFixture {
     )
     .await
     .unwrap();
-    let endpoint = codeyard_app::cluster::transport::bind(
-        &codeyard_app::cluster::transport::Listen {
+    let endpoint = codeyard_cluster::transport::bind(
+        &codeyard_cluster::transport::Listen {
             bind: "127.0.0.1:0".parse().unwrap(),
-            relay: codeyard_app::cluster::transport::Relay::Off,
+            relay: codeyard_cluster::transport::Relay::Off,
             advertise: vec![],
         },
         &core_key,
@@ -4403,8 +4403,8 @@ async fn ci_fixture() -> CiFixture {
     .unwrap();
     let context = NodeContext {
         pool: Some(pool.clone()),
-        iroh: codeyard_app::cluster::transport::IrohDialer::with_endpoint(
-            codeyard_app::cluster::transport::Relay::Off,
+        iroh: codeyard_cluster::transport::IrohDialer::with_endpoint(
+            codeyard_cluster::transport::Relay::Off,
             core_key.clone(),
             endpoint.clone(),
         ),
@@ -4432,16 +4432,16 @@ async fn ci_fixture() -> CiFixture {
     let (authorized, authorization) = mpsc::unbounded_channel();
     let dispatch =
         tracing::Dispatch::new(tracing_subscriber::registry().with(CiAuthorization(authorized)));
-    let router = codeyard_app::cluster::transport::router(
+    let router = codeyard_cluster::transport::router(
         endpoint.clone(),
-        codeyard_app::cluster::pairing::PairingHandler::new(pool.clone()),
+        codeyard_cluster::pairing::PairingHandler::new(pool.clone()),
     )
     .accept(
-        codeyard_app::cluster::transport::ALPN_RPC,
+        codeyard_cluster::transport::ALPN_RPC,
         codeyard_app::cluster::rpc::RpcHandler::new(context.clone()),
     )
     .accept(
-        codeyard_app::cluster::transport::ALPN_EVENTS,
+        codeyard_cluster::transport::ALPN_EVENTS,
         CountingCi {
             inner: codeyard_app::cluster::ci::CiHandler::new(context.clone(), queue),
             requests: requests.clone(),
@@ -4454,7 +4454,7 @@ async fn ci_fixture() -> CiFixture {
         &pool,
         &core_key.public_hex(),
         "test",
-        &serde_json::to_string(&codeyard_app::cluster::transport::NodeAddress::of(
+        &serde_json::to_string(&codeyard_cluster::transport::NodeAddress::of(
             &endpoint.addr(),
         ))
         .unwrap(),
@@ -4513,10 +4513,10 @@ async fn ci_fixture() -> CiFixture {
     .await
     .unwrap();
     let worker = client(&worker_key).await;
-    let peer = codeyard_app::cluster::worker::CorePeer {
+    let peer = codeyard_cluster::worker::CorePeer {
         target: None,
         public_key: core_key.public_hex(),
-        address: codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
+        address: codeyard_cluster::transport::NodeAddress::of(&endpoint.addr()),
     };
     CiFixture {
         database,
@@ -4547,7 +4547,7 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
         .unwrap()
         .connect(
             fixture.peer.endpoint_addr().unwrap(),
-            codeyard_app::cluster::transport::ALPN_EVENTS,
+            codeyard_cluster::transport::ALPN_EVENTS,
         )
         .await
         .unwrap();
@@ -4558,7 +4558,7 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
     // Keep the body back until the core has checked membership and we have revoked it.
     send.write_u32(frame.len() as u32).await.unwrap();
     fixture.authorized().await;
-    codeyard_app::cluster::pairing::revoke(
+    codeyard_cluster::pairing::revoke(
         &pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "ci-worker",
@@ -4584,7 +4584,7 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
     assert_eq!(run.status, "queued");
     connection.close(0u32.into(), b"test complete");
 
-    codeyard_app::cluster::pairing::approve(
+    codeyard_cluster::pairing::approve(
         &pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "ci-worker",
@@ -4693,7 +4693,7 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
             .unwrap()
             .connect(
                 fixture.peer.endpoint_addr().unwrap(),
-                codeyard_app::cluster::transport::ALPN_EVENTS,
+                codeyard_cluster::transport::ALPN_EVENTS,
             )
             .await
             .unwrap();
@@ -4711,7 +4711,7 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
         .unwrap()
         .connect(
             fixture.peer.endpoint_addr().unwrap(),
-            codeyard_app::cluster::transport::ALPN_EVENTS,
+            codeyard_cluster::transport::ALPN_EVENTS,
         )
         .await
         .unwrap();
@@ -4744,7 +4744,7 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
         .unwrap()
         .connect(
             fixture.peer.endpoint_addr().unwrap(),
-            codeyard_app::cluster::transport::ALPN_EVENTS,
+            codeyard_cluster::transport::ALPN_EVENTS,
         )
         .await
         .unwrap();
@@ -4793,7 +4793,7 @@ async fn stalled_ci_replies_keep_their_admission_slots() {
         let connection = slow[index % slow.len()]
             .connect(
                 fixture.peer.endpoint_addr().unwrap(),
-                codeyard_app::cluster::transport::ALPN_EVENTS,
+                codeyard_cluster::transport::ALPN_EVENTS,
             )
             .await
             .unwrap();
@@ -5079,7 +5079,7 @@ impl ProtocolHandler for LogReplyProxy {
             .upstream
             .connect(
                 self.peer.clone(),
-                codeyard_app::cluster::transport::ALPN_EVENTS,
+                codeyard_cluster::transport::ALPN_EVENTS,
             )
             .await
             .unwrap();
@@ -5135,10 +5135,10 @@ async fn successful_core_is_tried_first_for_subsequent_log_batches() {
         context: fixture.worker.clone(),
         preferred: Default::default(),
         peers: vec![
-            codeyard_app::cluster::worker::CorePeer {
+            codeyard_cluster::worker::CorePeer {
                 target: None,
                 public_key: codeyard_support::node_identity::NodeKey::generate().public_hex(),
-                address: codeyard_app::cluster::transport::NodeAddress {
+                address: codeyard_cluster::transport::NodeAddress {
                     tcp: vec![address],
                     ..Default::default()
                 },
@@ -5183,14 +5183,14 @@ async fn shutdown_cancels_a_run_while_its_heartbeat_is_stalled() {
     let fixture = ci_fixture().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
-        .alpns(vec![codeyard_app::cluster::transport::ALPN_EVENTS.to_vec()])
+        .alpns(vec![codeyard_cluster::transport::ALPN_EVENTS.to_vec()])
         .bind()
         .await
         .unwrap();
     let (logs, mut heartbeat) = mpsc::unbounded_channel();
     let router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(
-            codeyard_app::cluster::transport::ALPN_EVENTS,
+            codeyard_cluster::transport::ALPN_EVENTS,
             LogReplyProxy {
                 upstream: fixture.worker.iroh.endpoint().await.unwrap().clone(),
                 peer: fixture.peer.endpoint_addr().unwrap(),
@@ -5208,10 +5208,10 @@ async fn shutdown_cancels_a_run_while_its_heartbeat_is_stalled() {
     let queue = RunQueue::Remote {
         context: fixture.worker.clone(),
         preferred: Default::default(),
-        peers: vec![codeyard_app::cluster::worker::CorePeer {
+        peers: vec![codeyard_cluster::worker::CorePeer {
             target: None,
             public_key: endpoint.id().to_string(),
-            address: codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
+            address: codeyard_cluster::transport::NodeAddress::of(&endpoint.addr()),
         }],
     };
     let workers = CiWorkers::new(
@@ -5264,14 +5264,14 @@ async fn a_lost_log_reply_replays_without_duplicating_a_committed_batch_on_the_n
         .unwrap();
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
-        .alpns(vec![codeyard_app::cluster::transport::ALPN_EVENTS.to_vec()])
+        .alpns(vec![codeyard_cluster::transport::ALPN_EVENTS.to_vec()])
         .bind()
         .await
         .unwrap();
     let (logs, mut received) = mpsc::unbounded_channel();
     let router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(
-            codeyard_app::cluster::transport::ALPN_EVENTS,
+            codeyard_cluster::transport::ALPN_EVENTS,
             LogReplyProxy {
                 upstream: fixture.worker.iroh.endpoint().await.unwrap().clone(),
                 peer: fixture.peer.endpoint_addr().unwrap(),
@@ -5286,10 +5286,10 @@ async fn a_lost_log_reply_replays_without_duplicating_a_committed_batch_on_the_n
         preferred: Default::default(),
         context: fixture.worker.clone(),
         peers: vec![
-            codeyard_app::cluster::worker::CorePeer {
+            codeyard_cluster::worker::CorePeer {
                 target: None,
                 public_key: endpoint.id().to_string(),
-                address: codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
+                address: codeyard_cluster::transport::NodeAddress::of(&endpoint.addr()),
             },
             fixture.peer.clone(),
         ],
@@ -5417,14 +5417,14 @@ async fn stalled_remote_logs_fail_success_and_do_not_delay_timeout_or_cancellati
     let fixture = ci_fixture().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
-        .alpns(vec![codeyard_app::cluster::transport::ALPN_EVENTS.to_vec()])
+        .alpns(vec![codeyard_cluster::transport::ALPN_EVENTS.to_vec()])
         .bind()
         .await
         .unwrap();
     let (logs, mut received) = mpsc::unbounded_channel();
     let router = iroh::protocol::Router::builder(endpoint.clone())
         .accept(
-            codeyard_app::cluster::transport::ALPN_EVENTS,
+            codeyard_cluster::transport::ALPN_EVENTS,
             LogReplyProxy {
                 upstream: fixture.worker.iroh.endpoint().await.unwrap().clone(),
                 peer: fixture.peer.endpoint_addr().unwrap(),
@@ -5446,10 +5446,10 @@ async fn stalled_remote_logs_fail_success_and_do_not_delay_timeout_or_cancellati
     let queue = RunQueue::Remote {
         preferred: Default::default(),
         context: fixture.worker.clone(),
-        peers: vec![codeyard_app::cluster::worker::CorePeer {
+        peers: vec![codeyard_cluster::worker::CorePeer {
             target: None,
             public_key: endpoint.id().to_string(),
-            address: codeyard_app::cluster::transport::NodeAddress::of(&endpoint.addr()),
+            address: codeyard_cluster::transport::NodeAddress::of(&endpoint.addr()),
         }],
     };
     for outcome in ["success", "timeout", "shutdown"] {

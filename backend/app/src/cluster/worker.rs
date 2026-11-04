@@ -1,7 +1,7 @@
 //! Core addresses and the dialing-only context for a worker with no database.
 use crate::cluster::context::NodeContext;
-use crate::cluster::transport::NodeAddress;
-use crate::cluster::Settings;
+use codeyard_cluster::transport::NodeAddress;
+use codeyard_cluster::settings::Settings;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
@@ -15,55 +15,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::RwLock;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CorePeer {
-    pub public_key: String,
-    pub address: NodeAddress,
-    /// Configured hostname retained even when startup DNS is unavailable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
-}
-
-impl CorePeer {
-    pub fn node(&self) -> Result<iroh::PublicKey> {
-        parse_public_key(&self.public_key)
-    }
-
-    pub async fn resolved_address(&self) -> Result<NodeAddress> {
-        let Some(host) = &self.target else {
-            return Ok(self.address.clone());
-        };
-        let target = host.strip_prefix("tcp://").unwrap_or(host);
-        let addresses =
-            tokio::time::timeout(std::time::Duration::from_secs(5), resolve(target)).await??;
-        ensure!(!addresses.is_empty(), "core hostname has no addresses");
-        Ok(if host.starts_with("tcp://") {
-            NodeAddress {
-                tcp: addresses,
-                ..Default::default()
-            }
-        } else {
-            NodeAddress {
-                addrs: addresses,
-                ..Default::default()
-            }
-        })
-    }
-
-    pub fn endpoint_addr(&self) -> Result<iroh::EndpointAddr> {
-        self.address.endpoint_addr(self.node()?)
-    }
-}
-
-/// Resolves a `host:port` entry of CLUSTER_PEERS.
-async fn resolve(host: &str) -> Result<Vec<SocketAddr>> {
-    Ok(tokio::net::lookup_host(host)
-        .await
-        .with_context(|| format!("cannot resolve CLUSTER_PEERS address `{host}`"))?
-        .collect())
-}
-
-pub fn save_core(state_dir: &Path, ticket: &crate::cluster::pairing::JoinTicket) -> Result<()> {
+pub fn save_core(state_dir: &Path, ticket: &codeyard_cluster::pairing::JoinTicket) -> Result<()> {
     codeyard_support::fs::private_dir(state_dir)?;
     let peer = CorePeer {
         public_key: ticket.node.to_string(),
@@ -138,7 +90,7 @@ pub async fn worker_context(
     // A join token joins every time: the saved address says a core was found, not that
     // this key is enrolled, and joining again with an enrolled key changes nothing.
     if let Some(ticket) = &settings.join_ticket {
-        let joined = crate::cluster::pairing::join(
+        let joined = codeyard_cluster::pairing::join(
             ticket,
             &key,
             &settings.relay,
@@ -176,7 +128,7 @@ pub async fn worker_context(
     Ok((
         NodeContext {
             pool: None,
-            iroh: crate::cluster::transport::IrohDialer::new(settings.relay.clone(), key.clone()),
+            iroh: codeyard_cluster::transport::IrohDialer::new(settings.relay.clone(), key.clone()),
             key,
             node_id: 0,
             repos_path: state_dir.to_owned(),
@@ -204,7 +156,7 @@ mod tests {
         .unwrap();
         let (_, peers) = worker_context(root.path(), settings).await.unwrap();
         assert_eq!(peers.len(), 1);
-        let ticket = crate::cluster::pairing::JoinTicket::new(
+        let ticket = codeyard_cluster::pairing::JoinTicket::new(
             peers[0].node().unwrap(),
             peers[0].address.clone(),
         )
@@ -216,7 +168,7 @@ mod tests {
         assert_eq!(peer.address, ticket.address);
         // A replacement does not truncate a file that another reader has open.
         let held = std::fs::File::open(root.path().join("cluster-peer.json")).unwrap();
-        let replacement = crate::cluster::pairing::JoinTicket::new(
+        let replacement = codeyard_cluster::pairing::JoinTicket::new(
             codeyard_support::node_identity::NodeKey::generate().public_key(),
             ticket.address.clone(),
         )
@@ -262,3 +214,5 @@ mod tests {
         assert_eq!(peers[1].address.tcp[0].port(), 7445);
     }
 }
+
+use codeyard_cluster::worker::{CorePeer, resolve};

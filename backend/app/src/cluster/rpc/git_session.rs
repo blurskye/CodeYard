@@ -1,7 +1,7 @@
 use codeyard_ci::config::CiConfig;
 use crate::ci::runs::CiRuns;
 use crate::cluster::context::NodeContext;
-use crate::cluster::link::Link;
+use codeyard_cluster::link::Link;
 use crate::cluster::rpc::client::attempt_deadline;
 use crate::cluster::rpc::client::cannot_serve;
 use crate::cluster::rpc::client::log_failover;
@@ -210,7 +210,7 @@ impl NodeContext {
     ) -> Result<Opened, RepoError> {
         let opened = tokio::time::timeout_at(deadline, async {
             let mut link = self
-                .dial(node_id, crate::cluster::transport::ALPN_RPC)
+                .dial(node_id, codeyard_cluster::transport::ALPN_RPC)
                 .await?;
             write_frame(&mut link.writer, &serde_json::to_vec(request)?, MAX_JSON).await?;
             let reply: Reply =

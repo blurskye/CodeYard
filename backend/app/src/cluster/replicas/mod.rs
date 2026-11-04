@@ -63,8 +63,8 @@ mod tests {
         let key = codeyard_support::node_identity::NodeKey::generate();
         let context = NodeContext {
             pool: None,
-            iroh: crate::cluster::transport::IrohDialer::new(
-                crate::cluster::transport::Relay::Off,
+            iroh: codeyard_cluster::transport::IrohDialer::new(
+                codeyard_cluster::transport::Relay::Off,
                 key.clone(),
             ),
             key,

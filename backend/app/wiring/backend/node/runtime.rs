@@ -271,7 +271,7 @@ fn select_transport(config: &ServeConfig) -> Result<codeyard_support::ssh_mode::
 /// A worker-only process has no application state, database or inbound listeners.
 pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
     let _state_dir_lock = lock_state_dir(state_dir)?;
-    let settings = codeyard_app::cluster::Settings::from_lookup(&|key| {
+    let settings = codeyard_cluster::settings::Settings::from_lookup(&|key| {
         // Empty counts as unset, as in `Settings::from_lookup`, so the fallback below applies.
         std::env::var(key)
             .ok()
@@ -352,7 +352,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     };
     // The cluster transport is opt-in. Without cluster settings no cluster socket is
     // opened. With them, single-node mode still admits only runners.
-    let member = match codeyard_app::cluster::Settings::from_env()? {
+    let member = match codeyard_cluster::settings::Settings::from_env()? {
         Some(settings) => Some(tokio::select! {
             biased;
             result = &mut signal => { pool.close().await; return result; }
@@ -750,7 +750,7 @@ mod tests {
         // The withdrawal runs twice: before the drain, and again in `Cluster::shutdown`.
         let phases = SHUTDOWN_GRACE
             + codeyard_app::ci::workers::SHUTDOWN_GRACE
-            + codeyard_app::cluster::WITHDRAW_TIMEOUT * 2;
+            + codeyard_cluster::settings::WITHDRAW_TIMEOUT * 2;
         assert!(
             phases < MAX_SHUTDOWN,
             "the shutdown phases add up to {phases:?}"

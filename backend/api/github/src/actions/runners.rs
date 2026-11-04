@@ -20,7 +20,7 @@ use axum::Json;
 use base64::engine::general_purpose::STANDARD;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
-use codeyard_app::cluster::pairing::JoinTicket;
+use codeyard_cluster::pairing::JoinTicket;
 use codeyard_db_actions::runners as native;
 use codeyard_db_actions::runners::GroupInput;
 use codeyard_db_actions::runners::Labels;

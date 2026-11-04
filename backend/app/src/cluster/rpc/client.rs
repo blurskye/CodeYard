@@ -1,5 +1,5 @@
 use crate::cluster::context::NodeContext;
-use crate::cluster::link::Link;
+use codeyard_cluster::link::Link;
 use crate::cluster::rpc::wire::invalid;
 use crate::cluster::rpc::wire::operation_body_limit;
 use crate::cluster::rpc::wire::read_frame;
@@ -12,7 +12,7 @@ use crate::cluster::rpc::wire::Request;
 use crate::cluster::rpc::wire::MAX_BYTES;
 use crate::cluster::rpc::wire::TIMEOUT;
 use crate::cluster::rpc::RpcHandler;
-use crate::cluster::transport::NodeAddress;
+use codeyard_cluster::transport::NodeAddress;
 use anyhow::Result;
 use codeyard_db_core::limits::MAX_JSON;
 use codeyard_git::error::ErrorKind;
@@ -39,12 +39,12 @@ impl NodeContext {
         let limits = crate::cluster::rpc::git_session::WriteLimits::load(pool).await?;
         let id = Uuid::new_v4().to_string();
         let write =
-            crate::cluster::writes::begin(pool, repo, self.node_id, term, &id, changes).await?;
+            codeyard_cluster::writes::begin(pool, repo, self.node_id, term, &id, changes).await?;
         let prepared = self
             .prepare_push_write(repository, path, write.record())
             .await;
         let votes = prepared.is_ok()
-            && crate::cluster::writes::collect_votes(pool, &write)
+            && codeyard_cluster::writes::collect_votes(pool, &write)
                 .await
                 .unwrap_or(false);
         let authorized = if votes {
@@ -54,7 +54,7 @@ impl NodeContext {
         } else {
             false
         };
-        let decided = crate::cluster::writes::decide(pool, &write, votes && authorized).await?;
+        let decided = codeyard_cluster::writes::decide(pool, &write, votes && authorized).await?;
         if decided.decision != "commit" {
             if self
                 .abort_push_write(repository, path, &decided)
@@ -74,7 +74,7 @@ impl NodeContext {
                 .await
                 .is_err()
         {
-            return Err(crate::cluster::writes::OutcomeUnknown.into());
+            return Err(codeyard_cluster::writes::OutcomeUnknown.into());
         }
         Ok(())
     }
@@ -135,7 +135,7 @@ impl NodeContext {
                 .await?;
             reply.result.map_err(|_| unavailable())?;
             self.remove_write_preparation(path, write, limits).await?;
-            crate::cluster::writes::publish(self.database()?, write).await?;
+            codeyard_cluster::writes::publish(self.database()?, write).await?;
             Ok::<_, anyhow::Error>(())
         })
         .await?
@@ -287,7 +287,7 @@ impl NodeContext {
         }
         let mut link = tokio::time::timeout_at(
             deadline,
-            self.dial(node_id, crate::cluster::transport::ALPN_RPC),
+            self.dial(node_id, codeyard_cluster::transport::ALPN_RPC),
         )
         .await
         .map_err(|_| unavailable())??;
@@ -386,7 +386,7 @@ impl NodeContext {
                 (peer.node().map_err(|_| unavailable())?, address)
             };
             let linked =
-                crate::cluster::transport::dial_node(&self.iroh, node, &address, alpn).await;
+                codeyard_cluster::transport::dial_node(&self.iroh, node, &address, alpn).await;
             self.note_dial(node_id, linked.is_ok());
             linked.map_err(|_| unavailable())
         })

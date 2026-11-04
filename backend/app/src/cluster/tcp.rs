@@ -2,13 +2,12 @@
 //! peer's key against membership, and passes the one request on the connection to the
 //! same protocol code that the iroh router serves.
 use crate::cluster::ci::CiHandler;
-use crate::cluster::link::Link;
-use crate::cluster::pairing::PairingHandler;
+use codeyard_cluster::link::Link;
+use codeyard_cluster::pairing::PairingHandler;
 use crate::cluster::rpc::RpcHandler;
-use crate::cluster::transport::active_member;
-use crate::cluster::transport::ALPN_PAIR;
-use crate::cluster::transport::ALPN_RPC;
-use anyhow::bail;
+use codeyard_cluster::transport::active_member;
+use codeyard_cluster::transport::ALPN_PAIR;
+use codeyard_cluster::transport::ALPN_RPC;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::DbPool;
@@ -25,9 +24,7 @@ use tokio::sync::OwnedSemaphorePermit;
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tokio::time::Instant;
-use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_rustls::TlsAcceptor;
-use tokio_rustls::TlsConnector;
 use tracing::debug;
 use tracing::warn;
 
@@ -79,7 +76,7 @@ pub async fn bind(address: SocketAddr, key: &NodeKey, services: Services) -> Res
         .await
         .with_context(|| format!("cannot listen for cluster connections on {address}"))?;
     let addr = listener.local_addr()?;
-    let acceptor = TlsAcceptor::from(crate::cluster::tls::server_config(key)?);
+    let acceptor = TlsAcceptor::from(codeyard_cluster::tls::server_config(key)?);
     let handshakes = Arc::new(Semaphore::new(MAX_HANDSHAKES));
     let (stop, stop_signal) = watch::channel(false);
     let (ended_sender, ended) = watch::channel(());
@@ -174,7 +171,7 @@ async fn serve_socket(
         .peer_certificates()
         .and_then(|certificates| certificates.first())
     {
-        Some(certificate) => match crate::cluster::tls::peer_key(certificate) {
+        Some(certificate) => match codeyard_cluster::tls::peer_key(certificate) {
             Ok(peer) => peer,
             Err(error) => {
                 debug!(%error, "cluster peer key rejected");
@@ -209,7 +206,7 @@ async fn serve_socket(
                     .pairing
                     .serve_link(
                         link,
-                        Instant::now() + crate::cluster::pairing::EXCHANGE_TIMEOUT,
+                        Instant::now() + codeyard_cluster::pairing::EXCHANGE_TIMEOUT,
                         slot,
                     )
                     .await
@@ -250,67 +247,5 @@ async fn admitted(services: &Services, alpn: &[u8], peer: PublicKey) -> bool {
     }
 }
 
-/// Opens a request stream to `node` at `address`. The handshake must end with the key of
-/// `node`, and the node must agree to `alpn`. The caller sets the time limit.
-pub async fn dial(
-    key: &NodeKey,
-    address: SocketAddr,
-    node: PublicKey,
-    alpn: &[u8],
-) -> Result<Link> {
-    let socket = TcpStream::connect(address)
-        .await
-        .with_context(|| format!("cannot connect to {address}"))?;
-    tune(&socket);
-    let config = crate::cluster::tls::client_config(key, node, alpn)?;
-    let stream = TlsConnector::from(config)
-        .connect(ServerName::IpAddress(address.ip().into()), socket)
-        .await
-        .with_context(|| format!("the TLS handshake with {address} failed"))?;
-    if stream.get_ref().1.alpn_protocol() != Some(alpn) {
-        bail!("the node at {address} did not agree to the protocol");
-    }
-    let (reader, writer) = split(stream);
-    Ok(Link::tcp(node, alpn, reader, writer))
-}
 
-/// Settings every node connection gets. TCP keepalive makes a peer that vanished while the
-/// connection was idle show up in about fifteen seconds: five seconds of silence, then two
-/// probes five seconds apart.
-fn tune(socket: &TcpStream) {
-    if let Err(error) = socket.set_nodelay(true) {
-        warn!(%error, "cannot turn off Nagle's algorithm on a cluster connection");
-    }
-    #[cfg(target_os = "linux")]
-    if let Err(error) =
-        socket2::SockRef::from(socket).set_tcp_user_timeout(Some(Duration::from_secs(15)))
-    {
-        warn!(%error, "cannot bound unacknowledged data on a cluster connection");
-    }
-    let keepalive = socket2::TcpKeepalive::new()
-        .with_time(Duration::from_secs(5))
-        .with_interval(Duration::from_secs(5))
-        .with_retries(2);
-    if let Err(error) = socket2::SockRef::from(socket).set_tcp_keepalive(&keepalive) {
-        warn!(%error, "cannot set TCP keepalive on a cluster connection");
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn both_ends_of_a_node_connection_ask_for_keepalive() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        let (dialed, accepted) = tokio::join!(TcpStream::connect(address), listener.accept());
-        let dialed = dialed.unwrap();
-        let (accepted, _) = accepted.unwrap();
-        tune(&dialed);
-        tune(&accepted);
-        for socket in [&dialed, &accepted] {
-            assert!(socket2::SockRef::from(socket).keepalive().unwrap());
-        }
-    }
-}
+use codeyard_cluster::tcp::tune;

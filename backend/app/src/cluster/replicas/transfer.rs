@@ -214,9 +214,9 @@ async fn remove_aside_copies(mirror: &Path) {
 mod tests {
     use super::*;
 
-    use crate::cluster::transport::IrohDialer;
-    use crate::cluster::transport::NodeAddress;
-    use crate::cluster::transport::Relay;
+    use codeyard_cluster::transport::IrohDialer;
+    use codeyard_cluster::transport::NodeAddress;
+    use codeyard_cluster::transport::Relay;
     use codeyard_support::node_identity::NodeKey;
 
     use std::sync::{
@@ -319,7 +319,7 @@ mod tests {
         .await
         .unwrap());
         let acceptor = tokio_rustls::TlsAcceptor::from(
-            crate::cluster::tls::server_config(&server_key).unwrap(),
+            codeyard_cluster::tls::server_config(&server_key).unwrap(),
         );
         let calls = Arc::new(AtomicUsize::new(0));
         let count = calls.clone();

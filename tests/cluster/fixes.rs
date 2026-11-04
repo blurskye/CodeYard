@@ -1,9 +1,9 @@
 use crate::support::native_database::NativeDatabase;
 use crate::support::native_database::PostgresDatabase;
 
-use codeyard_app::cluster::pairing::InviteOptions;
-use codeyard_app::cluster::transport::NodeAddress;
-use codeyard_app::cluster::Settings;
+use codeyard_cluster::pairing::InviteOptions;
+use codeyard_cluster::transport::NodeAddress;
+use codeyard_cluster::settings::Settings;
 use codeyard_support::node_identity::NodeKey;
 
 use codeyard_db_core::DbPool;
@@ -12,7 +12,7 @@ use std::time::Duration;
 #[tokio::test]
 async fn oversized_invites_are_refused_before_persisting_tokens() {
     let db = NativeDatabase::new().await;
-    let result = codeyard_app::cluster::pairing::create_invite(
+    let result = codeyard_cluster::pairing::create_invite(
         &db.pool,
         NodeKey::generate().public_key(),
         NodeAddress {

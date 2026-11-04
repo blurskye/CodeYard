@@ -534,7 +534,7 @@ async fn oversized(context: &NodeContext, storage: &cluster::Cluster, binary: bo
         .unwrap()
         .connect(
             storage.endpoint().unwrap().addr(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -611,7 +611,7 @@ async fn body_refusal_without_payload(
         .unwrap()
         .connect(
             storage.endpoint().unwrap().addr(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -642,7 +642,7 @@ async fn raw_editor_call(
         .unwrap()
         .connect(
             storage.endpoint().unwrap().addr(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -678,7 +678,7 @@ async fn open_git_session(
         .unwrap()
         .connect(
             storage.endpoint().unwrap().addr(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -871,7 +871,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         .unwrap()
         .connect(
             storage.endpoint().unwrap().addr(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -950,7 +950,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         .unwrap()
         .connect(
             storage.endpoint().unwrap().addr(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -990,7 +990,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         .unwrap()
         .connect(
             storage.endpoint().unwrap().addr(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -1080,7 +1080,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
             .unwrap()
             .connect(
                 storage.endpoint().unwrap().addr(),
-                codeyard_app::cluster::transport::ALPN_RPC,
+                codeyard_cluster::transport::ALPN_RPC,
             )
             .await
             .unwrap();
@@ -2434,7 +2434,7 @@ async fn remote_web_contract() {
         .unwrap()
         .connect(
             storage.endpoint().unwrap().addr(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -3022,7 +3022,7 @@ async fn remote_web_contract() {
         .unwrap()
         .connect(
             storage.endpoint().unwrap().addr(),
-            codeyard_app::cluster::transport::ALPN_RPC,
+            codeyard_cluster::transport::ALPN_RPC,
         )
         .await
         .unwrap();
@@ -3105,7 +3105,7 @@ async fn remote_web_contract() {
         ci_run: None,
     };
     assert!(stream_call(&connection, &request).await.result.is_ok());
-    codeyard_app::cluster::pairing::revoke(
+    codeyard_cluster::pairing::revoke(
         &database.pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "rpc-web",
@@ -3117,7 +3117,7 @@ async fn remote_web_contract() {
     );
     connection.close(0u32.into(), b"test complete");
     assert!(remote.refs().await.is_err());
-    codeyard_app::cluster::pairing::approve(
+    codeyard_cluster::pairing::approve(
         &database.pool,
         codeyard_db_cluster::cluster::Authority::Operator,
         "rpc-web",

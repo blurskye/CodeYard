@@ -1,6 +1,6 @@
 //! Runner credentials use cluster pairing unchanged; removal has its own hash domain.
 use crate::cluster::context::NodeContext;
-use crate::cluster::pairing::JoinTicket;
+use codeyard_cluster::pairing::JoinTicket;
 use anyhow::Context;
 use anyhow::Result;
 use serde::Deserialize;
@@ -24,7 +24,7 @@ impl JitConfig {
             .context("invalid runner configuration")?;
         let config: Self = serde_json::from_slice(&bytes)
             .map_err(|_| anyhow::anyhow!("invalid runner configuration"))?;
-        crate::cluster::pairing::normalize_name(&config.node_name)?;
+        codeyard_cluster::pairing::normalize_name(&config.node_name)?;
         JoinTicket::decode(&config.ticket)
             .map_err(|_| anyhow::anyhow!("invalid runner pairing credential"))?;
         anyhow::ensure!(
@@ -135,7 +135,7 @@ mod tests {
         let key = codeyard_support::node_identity::NodeKey::generate();
         let ticket = JoinTicket::new(
             key.public_key(),
-            crate::cluster::transport::NodeAddress {
+            codeyard_cluster::transport::NodeAddress {
                 tcp: vec!["127.0.0.1:1".parse().unwrap()],
                 ..Default::default()
             },

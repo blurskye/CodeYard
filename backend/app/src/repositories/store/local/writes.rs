@@ -1,5 +1,5 @@
 use super::*;
-use crate::cluster::writes::OutcomeUnknown;
+use codeyard_cluster::writes::OutcomeUnknown;
 use codeyard_repos::protection::BranchWrite;
 use codeyard_repos::protection::History;
 use codeyard_repos::protection::WriteVia;

@@ -334,7 +334,7 @@ async fn content_search_allows_transport_fallback_and_keeps_completed_repositori
             .await
             .unwrap()
             .unwrap();
-    let mut address: codeyard_app::cluster::transport::NodeAddress =
+    let mut address: codeyard_cluster::transport::NodeAddress =
         serde_json::from_str(node.addr_hint.as_deref().unwrap()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     address.tcp = vec![listener.local_addr().unwrap()];

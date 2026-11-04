@@ -1,9 +1,9 @@
 use super::*;
 use codeyard_ci::config::CiConfig;
 use crate::cluster::context::NodeContext;
-use crate::cluster::link::Link;
+use codeyard_cluster::link::Link;
 use crate::cluster::rpc::repository::repository_uuid;
-use crate::cluster::transport;
+use codeyard_cluster::transport;
 
 use crate::cluster::rpc::wire::read_frame;
 use crate::cluster::rpc::wire::write_frame;
@@ -12,8 +12,8 @@ use crate::cluster::rpc::wire::Request;
 use crate::cluster::rpc::wire::MAX_BYTES;
 use crate::cluster::rpc::wire::TIMEOUT;
 use crate::cluster::rpc::RpcHandler;
-use crate::cluster::transport::IrohDialer;
-use crate::cluster::transport::Relay;
+use codeyard_cluster::transport::IrohDialer;
+use codeyard_cluster::transport::Relay;
 use crate::repositories::git_sessions::ReceiveCredential;
 use crate::repositories::store::types::GitService;
 use crate::repositories::store::types::GitSession;
@@ -471,7 +471,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     .await
     .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = crate::cluster::transport::NodeAddress {
+    let address = codeyard_cluster::transport::NodeAddress {
         tcp: vec![listener.local_addr().unwrap()],
         ..Default::default()
     };
@@ -525,7 +525,7 @@ async fn connected_but_stalled_primary_leaves_time_for_buffered_and_streamed_fai
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     git2::Repository::init_bare(&path).unwrap();
     let acceptor =
-        tokio_rustls::TlsAcceptor::from(crate::cluster::tls::server_config(&key).unwrap());
+        tokio_rustls::TlsAcceptor::from(codeyard_cluster::tls::server_config(&key).unwrap());
     let (ready, mut waiting) = tokio::sync::mpsc::channel(2);
     let server = tokio::spawn(async move {
         let mut links = tokio::task::JoinSet::new();

@@ -4,9 +4,9 @@
 //! by itself: the dialer accepts only the key it pinned, and the listener accepts any
 //! well-formed ed25519 key so that unpaired nodes can reach pairing. `cluster::tcp`
 //! applies membership to everything after the handshake.
-use crate::cluster::transport::ALPN_EVENTS;
-use crate::cluster::transport::ALPN_PAIR;
-use crate::cluster::transport::ALPN_RPC;
+use codeyard_cluster::transport::ALPN_EVENTS;
+use codeyard_cluster::transport::ALPN_PAIR;
+use codeyard_cluster::transport::ALPN_RPC;
 use anyhow::Result;
 use codeyard_support::node_identity::NodeKey;
 use iroh::PublicKey;
@@ -51,7 +51,7 @@ const ED25519_PKCS8_HEADER: [u8; 16] = [
 pub const ALPNS: [&[u8]; 3] = [ALPN_PAIR, ALPN_RPC, ALPN_EVENTS];
 
 /// The key a peer presented, when it is a well-formed ed25519 SubjectPublicKeyInfo.
-pub(super) fn peer_key(presented: &[u8]) -> Result<PublicKey, Error> {
+pub fn peer_key(presented: &[u8]) -> Result<PublicKey, Error> {
     let bytes = presented
         .strip_prefix(&ED25519_SPKI_HEADER)
         .and_then(|key| <&[u8; 32]>::try_from(key).ok())

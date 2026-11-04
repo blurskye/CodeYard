@@ -107,7 +107,8 @@ and results stay the same. A stage can be the last one.
    All workspace targets check.
 6. **Services (partial).** Repository policy, imports, lockfile parsing, traffic,
    templates and Git editor preparation live in `backend/repos/`. CI configuration,
-   credentials, logs and environment values live in `backend/ci/`. `identity`, `notifications` and `ssh` are extracted. Repository
+   credentials, logs and environment values live in `backend/ci/`. Membership,
+   transport, settings and quorum writes live in `backend/cluster/`. `identity`, `notifications` and `ssh` are extracted. Repository
    authority, identity mail links and delivery helpers have one lower owner.
    `RepoStore` is a concrete enum-backed type, not the trait assumed above; its local
    and remote implementations call cluster RPC and CI, which call the concrete store

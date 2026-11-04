@@ -10,10 +10,10 @@ use codeyard_app::ci::runs::CiRuns;
 use codeyard_app::cluster::context::term_path;
 
 use codeyard_app::cluster::context::NodeContext;
-use codeyard_app::cluster::pairing::PairingHandler;
-use codeyard_app::cluster::transport::IrohDialer;
-use codeyard_app::cluster::transport::NodeAddress;
-use codeyard_app::cluster::transport::Relay;
+use codeyard_cluster::pairing::PairingHandler;
+use codeyard_cluster::transport::IrohDialer;
+use codeyard_cluster::transport::NodeAddress;
+use codeyard_cluster::transport::Relay;
 
 use codeyard_app::repositories::git_sessions::receive_session;
 use codeyard_app::repositories::git_sessions::ReceiveCredential;
