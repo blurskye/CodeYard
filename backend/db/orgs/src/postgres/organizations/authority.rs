@@ -6,7 +6,6 @@ use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::Team;
 use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use sqlx::PgConnection;
 use sqlx::Postgres;
 use sqlx::Transaction;
@@ -71,7 +70,6 @@ macro_rules! require_org {
         }
     };
 }
-pub(crate) use require_org;
 
 pub async fn metadata(connection: &mut PgConnection, org: i64) -> Result<OrganizationMetadata> {
     Ok(sqlx::query_as(

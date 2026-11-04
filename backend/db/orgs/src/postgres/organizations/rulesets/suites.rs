@@ -1,6 +1,5 @@
 use super::*;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use codeyard_db_core::queries::postgres::organizations::authority::active;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
 use codeyard_db_core::queries::rulesets::records::StoredSuite;
 use codeyard_db_core::queries::rulesets::records::Suite;

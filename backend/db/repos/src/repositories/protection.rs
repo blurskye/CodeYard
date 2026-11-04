@@ -3,9 +3,6 @@ use codeyard_db_core::models::BranchProtectionRule;
 use codeyard_db_core::models::CommitStatus;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
-use codeyard_model::workflow_glob::github_glob_matches_bounded;
-use codeyard_model::workflow_glob::WorkflowMatchBudget;
-use codeyard_model::workflow_glob::WorkflowMatchLimit;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum ProtectionWriteRefusal {
@@ -502,20 +499,6 @@ pub fn validate_branch_pattern(pattern: &str) -> Result<(), ProtectionWriteRefus
     Ok(())
 }
 
-/// Whether `pattern` names `branch`. A pattern without `*`, `?` or `[` is a plain name and is only
-/// compared (Git ref names cannot contain those characters). A wildcard pattern is matched within `budget`, and running out of it is an error,
-/// never a non-match.
-pub fn branch_pattern_matches(
-    pattern: &str,
-    branch: &str,
-    budget: &mut WorkflowMatchBudget,
-) -> std::result::Result<bool, WorkflowMatchLimit> {
-    if !pattern.contains(['*', '?', '[']) {
-        return Ok(pattern == branch);
-    }
-    github_glob_matches_bounded(pattern, branch, budget)
-}
-
 /// Contexts compare without case, so the reserved prefix does too.
 pub fn server_owned_status_context(context: &str) -> bool {
     context
@@ -600,6 +583,8 @@ native_operation!(crate::postgres::repositories::protection::commit_status_histo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_model::workflow_glob::branch_pattern_matches;
+    use codeyard_model::workflow_glob::WorkflowMatchBudget;
 
     #[test]
     fn push_allowance_validation_deduplicates_new_users_but_does_not_revalidate_removals() {

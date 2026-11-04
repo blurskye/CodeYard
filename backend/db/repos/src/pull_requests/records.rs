@@ -77,7 +77,7 @@ pub fn can_grant_maintainer_edit(
 pub(crate) fn retarget_dismisses_reviews(patterns: &[String], branch: &str) -> Result<bool> {
     let mut budget = codeyard_model::workflow_glob::WorkflowMatchBudget::new();
     for pattern in patterns {
-        if crate::repositories::protection::branch_pattern_matches(pattern, branch, &mut budget)
+        if codeyard_model::workflow_glob::branch_pattern_matches(pattern, branch, &mut budget)
             .map_err(|_| anyhow::anyhow!("branch protection could not be checked"))?
         {
             return Ok(true);

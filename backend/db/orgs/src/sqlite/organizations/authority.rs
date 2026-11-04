@@ -6,7 +6,6 @@ use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::Team;
 use codeyard_db_core::queries::organizations::administers;
-use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use sqlx::Sqlite;
 use sqlx::SqliteConnection;
 use sqlx::Transaction;
@@ -60,7 +59,6 @@ macro_rules! require_org {
         }
     };
 }
-pub(crate) use require_org;
 
 pub async fn metadata(connection: &mut SqliteConnection, org: i64) -> Result<OrganizationMetadata> {
     Ok(sqlx::query_as(

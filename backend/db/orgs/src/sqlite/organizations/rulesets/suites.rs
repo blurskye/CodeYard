@@ -5,7 +5,6 @@ use codeyard_db_core::queries::rulesets::records::Suite;
 use codeyard_db_core::queries::rulesets::records::SuiteEnforcement;
 use codeyard_db_core::queries::rulesets::records::SuiteFilter;
 use codeyard_db_core::queries::rulesets::records::SuiteResult;
-use codeyard_db_core::queries::sqlite::organizations::authority::active;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
 use codeyard_db_core::require_read_org_sqlite;
 

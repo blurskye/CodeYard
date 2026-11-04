@@ -1,4 +1,3 @@
-use super::*;
 use crate::organizations::profiles::OrganizationMetadata;
 use crate::organizations::OrganizationPage;
 use anyhow::Result;

@@ -171,6 +171,9 @@ native_operation!(crate::postgres::organizations::properties::set_repository_val
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_db_core::queries::organizations::properties::valid_name;
+    use codeyard_db_core::queries::organizations::properties::EditableBy;
+    use codeyard_db_core::queries::organizations::properties::PropertyValue;
     use serde_json::json;
     #[test]
     fn orgs_property_values_distinguish_unset_from_missing_and_boolean_strings() {

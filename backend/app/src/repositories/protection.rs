@@ -182,12 +182,9 @@ fn rules_for_branch<'a>(
 ) -> Result<Vec<&'a BranchProtectionRule>, Refusal> {
     let mut matching = Vec::new();
     for rule in rules {
-        let matches = codeyard_db_repos::repositories::protection::branch_pattern_matches(
-            &rule.pattern,
-            branch,
-            budget,
-        )
-        .map_err(|_| Refusal::Unavailable)?;
+        let matches =
+            codeyard_model::workflow_glob::branch_pattern_matches(&rule.pattern, branch, budget)
+                .map_err(|_| Refusal::Unavailable)?;
         if matches {
             matching.push(rule);
         }

@@ -1279,4 +1279,4 @@ mod quorum_tests;
 
 #[cfg(test)]
 #[path = "broker_tests.rs"]
-mod broker_tests;
+mod tests;

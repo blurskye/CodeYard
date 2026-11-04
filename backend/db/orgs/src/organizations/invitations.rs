@@ -1,5 +1,3 @@
-use super::*;
-use crate::organizations::profiles::validate_slug;
 use crate::organizations::OrganizationPage;
 use anyhow::Result;
 use codeyard_db_core::models::OrgInvitation;
