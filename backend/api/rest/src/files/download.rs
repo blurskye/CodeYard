@@ -96,6 +96,8 @@ pub(super) fn download_failure(error: DownloadError) -> ApiFailure {
     ApiError::failure(status, code, message)
 }
 
+use codeyard_api_http::shared::files::download::private_response;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -239,5 +241,3 @@ mod tests {
         }
     }
 }
-
-use codeyard_api_http::shared::files::download::private_response;

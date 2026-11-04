@@ -33,6 +33,12 @@ pub fn validate_new_password(password: &str) -> Result<(), AccountInputError> {
     Ok(())
 }
 
+use codeyard_model::account_input::AccountInputError;
+
+use codeyard_model::account_input::validate_email;
+
+use codeyard_model::account_input::validate_namespace;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -78,9 +84,3 @@ mod tests {
         );
     }
 }
-
-use codeyard_model::account_input::AccountInputError;
-
-use codeyard_model::account_input::validate_email;
-
-use codeyard_model::account_input::validate_namespace;

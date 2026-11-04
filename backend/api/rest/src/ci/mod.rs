@@ -39,6 +39,8 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/ci/dispatch", post(crate::ci::trigger::global_dispatch))
 }
 
+use codeyard_api_http::shared::ci::repository_router;
+
 #[cfg(test)]
 mod tests {
     use axum::http::StatusCode;
@@ -111,5 +113,3 @@ mod tests {
         assert!(!json.contains("private/repo"));
     }
 }
-
-use codeyard_api_http::shared::ci::repository_router;

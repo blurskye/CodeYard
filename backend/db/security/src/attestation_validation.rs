@@ -197,6 +197,14 @@ native_operation!(codeyard_db_core::queries::postgres::repository_attestations::
     codeyard_db_core::queries::sqlite::repository_attestations::get,
     fn get(pool: &DbPool, actor: Option<i64>, repo: i64, id: i64) -> Result<Attestation, AttestationError>);
 
+use codeyard_db_core::queries::attestation_validation::Attestation;
+
+use codeyard_db_core::queries::attestation_validation::subject_digest;
+
+use codeyard_db_core::queries::attestation_validation::Page;
+
+use codeyard_db_core::queries::attestation_validation::AttestationError;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,11 +318,3 @@ mod tests {
         }
     }
 }
-
-use codeyard_db_core::queries::attestation_validation::Attestation;
-
-use codeyard_db_core::queries::attestation_validation::subject_digest;
-
-use codeyard_db_core::queries::attestation_validation::Page;
-
-use codeyard_db_core::queries::attestation_validation::AttestationError;

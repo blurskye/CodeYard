@@ -199,6 +199,8 @@ pub async fn delete(
     }
 }
 
+use codeyard_support::token_hash::token_hash;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,5 +215,3 @@ mod tests {
         assert_eq!(validate(&input, Utc::now()), Err(TokenError::Invalid));
     }
 }
-
-use codeyard_support::token_hash::token_hash;

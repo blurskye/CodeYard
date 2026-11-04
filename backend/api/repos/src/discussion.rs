@@ -1550,6 +1550,8 @@ pub(crate) fn expected(
     }
 }
 
+use codeyard_api_http::shared::repos::discussion::page;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1654,5 +1656,3 @@ mod tests {
         }
     }
 }
-
-use codeyard_api_http::shared::repos::discussion::page;

@@ -351,9 +351,6 @@ async fn update_default_setup(
     Ok(Json(json!({})))
 }
 
-#[cfg(test)]
-mod tests;
-
 use codeyard_api_http::shared::github::code_scanning::Filters;
 
 use codeyard_api_http::shared::github::code_scanning::SARIF_ACTION_ROUTE;
@@ -377,3 +374,6 @@ use codeyard_api_http::shared::github::code_scanning::find_alert;
 use codeyard_api_http::shared::github::code_scanning::normalize_ref;
 
 use codeyard_api_http::shared::github::code_scanning::scope;
+
+#[cfg(test)]
+mod tests;

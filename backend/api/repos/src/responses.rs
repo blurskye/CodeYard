@@ -299,6 +299,8 @@ pub(crate) fn engagement_error(
     )
 }
 
+use codeyard_api_http::shared::repos::responses::rfc3339;
+
 #[cfg(test)]
 mod error_tests {
     use super::*;
@@ -350,5 +352,3 @@ mod error_tests {
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
 }
-
-use codeyard_api_http::shared::repos::responses::rfc3339;

@@ -361,6 +361,18 @@ native_operation!(crate::postgres::runners::remove_token, crate::sqlite::runners
 native_operation!(crate::postgres::runners::remove_with_token, crate::sqlite::runners::remove_with_token,
     fn remove_with_token(pool:&DbPool,id:i64,hash:&str)->Result<()>);
 
+use codeyard_db_core::queries::runners::Scope;
+
+use codeyard_db_core::queries::runners::Window;
+
+use codeyard_db_core::queries::runners::Refusal;
+
+use codeyard_db_core::queries::runners::Runner;
+
+use codeyard_db_core::queries::runners::Group;
+
+use codeyard_db_core::queries::runners::RunnerQuery;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,15 +423,3 @@ mod tests {
         assert!(normalize_labels(&["${{ expression }}".into()]).is_err());
     }
 }
-
-use codeyard_db_core::queries::runners::Scope;
-
-use codeyard_db_core::queries::runners::Window;
-
-use codeyard_db_core::queries::runners::Refusal;
-
-use codeyard_db_core::queries::runners::Runner;
-
-use codeyard_db_core::queries::runners::Group;
-
-use codeyard_db_core::queries::runners::RunnerQuery;

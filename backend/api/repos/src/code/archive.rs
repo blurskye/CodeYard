@@ -158,6 +158,10 @@ fn parse_archive_name(name: &str) -> Option<(&str, ArchiveFormat)> {
     (!reference.is_empty()).then_some((reference, format))
 }
 
+use codeyard_api_http::shared::repos::code::archive::archive_prefix;
+
+use codeyard_api_http::shared::repos::code::archive::archive_response;
+
 #[cfg(test)]
 mod archive_error_tests {
     use super::*;
@@ -199,7 +203,3 @@ mod archive_error_tests {
         );
     }
 }
-
-use codeyard_api_http::shared::repos::code::archive::archive_prefix;
-
-use codeyard_api_http::shared::repos::code::archive::archive_response;

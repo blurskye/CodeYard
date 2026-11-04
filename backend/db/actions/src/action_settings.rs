@@ -227,6 +227,18 @@ pub(crate) fn policy_update(existing: Option<&str>, input: &Value) -> Result<Val
     Ok(result)
 }
 
+use codeyard_db_core::queries::action_settings::SelectionChange;
+
+use codeyard_db_core::queries::action_settings::can_approve_reviews;
+
+use codeyard_db_core::queries::action_settings::Setting;
+
+use codeyard_db_core::queries::action_settings::Refusal;
+
+use codeyard_db_core::queries::action_settings::Scope;
+
+use codeyard_db_core::queries::action_settings::retention;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,15 +256,3 @@ mod tests {
         assert!(!fork_workflows_allowed(&on, &off));
     }
 }
-
-use codeyard_db_core::queries::action_settings::SelectionChange;
-
-use codeyard_db_core::queries::action_settings::can_approve_reviews;
-
-use codeyard_db_core::queries::action_settings::Setting;
-
-use codeyard_db_core::queries::action_settings::Refusal;
-
-use codeyard_db_core::queries::action_settings::Scope;
-
-use codeyard_db_core::queries::action_settings::retention;

@@ -59,6 +59,8 @@ pub(super) async fn global_dispatch(
     dispatch(state, headers, uri, form, None).await
 }
 
+use codeyard_api_http::shared::ci::trigger::dispatch;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,5 +213,3 @@ mod tests {
         assert_eq!(draft.branch, "feature/x");
     }
 }
-
-use codeyard_api_http::shared::ci::trigger::dispatch;

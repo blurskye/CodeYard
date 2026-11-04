@@ -656,6 +656,14 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
     }
 }
 
+use codeyard_model::fine_grained::Group;
+
+use codeyard_model::fine_grained::PERMISSIONS;
+
+use codeyard_model::fine_grained::allows;
+
+use codeyard_model::fine_grained::catalog;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -860,11 +868,3 @@ mod tests {
         assert_eq!(need("/repos/a/b/import", false), Need::Denied);
     }
 }
-
-use codeyard_model::fine_grained::Group;
-
-use codeyard_model::fine_grained::PERMISSIONS;
-
-use codeyard_model::fine_grained::allows;
-
-use codeyard_model::fine_grained::catalog;

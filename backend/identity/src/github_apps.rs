@@ -530,6 +530,8 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
     }
 }
 
+use codeyard_model::github_apps::allows;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -599,5 +601,3 @@ mod tests {
         assert_eq!(parsed.permissions, json!({"metadata":"read"}));
     }
 }
-
-use codeyard_model::github_apps::allows;

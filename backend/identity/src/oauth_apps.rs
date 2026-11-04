@@ -161,6 +161,8 @@ pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bo
         .is_none_or(|token| has_scope(&token.scopes, "workflow")))
 }
 
+use codeyard_model::oauth_apps::has_scope;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,5 +304,3 @@ mod tests {
         ));
     }
 }
-
-use codeyard_model::oauth_apps::has_scope;

@@ -168,6 +168,18 @@ native_operation!(crate::postgres::organizations::properties::set_repository_val
 native_operation!(crate::postgres::organizations::properties::set_repository_value,crate::sqlite::organizations::properties::set_repository_value,
     fn set_repository_value(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,definition:i64,value:&ValueInput)->Result<()>);
 
+use codeyard_db_core::queries::organizations::properties::ValueInput;
+
+use codeyard_db_core::queries::organizations::properties::DefinitionInput;
+
+use codeyard_db_core::queries::organizations::properties::Definition;
+
+use codeyard_db_core::queries::organizations::properties::invalid;
+
+use codeyard_db_core::queries::organizations::properties::MAX_VALUE_BYTES;
+
+use codeyard_db_core::queries::organizations::properties::MAX_ALLOWED_VALUES;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -235,15 +247,3 @@ mod tests {
         assert!(checked_definitions(&[first, alias], &[]).is_err());
     }
 }
-
-use codeyard_db_core::queries::organizations::properties::ValueInput;
-
-use codeyard_db_core::queries::organizations::properties::DefinitionInput;
-
-use codeyard_db_core::queries::organizations::properties::Definition;
-
-use codeyard_db_core::queries::organizations::properties::invalid;
-
-use codeyard_db_core::queries::organizations::properties::MAX_VALUE_BYTES;
-
-use codeyard_db_core::queries::organizations::properties::MAX_ALLOWED_VALUES;

@@ -73,6 +73,12 @@ pub(crate) async fn check_repo_write_access(
     Err(access_error(AccessError::NotFound))
 }
 
+use codeyard_api_http::shared::repos::access::access_error;
+
+use codeyard_api_http::shared::repos::access::current_repository;
+
+use codeyard_api_http::shared::repos::access::read_access;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -118,9 +124,3 @@ mod tests {
         }
     }
 }
-
-use codeyard_api_http::shared::repos::access::access_error;
-
-use codeyard_api_http::shared::repos::access::current_repository;
-
-use codeyard_api_http::shared::repos::access::read_access;

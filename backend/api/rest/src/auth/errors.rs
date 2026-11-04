@@ -369,6 +369,8 @@ pub(crate) fn role_failure(error: RoleError) -> ApiFailure {
     }
 }
 
+use codeyard_api_http::shared::auth::errors::admin_authority_failure;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -443,5 +445,3 @@ mod tests {
         );
     }
 }
-
-use codeyard_api_http::shared::auth::errors::admin_authority_failure;

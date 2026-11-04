@@ -246,6 +246,8 @@ native_operation!(crate::postgres::secrets::decrypt_repository_secrets,
     repo_id: i64,
 ) -> Result<Vec<(String, String)>, SecretsError>);
 
+use codeyard_db_core::queries::secrets::SecretsError;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -394,5 +396,3 @@ mod tests {
         assert_eq!(error.to_string(), "Secret encryption unavailable");
     }
 }
-
-use codeyard_db_core::queries::secrets::SecretsError;

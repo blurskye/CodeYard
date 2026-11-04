@@ -286,6 +286,8 @@ pub(crate) async fn exchange_profile(
     Ok(profile)
 }
 
+use codeyard_model::oauth_apps::pkce_challenge;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,5 +529,3 @@ mod tests {
         let _ = task.await;
     }
 }
-
-use codeyard_model::oauth_apps::pkce_challenge;

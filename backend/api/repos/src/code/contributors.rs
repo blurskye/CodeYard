@@ -77,6 +77,8 @@ pub async fn get_repo_contributors(
     Ok(Json(responses))
 }
 
+use codeyard_api_http::shared::repos::code::contributors::contributor_accounts;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -91,5 +93,3 @@ mod tests {
             .is_response_too_large());
     }
 }
-
-use codeyard_api_http::shared::repos::code::contributors::contributor_accounts;

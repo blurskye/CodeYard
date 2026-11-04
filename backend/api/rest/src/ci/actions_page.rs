@@ -13,6 +13,8 @@ pub(crate) async fn global_actions(
     actions(state, headers, uri, None).await
 }
 
+use codeyard_api_http::shared::ci::actions_page::actions;
+
 #[cfg(test)]
 mod tests {
     use codeyard_api_http::shared::ci::actions_page::run_matches_repository;
@@ -23,5 +25,3 @@ mod tests {
         assert!(run_matches_repository(9, None));
     }
 }
-
-use codeyard_api_http::shared::ci::actions_page::actions;

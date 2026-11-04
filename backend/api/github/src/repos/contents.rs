@@ -525,6 +525,8 @@ pub(crate) fn aliases() -> Router<Arc<AppState>> {
     Router::new().route("/repos/:owner/:repo/contents", get(read))
 }
 
+use codeyard_app::api_shared::github::contents::store_error;
+
 #[cfg(test)]
 mod link_tests {
     #[test]
@@ -553,5 +555,3 @@ mod link_tests {
         );
     }
 }
-
-use codeyard_app::api_shared::github::contents::store_error;
