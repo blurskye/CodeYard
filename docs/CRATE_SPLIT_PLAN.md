@@ -134,6 +134,7 @@ and results stay the same. A stage can be the last one.
 8. **`app`.** Source layout complete. `backend/app/src` is the app library;
    `backend/repos-pulls/` owns pull mutations, repository operations, issues and
    security workers. Their resource trait is implemented by `AppState`.
+   Vulnerability synchronization stays in app; advisory lookup lives in DB security.
    `backend/app/wiring` contains the existing binary package's entry points, CLI
    and node startup. Backups live in the app library. Storage and file operations
    live in `backend/storage/`. SSH lives in `backend/ssh/`. The source stages are
