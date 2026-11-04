@@ -77,14 +77,14 @@ async fn contract(pg: bool) {
     let bob = f.actor("graphql-bob").await;
     let reviewer = f.actor("graphql-reviewer").await;
     let root = tempfile::tempdir().unwrap();
-    let state = AppState::new(
+    let state = super::patient(AppState::new(
         f.pool().clone(),
         root.path().to_owned(),
         Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
         None,
         CiConfig::default(),
         None,
-    );
+    ));
     let router = create_router(state.clone());
     let mut credentials = Vec::new();
     for (actor, scope) in [(alice, "write"), (bob, "write"), (alice, "read")] {

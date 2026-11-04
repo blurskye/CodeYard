@@ -567,6 +567,7 @@ async fn execute(
         }
     };
     let actor = authentication.database_actor();
+    let query_timeout = state.graphql_query_timeout;
     let request = body.data(RequestContext {
         state,
         auth: authentication,
@@ -579,11 +580,7 @@ async fn execute(
         mergeability: Default::default(),
         rate,
     });
-    let result = match tokio::time::timeout(
-        std::time::Duration::from_secs(30),
-        schema::schema().execute(request),
-    )
-    .await
+    let result = match tokio::time::timeout(query_timeout, schema::schema().execute(request)).await
     {
         Ok(result) => result,
         Err(_) => async_graphql::Response::from_errors(vec![async_graphql::ServerError::new(

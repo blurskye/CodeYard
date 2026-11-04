@@ -132,6 +132,7 @@ fn keys(value: &Value, names: &[&str]) {
 }
 
 async fn contract(pg: bool) {
+    crate::support::fake_webui_bundle::install();
     let f = Database::new(pg).await;
     f.complete_setup().await;
     let alice = f.actor("gh-issues-alice").await;
@@ -148,14 +149,14 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let router = create_router(AppState::new(
+    let router = create_router(super::patient(AppState::new(
         f.pool().clone(),
         root.path().to_owned(),
         Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
         None,
         CiConfig::default(),
         None,
-    ));
+    )));
     let mut credentials = Vec::new();
     for (actor, scope) in [(alice, "write"), (bob, "write"), (alice, "read")] {
         let session = Client::login(&router, f.pool(), actor).await;
@@ -1234,11 +1235,12 @@ async fn contract(pg: bool) {
     );
 }
 
-#[tokio::test]
-async fn sqlite_gh_issues_queries() {
-    contract(false).await;
+// The contract's debug-build future outgrows the default test stack.
+#[test]
+fn sqlite_gh_issues_queries() {
+    crate::support::large_stack::run(|| contract(false));
 }
-#[tokio::test]
-async fn postgres_gh_issues_queries() {
-    contract(true).await;
+#[test]
+fn postgres_gh_issues_queries() {
+    crate::support::large_stack::run(|| contract(true));
 }

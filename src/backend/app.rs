@@ -12,6 +12,8 @@ use std::{path::PathBuf, sync::Arc};
 const DEFAULT_SEARCH_TIME_BUDGET: std::time::Duration =
     crate::backend::cluster::DIAL_TIMEOUT.saturating_mul(7);
 
+const DEFAULT_GRAPHQL_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: DbPool,
@@ -31,6 +33,8 @@ pub struct AppState {
     /// How long one code or commit search page may walk repositories:
     /// `SEARCH_TIME_BUDGET_SECONDS`, default 35.
     pub search_time_budget: std::time::Duration,
+    /// How long one GraphQL query may run: `GRAPHQL_QUERY_TIMEOUT_SECONDS`, default 30.
+    pub graphql_query_timeout: std::time::Duration,
     pub metrics_token_hash: Option<String>,
     pub roles: crate::backend::node::NodeRoles,
     pub storage_min_free_bytes: u64,
@@ -88,6 +92,14 @@ impl AppState {
                 .and_then(|value| value.parse::<u64>().ok())
                 .filter(|seconds| *seconds > 0)
                 .map_or(DEFAULT_SEARCH_TIME_BUDGET, std::time::Duration::from_secs),
+            graphql_query_timeout: std::env::var("GRAPHQL_QUERY_TIMEOUT_SECONDS")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|seconds| *seconds > 0)
+                .map_or(
+                    DEFAULT_GRAPHQL_QUERY_TIMEOUT,
+                    std::time::Duration::from_secs,
+                ),
         }
     }
 }

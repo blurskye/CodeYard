@@ -1,5 +1,6 @@
 //! Database-free workers reach the real core queue over encrypted loopback iroh.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+use crate::support::fake_s3::FakeS3;
 use crate::support::http_client as pulls;
 use crate::support::native_database as native;
 use crate::support::rpc_operations;
@@ -54,6 +55,7 @@ async fn core_sigterm_during_container_recovery_withdraws_its_heartbeat() {
     .unwrap();
     let log = root.path().join("server.log");
     let output = std::fs::File::create(&log).unwrap();
+    let s3 = FakeS3::for_database(&database.pool).await.unwrap();
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_codeyard"))
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
@@ -61,11 +63,7 @@ async fn core_sigterm_during_container_recovery_withdraws_its_heartbeat() {
         .env("GITSERV_STATE_DIR", &state)
         .env("REPOS_PATH", root.path().join("repos"))
         .env("NODE_NAME", "startup-stop")
-        // Cluster mode needs the S3 settings. A node without the web role never calls the store.
-        .env("S3_ENDPOINT", "http://127.0.0.1:9")
-        .env("S3_ACCESS_KEY", "unused")
-        .env("S3_SECRET_KEY", "unused")
-        .env("S3_BUCKET", "unused")
+        .envs(s3.environment())
         .env("SECRETS_MASTER_KEY", "2a".repeat(32))
         .env("IROH_BIND", "127.0.0.1:0")
         .current_dir(root.path())
@@ -173,6 +171,7 @@ async fn cluster_startup_can_execute_preexisting_runs_for_unplaced_repositories(
     std::fs::set_permissions(&act, std::fs::Permissions::from_mode(0o700)).unwrap();
     let log = root.path().join("server.log");
     let output = std::fs::File::create(&log).unwrap();
+    let s3 = FakeS3::for_database(&database.pool).await.unwrap();
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_codeyard"))
         .env_clear()
         .env("PATH", std::env::var_os("PATH").unwrap())
@@ -181,10 +180,7 @@ async fn cluster_startup_can_execute_preexisting_runs_for_unplaced_repositories(
         .env("GITSERV_STATE_DIR", root.path().join("state"))
         .env("REPOS_PATH", &repos)
         .env("NODE_NAME", "startup-node")
-        .env("S3_ENDPOINT", "http://127.0.0.1:9")
-        .env("S3_ACCESS_KEY", "unused")
-        .env("S3_SECRET_KEY", "unused")
-        .env("S3_BUCKET", "unused")
+        .envs(s3.environment())
         .env("SECRETS_MASTER_KEY", "2a".repeat(32))
         .env("IROH_BIND", "127.0.0.1:0")
         .env("CI_EXECUTION_MODE", "local")

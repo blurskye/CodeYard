@@ -89,6 +89,13 @@ async fn request(
     )
 }
 
+/// Hundreds of tests share one busy host, so a query that waits for Git can pass the 30 second
+/// production limit; these contracts check results, not that limit.
+fn patient(mut state: AppState) -> AppState {
+    state.graphql_query_timeout = std::time::Duration::from_secs(600);
+    state
+}
+
 async fn query(router: &Router, token: &str, query: &str, variables: Value) -> Value {
     let diagnostic = format!("{query}\n{variables}");
     let (status, body) = call(router, Some(token), query, variables).await;
@@ -144,14 +151,14 @@ async fn contract(pg: bool) {
     let label = db::labels::create_label(f.pool(), alice, repo.id, "bug", "ff0000", Some("A bug"))
         .await
         .unwrap();
-    let state = AppState::new(
+    let state = patient(AppState::new(
         f.pool().clone(),
         root.path().to_owned(),
         Arc::new(ObjectStore::open(root.path(), None).await.unwrap()),
         None,
         CiConfig::default(),
         None,
-    );
+    ));
     let router = create_router(state.clone());
     let mut credentials = Vec::new();
     let mut token_ids = Vec::new();
