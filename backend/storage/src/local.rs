@@ -236,10 +236,6 @@ impl LocalStore {
     }
 }
 
-async fn sync_directory(path: &Path) -> std::io::Result<()> {
-    tokio::fs::File::open(path).await?.sync_all().await
-}
-
 /// Flush only entries we create, not unrelated ancestors of an existing store.
 async fn create_directories(path: &Path, io: Option<IoGuard>) -> std::io::Result<()> {
     static CREATION: std::sync::OnceLock<std::sync::Arc<tokio::sync::Mutex<Vec<PathBuf>>>> =

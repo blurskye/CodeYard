@@ -4459,3 +4459,59 @@ async fn rebalance_reserves_nodes_and_resumes_retirement_after_a_busy_reader() {
     copy.shutdown().await;
     primary.shutdown().await;
 }
+
+#[tokio::test]
+async fn operator_snapshot_uses_the_copy_transport_without_enrolling_a_backup_as_a_replica() {
+    let database = native::PostgresDatabase::new().await;
+    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
+    let web = web_node(&database.pool, root.path()).await;
+    let repo = create_repository(&database.pool, &primary, "snapshot").await;
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
+    let tip = repo.save("main", "a.txt", "unborn", b"backup bytes").await;
+    let path = root.path().join("backup.git");
+    codeyard_cluster::replicas::snapshot(&web.context, primary.context.node_id, uuid, &path)
+        .await
+        .unwrap();
+    assert_eq!(applied_on(&database.pool, repo.id(), &web).await, None);
+    let retained = git2::Repository::open_bare(&path).unwrap();
+    assert_eq!(
+        retained
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .target()
+            .unwrap()
+            .to_string(),
+        tip
+    );
+    codeyard_cluster_core::pairing::revoke(
+        &database.pool,
+        codeyard_db_cluster::cluster::Authority::Operator,
+        "web",
+    )
+    .await
+    .unwrap();
+    assert!(codeyard_cluster::replicas::snapshot(
+        &web.context,
+        primary.context.node_id,
+        uuid,
+        &path
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        retained
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .target()
+            .unwrap()
+            .to_string(),
+        tip
+    );
+    web.shutdown().await;
+    copy.shutdown().await;
+    primary.shutdown().await;
+}

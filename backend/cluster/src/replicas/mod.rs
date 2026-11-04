@@ -36,6 +36,16 @@ pub mod promote;
 pub mod rebalance;
 mod transfer;
 
+/// Operator backup uses the same authenticated pack transfer as replica maintenance.
+pub async fn snapshot(
+    context: &NodeContext,
+    primary: i64,
+    repository: Uuid,
+    mirror: &Path,
+) -> Result<()> {
+    transfer::snapshot(context, primary, repository, mirror).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

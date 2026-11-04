@@ -156,7 +156,10 @@ pub fn authorize_operation(
             | Operation::ApplyWrite { .. }
             | Operation::WritePack { .. }
     ) {
-        return if roles.iter().any(|role| role == "storage") {
+        return if roles.iter().any(|role| role == "storage")
+            || (matches!(operation, Operation::ReplicaPack { .. })
+                && roles.iter().any(|role| role == "web" || role == "ssh"))
+        {
             Ok(name)
         } else {
             Err(invalid(
@@ -522,7 +525,9 @@ impl RpcHandler {
         {
             return Err(RepoError::storage_node_unavailable());
         }
-        if matches!(request.operation, Operation::ReplicaPack { .. }) {
+        if matches!(request.operation, Operation::ReplicaPack { .. })
+            && !node.roles.iter().any(|role| role == "web" || role == "ssh")
+        {
             let copy_held = match repo_id {
                 Some(repo_id) => {
                     codeyard_db_cluster::cluster::replica_applied_version(pool, repo_id, node.id)

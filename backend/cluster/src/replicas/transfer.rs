@@ -80,54 +80,7 @@ async fn fetch(
     have: &[String],
     stop: &CancellationToken,
 ) -> Result<()> {
-    let copies = mirror.parent().context("replica copy has no directory")?;
-    tokio::fs::create_dir_all(copies).await?;
-    // The pack is written beside the copies, on the same disk, and removed on return. A
-    // crash skips that, so the prefix lets `remove_stale_packs` find what was left.
-    let pack = tempfile::Builder::new()
-        .prefix(TEMP_PREFIX)
-        .tempfile_in(copies)?;
-    let mut output = tokio::fs::File::from_std(pack.reopen()?);
-    let rate: u64 = std::env::var("REPLICA_BANDWIDTH_BYTES_PER_SECOND")
-        .map(|value| value.parse())
-        .unwrap_or(Ok(50 * 1024 * 1024))?;
-    ensure!(
-        (1024..=1024 * 1024 * 1024).contains(&rate),
-        "invalid replica bandwidth limit"
-    );
-    let mut limited = Throttled {
-        inner: &mut output,
-        rate,
-        wait: None,
-        reserved: 0,
-    };
-    let mut input = tokio::io::empty();
-    let mut errors = tokio::io::sink();
-    let (listing, status) = tokio::select! {
-        biased;
-        _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
-        downloaded = context.git_session(
-            primary,
-            Request {
-                repository,
-                operation: Operation::ReplicaPack {
-                    have: have.to_vec(),
-                },
-                actor: None,
-                ci_run: None,
-            },
-            GitStreams {
-                input: &mut input,
-                output: &mut limited,
-                errors: &mut errors,
-            },
-        ) => downloaded?,
-    };
-    ensure!(status.success(), "the primary could not make a pack");
-    drop(limited);
-    output.flush().await?;
-    drop(output);
-    let listing: Listing = serde_json::from_value(listing)?;
+    let (pack, listing) = download(context, primary, repository, mirror, have, stop).await?;
     let store =
         RepoStore::from_disk_path(mirror.to_str().context("replica copy path is not text")?);
     let pool = context.database()?;
@@ -493,4 +446,101 @@ mod bandwidth_tests {
         output.flush().await.unwrap();
         assert!(started.elapsed() >= std::time::Duration::from_millis(900));
     }
+}
+
+async fn download(
+    context: &NodeContext,
+    primary: i64,
+    repository: Uuid,
+    mirror: &Path,
+    have: &[String],
+    stop: &CancellationToken,
+) -> Result<(tempfile::NamedTempFile, Listing)> {
+    let copies = mirror.parent().context("replica copy has no directory")?;
+    tokio::fs::create_dir_all(copies).await?;
+    // The pack is written beside the copies, on the same disk, and removed on return. A
+    // crash skips that, so the prefix lets `remove_stale_packs` find what was left.
+    let pack = tempfile::Builder::new()
+        .prefix(TEMP_PREFIX)
+        .tempfile_in(copies)?;
+    let mut output = tokio::fs::File::from_std(pack.reopen()?);
+    let rate: u64 = std::env::var("REPLICA_BANDWIDTH_BYTES_PER_SECOND")
+        .map(|value| value.parse())
+        .unwrap_or(Ok(50 * 1024 * 1024))?;
+    ensure!(
+        (1024..=1024 * 1024 * 1024).contains(&rate),
+        "invalid replica bandwidth limit"
+    );
+    let mut limited = Throttled {
+        inner: &mut output,
+        rate,
+        wait: None,
+        reserved: 0,
+    };
+    let max_bytes = match std::env::var("REPLICA_MAX_PACK_BYTES") {
+        Ok(raw) => raw.parse::<u64>().context("invalid replica pack limit")?,
+        Err(std::env::VarError::NotPresent) => 4 * 1024 * 1024 * 1024,
+        Err(error) => return Err(error.into()),
+    };
+    ensure!(
+        (1..=1024 * 1024 * 1024 * 1024).contains(&max_bytes),
+        "invalid replica pack limit"
+    );
+    let mut bounded =
+        codeyard_repos_core::git_transport::LimitedWriter::new(&mut limited, max_bytes);
+    let mut input = tokio::io::empty();
+    let mut errors = tokio::io::sink();
+    let (listing, status) = tokio::select! {
+        biased;
+        _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
+        downloaded = context.git_session(
+            primary,
+            Request {
+                repository,
+                operation: Operation::ReplicaPack {
+                    have: have.to_vec(),
+                },
+                actor: None,
+                ci_run: None,
+            },
+            GitStreams {
+                input: &mut input,
+                output: &mut bounded,
+                errors: &mut errors,
+            },
+        ) => downloaded?,
+    };
+    ensure!(status.success(), "the primary could not make a pack");
+    drop(bounded);
+    drop(limited);
+    output.flush().await?;
+    drop(output);
+    let listing: Listing = serde_json::from_value(listing)?;
+    Ok((pack, listing))
+}
+
+/// Mirrors a primary for operator backup without creating or changing a replica assignment.
+pub(super) async fn snapshot(
+    context: &NodeContext,
+    primary: i64,
+    repository: Uuid,
+    mirror: &Path,
+) -> Result<()> {
+    let stop = CancellationToken::new();
+    let have = if mirror.join("HEAD").is_file() {
+        tips(context, repository, mirror).await?
+    } else {
+        Vec::new()
+    };
+    let (pack, listing) = download(context, primary, repository, mirror, &have, &stop).await?;
+    let store = RepoStore::from_disk_path(mirror.to_str().context("backup path is not text")?);
+    if !mirror.join("HEAD").is_file() {
+        store.initialize(None, "main").await?;
+    }
+    store.index_pack(pack.path(), false).await?;
+    store.set_refs(&listing.refs).await?;
+    if let Some(head) = listing.head {
+        store.set_head_target(&head).await?;
+    }
+    Ok(())
 }
