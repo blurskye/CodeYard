@@ -100,11 +100,12 @@ and results stay the same. A stage can be the last one.
    configuration/texts and URL helpers now live in `model`. Native CI record/log
    helpers live in `db/core`; encryption, SSH selection, node identity and custom
    secret scanning live in `support`. Database domains no longer call server helpers.
-   Source moves are complete; workspace validation is in progress.
+   Source moves are complete; native library targets check. Full workspace
+   validation is blocked in stage 8.
 5. **`db` domains.** Source extraction complete: `identity`, `orgs`, `repos`
    (including pulls and issues), `actions`, `security` and `cluster` each own both
    engines. Shared transaction helpers and their records live under `db/core/src/queries`.
-   Workspace validation is in progress.
+   Native library targets check. Full workspace validation is blocked in stage 8.
 6. **Services (partial).** `identity` and `notifications` are extracted. Repository
    authority, identity mail links and delivery helpers have one lower owner.
    `RepoStore` is a concrete enum-backed type, not the trait assumed above; its local
@@ -115,14 +116,16 @@ and results stay the same. A stage can be the last one.
    with folders named for its operation categories), repository HTTP, GraphQL and
    the remaining routes are separate crates. Shared helpers have one direct lower
    home. The coupled runtime is in the app library so adapters do not depend on
-   binary wiring. Workspace validation is in progress.
+   binary wiring. Native library targets check. Full workspace validation is blocked in stage 8.
 8. **`app`.** Source layout complete. `backend/app/src` is the app library;
    `backend/app/wiring` contains the existing binary package's entry points, CLI
    and node startup. SSH, backups and storage live in the app library. The source
    stages are committed before workspace, Clippy and WASM checks begin. Broker unit
    tests still need private test hooks and the REST listener; the app test target and
    REST dependency use distinct `AppState` types. This needs a shared test seam or
-   keeping these tests with the composed server, beyond pure moves.
+   keeping these tests with the composed server, beyond pure moves. Native libraries,
+   binary wiring and integration targets check; this is the only workspace check
+   error. Clippy and WASM wait for a clean workspace check.
 
 ## Move only: no behaviour change
 
