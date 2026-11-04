@@ -1,5 +1,5 @@
 //! The store against real bare repositories in temporary directories.
-use codeyard_db_core::models::Repository;
+use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::error::RepoErrorReason;

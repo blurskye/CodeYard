@@ -349,115 +349,6 @@ fn connection_budget(sessions: usize) -> usize {
     2 * sessions + MAX_CONTROLS + MAX_HEADERS + 16
 }
 
-#[cfg(test)]
-mod admission_tests {
-    use super::*;
-
-    #[test]
-    fn connection_capacity_includes_active_receives_their_hooks_and_controls() {
-        for sessions in [16, 128, 512] {
-            assert!(connection_budget(sessions) >= sessions * 2 + MAX_CONTROLS + MAX_HEADERS);
-        }
-    }
-
-    fn pending_operation() -> Arc<Operation> {
-        Arc::new(Operation {
-            credential: ReceiveCredential::SshKey(1),
-            actor_id: 1,
-            repo_id: 1,
-            owner: "owner".into(),
-            path: PathBuf::new(),
-            publication_lease: None,
-            hooks: tempfile::tempdir().unwrap(),
-            state: Mutex::new(HookState {
-                quorum: true,
-                quorum_started: true,
-                ..HookState::default()
-            }),
-        })
-    }
-
-    #[tokio::test]
-    async fn receive_terminal_output_is_held_until_release() {
-        let (mut output, mut reader) = tokio::io::duplex(1024);
-        let mut gate = ReceiveOutput {
-            output: &mut output,
-            operation: pending_operation(),
-            held: Vec::new(),
-        };
-        gate.write_all(b"ok refs/heads/main\n").await.unwrap();
-        let mut bytes = [0; 19];
-        assert!(timeout(Duration::from_millis(10), reader.read(&mut bytes))
-            .await
-            .is_err());
-        gate.release().await.unwrap();
-        let count = reader.read(&mut bytes).await.unwrap();
-        assert_eq!(&bytes[..count], b"ok refs/heads/main\n");
-    }
-
-    #[tokio::test]
-    async fn discarded_receive_status_never_reports_success() {
-        let (mut output, mut reader) = tokio::io::duplex(1024);
-        let mut gate = ReceiveOutput {
-            output: &mut output,
-            operation: pending_operation(),
-            held: Vec::new(),
-        };
-        gate.write_all(b"ok refs/heads/main\n").await.unwrap();
-        drop(gate);
-        drop(output);
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).await.unwrap();
-        assert!(bytes.is_empty());
-    }
-
-    #[tokio::test]
-    async fn unknown_outcomes_replace_plain_and_sideband_success_packets() {
-        for status in [
-            b"0010unpack ok\n".as_slice(),
-            b"0010\x01unpack ok\n".as_slice(),
-        ] {
-            let (mut output, mut reader) = tokio::io::duplex(1024);
-            let mut gate = ReceiveOutput {
-                output: &mut output,
-                operation: pending_operation(),
-                held: status.to_vec(),
-            };
-            gate.unknown().await.unwrap();
-            drop(gate);
-            drop(output);
-            let mut bytes = Vec::new();
-            reader.read_to_end(&mut bytes).await.unwrap();
-            let text = String::from_utf8_lossy(&bytes);
-            assert!(text.contains("write outcome unknown; fetch before retrying"));
-            assert!(!text.contains("unpack ok"));
-            assert_eq!(bytes[4] == 3, status[4] == 1);
-        }
-    }
-
-    #[tokio::test]
-    async fn oversized_terminal_output_preserves_an_unknown_outcome_after_draining() {
-        let mut output = tokio::io::sink();
-        let operation = pending_operation();
-        let mut gate = ReceiveOutput {
-            output: &mut output,
-            operation: operation.clone(),
-            held: vec![0; codeyard_db_core::limits::MAX_JSON],
-        };
-        assert!(gate.write_all(b"x").await.is_err());
-        assert!(operation.state.lock().unwrap().quorum_unknown);
-    }
-
-    #[test]
-    fn busy_session_refusals_keep_the_public_reason() {
-        assert_eq!(
-            refusal_message(&anyhow::Error::new(git_process::SessionsBusy)),
-            Some(b"Git sessions busy\n".to_vec())
-        );
-        assert!(refusal_message(&anyhow::anyhow!("private driver detail")).is_none());
-    }
-}
-
 struct AbortSession(tokio::task::AbortHandle);
 impl Drop for AbortSession {
     fn drop(&mut self) {
@@ -1253,4 +1144,113 @@ async fn framed_output<R: AsyncRead + Unpin, E: AsyncRead + Unpin, W: AsyncWrite
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+
+    #[test]
+    fn connection_capacity_includes_active_receives_their_hooks_and_controls() {
+        for sessions in [16, 128, 512] {
+            assert!(connection_budget(sessions) >= sessions * 2 + MAX_CONTROLS + MAX_HEADERS);
+        }
+    }
+
+    fn pending_operation() -> Arc<Operation> {
+        Arc::new(Operation {
+            credential: ReceiveCredential::SshKey(1),
+            actor_id: 1,
+            repo_id: 1,
+            owner: "owner".into(),
+            path: PathBuf::new(),
+            publication_lease: None,
+            hooks: tempfile::tempdir().unwrap(),
+            state: Mutex::new(HookState {
+                quorum: true,
+                quorum_started: true,
+                ..HookState::default()
+            }),
+        })
+    }
+
+    #[tokio::test]
+    async fn receive_terminal_output_is_held_until_release() {
+        let (mut output, mut reader) = tokio::io::duplex(1024);
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: pending_operation(),
+            held: Vec::new(),
+        };
+        gate.write_all(b"ok refs/heads/main\n").await.unwrap();
+        let mut bytes = [0; 19];
+        assert!(timeout(Duration::from_millis(10), reader.read(&mut bytes))
+            .await
+            .is_err());
+        gate.release().await.unwrap();
+        let count = reader.read(&mut bytes).await.unwrap();
+        assert_eq!(&bytes[..count], b"ok refs/heads/main\n");
+    }
+
+    #[tokio::test]
+    async fn discarded_receive_status_never_reports_success() {
+        let (mut output, mut reader) = tokio::io::duplex(1024);
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: pending_operation(),
+            held: Vec::new(),
+        };
+        gate.write_all(b"ok refs/heads/main\n").await.unwrap();
+        drop(gate);
+        drop(output);
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await.unwrap();
+        assert!(bytes.is_empty());
+    }
+
+    #[tokio::test]
+    async fn unknown_outcomes_replace_plain_and_sideband_success_packets() {
+        for status in [
+            b"0010unpack ok\n".as_slice(),
+            b"0010\x01unpack ok\n".as_slice(),
+        ] {
+            let (mut output, mut reader) = tokio::io::duplex(1024);
+            let mut gate = ReceiveOutput {
+                output: &mut output,
+                operation: pending_operation(),
+                held: status.to_vec(),
+            };
+            gate.unknown().await.unwrap();
+            drop(gate);
+            drop(output);
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).await.unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(text.contains("write outcome unknown; fetch before retrying"));
+            assert!(!text.contains("unpack ok"));
+            assert_eq!(bytes[4] == 3, status[4] == 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_terminal_output_preserves_an_unknown_outcome_after_draining() {
+        let mut output = tokio::io::sink();
+        let operation = pending_operation();
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: operation.clone(),
+            held: vec![0; codeyard_db_core::limits::MAX_JSON],
+        };
+        assert!(gate.write_all(b"x").await.is_err());
+        assert!(operation.state.lock().unwrap().quorum_unknown);
+    }
+
+    #[test]
+    fn busy_session_refusals_keep_the_public_reason() {
+        assert_eq!(
+            refusal_message(&anyhow::Error::new(git_process::SessionsBusy)),
+            Some(b"Git sessions busy\n".to_vec())
+        );
+        assert!(refusal_message(&anyhow::anyhow!("private driver detail")).is_none());
+    }
 }

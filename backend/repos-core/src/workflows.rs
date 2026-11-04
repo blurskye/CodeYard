@@ -672,6 +672,21 @@ fn is_missing_workflow_tree_error(error: &RepoError) -> bool {
     error.kind == ErrorKind::MissingPath
 }
 
+pub fn is_safe_ref(value: &str) -> bool {
+    let reference = if value.starts_with("refs/") {
+        value.to_owned()
+    } else {
+        format!("refs/heads/{value}")
+    };
+    !value.starts_with('-') && codeyard_git::ref_names::is_canonical_ref(&reference)
+}
+
+pub fn is_safe_workflow_path(value: &str) -> bool {
+    value
+        .strip_prefix(".github/workflows/")
+        .is_some_and(codeyard_git::ci::is_ci_workflow_filename)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1568,19 +1583,4 @@ mod push_parser_tests {
         )
         .is_err());
     }
-}
-
-pub fn is_safe_ref(value: &str) -> bool {
-    let reference = if value.starts_with("refs/") {
-        value.to_owned()
-    } else {
-        format!("refs/heads/{value}")
-    };
-    !value.starts_with('-') && codeyard_git::ref_names::is_canonical_ref(&reference)
-}
-
-pub fn is_safe_workflow_path(value: &str) -> bool {
-    value
-        .strip_prefix(".github/workflows/")
-        .is_some_and(codeyard_git::ci::is_ci_workflow_filename)
 }

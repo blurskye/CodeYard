@@ -241,6 +241,36 @@ impl ProtocolHandler for RpcHandler {
     }
 }
 
+#[derive(Debug)]
+pub struct RpcFactory;
+impl codeyard_repos_core::local_rpc::RpcFactory for RpcFactory {
+    fn create(&self, context: NodeContext) -> Box<dyn codeyard_repos_core::local_rpc::LocalRpc> {
+        Box::new(RpcHandler::new(context))
+    }
+}
+impl codeyard_repos_core::local_rpc::LocalRpc for RpcHandler {
+    fn execute(
+        &self,
+        request: Request,
+        body: Vec<u8>,
+        caller: iroh::PublicKey,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        Result<(serde_json::Value, Vec<u8>), codeyard_repos_core::wire::Failure>,
+    > {
+        Box::pin(self.execute(request, body, caller))
+    }
+    fn own_copy<'a>(
+        &'a self,
+        request: &'a Request,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<codeyard_repos_core::local_rpc::LocalCopy, codeyard_git::error::RepoError>,
+    > {
+        Box::pin(self.own_copy(request))
+    }
+}
+
 #[cfg(test)]
 mod regression_tests;
 
@@ -300,35 +330,5 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), gate.drain())
             .await
             .expect("dropping the session releases the wait");
-    }
-}
-
-#[derive(Debug)]
-pub struct RpcFactory;
-impl codeyard_repos_core::local_rpc::RpcFactory for RpcFactory {
-    fn create(&self, context: NodeContext) -> Box<dyn codeyard_repos_core::local_rpc::LocalRpc> {
-        Box::new(RpcHandler::new(context))
-    }
-}
-impl codeyard_repos_core::local_rpc::LocalRpc for RpcHandler {
-    fn execute(
-        &self,
-        request: Request,
-        body: Vec<u8>,
-        caller: iroh::PublicKey,
-    ) -> futures_util::future::BoxFuture<
-        '_,
-        Result<(serde_json::Value, Vec<u8>), codeyard_repos_core::wire::Failure>,
-    > {
-        Box::pin(self.execute(request, body, caller))
-    }
-    fn own_copy<'a>(
-        &'a self,
-        request: &'a Request,
-    ) -> futures_util::future::BoxFuture<
-        'a,
-        Result<codeyard_repos_core::local_rpc::LocalCopy, codeyard_git::error::RepoError>,
-    > {
-        Box::pin(self.own_copy(request))
     }
 }

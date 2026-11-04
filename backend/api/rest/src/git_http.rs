@@ -416,7 +416,13 @@ async fn rpc(
         let status = store
             .git_session(
                 options,
-                write.then(|| (state.pool.clone(), state.ci_runs.clone())),
+                write.then(|| {
+                    (
+                        state.pool.clone(),
+                        state.ci_runs.clone()
+                            as Arc<dyn codeyard_repos_core::receive_ci::ReceiveCi>,
+                    )
+                }),
                 GitStreams {
                     input: &mut input,
                     output: &mut output,

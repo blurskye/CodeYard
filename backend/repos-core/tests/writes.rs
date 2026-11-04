@@ -1,5 +1,7 @@
 use codeyard_db_core::models::WriteRecord;
 use codeyard_repos_core::git_transport::*;
+use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_repos_core::store_types::GitStreams;
 use codeyard_repos_core::wire::operation_body_limit;
 use std::time::Duration;
 

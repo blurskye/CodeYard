@@ -2089,7 +2089,7 @@ impl LocalStore {
         clippy::too_many_arguments,
         reason = "The effect-point check retains every pull-head publication input."
     )]
-    pub(super) async fn publish_fetched_pull_head(
+    pub async fn publish_fetched_pull_head(
         &self,
         pool: &codeyard_db_core::DbPool,
         repo_id: i64,

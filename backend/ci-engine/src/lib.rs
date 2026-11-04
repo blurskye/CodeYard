@@ -15,6 +15,9 @@ pub mod pull_requests;
 mod receive;
 pub mod worker;
 
+pub mod code_owners;
+pub mod refs;
+
 #[cfg(test)]
 mod tests {
 

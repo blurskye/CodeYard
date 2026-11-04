@@ -162,7 +162,7 @@ enum Backend {
 }
 
 impl RepoStore {
-    fn local(&self) -> Result<&crate::repositories::store::local::LocalStore, RepoError> {
+    pub fn local(&self) -> Result<&crate::repositories::store::local::LocalStore, RepoError> {
         match &self.0 {
             Backend::Local(local) => Ok(local),
             Backend::Remote(_) => Err(crate::wire::invalid(
