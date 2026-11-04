@@ -129,8 +129,8 @@ and results stay the same. A stage can be the last one.
 7. **API.** Source extraction complete: HTTP plumbing, GitHub REST (one crate,
    with folders named for its operation categories), repository HTTP, GraphQL and
    the remaining routes are separate crates. Shared helpers have one direct lower
-   home. The coupled runtime is in the app library so adapters do not depend on
-   binary wiring. All workspace targets check.
+   home. Adapters use the service crates and app state without depending on
+   binary wiring.
 8. **`app`.** Source layout complete. `backend/app/src` is the app library;
    `backend/repos-pulls/` owns pull mutations, repository operations, issues and
    security workers. Their resource trait is implemented by `AppState`.
