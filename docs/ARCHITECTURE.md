@@ -277,7 +277,8 @@ family with a behind or missing copy waits for `codeyard cluster promote --force
 The experimental write quorum uses two storage voters and PostgreSQL decisions, with
 canonical refs and fenced term directories. Empty initialization and repository copies
 use that coordinator too. Read distribution and geo-routing remain future work.
-Cluster startup requires shared S3 storage for files. Single node remains supported.
+Cluster files use two checksum-checked storage-node copies, or shared S3 when configured.
+The new backend awaits builder verification. Single node remains supported.
 
 Node membership (`pending`, `active`, `revoked`) is separate from allocation state
 (`active`, `draining`, `drained`). Drain admission reserves complete fork families and
@@ -310,7 +311,7 @@ nodes serve paired nodes over iroh without opening HTTP or SSH listeners.
   membership and the job queues. A cluster requires
   PostgreSQL; SQLite is single-node only and the server refuses to start a
   second node against it.
-- **S3** holds uploads for all nodes.
+- **Uploaded files** use two storage-node copies, or a shared S3 bucket. Git stays on storage disks.
 - **No gossip.** Membership is the `nodes` table with heartbeats.
 
 ### Node identity and transport: iroh and TCP

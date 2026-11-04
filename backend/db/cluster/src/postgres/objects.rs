@@ -227,11 +227,11 @@ pub async fn forget_copy(
 }
 pub async fn finish_delete(pool: &PgPool, key: &str) -> Result<()> {
     let complete:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM storage_objects WHERE object_key=$1 AND confirmed=-1 AND NOT EXISTS(SELECT 1 FROM storage_object_copies WHERE object_key=$1))").bind(key).fetch_one(pool).await?;
-    ensure!(complete,"object deletion is incomplete");
+    ensure!(complete, "object deletion is incomplete");
     Ok(())
 }
 
-pub async fn purge(pool:&PgPool)->Result<()> {
+pub async fn purge(pool: &PgPool) -> Result<()> {
     // Keep immutable-key tombstones past every admitted upload and the backup window.
     sqlx::query("DELETE FROM storage_objects WHERE object_key IN (SELECT o.object_key FROM storage_objects o WHERE o.confirmed=-1 AND o.deleted_at<clock_timestamp()-$1::bigint*INTERVAL '1 second' AND NOT EXISTS(SELECT 1 FROM storage_object_copies c WHERE c.object_key=o.object_key) ORDER BY o.deleted_at LIMIT 100)")
         .bind(codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS).execute(pool).await?;

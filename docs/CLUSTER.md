@@ -35,10 +35,12 @@ and the rest) open the node connection in either mode; they do not change the mo
   signed push webhooks are sent on storage nodes too. Core startup requires a valid
   64-hex-character key and checks it against an existing signed hook when one exists.
   Database-free workers do not need it.
-- **Shared S3-compatible storage** for uploads, avatars, release assets, packages and
-  Actions artifacts and caches (`S3_*`, see the [README](../README.md)). Every core node
-  refuses to start in cluster mode without these settings. Use the same bucket on all
-  nodes; single-node mode still defaults to local disk.
+- **Two active storage nodes with free disk space**, or shared S3-compatible storage
+  (`S3_*`, see the [README](../README.md)). Without S3, uploads, avatars, release assets,
+  packages, Actions artifacts and caches use checked, durable copies on two storage nodes.
+  Their immutable address includes the declared SHA256. A web node keeps only staging/cache
+  bytes; reads can use either storage copy. Every core must select the same backend.
+  Single-node mode still defaults to local disk. This backend awaits builder verification.
 - **UDP or TCP between the nodes.** Nodes talk over QUIC on `IROH_BIND` (default
   `0.0.0.0:7444`). Direct connections are the default and there is no relay unless you
   set `IROH_RELAY`. Behind NAT or a container port mapping, tell the other nodes where to
@@ -197,6 +199,17 @@ with the roles you allowed.
 Manage nodes with `codeyard cluster list`, `approve <name>`, `revoke <name>`, `invites` and
 `cancel-invite <id>`, or on the **Administration → Cluster nodes** page. A revoked node is
 refused on its next request.
+
+## Files on storage nodes
+
+Without `S3_*`, cluster files use the ordinary authenticated upload and download URLs.
+The web node checks file policy and user credentials; runner keys grant no arbitrary
+object reads. Storage peers check live membership again before recording durable bytes.
+A failed upload stays pending and can be retried. Drain reserves file and Git replacement
+space together, then retires old file bytes after two active replacements are ready.
+Immutable-key tombstones remain through the restore window to refuse late uploads.
+Objects are bounded to 100 MiB; each store and node listener admits two transfers at once.
+The object backend and its HTTP acceptance tests await builder verification.
 
 ## Drain a node
 

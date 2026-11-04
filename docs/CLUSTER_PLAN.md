@@ -21,7 +21,7 @@ workers on other machines, live logs and notifications across web nodes, and a f
 round in `scripts/e2e.sh`.
 
 The experimental write path uses two storage voters, PostgreSQL decisions and a ref
-journal. Cluster startup requires shared S3 storage for files. Repository initialization
+journal. Cluster files use two storage-node copies or optional shared S3. Repository initialization
 and copy now use the same quorum path; builder verification is pending.
 
 Not complete: drain acceptance, PostgreSQL failover acceptance, cluster-aware backup,
@@ -30,7 +30,7 @@ provisioning, automatic scaling, rebalancing, rolling upgrades and measured load
 Current acceptance status (runtime checks are still pending):
 
 - 1: hiding switch built; source checks pass.
-- 2: shared S3 enforcement built; the planned storage-node object backend is missing.
+- 2: two-copy storage-node backend, shared drain reservations and HTTP acceptance written; checks pending.
 - 3: quorum initialization and copy source checks pass; voter replacement checks await compilation.
 - 4: drain source checks pass; runtime acceptance pending.
 - 5: quorum and drain metrics source checks pass; pool waiters remain unavailable (`NaN`).

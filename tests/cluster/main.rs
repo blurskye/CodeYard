@@ -4,6 +4,7 @@ mod fixes;
 mod monitoring;
 mod monitoring_bounds;
 mod notification_cluster;
+mod objects;
 mod pairing;
 mod production_controls;
 mod quorum;
