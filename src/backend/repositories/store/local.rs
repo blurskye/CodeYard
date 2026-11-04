@@ -4331,6 +4331,45 @@ impl LocalStore {
         .map_err(|_| unavailable("Repository update failed"))?
     }
 
+    async fn settings_authority(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+        authority: &db::credentials::Actor,
+        changes: &db::repositories::records::RepositoryChanges<String>,
+    ) -> Result<db::models::Repository, RepoError> {
+        let repository = access::check_admin(pool, repo_id, authority.user_id)
+            .await
+            .map_err(|error| match error {
+                access::AccessError::Unavailable => RepoError::authority_unavailable(),
+                _ => RepoError::write_denied(),
+            })?;
+        if !repository_matches_path(&repository, self.path(), self.node_id)
+            || (repository.is_archived && changes.archived != Some(false))
+        {
+            return Err(RepoError::write_denied());
+        }
+        access::credential_user(pool, authority, true)
+            .await
+            .map_err(RepoError::from)?;
+        for token in [authority.token_id(), changes.token].into_iter().flatten() {
+            if !crate::backend::identity::tokens::repository_scope(
+                pool,
+                token,
+                authority.user_id,
+                repo_id,
+                "administration",
+                true,
+            )
+            .await
+            .map_err(|_| RepoError::authority_unavailable())?
+            {
+                return Err(RepoError::write_denied());
+            }
+        }
+        Ok(repository)
+    }
+
     async fn patch_repository_owned(
         &self,
         pool: &db::DbPool,
@@ -4339,21 +4378,13 @@ impl LocalStore {
         name: &str,
         changes: &db::repositories::records::RepositoryChanges<String>,
     ) -> Result<db::models::Repository, RepoError> {
-        let actor = authority.user_id;
-        let _lock = git::locks::lock(self.path()).await;
-        let previous =
-            access::check_admin(pool, repo_id, actor)
-                .await
-                .map_err(|error| match error {
-                    access::AccessError::Unavailable => RepoError::authority_unavailable(),
-                    _ => RepoError::write_denied(),
-                })?;
-        if !repository_matches_path(&previous, self.path(), self.node_id) {
-            return Err(RepoError::write_denied());
-        }
-        if previous.is_archived && changes.archived != Some(false) {
-            return Err(RepoError::write_denied());
-        }
+        self.admitted_path(false).await?;
+        let publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
+        let previous = self
+            .settings_authority(pool, repo_id, &authority, changes)
+            .await?;
         let checked_owner = if let Some(destination) = changes.name.as_deref() {
             let owner = db::repositories::records::repository_owner_names(pool, &[repo_id])
                 .await
@@ -4395,11 +4426,19 @@ impl LocalStore {
         } else {
             String::new()
         };
-        let _change = begin_ref_change(pool, repo_id, self.path(), self.node_id).await?;
-        access::credential_user(pool, &authority, true)
-            .await
-            .map_err(RepoError::from)?;
-        self.set_head_target(&reference).await?;
+        let _change = self.begin_publisher_change(pool, repo_id).await?;
+        self.settings_authority(pool, repo_id, &authority, changes)
+            .await?;
+        if !publication
+            .scope(self.publish_quorum_head(pool, repo_id, &reference, async {
+                self.settings_authority(pool, repo_id, &authority, changes)
+                    .await?;
+                Ok(())
+            }))
+            .await?
+        {
+            publication.scope(self.set_head_target(&reference)).await?;
+        }
         let updated = db::repositories::records::patch_repository_and_default(
             pool,
             authority,
@@ -4431,7 +4470,7 @@ impl LocalStore {
                 };
                 if must_restore {
                     let restored = match previous_head.as_deref() {
-                        Some(head) => self.set_head_target(head).await,
+                        Some(head) => publication.scope(self.set_head_target(head)).await,
                         None => self
                             .git(&["update-ref", "--no-deref", "HEAD", &previous_oid])
                             .await
@@ -4477,22 +4516,13 @@ impl LocalStore {
         }
         if let Some((context, repo)) = &self.context {
             let pool = context.database()?;
-            if self.quorum_context(pool, *repo).await?.is_some() {
-                let old = self
-                    .head_target()
-                    .await?
-                    .ok_or_else(|| unavailable("Detached HEAD requires recovery"))?;
-                let changes = [db::models::RefChange {
-                    name: "HEAD".into(),
-                    kind: "symbolic".into(),
-                    old_target: Some(old),
-                    new_target: Some(target.to_owned()),
-                }];
-                self.publish_quorum_refs(pool, *repo, &changes, async {
+            if self
+                .publish_quorum_head(pool, *repo, target, async {
                     self.admitted_path(false).await?;
                     Ok(())
                 })
-                .await?;
+                .await?
+            {
                 return Ok(());
             }
         }
