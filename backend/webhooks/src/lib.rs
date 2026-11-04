@@ -1,8 +1,5 @@
 use crate::delivery::Outgoing;
-use codeyard_db_core::{
-    models::{Repository, Webhook},
-    DbPool,
-};
+use codeyard_db_core::{models::Webhook, DbPool};
 use codeyard_db_repos::webhooks::HookOwner;
 use codeyard_model::webhook_events as events;
 use serde_json::Value;

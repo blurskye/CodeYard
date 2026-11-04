@@ -9998,6 +9998,7 @@ dependencies = [
  "hex",
  "hmac 0.12.1",
  "reqwest",
+ "serde_json",
  "sha1 0.10.6",
  "sqlx",
  "tempfile",
