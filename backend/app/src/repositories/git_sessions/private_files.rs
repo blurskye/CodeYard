@@ -1,10 +1,10 @@
 //! Files and sockets only the server's user may touch, for the OpenSSH gateway (Linux).
 //! Native children use backend::process.
-use codeyard_repos::validation::shell_safe_path;
 use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
+use codeyard_repos::validation::shell_safe_path;
 use std::fs::DirBuilder;
 use std::fs::File;
 use std::fs::Metadata;

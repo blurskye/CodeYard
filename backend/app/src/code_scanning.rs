@@ -1,5 +1,4 @@
 //! Open scanners submit SARIF; queued uploads survive restarts and commit atomically.
-use codeyard_webhooks::payloads;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
@@ -9,6 +8,7 @@ use codeyard_db_core::DbPool;
 use codeyard_db_security::code_scanning::Finding;
 use codeyard_db_security::code_scanning::Run;
 use codeyard_db_security::code_scanning::Upload;
+use codeyard_webhooks::payloads;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;

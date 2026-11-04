@@ -1,16 +1,16 @@
 //! A CI worker: claims queued runs and executes their workflows with `act`.
-use codeyard_ci::config::podman_socket_path;
-use codeyard_ci::config::CiExecutionMode;
 use crate::ci::process::Stopped;
 use crate::ci::queue::ClaimedRun;
 use crate::ci::queue::CoreRefusal;
 use crate::ci::queue::RunQueue;
-use codeyard_ci::runner_labels::labels_from_value;
 use crate::ci::workers::CiWorkers;
 use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
+use codeyard_ci::config::podman_socket_path;
+use codeyard_ci::config::CiExecutionMode;
+use codeyard_ci::runner_labels::labels_from_value;
 use codeyard_db_core::models::CiRun;
 use codeyard_model::ci::LogLine;
 use serde::Deserialize;
@@ -2305,8 +2305,8 @@ fn file_name(workflow: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codeyard_ci::config::CiConfig;
     use crate::repositories::store::RepoStore;
+    use codeyard_ci::config::CiConfig;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 

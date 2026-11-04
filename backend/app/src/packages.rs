@@ -1,13 +1,13 @@
 //! Content-addressed objects are reserved before storage I/O so interrupted writes are collected.
 use sha2::Digest;
 
-use codeyard_storage::ObjectStore;
-use codeyard_storage::Upload;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_repos::packages::Blob;
 use codeyard_db_repos::packages::Refusal;
 use codeyard_model::package_input::valid_name;
+use codeyard_storage::ObjectStore;
+use codeyard_storage::Upload;
 use codeyard_support::object_limits::MAX_OBJECT_BYTES;
 use sha2::Sha256;
 
@@ -33,7 +33,9 @@ pub fn valid_package_name(kind: &str, name: &str) -> bool {
         return valid_name(name);
     }
     if kind == "npm" {
-        return !name.starts_with('@') && !name.contains('/') && codeyard_repos::npm::package_name(name);
+        return !name.starts_with('@')
+            && !name.contains('/')
+            && codeyard_repos::npm::package_name(name);
     }
     let part = |s: &str| {
         !s.is_empty()

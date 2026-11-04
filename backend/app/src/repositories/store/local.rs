@@ -1,13 +1,6 @@
 //! The local store: the bare repository is a directory on this machine. Each
 //! method runs the matching Git code, moving blocking libgit2 work off the async
 //! threads and turning failures into [`RepoError`]s.
-use codeyard_repos::protection::check_branch_write;
-use codeyard_repos::protection::BranchWrite;
-use codeyard_repos::protection::History;
-use codeyard_repos::protection::Refusal;
-use codeyard_repos::protection::WriteVia;
-use codeyard_repos::editor;
-use codeyard_repos::editor::FileWrite;
 use crate::repositories::store::local::writes::oid_change;
 use crate::repositories::store::types::allowed_merge_methods;
 use crate::repositories::store::types::AsyncMergePublication;
@@ -19,7 +12,6 @@ use crate::repositories::store::types::MergeRequest;
 use crate::repositories::store::types::RestackMove;
 use crate::repositories::store::types::MAX_ARCHIVE_RESPONSE_BYTES;
 use crate::repositories::store::types::MAX_BLOB_RESPONSE_BYTES;
-use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
@@ -43,6 +35,14 @@ use codeyard_git::TagInfo;
 use codeyard_git::TreeEntry;
 use codeyard_git::WeekChanges;
 use codeyard_identity::repository_access as access;
+use codeyard_repos::editor;
+use codeyard_repos::editor::FileWrite;
+use codeyard_repos::protection::check_branch_write;
+use codeyard_repos::protection::BranchWrite;
+use codeyard_repos::protection::History;
+use codeyard_repos::protection::Refusal;
+use codeyard_repos::protection::WriteVia;
+use codeyard_storage::range::ByteRange as BlobRange;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -330,11 +330,9 @@ async fn live_pull_head_write(
         return Err(RepoError::new(ErrorKind::Conflict, "Pull request changed"));
     }
     if !repository_matches_path(&head, target.path(), target.node_id)
-        || !codeyard_repos::maintainer_edit::can_update_head(
-            pool, &user, &base, &head, &pull,
-        )
-        .await
-        .map_err(|_| RepoError::authority_unavailable())?
+        || !codeyard_repos::maintainer_edit::can_update_head(pool, &user, &base, &head, &pull)
+            .await
+            .map_err(|_| RepoError::authority_unavailable())?
     {
         return Err(RepoError::write_denied());
     }
@@ -2218,17 +2216,16 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        let bypasses =
-            codeyard_repos::push_protection::refuse_blocked_secrets(
-                pool,
-                &repository,
-                actor,
-                self.path(),
-                None,
-                std::slice::from_ref(&target),
-            )
-            .await
-            .map_err(RepoError::from)?;
+        let bypasses = codeyard_repos::push_protection::refuse_blocked_secrets(
+            pool,
+            &repository,
+            actor,
+            self.path(),
+            None,
+            std::slice::from_ref(&target),
+        )
+        .await
+        .map_err(RepoError::from)?;
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
@@ -2355,17 +2352,16 @@ impl LocalStore {
         if old == new {
             return Ok((old, new));
         }
-        let bypasses =
-            codeyard_repos::push_protection::refuse_blocked_secrets(
-                pool,
-                &repository,
-                actor,
-                self.path(),
-                None,
-                std::slice::from_ref(&new),
-            )
-            .await
-            .map_err(RepoError::from)?;
+        let bypasses = codeyard_repos::push_protection::refuse_blocked_secrets(
+            pool,
+            &repository,
+            actor,
+            self.path(),
+            None,
+            std::slice::from_ref(&new),
+        )
+        .await
+        .map_err(RepoError::from)?;
         let writes = write.as_ref().into_iter().collect::<Vec<_>>();
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &writes, &publication, None)
@@ -2497,11 +2493,7 @@ impl LocalStore {
             pool,
             repo_id,
             actor,
-            &[(
-                reference,
-                old,
-                codeyard_repos::editor::ZERO.to_owned(),
-            )],
+            &[(reference, old, codeyard_repos::editor::ZERO.to_owned())],
         )
         .await
     }
@@ -2573,17 +2565,16 @@ impl LocalStore {
         let replacement = (reference.clone(), tag.sha.clone());
         self.blocking(move |path| git::check_tag_budget(path, None, &[replacement]))
             .await?;
-        let bypasses =
-            codeyard_repos::push_protection::refuse_blocked_secrets(
-                pool,
-                &repository,
-                actor,
-                self.path(),
-                None,
-                std::slice::from_ref(&tag.sha),
-            )
-            .await
-            .map_err(RepoError::from)?;
+        let bypasses = codeyard_repos::push_protection::refuse_blocked_secrets(
+            pool,
+            &repository,
+            actor,
+            self.path(),
+            None,
+            std::slice::from_ref(&tag.sha),
+        )
+        .await
+        .map_err(RepoError::from)?;
         let _change = self.begin_publisher_change(pool, repo_id).await?;
         crate::repositories::access::check_publication_actor(pool, &authority, &repository)
             .await
@@ -2689,11 +2680,7 @@ impl LocalStore {
             pool,
             repo_id,
             actor,
-            &[(
-                reference,
-                old,
-                codeyard_repos::editor::ZERO.to_owned(),
-            )],
+            &[(reference, old, codeyard_repos::editor::ZERO.to_owned())],
         )
         .await
     }
@@ -2797,12 +2784,8 @@ impl LocalStore {
         let prepared_path = staged.as_ref().map_or(self.path(), |staged| staged.path());
         let quarantine = staged.as_ref().map(|staged| staged.path().join("objects"));
         if self.quorum_context(pool, repo_id).await?.is_some() {
-            codeyard_repos::editor::validate_staged(
-                self.path(),
-                prepared,
-                staged.as_deref(),
-            )
-            .await?;
+            codeyard_repos::editor::validate_staged(self.path(), prepared, staged.as_deref())
+                .await?;
         }
         let publication = git::locks::publication(self.path())
             .await
@@ -2879,17 +2862,16 @@ impl LocalStore {
         }
         // A saved file is scanned like a push. It must not carry a secret that push protection
         // blocks, even though it never goes through receive-pack.
-        let bypasses =
-            codeyard_repos::push_protection::refuse_blocked_secrets(
-                pool,
-                &repository,
-                actor,
-                self.path(),
-                quarantine.as_deref(),
-                std::slice::from_ref(&prepared.commit.sha),
-            )
-            .await
-            .map_err(RepoError::from)?;
+        let bypasses = codeyard_repos::push_protection::refuse_blocked_secrets(
+            pool,
+            &repository,
+            actor,
+            self.path(),
+            quarantine.as_deref(),
+            std::slice::from_ref(&prepared.commit.sha),
+        )
+        .await
+        .map_err(RepoError::from)?;
         let _change = self
             .begin_branch_change(
                 pool,
@@ -2953,9 +2935,10 @@ impl LocalStore {
                         actor,
                         authority.token_id(),
                         vec![(
-                            prepared.expected.clone().unwrap_or_else(|| {
-                                codeyard_repos::editor::ZERO.to_owned()
-                            }),
+                            prepared
+                                .expected
+                                .clone()
+                                .unwrap_or_else(|| codeyard_repos::editor::ZERO.to_owned()),
                             prepared.commit.sha.clone(),
                         )],
                         quarantine.clone(),
@@ -3051,13 +3034,13 @@ impl LocalStore {
                 .ok_or_else(|| anyhow::anyhow!("rule suite actor is unavailable"))?;
             let updates: Vec<_> = moves
                 .iter()
-                .map(|(reference, old, new)| {
-                    codeyard_repos::validation::RefUpdate {
+                .map(
+                    |(reference, old, new)| codeyard_repos::validation::RefUpdate {
                         reference: reference.clone(),
                         old: old.clone(),
                         new: new.clone(),
-                    }
-                })
+                    },
+                )
                 .collect();
             crate::repositories::rule_suites::record_push(
                 pool,
@@ -3542,17 +3525,16 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
-        let bypasses =
-            codeyard_repos::push_protection::refuse_blocked_secrets(
-                pool,
-                &repository,
-                actor,
-                self.path(),
-                None,
-                &[result.to_owned()],
-            )
-            .await
-            .map_err(RepoError::from)?;
+        let bypasses = codeyard_repos::push_protection::refuse_blocked_secrets(
+            pool,
+            &repository,
+            actor,
+            self.path(),
+            None,
+            &[result.to_owned()],
+        )
+        .await
+        .map_err(RepoError::from)?;
         let authorize = || async {
             let repository = live_write(
                 pool,
@@ -4685,9 +4667,9 @@ impl LocalStore {
         if session.stateless {
             command.arg("--stateless-rpc");
         }
-        if let Some(protocol) = codeyard_repos::validation::protocol(
-            session.git_protocol.as_deref(),
-        )? {
+        if let Some(protocol) =
+            codeyard_repos::validation::protocol(session.git_protocol.as_deref())?
+        {
             command.env("GIT_PROTOCOL", protocol);
         }
         command.arg(&path);

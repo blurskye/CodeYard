@@ -2,7 +2,6 @@
 use crate::cluster::context::NodeContext;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::RepoStore;
-use codeyard_storage::range::ByteRange as BlobRange;
 use anyhow::Context;
 use anyhow::Result;
 use chrono::DateTime;
@@ -16,6 +15,7 @@ use codeyard_db_repos::discussion_search::Expr;
 use codeyard_git as git;
 use codeyard_git::CommitFilter;
 use codeyard_git::CommitInfo;
+use codeyard_storage::range::ByteRange as BlobRange;
 use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::collections::HashSet;

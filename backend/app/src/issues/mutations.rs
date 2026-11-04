@@ -1,6 +1,5 @@
 use crate::issues::database_error;
 use crate::issues::OperationError;
-use codeyard_webhooks::payloads::Scope;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::notify_subscribers;
@@ -10,6 +9,7 @@ use codeyard_notifications::mentions::MentionSource;
 use codeyard_notifications::watchers::notify_watchers;
 use codeyard_notifications::watchers::WatchEvent;
 use codeyard_notifications::watchers::WatchedItem;
+use codeyard_webhooks::payloads::Scope;
 use serde::Deserialize;
 use std::sync::Arc;
 

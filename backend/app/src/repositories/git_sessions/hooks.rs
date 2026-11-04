@@ -2,18 +2,9 @@
 use crate::ci::runs::CiRunRequest;
 use crate::repositories::git_sessions::broker::Gateway;
 use crate::repositories::git_sessions::broker::Operation;
-use codeyard_repos::validation::RefUpdate;
-use codeyard_repos::validation::ZERO_SHA;
 use crate::repositories::git_sessions::ReceiveCredential;
-use codeyard_repos::protection::check_branch_write_with;
-use codeyard_repos::protection::load_rules;
-use codeyard_repos::protection::BranchWrite;
-use codeyard_repos::protection::History;
-use codeyard_repos::protection::Refusal;
-use codeyard_repos::protection::WriteVia;
 use crate::repositories::store::local::ensure_ref_room;
 use crate::repositories::store::repo_store;
-use codeyard_repos::ref_changes::RefMove;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
@@ -26,6 +17,15 @@ use codeyard_git::published_refs_in_use;
 use codeyard_git::ref_listing_bytes;
 use codeyard_git::RefsInUse;
 use codeyard_model::workflow_glob::WorkflowMatchBudget;
+use codeyard_repos::protection::check_branch_write_with;
+use codeyard_repos::protection::load_rules;
+use codeyard_repos::protection::BranchWrite;
+use codeyard_repos::protection::History;
+use codeyard_repos::protection::Refusal;
+use codeyard_repos::protection::WriteVia;
+use codeyard_repos::ref_changes::RefMove;
+use codeyard_repos::validation::RefUpdate;
+use codeyard_repos::validation::ZERO_SHA;
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -204,8 +204,7 @@ impl Gateway {
                         "reference transaction differs from admission"
                     );
                     ensure!(
-                        state.writes.len()
-                            < codeyard_repos::validation::MAX_UPDATES,
+                        state.writes.len() < codeyard_repos::validation::MAX_UPDATES,
                         "too many reference transactions"
                     );
                     state.quorum_started = true;
@@ -552,16 +551,15 @@ impl Gateway {
             .filter(|update| update.new != ZERO_SHA)
             .map(|update| update.new.clone())
             .collect();
-        let bypasses =
-            codeyard_repos::push_protection::refuse_blocked_secrets(
-                &self.pool,
-                &repo,
-                identity.id,
-                &path,
-                quarantine.as_deref(),
-                &heads,
-            )
-            .await?;
+        let bypasses = codeyard_repos::push_protection::refuse_blocked_secrets(
+            &self.pool,
+            &repo,
+            identity.id,
+            &path,
+            quarantine.as_deref(),
+            &heads,
+        )
+        .await?;
         operation
             .state
             .lock()
@@ -917,10 +915,9 @@ impl Gateway {
                 )
             })
             .collect();
-        if let Err(error) = codeyard_repos::activity::record_moves(
-            &self.pool, repo.id, actor_id, &path, &moves,
-        )
-        .await
+        if let Err(error) =
+            codeyard_repos::activity::record_moves(&self.pool, repo.id, actor_id, &path, &moves)
+                .await
         {
             tracing::warn!(repo_id=repo.id,%error,"could not record accepted Git ref activity");
             failed = true;

@@ -2,14 +2,14 @@
 //! peer's key against membership, and passes the one request on the connection to the
 //! same protocol code that the iroh router serves.
 use crate::cluster::ci::CiHandler;
+use crate::cluster::rpc::RpcHandler;
+use anyhow::Context;
+use anyhow::Result;
 use codeyard_cluster::link::Link;
 use codeyard_cluster::pairing::PairingHandler;
-use crate::cluster::rpc::RpcHandler;
 use codeyard_cluster::transport::active_member;
 use codeyard_cluster::transport::ALPN_PAIR;
 use codeyard_cluster::transport::ALPN_RPC;
-use anyhow::Context;
-use anyhow::Result;
 use codeyard_db_core::DbPool;
 use codeyard_support::node_identity::NodeKey;
 use iroh::PublicKey;
@@ -246,6 +246,5 @@ async fn admitted(services: &Services, alpn: &[u8], peer: PublicKey) -> bool {
         }
     }
 }
-
 
 use codeyard_cluster::tcp::tune;

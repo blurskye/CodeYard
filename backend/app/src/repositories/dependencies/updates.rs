@@ -7,8 +7,6 @@ use crate::repositories::dependencies::registry::Client;
 use crate::repositories::dependencies::worker::Pinned;
 use crate::repositories::pull_requests::mutations::create_pull_request;
 use crate::repositories::pull_requests::mutations::CreatePullRequestRequest;
-use codeyard_repos::editor::UploadFile;
-use codeyard_repos::editor::UploadWrite;
 use crate::repositories::store::repo_store;
 use anyhow::ensure;
 use anyhow::Result;
@@ -20,6 +18,8 @@ use codeyard_db_repos::repositories::dependencies::Publication;
 use codeyard_db_repos::repositories::dependencies::Refusal;
 use codeyard_db_repos::repositories::dependencies::Update;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_repos::editor::UploadFile;
+use codeyard_repos::editor::UploadWrite;
 use sha2::Sha256;
 
 /// The owner name of a repository, as push events and pull requests name it.

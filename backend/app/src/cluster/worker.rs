@@ -1,10 +1,10 @@
 //! Core addresses and the dialing-only context for a worker with no database.
 use crate::cluster::context::NodeContext;
-use codeyard_cluster::transport::NodeAddress;
-use codeyard_cluster::settings::Settings;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
+use codeyard_cluster::settings::Settings;
+use codeyard_cluster::transport::NodeAddress;
 use codeyard_support::node_identity::load_or_create;
 use codeyard_support::node_identity::parse_public_key;
 use serde::Deserialize;
@@ -215,4 +215,4 @@ mod tests {
     }
 }
 
-use codeyard_cluster::worker::{CorePeer, resolve};
+use codeyard_cluster::worker::{resolve, CorePeer};

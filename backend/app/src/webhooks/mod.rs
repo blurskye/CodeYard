@@ -1,12 +1,12 @@
 //! Webhooks: subscriptions on repositories and organizations, and the background sends that
 //! follow a committed write. Callers never wait for a send, and a send never fails a request.
-use codeyard_webhooks::delivery::Outgoing;
-use codeyard_webhooks::payloads::Person;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::DbPool;
 use codeyard_db_repos::webhooks::HookOwner;
 use codeyard_model::webhook_events as events;
+use codeyard_webhooks::delivery::Outgoing;
+use codeyard_webhooks::payloads::Person;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -315,7 +315,8 @@ async fn hooks_for(pool: &DbPool, repo: &Repository) -> anyhow::Result<Vec<Webho
     Ok(hooks)
 }
 
-
-pub mod repository_payloads;
 pub mod release_payloads;
-use codeyard_webhooks::{payloads, BUILD_SLOTS, MAX_PAYLOAD_BYTES, TASKS, enqueue_delivery, outgoing, set_open_issues};
+pub mod repository_payloads;
+use codeyard_webhooks::{
+    enqueue_delivery, outgoing, payloads, set_open_issues, BUILD_SLOTS, MAX_PAYLOAD_BYTES, TASKS,
+};

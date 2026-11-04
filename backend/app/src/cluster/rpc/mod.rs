@@ -1,6 +1,5 @@
 //! Repository protocol composition; wire format and policy have explicit owners.
 use crate::cluster::context::NodeContext;
-use codeyard_cluster::link::Link;
 use crate::cluster::rpc::wire::invalid;
 use crate::cluster::rpc::wire::read_frame;
 use crate::cluster::rpc::wire::unavailable;
@@ -11,6 +10,7 @@ use crate::cluster::rpc::wire::Request;
 use crate::cluster::rpc::wire::MAX_BYTES;
 use crate::cluster::rpc::wire::TIMEOUT;
 use anyhow::Result;
+use codeyard_cluster::link::Link;
 use codeyard_db_core::limits::MAX_JSON;
 use iroh::endpoint::Connection;
 use iroh::protocol::AcceptError;

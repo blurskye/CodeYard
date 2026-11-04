@@ -1,8 +1,8 @@
 use super::*;
-use codeyard_ci::config::CiConfig;
 use crate::cluster::context::NodeContext;
-use codeyard_cluster::link::Link;
 use crate::cluster::rpc::repository::repository_uuid;
+use codeyard_ci::config::CiConfig;
+use codeyard_cluster::link::Link;
 use codeyard_cluster::transport;
 
 use crate::cluster::rpc::wire::read_frame;
@@ -12,12 +12,12 @@ use crate::cluster::rpc::wire::Request;
 use crate::cluster::rpc::wire::MAX_BYTES;
 use crate::cluster::rpc::wire::TIMEOUT;
 use crate::cluster::rpc::RpcHandler;
-use codeyard_cluster::transport::IrohDialer;
-use codeyard_cluster::transport::Relay;
 use crate::repositories::git_sessions::ReceiveCredential;
 use crate::repositories::store::types::GitService;
 use crate::repositories::store::types::GitSession;
 use crate::repositories::store::RepoStore;
+use codeyard_cluster::transport::IrohDialer;
+use codeyard_cluster::transport::Relay;
 use codeyard_db_core::DbPool;
 use codeyard_support::node_identity::NodeKey;
 use std::path::Path;

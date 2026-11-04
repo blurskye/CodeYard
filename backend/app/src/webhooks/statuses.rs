@@ -2,12 +2,12 @@
 
 use crate::repositories::store::RepoStore;
 use crate::webhooks::emit;
-use codeyard_webhooks::payloads::Person;
-use codeyard_webhooks::payloads::Scope;
 use codeyard_db_core::models::CommitStatus;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
 use codeyard_git::CommitInfo;
+use codeyard_webhooks::payloads::Person;
+use codeyard_webhooks::payloads::Scope;
 
 /// GitHub names at most this many branches in a status event.
 const MAX_BRANCHES: usize = 10;

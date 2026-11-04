@@ -1,17 +1,17 @@
 use super::*;
-use codeyard_repos::validation::ZERO_SHA;
-use codeyard_repos::imports::GitImport;
-use codeyard_repos::imports::ImportCredential;
-use codeyard_repos::imports::MAX_IMPORT_PACK_BYTES;
-use codeyard_repos::protection::BranchWrite;
-use codeyard_repos::protection::History;
-use codeyard_repos::protection::WriteVia;
 use crate::repositories::store::local::ensure_ref_room;
 use crate::repositories::store::local::live_read;
 use crate::repositories::store::local::live_write;
 use crate::repositories::store::local::refresh_storage_size;
 use crate::repositories::store::local::unavailable;
 use crate::repositories::store::local::LocalStore;
+use codeyard_repos::imports::GitImport;
+use codeyard_repos::imports::ImportCredential;
+use codeyard_repos::imports::MAX_IMPORT_PACK_BYTES;
+use codeyard_repos::protection::BranchWrite;
+use codeyard_repos::protection::History;
+use codeyard_repos::protection::WriteVia;
+use codeyard_repos::validation::ZERO_SHA;
 
 impl LocalStore {
     pub(crate) async fn import_git(
@@ -149,13 +149,11 @@ impl LocalStore {
             .refs
             .iter()
             .filter(|(name, _)| name.starts_with("refs/tags/"))
-            .map(
-                |(name, sha)| codeyard_repos::validation::RefUpdate {
-                    reference: name.clone(),
-                    old: editor::ZERO.to_owned(),
-                    new: sha.clone(),
-                },
-            )
+            .map(|(name, sha)| codeyard_repos::validation::RefUpdate {
+                reference: name.clone(),
+                old: editor::ZERO.to_owned(),
+                new: sha.clone(),
+            })
             .collect();
         crate::repositories::releases::immutable::check_current_tag_updates(
             pool,

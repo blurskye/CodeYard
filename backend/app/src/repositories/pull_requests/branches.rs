@@ -4,11 +4,11 @@
 use crate::ci::runs::CiRuns;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::RepoStore;
-use codeyard_webhooks::payloads::Scope;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
+use codeyard_webhooks::payloads::Scope;
 use std::collections::HashMap;
 use std::time::Duration;
 

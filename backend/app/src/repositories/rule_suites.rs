@@ -4,10 +4,7 @@
 //! records what would have happened, as GitHub's evaluate mode does. Ref, history and name
 //! rules are judged. Unsupported evaluate definitions cannot be saved; historical unsupported
 //! rules produce an indeterminate verdict, never a successful evaluation.
-use codeyard_repos::validation::RefUpdate;
-use codeyard_repos::validation::ZERO_SHA;
 use crate::repositories::git_sessions::ReceiveCredential;
-use codeyard_repos::protection::History;
 use anyhow::Result;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
@@ -28,6 +25,9 @@ use codeyard_db_core::queries::rulesets::BypassMode;
 use codeyard_db_core::queries::rulesets::Enforcement;
 use codeyard_db_core::queries::rulesets::Rule;
 use codeyard_model::workflow_glob::WorkflowMatchBudget;
+use codeyard_repos::protection::History;
+use codeyard_repos::validation::RefUpdate;
+use codeyard_repos::validation::ZERO_SHA;
 use std::collections::HashSet;
 
 #[derive(Clone, Copy)]

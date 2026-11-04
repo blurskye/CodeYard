@@ -2,6 +2,11 @@
 //! each other, over iroh or over TCP with TLS. A plain single node never calls into this module: it
 //! starts only when cluster settings are present in the environment.
 use crate::cluster::context::NodeContext;
+use anyhow::anyhow;
+use anyhow::bail;
+use anyhow::ensure;
+use anyhow::Context;
+use anyhow::Result;
 use codeyard_cluster::pairing::apply_declared_nodes;
 use codeyard_cluster::pairing::join;
 use codeyard_cluster::pairing::normalize_name;
@@ -17,11 +22,6 @@ use codeyard_cluster::transport::NodeAddress;
 use codeyard_cluster::transport::Relay;
 use codeyard_cluster::transport::ALPN_EVENTS;
 use codeyard_cluster::transport::ALPN_RPC;
-use anyhow::anyhow;
-use anyhow::bail;
-use anyhow::ensure;
-use anyhow::Context;
-use anyhow::Result;
 use codeyard_db_core::models::ClusterNode;
 use codeyard_db_core::DbPool;
 use codeyard_model::node_roles::NodeRole;
@@ -583,5 +583,7 @@ pub async fn adopt_repositories(pool: &DbPool, node_id: i64, repos_path: &Path) 
     Ok(adopted)
 }
 
-
-use codeyard_cluster::settings::{Settings, require_postgres, HEARTBEAT_INTERVAL, WITHDRAW_TIMEOUT, default_tcp_advertise, VERSION};
+use codeyard_cluster::settings::{
+    default_tcp_advertise, require_postgres, Settings, HEARTBEAT_INTERVAL, VERSION,
+    WITHDRAW_TIMEOUT,
+};

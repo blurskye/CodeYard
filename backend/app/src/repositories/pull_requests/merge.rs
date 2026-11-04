@@ -1,23 +1,23 @@
 use crate::ci::push::RefUpdate;
 use crate::ci::runs::CiRuns;
-use codeyard_repos::protection::check_branch_write;
-use codeyard_repos::protection::BranchWrite;
-use codeyard_repos::protection::History;
-use codeyard_repos::protection::Refusal;
-use codeyard_repos::protection::WriteVia;
 use crate::repositories::pull_requests::database_error;
 use crate::repositories::pull_requests::OperationError;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::types::allowed_merge_methods;
 use crate::repositories::store::types::MergeMethod;
 use crate::repositories::store::types::MergeRequest as StoreMerge;
-use codeyard_webhooks::payloads::Scope;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::validate_merge_revision;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::NotificationRequest;
+use codeyard_repos::protection::check_branch_write;
+use codeyard_repos::protection::BranchWrite;
+use codeyard_repos::protection::History;
+use codeyard_repos::protection::Refusal;
+use codeyard_repos::protection::WriteVia;
+use codeyard_webhooks::payloads::Scope;
 use codeyard_webui::pages::repos::issues::MERGE_COMMIT_REFUSED;
 use serde::Deserialize;
 use serde::Serialize;
@@ -212,8 +212,7 @@ pub async fn review_decision(
     pull: &codeyard_db_core::models::PullRequest,
 ) -> anyhow::Result<Option<ReviewDecision>> {
     let target = codeyard_repos::stacks::merge_target(pool, pull).await?;
-    let rules =
-        codeyard_repos::protection::matching_rules(pool, repository, &target.0).await?;
+    let rules = codeyard_repos::protection::matching_rules(pool, repository, &target.0).await?;
     let decisions = eligible_reviews(pool, pull, repository).await?;
     let mut approved = false;
     for rule in &rules {
@@ -780,22 +779,18 @@ pub(super) async fn open_chain(
         .map_err(database_error)?;
     match chain {
         codeyard_repos::stacks::Chain::Open(layers) => Ok(layers),
-        codeyard_repos::stacks::Chain::BelowClosed(number) => {
-            Err(OperationError::Conflict {
-                code: "stack_layer_closed",
-                message: format!(
+        codeyard_repos::stacks::Chain::BelowClosed(number) => Err(OperationError::Conflict {
+            code: "stack_layer_closed",
+            message: format!(
                 "Pull request #{number} below it is closed. Reopen it or unstack this pull request."
             ),
-            })
-        }
-        codeyard_repos::stacks::Chain::Broken => {
-            Err(OperationError::Conflict {
-                code: "stack_broken",
-                message:
-                    "These pull requests depend on each other, so they cannot be merged as a stack."
-                        .to_owned(),
-            })
-        }
+        }),
+        codeyard_repos::stacks::Chain::Broken => Err(OperationError::Conflict {
+            code: "stack_broken",
+            message:
+                "These pull requests depend on each other, so they cannot be merged as a stack."
+                    .to_owned(),
+        }),
     }
 }
 

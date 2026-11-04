@@ -5,7 +5,6 @@ use crate::ci::runs::CiRuns;
 use crate::repositories::dependencies::registry::Client;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::RepoStore;
-use codeyard_storage::range::ByteRange as BlobRange;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
@@ -14,6 +13,7 @@ use codeyard_db_repos::repositories::dependencies::Job;
 use codeyard_db_repos::repositories::dependencies::Refusal;
 use codeyard_git::error::ErrorKind;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_storage::range::ByteRange as BlobRange;
 use std::time::Duration;
 
 #[derive(Debug, thiserror::Error)]

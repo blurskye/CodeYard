@@ -1,7 +1,5 @@
-use codeyard_ci::config::CiConfig;
 use crate::ci::runs::CiRuns;
 use crate::cluster::context::NodeContext;
-use codeyard_cluster::link::Link;
 use crate::cluster::rpc::client::attempt_deadline;
 use crate::cluster::rpc::client::cannot_serve;
 use crate::cluster::rpc::client::log_failover;
@@ -22,6 +20,8 @@ use crate::repositories::store::RepoStore;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
+use codeyard_ci::config::CiConfig;
+use codeyard_cluster::link::Link;
 use codeyard_db_core::limits::MAX_JSON;
 use codeyard_db_core::models::RefChange;
 use codeyard_db_core::models::WriteRecord;

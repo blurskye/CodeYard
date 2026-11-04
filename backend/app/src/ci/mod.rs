@@ -1,7 +1,6 @@
 //! CI/Actions: workflow triggers queue runs; worker nodes run them with `act`.
 pub mod admission;
 
-
 pub mod events;
 mod process;
 pub mod push;

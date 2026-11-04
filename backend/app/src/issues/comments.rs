@@ -1,6 +1,5 @@
 use crate::issues::database_error;
 use crate::issues::OperationError;
-use codeyard_webhooks::payloads::Scope;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
@@ -9,6 +8,7 @@ use codeyard_notifications::mentions::mentions_anyone;
 use codeyard_notifications::mentions::notify_mentions;
 use codeyard_notifications::mentions::MentionComment;
 use codeyard_notifications::mentions::MentionSource;
+use codeyard_webhooks::payloads::Scope;
 use serde::Deserialize;
 use serde_json::json;
 

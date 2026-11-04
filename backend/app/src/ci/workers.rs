@@ -1,8 +1,8 @@
 //! Worker execution and shutdown for this node.
-use codeyard_ci::config::CiConfig;
 use crate::ci::queue::RunQueue;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_ci::config::CiConfig;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;

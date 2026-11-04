@@ -1,4 +1,3 @@
-use codeyard_ci::config::CiPipelineKind;
 use crate::repositories::store::RepoStore;
 use anyhow::ensure;
 use anyhow::Context;
@@ -11,6 +10,7 @@ use codeyard_actions::workflow::events::WorkflowTriggers;
 use codeyard_actions::workflow::events::MAX_WORKFLOW_FILTER_PATTERNS;
 #[cfg(test)]
 use codeyard_actions::workflow::events::MAX_WORKFLOW_PATTERN_BYTES;
+use codeyard_ci::config::CiPipelineKind;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::MAX_CI_WORKFLOW_BYTES;

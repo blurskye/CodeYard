@@ -8,12 +8,6 @@
 //! host OpenSSH gateway.
 use crate::cluster::context::NodeContext;
 use crate::cluster::rpc::wire::Operation;
-use codeyard_repos::protection::WriteVia;
-use codeyard_repos::editor::CommitIdentities;
-use codeyard_repos::editor::FileWrite;
-use codeyard_repos::editor::PreparedFile;
-use codeyard_repos::editor::UploadWrite;
-use codeyard_repos::gists::GistCredential;
 use crate::repositories::store::types::AsyncMergePublication;
 use crate::repositories::store::types::BlobBytes;
 use crate::repositories::store::types::BranchMergePublication;
@@ -30,7 +24,6 @@ use crate::repositories::store::types::UpstreamMerge;
 use crate::repositories::store::types::MAX_ARCHIVE_RESPONSE_BYTES;
 use crate::repositories::store::types::MAX_COMMIT_OFFSET;
 use crate::repositories::store::types::MAX_COMMIT_PAGE_SIZE;
-use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_db_core::models::Repository;
 use codeyard_git as git;
 use codeyard_git::error::invalid_ref;
@@ -57,13 +50,19 @@ use codeyard_git::RepoInfo;
 use codeyard_git::TagInfo;
 use codeyard_git::TreeEntry;
 use codeyard_git::WeekChanges;
+use codeyard_repos::editor::CommitIdentities;
+use codeyard_repos::editor::FileWrite;
+use codeyard_repos::editor::PreparedFile;
+use codeyard_repos::editor::UploadWrite;
+use codeyard_repos::gists::GistCredential;
+use codeyard_repos::protection::WriteVia;
+use codeyard_storage::range::ByteRange as BlobRange;
 use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
 pub mod local;
 mod remote;
-pub mod source;
 pub mod types;
 
 pub(crate) fn primary_path(root: &Path, uuid: uuid::Uuid) -> std::path::PathBuf {

@@ -5,7 +5,6 @@ use crate::repositories::git_sessions::protocol::EOF;
 use crate::repositories::git_sessions::protocol::STDERR;
 use crate::repositories::git_sessions::protocol::STDIN;
 use crate::repositories::git_sessions::protocol::STDOUT;
-use codeyard_repos::validation::RefUpdate;
 use crate::repositories::git_sessions::ReceiveCredential;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::types::GitService;
@@ -19,6 +18,7 @@ use codeyard_db_core::DbPool;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::repository::process as git_process;
+use codeyard_repos::validation::RefUpdate;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -73,8 +73,7 @@ pub struct Operation {
 pub(super) struct HookState {
     pub(super) proposed: Option<Vec<RefUpdate>>,
     pub(super) previous_refs: Vec<String>,
-    pub(super) secret_bypasses:
-        Vec<codeyard_repos::push_protection::ApprovedBypass>,
+    pub(super) secret_bypasses: Vec<codeyard_repos::push_protection::ApprovedBypass>,
     pub(super) post_started: bool,
     pub(super) dispatch_failed: bool,
     // Acquired in pre-receive through the description already inherited by the child.
@@ -677,8 +676,7 @@ impl Gateway {
         if user != self.git_user {
             return Ok(None);
         }
-        let supplied =
-            codeyard_repos::validation::canonical_key(key_type, blob)?;
+        let supplied = codeyard_repos::validation::canonical_key(key_type, blob)?;
         let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&supplied)?;
         let account = codeyard_db_identity::users::ssh_keys::get_user_by_key_fingerprint(
             &self.pool,
@@ -707,10 +705,8 @@ impl Gateway {
             {
                 return Ok(None);
             }
-            let canonical = codeyard_repos::validation::canonical_db_key(
-                &key.public_key,
-                key_type,
-            )?;
+            let canonical =
+                codeyard_repos::validation::canonical_db_key(&key.public_key, key_type)?;
             ensure!(
                 canonical == supplied
                     && codeyard_db_identity::users::ssh_keys::calculate_fingerprint(&canonical)?
@@ -988,9 +984,9 @@ impl Gateway {
             None => self.git_command(&operation, &token, write, options.stateless)?,
         };
         drop(publication_lease);
-        if let Some(protocol) = codeyard_repos::validation::protocol(
-            options.git_protocol.as_deref(),
-        )? {
+        if let Some(protocol) =
+            codeyard_repos::validation::protocol(options.git_protocol.as_deref())?
+        {
             command_process.env("GIT_PROTOCOL", protocol);
         }
         let mut output = ReceiveOutput {
@@ -1073,9 +1069,7 @@ impl Gateway {
             .arg("-c")
             .arg(format!(
                 "core.hooksPath={}",
-                codeyard_repos::validation::shell_safe_path(
-                    operation.hooks.path()
-                )?
+                codeyard_repos::validation::shell_safe_path(operation.hooks.path())?
             ))
             .arg(if write { "receive-pack" } else { "upload-pack" });
         if stateless {
@@ -1103,9 +1097,7 @@ impl Gateway {
                 writeln!(
                     file,
                     "#!/bin/sh\nexec {} ssh {} --socket {} --key-id {} --repo-id {}{}",
-                    codeyard_repos::validation::shell_safe_path(
-                        &self.executable
-                    )?,
+                    codeyard_repos::validation::shell_safe_path(&self.executable)?,
                     name,
                     codeyard_repos::validation::shell_safe_path(&self.socket)?,
                     key_id,

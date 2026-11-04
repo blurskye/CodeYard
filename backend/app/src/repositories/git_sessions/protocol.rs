@@ -1,9 +1,9 @@
 //! One bounded length-prefixed JSON request, then directional binary frames.
 //! No pack is accumulated: each frame is at most 32 KiB and IO is backpressured.
-use codeyard_repos::validation::RefUpdate;
-use codeyard_repos::validation::MAX_HEADER;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_repos::validation::RefUpdate;
+use codeyard_repos::validation::MAX_HEADER;
 use serde::Deserialize;
 use serde::Serialize;
 use tokio::io::AsyncRead;

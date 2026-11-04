@@ -1,7 +1,6 @@
 //! The store against real bare repositories in temporary directories.
 use super::*;
 use crate::cluster::rpc::repository as rpc;
-use codeyard_repos::editor::FileWrite;
 use crate::repositories::store::local::begin_ref_change;
 use crate::repositories::store::local::ensure_ref_room;
 use crate::repositories::store::repo_store;
@@ -14,11 +13,12 @@ use crate::repositories::store::types::MAX_BLOB_RESPONSE_BYTES;
 use crate::repositories::store::types::MAX_COMMIT_OFFSET;
 use crate::repositories::store::types::MAX_COMMIT_PAGE_SIZE;
 use crate::repositories::store::RepoStore;
-use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_git::error::RepoErrorReason;
 use codeyard_git::repository::MAX_DIFF_FILE_PATCH_BYTES;
 use codeyard_git::repository::MAX_REPOSITORY_REFS;
 use codeyard_git::repository::MAX_TREE_ENTRIES;
+use codeyard_repos::editor::FileWrite;
+use codeyard_storage::range::ByteRange as BlobRange;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 

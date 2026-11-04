@@ -150,7 +150,9 @@ impl CiRuns {
                                 .ok()
                                 .flatten()
                             {
-                                Some(owner) => codeyard_webhooks::payloads::repository(&head, &owner),
+                                Some(owner) => {
+                                    codeyard_webhooks::payloads::repository(&head, &owner)
+                                }
                                 None => Value::Null,
                             }
                         }

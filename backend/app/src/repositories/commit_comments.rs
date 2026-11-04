@@ -1,8 +1,6 @@
 //! Discussions anchored to immutable commits, shared by REST and native forms.
 use crate::cluster::context::NodeContext;
 use crate::repositories::store::repo_store;
-use codeyard_webhooks::payloads::Person;
-use codeyard_webhooks::payloads::Scope;
 use codeyard_db_core::models::CommitComment;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
@@ -17,6 +15,8 @@ use codeyard_notifications::create::NotificationRequest;
 use codeyard_notifications::mentions::notify_mentions;
 use codeyard_notifications::mentions::MentionComment;
 use codeyard_notifications::mentions::MentionSource;
+use codeyard_webhooks::payloads::Person;
+use codeyard_webhooks::payloads::Scope;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;

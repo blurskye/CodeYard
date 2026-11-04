@@ -1,11 +1,11 @@
 //! README and license predicates use pinned Git snapshots, bounded like live code search.
 use crate::cluster::context::NodeContext;
 use crate::repositories::store::repo_store;
-use codeyard_storage::range::ByteRange as BlobRange;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
 use codeyard_db_repos::catalog_search::Options;
 use codeyard_db_repos::catalog_search::Search;
+use codeyard_storage::range::ByteRange as BlobRange;
 use serde::Serialize;
 use std::time::Duration;
 use tokio::time::timeout_at;
@@ -48,8 +48,7 @@ pub async fn git_facts(
             let name = entry.name.to_ascii_lowercase();
             let is_readme =
                 readme && !read_readme && (name == "readme" || name.starts_with("readme."));
-            let is_license =
-                !read_license && codeyard_repos::templates::is_license_file(&name);
+            let is_license = !read_license && codeyard_repos::templates::is_license_file(&name);
             if !is_readme && !is_license {
                 continue;
             }

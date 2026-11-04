@@ -341,8 +341,12 @@ async fn pull_request(
                 Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(pool, id).await?,
                 None => None,
             };
-            document["milestone"] =
-                codeyard_webhooks::payloads::milestone(&summary, creator.as_ref(), owner, &repo.name);
+            document["milestone"] = codeyard_webhooks::payloads::milestone(
+                &summary,
+                creator.as_ref(),
+                owner,
+                &repo.name,
+            );
         }
     }
     let mut assignees = Vec::new();
@@ -421,11 +425,13 @@ pub(crate) async fn release_assets(
             .into_iter()
             .map(|row| {
                 let uploader = row.uploader_id.zip(row.uploader_name).map(|(id, login)| {
-                    codeyard_webhooks::payloads::simple_person(&codeyard_webhooks::payloads::Person {
-                        id,
-                        login,
-                        site_admin: row.uploader_is_admin.unwrap_or(false),
-                    })
+                    codeyard_webhooks::payloads::simple_person(
+                        &codeyard_webhooks::payloads::Person {
+                            id,
+                            login,
+                            site_admin: row.uploader_is_admin.unwrap_or(false),
+                        },
+                    )
                 });
                 codeyard_webhooks::payloads::release_asset(
                     &row.asset,
@@ -455,9 +461,9 @@ pub async fn release_asset(
         Some(id) => codeyard_db_identity::users::accounts::get_user_by_id(pool, id)
             .await?
             .map(|user| {
-                codeyard_webhooks::payloads::simple_person(&codeyard_webhooks::payloads::Person::of(
-                    &user,
-                ))
+                codeyard_webhooks::payloads::simple_person(
+                    &codeyard_webhooks::payloads::Person::of(&user),
+                )
             }),
         None => None,
     };

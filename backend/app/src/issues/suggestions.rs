@@ -1,11 +1,11 @@
 //! Shared post-commit effects for REST and native suggestion review.
 
-use codeyard_webhooks::payloads::Scope;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
 use codeyard_notifications::assignments::Assignment;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_webhooks::payloads::Scope;
 
 pub async fn resolve(
     pool: &codeyard_db_core::DbPool,

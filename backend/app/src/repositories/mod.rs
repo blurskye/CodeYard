@@ -27,5 +27,3 @@ pub mod refs;
 pub mod releases;
 pub mod rule_suites;
 pub mod secret_scanning;
-
-

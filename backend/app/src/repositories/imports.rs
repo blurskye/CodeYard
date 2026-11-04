@@ -136,4 +136,4 @@ fn spawn(
     })
 }
 
-use codeyard_repos::imports::{Credentials, GitImport, ImportCredential, ImportError, source_url};
+use codeyard_repos::imports::{source_url, Credentials, GitImport, ImportCredential, ImportError};

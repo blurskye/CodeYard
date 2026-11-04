@@ -1,13 +1,13 @@
 //! One CI queue, reached through the database or a paired core node.
-use codeyard_ci::config::CiConfig;
-use codeyard_ci::config::CiExecutionMode;
-use codeyard_ci::config::RunLimits;
 use crate::cluster::context::NodeContext;
 use crate::repositories::store::repo_store;
 use crate::repositories::store::RepoStore;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
+use codeyard_ci::config::CiConfig;
+use codeyard_ci::config::CiExecutionMode;
+use codeyard_ci::config::RunLimits;
 use codeyard_db_core::ci_logs::prepare_logs;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::DbPool;

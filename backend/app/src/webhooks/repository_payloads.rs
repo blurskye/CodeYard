@@ -1,6 +1,6 @@
-use serde_json::{json, Value};
 use codeyard_model::http_config::link_origin;
 use codeyard_model::node_id;
+use serde_json::{json, Value};
 pub fn community_file(file: Option<&crate::repositories::community::File>) -> Value {
     let Some(file) = file else {
         return Value::Null;
@@ -28,4 +28,3 @@ pub fn community_profile(profile: &crate::repositories::community::Profile) -> V
     json!({"health_percentage":profile.health_percentage(),"description":profile.description,"documentation":profile.documentation,"updated_at":profile.updated_at,
         "files":{"code_of_conduct":if profile.contributor_covenant {json!({"key":"contributor_covenant","name":"Contributor Covenant","html_url":conduct["html_url"],"url":api_url("/codes_of_conduct/contributor_covenant")})}else {Value::Null},"code_of_conduct_file":conduct,"license":license,"readme":community_file(profile.readme.as_ref()),"contributing":community_file(profile.contributing.as_ref()),"issue_template":community_file(profile.issue_template.as_ref()),"pull_request_template":community_file(profile.pull_request_template.as_ref())}})
 }
-

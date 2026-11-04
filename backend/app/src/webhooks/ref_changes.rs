@@ -1,9 +1,9 @@
 //! Webhook events for published branch and tag changes: `create`, `delete` and `push`.
 
 use crate::webhooks::emit;
-use codeyard_webhooks::payloads::Scope;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
+use codeyard_webhooks::payloads::Scope;
 use std::path::Path;
 
 fn is_zero(id: &str) -> bool {
