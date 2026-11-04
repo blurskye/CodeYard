@@ -3,27 +3,15 @@
 //! UI. Its pushes are attributed to the account that added it, and it gets no more than that
 //! account's access, capped at write.
 use crate::backend::db::models::{AccessLevel, DeployKey, Repository, User};
-use crate::backend::db::users::ssh_keys::{self, SshKeyWriteRefusal};
+use crate::backend::db::users::ssh_keys;
 use crate::backend::db::{self, deploy_keys::NewDeployKey};
+use crate::backend::model::identity::SshKeyWriteRefusal;
+use crate::backend::model::repositories::DeployKeyError;
 use crate::backend::repositories::access::can_admin;
 use anyhow::{ensure, Context, Result};
 use codeyard_webui::components::deploy_keys::{DeployKeyPanel, DeployKeyRow};
 use ssh_key::HashAlg;
 use tracing::warn;
-
-#[derive(Debug, thiserror::Error)]
-pub enum DeployKeyError {
-    #[error("Repository admin access is required")]
-    Denied,
-    #[error("Enter a title of up to 255 characters")]
-    InvalidTitle,
-    #[error("Deploy key not found")]
-    NotFound,
-    #[error(transparent)]
-    Key(#[from] SshKeyWriteRefusal),
-    #[error("Deploy key storage is unavailable")]
-    Unavailable(anyhow::Error),
-}
 
 /// Keeps a typed key refusal from the database layer, and turns anything else into unavailable.
 fn refusal(error: anyhow::Error) -> DeployKeyError {

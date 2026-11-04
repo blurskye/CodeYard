@@ -260,7 +260,7 @@ pub(crate) async fn propose(
             {
                 continue;
             }
-            let candidate_package = super::super::dependency_graph::Package {
+            let candidate_package = crate::backend::model::repositories::Package {
                 manifest: "package-lock.json".into(),
                 ecosystem: "npm".into(),
                 name: package.name.clone(),

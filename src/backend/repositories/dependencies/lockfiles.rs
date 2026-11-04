@@ -1,6 +1,6 @@
 //! Read resolved versions without invoking package managers or following external files.
 use super::npm::{MAX_LOCK_BYTES, MAX_PACKAGES};
-use crate::backend::repositories::dependency_graph::Package;
+use crate::backend::model::repositories::Package;
 use anyhow::{ensure, Context, Result};
 use serde_json::Value;
 

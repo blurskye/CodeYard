@@ -1,5 +1,6 @@
 //! Compressed, immutable batches share the same line cursors on both database engines.
-use crate::backend::{ci::queue::LogLine, db::models::CiLogLine};
+use crate::backend::db::models::CiLogLine;
+use crate::backend::model::ci::LogLine;
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
 use flate2::{read::ZlibDecoder, write::ZlibEncoder, Compression};

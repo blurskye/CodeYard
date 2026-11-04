@@ -169,7 +169,7 @@ pub async fn repositories(
                  AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND {issuer}))
         AND {readable} ORDER BY r.name,r.id LIMIT 100"))
         .bind(token).bind(actor).bind(session).bind(presented.map(|(id, _)| id)).bind(presented.map(|(_, hash)| hash))
-        .bind(crate::backend::identity::oauth_apps::CLI_CLIENT)
+        .bind(crate::backend::model::identity::CLI_CLIENT)
         .fetch_all(pool).await?)
 }
 

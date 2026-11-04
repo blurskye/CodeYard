@@ -5,10 +5,11 @@ use super::{
 };
 use crate::support::{database::Database, fake_webui_bundle};
 use axum::http::StatusCode;
-use codeyard::backend::{
-    ci::{self, admission::AdmissionError, queue::LogLine},
-    db::{self, ci::CiRunDeletion},
-};
+use codeyard::backend::ci;
+use codeyard::backend::ci::admission::AdmissionError;
+use codeyard::backend::db;
+use codeyard::backend::db::ci::CiRunDeletion;
+use codeyard::backend::model::ci::LogLine;
 use std::collections::BTreeMap;
 
 async fn contract(pg: bool) {

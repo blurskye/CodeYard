@@ -37,7 +37,7 @@ impl Identity {
     pub fn fingerprint(&self, salt: &str) -> Result<String> {
         let key = hex::decode(salt)?;
         ensure!(key.len() == 32, "Invalid traffic privacy key");
-        Ok(hex::encode(crate::backend::crypto::hmac_sha256(
+        Ok(hex::encode(codeyard_support::crypto::hmac_sha256(
             &key,
             self.0.as_bytes(),
         )))
@@ -134,7 +134,7 @@ pub(crate) fn fingerprints(keys: &[DayKey], identity: &Identity) -> Result<Vec<F
 }
 
 pub(crate) fn new_salt() -> String {
-    crate::backend::crypto::random_hex()
+    codeyard_support::crypto::random_hex()
 }
 #[derive(Clone, Debug)]
 pub struct Summary {

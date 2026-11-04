@@ -433,7 +433,7 @@ pub fn import_document(value: &Value) -> Result<Value> {
 pub(crate) fn osv_document(value: &Value) -> Result<Value> {
     validate_document(
         value,
-        crate::backend::vulnerabilities::MAX_AFFECTED_PACKAGES,
+        crate::backend::model::vulnerabilities::MAX_AFFECTED_PACKAGES,
     )
 }
 
@@ -839,7 +839,7 @@ pub(crate) fn matches(
                 continue;
             }
             if let Some(osv) = osv {
-                let locked = crate::backend::repositories::dependency_graph::Package {
+                let locked = crate::backend::model::repositories::Package {
                     manifest: package.manifest.clone(),
                     ecosystem: package.ecosystem.clone(),
                     name: package.name.clone(),

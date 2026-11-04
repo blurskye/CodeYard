@@ -1465,6 +1465,10 @@ dependencies = [
 name = "codeyard-support"
 version = "0.1.5"
 dependencies = [
+ "hex",
+ "hmac 0.12.1",
+ "rand 0.8.8",
+ "sha2 0.10.9",
  "url",
 ]
 

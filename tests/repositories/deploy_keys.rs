@@ -269,8 +269,8 @@ async fn keys_api_and_forms(pg: bool) {
         .await
         .unwrap_err();
     assert_eq!(
-        refused.downcast_ref::<ssh_keys::SshKeyWriteRefusal>(),
-        Some(&ssh_keys::SshKeyWriteRefusal::AlreadyUsed)
+        refused.downcast_ref::<crate::backend::model::identity::SshKeyWriteRefusal>(),
+        Some(&crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed)
     );
 
     // The settings form adds and deletes the same way, and redirects with a notice.
@@ -405,7 +405,7 @@ async fn live_authority(pg: bool) {
             false
         )
         .await,
-        Err(keys::DeployKeyError::Denied)
+        Err(crate::backend::model::repositories::DeployKeyError::Denied)
     ));
     assert!(db::deploy_keys::delete_deploy_key(
         pool,

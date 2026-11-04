@@ -1,5 +1,6 @@
 //! CODEOWNERS: which owners a path has at a commit, and which of them may review it.
 //! Parsing and matching are pure. Resolving owners reads users and teams.
+use crate::backend::model::repositories::MAX_REVIEWERS;
 
 use crate::backend::ci::workflows::{code_owner_glob_matches_bounded, WorkflowMatchBudget};
 use crate::backend::cluster::NodeContext;
@@ -24,8 +25,6 @@ const MAX_PATTERN_BYTES: usize = 1024;
 const MAX_OWNERS: usize = 1000;
 const MAX_OWNER_BYTES: usize = 1 + 1024 + 1 + 1024;
 const MAX_OWNER_EXPANSIONS: usize = 10_000;
-pub(crate) const MAX_REVIEWERS: usize = 5000;
-
 /// One line of the file: a compiled path pattern and the owners it names.
 struct Entry {
     /// Path segments; `**` crosses directories. A pattern without a slash is `**/name`.

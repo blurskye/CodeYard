@@ -1,20 +1,9 @@
 //! Shared named operation surface; native transactions stay inside db.
 use crate::backend::db::models::{SshKey, UserWithKey};
 use crate::backend::db::DbPool;
+use crate::backend::model::identity::SshKeyWriteRefusal;
 use anyhow::Result;
 use ssh_key::{HashAlg, PublicKey};
-
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum SshKeyWriteRefusal {
-    #[error("Invalid SSH public key")]
-    InvalidKey,
-    #[error("This SSH public key is already registered")]
-    AlreadyUsed,
-    #[error("SSH keys cannot be changed while the account is restricted")]
-    AccountRestricted,
-    #[error("SSH key enrollment requires a live session")]
-    InvalidSession,
-}
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct SshKeySummary {

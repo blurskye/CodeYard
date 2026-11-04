@@ -362,7 +362,7 @@ async fn issue(
         return Err(Error::invalid("Select at least one repository"));
     }
     let value = if actor.is_some() {
-        format!("ghu_{}", crate::backend::crypto::random_hex())
+        format!("ghu_{}", codeyard_support::crypto::random_hex())
     } else {
         crate::backend::identity::tokens::installation_token()
     };

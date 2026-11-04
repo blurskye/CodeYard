@@ -5,10 +5,9 @@ use super::{
 };
 use crate::support::{database::Database, fake_webui_bundle};
 use axum::http::StatusCode;
-use codeyard::backend::{
-    ci::{queue::LogLine, runtime},
-    db,
-};
+use codeyard::backend::ci::runtime;
+use codeyard::backend::db;
+use codeyard::backend::model::ci::LogLine;
 use codeyard_actions::progress::{Conclusion, Event, JobResult, State, Update};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;

@@ -1,30 +1,16 @@
 //! OSV mirrors and repository alerts share the pinned dependency inventory.
+use crate::backend::model::vulnerabilities::{ECOSYSTEMS, MAX_AFFECTED_PACKAGES};
 pub(crate) mod versions;
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::{
-        dependency_graph::{self, Package},
-        store::ErrorKind,
-    },
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::model::repositories::Package;
+use crate::backend::repositories::dependency_graph;
+use crate::backend::repositories::store::ErrorKind;
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{cmp::Ordering, io::Read, sync::Arc, time::Duration};
 
-pub const ECOSYSTEMS: &[&str] = &[
-    "npm",
-    "PyPI",
-    "crates.io",
-    "Go",
-    "Maven",
-    "RubyGems",
-    "Packagist",
-    "NuGet",
-    "Pub",
-    "Hex",
-];
 pub fn ecosystem(name: &str) -> Option<&'static str> {
     Some(match name {
         "npm" => "npm",
@@ -138,8 +124,6 @@ pub struct Range {
     #[serde(default)]
     pub events: Vec<Value>,
 }
-pub(crate) const MAX_AFFECTED_PACKAGES: usize = 2000;
-
 /// The validated catalogue projection paired with its original OSV record.
 pub struct PreparedAdvisory {
     pub(crate) advisory: Advisory,

@@ -1,9 +1,12 @@
 //! Incremental log durability, cursors and retention on both native engines.
 use crate::support::database::Database;
-use codeyard::backend::{
-    ci::{logs::archive, queue::LogLine, runtime, CiConfig},
-    db::{self, action_logs::Target, models::CiRun},
-};
+use codeyard::backend::ci::logs::archive;
+use codeyard::backend::ci::runtime;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::db;
+use codeyard::backend::db::action_logs::Target;
+use codeyard::backend::db::models::CiRun;
+use codeyard::backend::model::ci::LogLine;
 use codeyard_actions::progress::{Event, Update};
 use std::io::Read;
 

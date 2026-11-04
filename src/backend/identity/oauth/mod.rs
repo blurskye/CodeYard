@@ -2,20 +2,16 @@
 
 pub mod providers;
 
-use crate::backend::{
-    crypto::is_hex_token,
-    db::{
-        users::{
-            sessions as states,
-            transitions::{self, AccountAdmission},
-        },
-        DbPool,
-    },
-    identity::{
-        sessions::{self, SessionContext, SessionIssueError},
-        setup, AuthenticatedAccount,
-    },
-};
+use crate::backend::db::users::sessions as states;
+use crate::backend::db::users::transitions;
+use crate::backend::db::users::transitions::AccountAdmission;
+use crate::backend::db::DbPool;
+use crate::backend::identity::sessions;
+use crate::backend::identity::sessions::SessionContext;
+use crate::backend::identity::sessions::SessionIssueError;
+use crate::backend::identity::setup;
+use crate::backend::identity::AuthenticatedAccount;
+use codeyard_support::crypto::is_hex_token;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum OAuthError {

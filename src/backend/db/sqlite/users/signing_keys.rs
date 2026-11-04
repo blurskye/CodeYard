@@ -1,8 +1,8 @@
-use crate::backend::db::users::{
-    accounts::AccountCredential,
-    signing_keys::{SigningKey, SigningKeyOwner},
-    ssh_keys::{parse_public_key, SshKeyWriteRefusal},
-};
+use crate::backend::db::users::accounts::AccountCredential;
+use crate::backend::db::users::signing_keys::SigningKey;
+use crate::backend::db::users::signing_keys::SigningKeyOwner;
+use crate::backend::db::users::ssh_keys::parse_public_key;
+use crate::backend::model::identity::SshKeyWriteRefusal;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -63,7 +63,7 @@ pub async fn add_signing_key(
     super::transitions::require_account(&mut tx, user, credential).await?;
     let row = sqlx::query_as("INSERT INTO ssh_signing_keys(user_id,title,key,fingerprint) VALUES(?1,?2,?3,?4) RETURNING id,title,key,created_at")
         .bind(user).bind(title).bind(key).bind(fingerprint).fetch_one(&mut *tx).await.map_err(|error|match &error {
-            sqlx::Error::Database(error) if error.is_unique_violation() => anyhow::Error::from(SshKeyWriteRefusal::AlreadyUsed),
+            sqlx::Error::Database(error) if error.is_unique_violation() => anyhow::Error::from(crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed),
             _ => anyhow::Error::from(error),
         })?;
     tx.commit().await?;

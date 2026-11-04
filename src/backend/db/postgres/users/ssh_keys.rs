@@ -1,8 +1,8 @@
 use crate::backend::db::models::{SshKey, User, UserWithKey};
 use crate::backend::db::users::accounts::{AccountCredential, AccountRestricted};
-use crate::backend::db::users::ssh_keys::{
-    calculate_fingerprint, valid_stored_key, SshKeyWriteRefusal,
-};
+use crate::backend::db::users::ssh_keys::calculate_fingerprint;
+use crate::backend::db::users::ssh_keys::valid_stored_key;
+use crate::backend::model::identity::SshKeyWriteRefusal;
 use anyhow::Result;
 use sqlx::PgPool;
 use tracing::debug;
@@ -70,7 +70,9 @@ async fn require_key_account(
             .await
             .map_err(|error| {
                 if error.is::<AccountRestricted>() {
-                    anyhow::Error::from(SshKeyWriteRefusal::AccountRestricted)
+                    anyhow::Error::from(
+                        crate::backend::model::identity::SshKeyWriteRefusal::AccountRestricted,
+                    )
                 } else {
                     error
                 }
@@ -83,11 +85,14 @@ async fn require_key_account(
     .bind(user)
     .fetch_optional(&mut **tx)
     .await?;
-    anyhow::ensure!(active == Some(true), SshKeyWriteRefusal::AccountRestricted);
+    anyhow::ensure!(
+        active == Some(true),
+        crate::backend::model::identity::SshKeyWriteRefusal::AccountRestricted
+    );
     if let Some(AccountCredential::Session(session)) = credential {
         anyhow::ensure!(
             super::transitions::live_session(tx, user, session).await?,
-            SshKeyWriteRefusal::InvalidSession
+            crate::backend::model::identity::SshKeyWriteRefusal::InvalidSession
         );
     }
     Ok(())
@@ -121,7 +126,10 @@ async fn insert_ssh_key(
             .bind(&fingerprint)
             .fetch_one(&mut *tx)
             .await?;
-    anyhow::ensure!(!used, SshKeyWriteRefusal::AlreadyUsed);
+    anyhow::ensure!(
+        !used,
+        crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed
+    );
     let result = sqlx::query_as::<_, SshKey>(
         r#"
         INSERT INTO ssh_keys (user_id, name, fingerprint, public_key, key_type)
@@ -139,7 +147,7 @@ async fn insert_ssh_key(
     // The unique fingerprint index is the final guard; report its violation as the refusal above.
     .map_err(|error| match &error {
         sqlx::Error::Database(database) if database.is_unique_violation() => {
-            anyhow::Error::from(SshKeyWriteRefusal::AlreadyUsed)
+            anyhow::Error::from(crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed)
         }
         _ => anyhow::Error::from(error),
     })?;

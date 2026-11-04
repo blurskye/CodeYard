@@ -80,7 +80,7 @@ pub async fn list_events(
            OR (?2='received' AND (EXISTS(SELECT 1 FROM follows f WHERE f.follower_id=?3 AND f.following_id=e.actor_id)
                  OR EXISTS(SELECT 1 FROM watches w WHERE w.user_id=?3 AND w.repo_id=r.id AND w.level IN ('watching','custom')))))
     ORDER BY e.created_at DESC,e.id DESC LIMIT ?5 OFFSET ?6"))
-        .bind(viewer).bind(kind).bind(id).bind(public_only).bind(limit.clamp(1,101).min((300-offset).max(0))).bind(offset.max(0)).bind(token).bind(feed).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_all(pool).await?)
+        .bind(viewer).bind(kind).bind(id).bind(public_only).bind(limit.clamp(1,101).min((300-offset).max(0))).bind(offset.max(0)).bind(token).bind(feed).bind(crate::backend::model::identity::CLI_CLIENT).fetch_all(pool).await?)
 }
 pub async fn activity_feed_token(
     pool: &SqlitePool,
@@ -88,7 +88,7 @@ pub async fn activity_feed_token(
     value: &str,
 ) -> Result<Option<String>> {
     let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "?3");
-    Ok(sqlx::query_scalar(&format!("INSERT INTO activity_feed_tokens(api_token_id,value) SELECT t.id,?2 FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR julianday(t.expires_at)>julianday('now')) AND {issuer} ON CONFLICT(api_token_id) DO UPDATE SET api_token_id=excluded.api_token_id RETURNING value")).bind(token_id).bind(value).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(pool).await?)
+    Ok(sqlx::query_scalar(&format!("INSERT INTO activity_feed_tokens(api_token_id,value) SELECT t.id,?2 FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR julianday(t.expires_at)>julianday('now')) AND {issuer} ON CONFLICT(api_token_id) DO UPDATE SET api_token_id=excluded.api_token_id RETURNING value")).bind(token_id).bind(value).bind(crate::backend::model::identity::CLI_CLIENT).fetch_optional(pool).await?)
 }
 pub async fn activity_feed_token_id(pool: &SqlitePool, value: &str) -> Result<Option<i64>> {
     Ok(

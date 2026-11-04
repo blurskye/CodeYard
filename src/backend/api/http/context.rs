@@ -2,15 +2,14 @@
 use super::origin::same_origin_submission;
 use super::render::{public_error, public_error_returning_to, redirect_response};
 use super::session;
-use crate::backend::{
-    app::AppState,
-    crypto::is_hex_token,
-    db::{self, models::User},
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::db::models::User;
 use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::Response,
 };
+use codeyard_support::crypto::is_hex_token;
 use codeyard_webui::document::{Chrome, Theme};
 use std::{collections::HashMap, sync::Arc};
 use subtle::ConstantTimeEq;

@@ -1276,8 +1276,8 @@ async fn contract(pg: bool) {
         .await
         .unwrap_err();
         assert_eq!(
-            error.downcast_ref::<db::users::ssh_keys::SshKeyWriteRefusal>(),
-            Some(&db::users::ssh_keys::SshKeyWriteRefusal::AccountRestricted)
+            error.downcast_ref::<crate::backend::model::identity::SshKeyWriteRefusal>(),
+            Some(&crate::backend::model::identity::SshKeyWriteRefusal::AccountRestricted)
         );
         let error = codeyard::backend::identity::keys::enroll_signing(
             f.pool(),
@@ -1306,8 +1306,8 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err();
     assert_eq!(
-        error.downcast_ref::<db::users::ssh_keys::SshKeyWriteRefusal>(),
-        Some(&db::users::ssh_keys::SshKeyWriteRefusal::AccountRestricted)
+        error.downcast_ref::<crate::backend::model::identity::SshKeyWriteRefusal>(),
+        Some(&crate::backend::model::identity::SshKeyWriteRefusal::AccountRestricted)
     );
     assert_eq!(
         db::users::ssh_keys::list_user_keys(f.pool(), alice)

@@ -87,7 +87,7 @@ pub(crate) async fn repository_write_on(
             "SELECT $1=$2 OR EXISTS(SELECT 1 FROM oauth_applications WHERE client_id=$1)",
         )
         .bind(client)
-        .bind(oauth_apps::CLI_CLIENT)
+        .bind(crate::backend::model::identity::CLI_CLIENT)
         .fetch_one(&mut **tx)
         .await?;
         return Ok(exists && oauth_apps::allows(&scopes, "/repos/owner/repo", true));
@@ -147,7 +147,7 @@ pub(crate) async fn team_write_on(
             return Ok(covers.is_some()
                 && github_apps::allows(&serde_json::from_str(&permissions)?, "members", true));
         }
-        let client_exists = client == oauth_apps::CLI_CLIENT
+        let client_exists = client == crate::backend::model::identity::CLI_CLIENT
             || sqlx::query_scalar::<_, i64>(
                 "SELECT id FROM oauth_applications WHERE client_id=$1 FOR SHARE",
             )
@@ -266,7 +266,7 @@ pub async fn token_user(pool: &PgPool, token_id: i64, write: bool) -> Result<Opt
         AND NOT EXISTS(SELECT 1 FROM github_app_tokens g WHERE g.token_id=t.id AND NOT EXISTS(
             SELECT 1 FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN users owner ON owner.id=a.owner_id
             WHERE i.id=g.installation_id AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password))"))
-        .bind(token_id).bind(write).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(pool).await?;
+        .bind(token_id).bind(write).bind(crate::backend::model::identity::CLI_CLIENT).fetch_optional(pool).await?;
     if user.as_ref().is_some_and(|user| {
         user.username.ends_with("[bot]") && user.username != crate::backend::db::ci_tokens::BOT
     }) && super::super::github_apps::token(pool, token_id)
@@ -407,9 +407,7 @@ pub(crate) async fn permits_write(
             if repo.is_some() { "repo" } else { "write:org" },
         ) || permission == "security_events"
             && crate::backend::identity::oauth_apps::has_scope(&scopes, "security_events");
-        return Ok(
-            (active || client == crate::backend::identity::oauth_apps::CLI_CLIENT) && allowed,
-        );
+        return Ok((active || client == crate::backend::model::identity::CLI_CLIENT) && allowed);
     }
     let refused: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=$1 AND NOT classic_allowed)")
         .bind(org).fetch_one(&mut *tx).await?;

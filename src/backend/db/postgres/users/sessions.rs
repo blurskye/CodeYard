@@ -1,7 +1,7 @@
-use crate::backend::crypto::is_hex_token;
 use crate::backend::db::models::{BrowserSession, OAuthState, Session, User};
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
+use codeyard_support::crypto::is_hex_token;
 use sqlx::PgPool;
 use subtle::ConstantTimeEq;
 

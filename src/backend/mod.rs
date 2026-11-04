@@ -22,6 +22,7 @@ pub mod git;
 pub mod identity;
 pub mod issues;
 pub(crate) mod locks;
+pub mod model;
 pub mod node;
 pub mod notifications;
 pub(crate) mod npm;

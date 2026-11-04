@@ -1,5 +1,6 @@
 //! One CI queue, reached through the database or a paired core node.
 use super::{config::RunLimits, CiConfig, CiExecutionMode};
+use crate::backend::model::ci::LogLine;
 use crate::backend::{
     cluster::{self, rpc, NodeContext},
     crypto::SecretEncryptor,
@@ -113,17 +114,6 @@ pub enum RunQueue {
         peers: Vec<cluster::CorePeer>,
         preferred: Arc<std::sync::Mutex<Option<String>>>,
     },
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct LogLine {
-    pub stage: String,
-    pub line: String,
-    pub level: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<i64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step_number: Option<i32>,
 }
 
 /// Replaces each control byte except tab, CR and LF with `?`. PostgreSQL cannot store NUL.

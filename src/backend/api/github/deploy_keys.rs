@@ -1,11 +1,10 @@
 //! Deploy-key writes retain live credentials and cross-account fingerprint uniqueness.
 use super::{auth, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db,
-    repositories::deploy_keys::{self as keys, DeployKeyError},
-    webhooks::payloads,
-};
+use crate::backend::app::AppState;
+use crate::backend::db;
+use crate::backend::model::repositories::DeployKeyError;
+use crate::backend::repositories::deploy_keys as keys;
+use crate::backend::webhooks::payloads;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -19,11 +18,13 @@ use std::sync::Arc;
 
 fn key_error(error: DeployKeyError) -> Error {
     match error {
-        DeployKeyError::Denied => {
+        crate::backend::model::repositories::DeployKeyError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Repository administration required")
         }
-        DeployKeyError::NotFound => Error::missing(),
-        DeployKeyError::Unavailable(_) => Error::unavailable(()),
+        crate::backend::model::repositories::DeployKeyError::NotFound => Error::missing(),
+        crate::backend::model::repositories::DeployKeyError::Unavailable(_) => {
+            Error::unavailable(())
+        }
         _ => Error::invalid(error.to_string()),
     }
 }

@@ -92,7 +92,7 @@ fn qualify(
         // Nested calls multiply, so the walk shares the same job budget as credential expansion.
         *visited += 1;
         ensure!(
-            *visited <= super::tokens::MAX_EXPANDED_JOBS,
+            *visited <= crate::backend::model::ci::MAX_EXPANDED_JOBS,
             "workflow run expands to too many jobs"
         );
         let job = job.as_str().context("Invalid admitted job ID")?;

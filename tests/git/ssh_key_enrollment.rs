@@ -15,7 +15,7 @@ const PUBLIC: &str =
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
 
 async fn contract(pg: bool) {
-    use db::users::ssh_keys::SshKeyWriteRefusal as Refusal;
+    use crate::backend::model::identity::SshKeyWriteRefusal as Refusal;
     bundle::install();
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
@@ -58,7 +58,10 @@ async fn contract(pg: bool) {
         let error = db::users::ssh_keys::add_ssh_key(f.pool(), alice_id, "Invalid", &invalid)
             .await
             .unwrap_err();
-        assert_eq!(error.downcast_ref::<Refusal>(), Some(&Refusal::InvalidKey));
+        assert_eq!(
+            error.downcast_ref::<Refusal>(),
+            Some(&crate::backend::model::identity::SshKeyWriteRefusal::InvalidKey)
+        );
         let reply = alice
             .form_reply(
                 "/settings/keys",
@@ -177,7 +180,10 @@ async fn contract(pg: bool) {
         let error = db::users::ssh_keys::add_ssh_key(f.pool(), actor, "Copy", &public)
             .await
             .unwrap_err();
-        assert_eq!(error.downcast_ref::<Refusal>(), Some(&Refusal::AlreadyUsed));
+        assert_eq!(
+            error.downcast_ref::<Refusal>(),
+            Some(&crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed)
+        );
         let (status, page) = client
             .form(
                 "/settings/keys",
@@ -221,7 +227,10 @@ async fn contract(pg: bool) {
                 successes += 1;
                 assert_eq!(key.fingerprint, fingerprint);
             }
-            Err(error) => assert_eq!(error.downcast_ref::<Refusal>(), Some(&Refusal::AlreadyUsed)),
+            Err(error) => assert_eq!(
+                error.downcast_ref::<Refusal>(),
+                Some(&crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed)
+            ),
         }
     }
     assert_eq!(successes, 1);
@@ -336,7 +345,7 @@ async fn contract(pg: bool) {
                 .unwrap_err();
         assert_eq!(
             error.downcast_ref::<Refusal>(),
-            Some(&Refusal::AccountRestricted)
+            Some(&crate::backend::model::identity::SshKeyWriteRefusal::AccountRestricted)
         );
         assert_eq!(
             codeyard::backend::identity::keys::delete(
@@ -549,8 +558,8 @@ async fn session_enrollment_contract(pg: bool) {
         enrollment
             .await
             .unwrap_err()
-            .downcast_ref::<ssh_keys::SshKeyWriteRefusal>(),
-        Some(&ssh_keys::SshKeyWriteRefusal::InvalidSession)
+            .downcast_ref::<crate::backend::model::identity::SshKeyWriteRefusal>(),
+        Some(&crate::backend::model::identity::SshKeyWriteRefusal::InvalidSession)
     );
     assert!(ssh_keys::list_user_keys(f.pool(), user.id)
         .await

@@ -3,22 +3,12 @@ use super::{
     dependencies::npm::Lockfile,
     store::{repo_store, ErrorKind, RepoError},
 };
+use crate::backend::model::repositories::Package;
 use crate::backend::{
     app::AppState,
     db::{self, dependency_graph::Reader, models::Repository},
 };
-use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
-pub struct Package {
-    pub manifest: String,
-    pub ecosystem: String,
-    pub name: String,
-    pub version: String,
-    pub package_url: String,
-    pub scope: String,
-}
 
 fn unavailable(_: anyhow::Error) -> RepoError {
     RepoError::new(

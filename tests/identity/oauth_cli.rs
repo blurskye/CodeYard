@@ -80,7 +80,7 @@ async fn contract(pg: bool) {
                         .collect::<std::collections::HashMap<_, _>>();
                     assert_eq!(
                         fields["client_id"],
-                        codeyard::backend::identity::oauth_apps::CLI_CLIENT
+                        codeyard::backend::model::identity::CLI_CLIENT
                     );
                     for scope in ["repo", "read:org", "gist"] {
                         assert!(fields["scope"].split_whitespace().any(|s| s == scope));

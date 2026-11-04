@@ -1,15 +1,15 @@
 //! OAuth clients authorize through native forms; only hashes of codes, secrets and tokens persist.
+use crate::backend::model::identity::CLI_CLIENT;
 use crate::backend::{
     db::{self, oauth_apps::Application, DbPool},
     identity::tokens::token_hash,
 };
 use subtle::ConstantTimeEq;
 
-pub const CLI_CLIENT: &str = "178c6fc778ccc68e1d6a";
 const CLI_SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";
 
 pub fn user_code() -> String {
-    let value = crate::backend::crypto::random_hex();
+    let value = codeyard_support::crypto::random_hex();
     format!("{}-{}", &value[..4], &value[4..8]).to_uppercase()
 }
 

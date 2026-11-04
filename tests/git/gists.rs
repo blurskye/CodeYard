@@ -7,11 +7,10 @@ use crate::support::{
     github_spec::assert_github_schema,
     native_database as native,
 };
-use codeyard::backend::{
-    cluster::replicas,
-    db::{self, users::accounts::AccountCredential},
-    repositories::deploy_keys::DeployKeyError,
-};
+use codeyard::backend::cluster::replicas;
+use codeyard::backend::db;
+use codeyard::backend::db::users::accounts::AccountCredential;
+use codeyard::backend::model::repositories::DeployKeyError;
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -387,7 +386,7 @@ async fn gists_http_ssh_remote_and_promotion() {
         .unwrap();
     assert!(matches!(
         refusal.downcast_ref::<DeployKeyError>(),
-        Some(DeployKeyError::Denied)
+        Some(crate::backend::model::repositories::DeployKeyError::Denied)
     ));
     sqlx::query("INSERT INTO deploy_keys(repo_id,name,fingerprint,public_key,read_only,created_by_id) VALUES($1,'legacy',$2,$3,FALSE,$4)").bind(repo.id).bind(fingerprint).bind(deploy_public).bind(alice.id).execute(&database.raw).await.unwrap();
     assert!(!git(root.path(), &["ls-remote", &ssh], None, &deploy)

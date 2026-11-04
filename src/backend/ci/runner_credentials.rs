@@ -99,7 +99,7 @@ pub fn work_root(state: &std::path::Path) -> Result<std::path::PathBuf> {
 pub fn new_remove_token() -> String {
     format!(
         "codeyard-remove-v1.{}",
-        crate::backend::crypto::random_hex()
+        codeyard_support::crypto::random_hex()
     )
 }
 pub fn remove_hash(token: &str) -> String {

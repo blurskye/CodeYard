@@ -1472,12 +1472,11 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
         http::{header, Request, StatusCode},
         Router,
     };
-    use codeyard::backend::{
-        api::create_router,
-        app::AppState,
-        ci::{queue::LogLine, CiConfig},
-        storage::ObjectStore,
-    };
+    use codeyard::backend::api::create_router;
+    use codeyard::backend::app::AppState;
+    use codeyard::backend::ci::CiConfig;
+    use codeyard::backend::model::ci::LogLine;
+    use codeyard::backend::storage::ObjectStore;
     use codeyard_webui::{
         app::PageEnvelope,
         bootstrap::{MAX_PAGE_MODEL_BYTES, MODEL_CONTENT_TYPE},
@@ -2129,7 +2128,7 @@ async fn commit_status_descriptions_redact_runner_messages(db: &Database) {
 }
 
 async fn log_batches_preserve_line_order_and_totals(db: &Database) {
-    use codeyard::backend::ci::queue::LogLine;
+    use codeyard::backend::model::ci::LogLine;
     let w = world(db, "batch_order").await;
     let run = db.enqueue(w.repo, w.owner, false, &[w.owner]).await;
     db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())

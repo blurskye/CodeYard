@@ -158,7 +158,7 @@ async fn compare(
         Vec::new()
     };
     for change in &mut changes {
-        let package = crate::backend::repositories::dependency_graph::Package {
+        let package = crate::backend::model::repositories::Package {
             manifest: change["manifest"].as_str().unwrap_or_default().into(),
             ecosystem: change["ecosystem"].as_str().unwrap_or_default().into(),
             name: change["name"].as_str().unwrap_or_default().into(),

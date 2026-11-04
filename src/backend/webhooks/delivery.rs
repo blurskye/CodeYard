@@ -1,12 +1,12 @@
 //! One webhook request: signed, sent with a timeout and no redirects, retried on server
 //! errors and timeouts, and recorded with what was sent and what came back.
 use super::outbound::{self, Refusal};
-use crate::backend::crypto::hmac_sha256;
 use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::models::{Webhook, WebhookDelivery};
 use crate::backend::db::webhooks::{self as hooks, NewDelivery};
 use crate::backend::db::DbPool;
 use base64::Engine as _;
+use codeyard_support::crypto::hmac_sha256;
 use hmac::{Hmac, Mac};
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};

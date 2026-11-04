@@ -1,10 +1,13 @@
 //! A CI worker: claims queued runs and executes their workflows with `act`.
 use super::config::{podman_socket_path, CiExecutionMode};
 use super::process::{self, Stopped};
-use super::queue::{ClaimedRun, CoreRefusal, LogLine, RunQueue};
+use super::queue::ClaimedRun;
+use super::queue::CoreRefusal;
+use super::queue::RunQueue;
 use super::runner_labels::labels_from_value;
 use super::workers::CiWorkers;
 use crate::backend::db::{self, models::CiRun};
+use crate::backend::model::ci::LogLine;
 use anyhow::{bail, ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml::{Mapping, Value};

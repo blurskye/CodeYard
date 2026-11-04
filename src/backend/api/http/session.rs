@@ -1,9 +1,10 @@
 use super::error::ApiError;
-use crate::backend::{crypto::is_hex_token, db};
+use crate::backend::db;
 use axum::{
     http::{header, HeaderMap, StatusCode},
     Json,
 };
+use codeyard_support::crypto::is_hex_token;
 
 fn cookie_domain() -> Option<String> {
     std::env::var("COOKIE_DOMAIN")
@@ -43,7 +44,7 @@ pub(crate) fn session_duration_days() -> i64 {
 }
 
 pub(crate) fn generate_session_id() -> String {
-    crate::backend::crypto::random_hex()
+    codeyard_support::crypto::random_hex()
 }
 
 pub(crate) fn build_session_cookie(session_id: &str, max_age_days: i64) -> String {

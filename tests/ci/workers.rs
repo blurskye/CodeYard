@@ -5,17 +5,23 @@ use crate::support::http_client as pulls;
 use crate::support::native_database as native;
 use crate::support::rpc_operations;
 
-use codeyard::backend::{
-    ci::{
-        queue::{LogLine, RunQueue},
-        CiConfig, CiExecutionMode, CiWorkers,
-    },
-    cluster::{self, rpc, NodeContext},
-    crypto::SecretEncryptor,
-    db,
-    notifications::{current_event, NotificationBroadcaster, NotificationEvent},
-    repositories::store::{ErrorKind, GitService, GitSession, RepoStore},
-};
+use codeyard::backend::ci::queue::RunQueue;
+use codeyard::backend::ci::CiConfig;
+use codeyard::backend::ci::CiExecutionMode;
+use codeyard::backend::ci::CiWorkers;
+use codeyard::backend::cluster;
+use codeyard::backend::cluster::rpc;
+use codeyard::backend::cluster::NodeContext;
+use codeyard::backend::crypto::SecretEncryptor;
+use codeyard::backend::db;
+use codeyard::backend::model::ci::LogLine;
+use codeyard::backend::notifications::current_event;
+use codeyard::backend::notifications::NotificationBroadcaster;
+use codeyard::backend::notifications::NotificationEvent;
+use codeyard::backend::repositories::store::ErrorKind;
+use codeyard::backend::repositories::store::GitService;
+use codeyard::backend::repositories::store::GitSession;
+use codeyard::backend::repositories::store::RepoStore;
 use iroh::protocol::ProtocolHandler;
 use serde_json::json;
 use std::{
@@ -3680,7 +3686,7 @@ async fn log_totals_close_a_run_at_its_limit_with_one_truncation_line() {
         set_log_totals(
             pool,
             run.id,
-            codeyard::backend::ci::logs::MAX_RUN_LOG_LINES - 2,
+            codeyard::backend::model::ci::MAX_RUN_LOG_LINES - 2,
             0,
         )
         .await;

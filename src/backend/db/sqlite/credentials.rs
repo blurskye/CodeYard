@@ -121,7 +121,7 @@ pub(crate) async fn repository(
     if let Some((client, scopes)) = oauth {
         let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM oauth_applications a JOIN users u ON u.id=a.owner_id WHERE a.client_id=?1 AND NOT u.is_banned AND NOT u.must_change_password)")
             .bind(&client).fetch_one(&mut **tx).await?;
-        if !active && client != crate::backend::identity::oauth_apps::CLI_CLIENT {
+        if !active && client != crate::backend::model::identity::CLI_CLIENT {
             return Ok(false);
         }
         let app: Option<(i64, String)> =
@@ -236,7 +236,7 @@ pub(crate) async fn organization(
         let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM oauth_applications a JOIN users u ON u.id=a.owner_id WHERE a.client_id=?1 AND NOT u.is_banned AND NOT u.must_change_password)")
             .bind(&client).fetch_one(&mut **tx).await?;
         return Ok(
-            (active || client == crate::backend::identity::oauth_apps::CLI_CLIENT)
+            (active || client == crate::backend::model::identity::CLI_CLIENT)
                 && crate::backend::identity::oauth_apps::allows(
                     &scopes,
                     &crate::backend::db::credentials::oauth_organization_path(permission),

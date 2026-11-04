@@ -59,7 +59,7 @@ async fn queue_link(
     user: &User,
     email: &str,
 ) -> Result<(), LinkError> {
-    let token = crate::backend::crypto::random_hex();
+    let token = codeyard_support::crypto::random_hex();
     let origin = public_origin();
     let mail = match purpose {
         Purpose::Verify => messages::verify_email(&origin, &user.username, &token),
@@ -128,7 +128,7 @@ pub async fn send_secondary_verifications(
     }
     admission::admit_mail(pool, None, &format!("user:{}", user.id)).await?;
     for email in pending {
-        let token = crate::backend::crypto::random_hex();
+        let token = codeyard_support::crypto::random_hex();
         let mail = messages::verify_email(&public_origin(), &user.username, &token);
         db::users::emails::save_verification(
             pool,

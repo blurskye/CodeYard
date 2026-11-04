@@ -1,6 +1,6 @@
 use crate::backend::db::deploy_keys::NewDeployKey;
 use crate::backend::db::models::DeployKey;
-use crate::backend::db::users::ssh_keys::SshKeyWriteRefusal;
+use crate::backend::model::identity::SshKeyWriteRefusal;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -28,7 +28,7 @@ pub async fn list_deploy_keys(
     .await?;
     anyhow::ensure!(
         live,
-        crate::backend::repositories::deploy_keys::DeployKeyError::Denied
+        crate::backend::model::repositories::DeployKeyError::Denied
     );
     let access = super::repositories::access::USER_REPO_ACCESS_SQL;
     let sql = format!("SELECT {COLUMNS} FROM deploy_keys WHERE repo_id=?1 AND id>?3 AND EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?2 WHERE r.id=deploy_keys.repo_id AND NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=5)) ORDER BY id LIMIT ?4");
@@ -98,7 +98,7 @@ async fn require_admin(
     .await?;
     anyhow::ensure!(
         !locked && (access.can_admin() || site_admin) && live,
-        crate::backend::repositories::deploy_keys::DeployKeyError::Denied
+        crate::backend::model::repositories::DeployKeyError::Denied
     );
     Ok(())
 }
@@ -113,7 +113,7 @@ pub async fn insert_deploy_key(
     let enabled:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=?1 AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories)").bind(key.repo_id).fetch_one(&mut *tx).await?;
     anyhow::ensure!(
         enabled,
-        crate::backend::repositories::deploy_keys::DeployKeyError::Denied
+        crate::backend::model::repositories::DeployKeyError::Denied
     );
 
     let used: bool = sqlx::query_scalar(
@@ -122,7 +122,10 @@ pub async fn insert_deploy_key(
     .bind(&key.fingerprint)
     .fetch_one(&mut *tx)
     .await?;
-    anyhow::ensure!(!used, SshKeyWriteRefusal::AlreadyUsed);
+    anyhow::ensure!(
+        !used,
+        crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed
+    );
     let sql = format!(
         "INSERT INTO deploy_keys (repo_id, name, fingerprint, public_key, read_only, created_by_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6) RETURNING {COLUMNS}"
     );
@@ -138,7 +141,9 @@ pub async fn insert_deploy_key(
         // The unique index is the final guard for a concurrent insert of the same key.
         .map_err(|error| match &error {
             sqlx::Error::Database(database) if database.is_unique_violation() => {
-                anyhow::Error::from(SshKeyWriteRefusal::AlreadyUsed)
+                anyhow::Error::from(
+                    crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed,
+                )
             }
             _ => anyhow::Error::from(error),
         })?;

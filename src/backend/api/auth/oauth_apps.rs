@@ -152,7 +152,7 @@ async fn device_code(
         Ok(None) => {}
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
-    let value = crate::backend::crypto::random_hex();
+    let value = codeyard_support::crypto::random_hex();
     let user_code = oauth::user_code();
     let grant = Grant {
         hash: token_hash(&value),
@@ -215,8 +215,8 @@ async fn access_token(
         );
     }
     let value = match db::github_apps::app(&state.pool, id).await {
-        Ok(Some(_)) => format!("ghu_{}", crate::backend::crypto::random_hex()),
-        Ok(None) => crate::backend::crypto::random_hex(),
+        Ok(Some(_)) => format!("ghu_{}", codeyard_support::crypto::random_hex()),
+        Ok(None) => codeyard_support::crypto::random_hex(),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
     // Device polling has its own durable interval; it must not consume the password-login budget.
@@ -478,11 +478,11 @@ async fn authorize_post(
     let Some(session) = session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let value = crate::backend::crypto::random_hex();
+    let value = codeyard_support::crypto::random_hex();
     let grant = Grant {
         hash: token_hash(&value),
         client_id: app.client_id,
-        user_code: crate::backend::crypto::random_hex(),
+        user_code: codeyard_support::crypto::random_hex(),
         scopes,
         expires_at: chrono::Utc::now().timestamp() + 600,
         interval: 5,
@@ -610,8 +610,8 @@ async fn register_post(
     let Some(session) = session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let id = crate::backend::crypto::random_hex();
-    let secret = crate::backend::crypto::random_hex();
+    let id = codeyard_support::crypto::random_hex();
+    let secret = codeyard_support::crypto::random_hex();
     match db::oauth_apps::register(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,

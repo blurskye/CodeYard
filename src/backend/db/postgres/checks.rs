@@ -44,7 +44,7 @@ async fn authority(
             .bind(id).fetch_optional(&mut **tx).await?;
         if let Some((client, scopes, app_id, registered)) = oauth {
             ensure!(
-                (registered || client == crate::backend::identity::oauth_apps::CLI_CLIENT)
+                (registered || client == crate::backend::model::identity::CLI_CLIENT)
                     && crate::backend::identity::oauth_apps::allows(
                         &scopes,
                         "/repos/owner/repo/check-runs",

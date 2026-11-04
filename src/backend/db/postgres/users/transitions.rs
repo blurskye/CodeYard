@@ -221,7 +221,7 @@ pub(crate) async fn credential_live(
             // A token issued to an OAuth app ends with that app's availability.
             let issuer = crate::backend::db::oauth_apps::token_issuer_condition("t", "$5");
             let expiry: Option<Option<chrono::DateTime<chrono::Utc>>> = sqlx::query_scalar(&format!("SELECT t.expires_at FROM personal_access_tokens t WHERE t.id=$1 AND t.user_id=$2 AND (NOT $4 OR t.scope='write') AND t.token_hash=$3 AND {issuer} FOR SHARE OF t"))
-                .bind(id).bind(actor).bind(hash).bind(write).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(&mut *tx).await?;
+                .bind(id).bind(actor).bind(hash).bind(write).bind(crate::backend::model::identity::CLI_CLIENT).fetch_optional(&mut *tx).await?;
             match expiry {
                 Some(None) => true,
                 Some(Some(expiry)) => {
@@ -729,7 +729,7 @@ pub async fn admit_oauth_account(
     // After the numbered names, a few random ones, so taken numbers cannot block the sign-in.
     for suffix in 0..36 {
         if suffix >= 32 {
-            name = format!("{base}_{}", &crate::backend::crypto::random_hex()[..8]);
+            name = format!("{base}_{}", &codeyard_support::crypto::random_hex()[..8]);
         } else if suffix > 0 {
             name = format!("{base}_{suffix}");
         }

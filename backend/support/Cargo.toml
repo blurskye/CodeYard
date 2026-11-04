@@ -8,5 +8,11 @@ license = "LGPL-3.0-or-later"
 [dependencies]
 url.workspace = true
 
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rand.workspace = true
+hex.workspace = true
+hmac.workspace = true
+sha2.workspace = true
+
 [lints]
 workspace = true

@@ -262,7 +262,7 @@ async fn regenerate(
         Ok(keys) => keys,
         Err(error) => return key_failure(&ctx, error),
     };
-    let secret = crate::backend::crypto::random_hex();
+    let secret = codeyard_support::crypto::random_hex();
     match db::github_apps::rotate_credentials(
         &ctx.state.pool,
         actor,
@@ -380,8 +380,8 @@ async fn register(
             Err(error) => return key_failure(&ctx, error),
         };
     let permissions = permissions.unwrap();
-    let client = format!("Iv1.{}", &crate::backend::crypto::random_hex()[..16]);
-    let secret = crate::backend::crypto::random_hex();
+    let client = format!("Iv1.{}", &codeyard_support::crypto::random_hex()[..16]);
+    let secret = codeyard_support::crypto::random_hex();
     let app = App {
         id: 0,
         owner_id: ctx.user.as_ref().unwrap().id,

@@ -714,18 +714,18 @@ async fn create_key(
         &input.key,
     )
     .await
-    .map_err(
-        |error| match error.downcast_ref::<ssh_keys::SshKeyWriteRefusal>() {
-            Some(ssh_keys::SshKeyWriteRefusal::InvalidKey) => {
+    .map_err(|error| {
+        match error.downcast_ref::<crate::backend::model::identity::SshKeyWriteRefusal>() {
+            Some(crate::backend::model::identity::SshKeyWriteRefusal::InvalidKey) => {
                 Error::validation("Key", "key", "invalid")
             }
-            Some(ssh_keys::SshKeyWriteRefusal::AlreadyUsed) => {
+            Some(crate::backend::model::identity::SshKeyWriteRefusal::AlreadyUsed) => {
                 Error::validation("Key", "key", "already_exists")
             }
             Some(_) => Error::new(StatusCode::FORBIDDEN, "Account is restricted"),
             None => Error::unavailable(error),
-        },
-    )?;
+        }
+    })?;
     Ok((
         StatusCode::CREATED,
         [(header::LOCATION, api_url(&format!("/user/keys/{}", key.id)))],
@@ -750,14 +750,14 @@ async fn delete_key(
         id,
     )
     .await
-    .map_err(
-        |error| match error.downcast_ref::<ssh_keys::SshKeyWriteRefusal>() {
-            Some(ssh_keys::SshKeyWriteRefusal::AccountRestricted) => {
+    .map_err(|error| {
+        match error.downcast_ref::<crate::backend::model::identity::SshKeyWriteRefusal>() {
+            Some(crate::backend::model::identity::SshKeyWriteRefusal::AccountRestricted) => {
                 Error::new(StatusCode::FORBIDDEN, "Account is restricted")
             }
             _ => Error::unavailable(error),
-        },
-    )?;
+        }
+    })?;
     if !deleted {
         return Err(Error::missing());
     }

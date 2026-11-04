@@ -159,7 +159,7 @@ pub async fn exchange(
         oauth_apps::client_condition("$1")
     ))
     .bind(client_id)
-    .bind(crate::backend::identity::oauth_apps::CLI_CLIENT)
+    .bind(crate::backend::model::identity::CLI_CLIENT)
     .fetch_one(&mut *tx)
     .await?;
     if !active {
@@ -257,7 +257,7 @@ pub async fn owned_token(
 ) -> Result<Option<crate::backend::db::models::PersonalAccessToken>> {
     let issuer = oauth_apps::token_issuer_condition("t", "$3");
     Ok(sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}"))
-        .bind(client).bind(hash).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(pool).await?)
+        .bind(client).bind(hash).bind(crate::backend::model::identity::CLI_CLIENT).fetch_optional(pool).await?)
 }
 
 pub async fn reset_token(
@@ -273,7 +273,7 @@ pub async fn reset_token(
     // A token from an app that is no longer available is not refreshed.
     let issuer = oauth_apps::token_issuer_condition("t", "$3");
     let old: Option<crate::backend::db::models::PersonalAccessToken> = sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer} FOR UPDATE OF t"))
-        .bind(client).bind(hash).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(&mut *tx).await?;
+        .bind(client).bind(hash).bind(crate::backend::model::identity::CLI_CLIENT).fetch_optional(&mut *tx).await?;
     let Some(old) = old else {
         return Ok(None);
     };
@@ -301,7 +301,7 @@ pub async fn revoke(pool: &PgPool, client: &str, hash: &str, authorization: bool
         oauth_apps::client_condition("$1")
     ))
     .bind(client)
-    .bind(crate::backend::identity::oauth_apps::CLI_CLIENT)
+    .bind(crate::backend::model::identity::CLI_CLIENT)
     .fetch_one(&mut *tx)
     .await?;
     if !active {

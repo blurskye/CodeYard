@@ -1,5 +1,6 @@
 //! Workflow permissions are replaced, not merged, at each explicit permissions block.
 use crate::backend::db::{self, ci_tokens::NewJobToken, models::CiRun, DbPool};
+use crate::backend::model::ci::MAX_EXPANDED_JOBS;
 use anyhow::{bail, ensure, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -152,9 +153,6 @@ pub async fn issue(
 ) -> Result<GithubTokens> {
     issue_selected(pool, run, definitions, permissive, None).await
 }
-
-/// Reusable calls multiply job identities, so credentials and environment bindings share one budget.
-pub(crate) const MAX_EXPANDED_JOBS: usize = 1000;
 
 pub(crate) async fn issue_selected(
     pool: &DbPool,
