@@ -26,8 +26,8 @@ impl LoginSessionRequest {
         }
     }
 
-    pub(crate) fn context(&self) -> crate::backend::identity::sessions::SessionContext<'_> {
-        use crate::backend::identity::sessions::{InitiatingSession, SessionContext};
+    pub(crate) fn context(&self) -> codeyard_identity::sessions::SessionContext<'_> {
+        use codeyard_identity::sessions::{InitiatingSession, SessionContext};
         let initiating = if self.invalid_initiator {
             InitiatingSession::Invalid
         } else if let Some(old) = self.old.as_deref() {

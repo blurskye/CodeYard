@@ -10,14 +10,14 @@ use crate::backend::api::user::responses::Fields;
 
 use crate::backend::app::AppState;
 
-use crate::backend::identity::credentials::PasswordAccount;
-use crate::backend::identity::login::FirstFactor;
-use crate::backend::identity::login::PasswordCredentials;
-use crate::backend::identity::registration::RegistrationOutcome;
-use crate::backend::identity::setup::SetupInput;
 use axum::extract::{Form, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_identity::credentials::PasswordAccount;
+use codeyard_identity::login::FirstFactor;
+use codeyard_identity::login::PasswordCredentials;
+use codeyard_identity::registration::RegistrationOutcome;
+use codeyard_identity::setup::SetupInput;
 use codeyard_webui::pages::{
     crate::backend::api::auth::AuthMode,
     account,
@@ -36,10 +36,10 @@ pub(crate) fn auth_mode(path: &str, mode: Option<&str>) -> AuthMode {
 
 /// Project only the ids of configured providers; credentials never enter SSR/hydration data.
 pub(crate) fn auth_providers() -> Vec<String> {
-    crate::backend::identity::oauth::providers::PROVIDERS
+    codeyard_identity::oauth::providers::PROVIDERS
         .iter()
         .filter(|provider| {
-            crate::backend::identity::oauth::providers::provider_credentials(provider).is_some()
+            codeyard_identity::oauth::providers::provider_credentials(provider).is_some()
         })
         .map(|provider| (*provider).to_owned())
         .collect()
@@ -69,7 +69,7 @@ pub(crate) async fn auth_get(
     };
     let mode = auth_mode(uri.path(), ctx.query.get("mode").map(String::as_str));
     let redirect = safe_redirect(ctx.query.get("redirect").map(String::as_str));
-    let setup = match crate::backend::identity::setup::status(&ctx.state.pool).await {
+    let setup = match codeyard_identity::setup::status(&ctx.state.pool).await {
         Ok(setup) => setup,
         Err(_) => return api_error(&ctx, crate::backend::api::auth::errors::database_failure()),
     };
@@ -116,7 +116,7 @@ pub(crate) async fn auth_failure(
     status: StatusCode,
     message: &str,
 ) -> Response {
-    let setup = match crate::backend::identity::setup::status(&ctx.state.pool).await {
+    let setup = match codeyard_identity::setup::status(&ctx.state.pool).await {
         Ok(setup) => setup,
         Err(_) => return api_error(ctx, crate::backend::api::auth::errors::database_failure()),
     };
@@ -196,7 +196,7 @@ pub(crate) async fn auth_post(
         password: field(&form, "password"),
     };
     let result: Result<Option<String>, ApiFailure> = match mode {
-        AuthMode::Login => match crate::backend::identity::login::password_login(
+        AuthMode::Login => match codeyard_identity::login::password_login(
             &ctx.state.pool,
             ctx.state.secret_encryptor.as_deref(),
             PasswordCredentials {
@@ -220,7 +220,7 @@ pub(crate) async fn auth_post(
             }
             Err(error) => Err(crate::backend::api::auth::errors::login_failure(error)),
         },
-        AuthMode::Register => crate::backend::identity::registration::register_password(
+        AuthMode::Register => codeyard_identity::registration::register_password(
             &ctx.state.pool,
             account,
             session_request.context(),
@@ -233,7 +233,7 @@ pub(crate) async fn auth_post(
         .map_err(crate::backend::api::auth::errors::registration_failure),
         AuthMode::Setup => {
             let supplied_secret = optional_field(&form, "admin_secret");
-            let expected_secret = match crate::backend::identity::setup::configured_admin_secret() {
+            let expected_secret = match codeyard_identity::setup::configured_admin_secret() {
                 Ok(secret) => secret,
                 Err(_) => {
                     return ctx.error(
@@ -242,7 +242,7 @@ pub(crate) async fn auth_post(
                     )
                 }
             };
-            crate::backend::identity::setup::complete_setup(
+            codeyard_identity::setup::complete_setup(
                 &ctx.state.pool,
                 SetupInput {
                     account,

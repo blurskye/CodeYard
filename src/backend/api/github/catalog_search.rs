@@ -7,7 +7,7 @@ use codeyard_db_repos::catalog_search::Kind;
 use codeyard_db_repos::catalog_search::Options;
 use codeyard_db_repos::catalog_search::Search;
 
-use crate::backend::repositories::access::AccessError;
+use codeyard_identity::repository_access::AccessError;
 
 use axum::{
     extract::{OriginalUri, Query, State},
@@ -64,7 +64,7 @@ async fn catalog(
         if id <= 0 {
             return Err(Error::invalid("Invalid repository_id"));
         }
-        crate::backend::repositories::access::check_read(&state.pool, id, viewer)
+        codeyard_identity::repository_access::check_read(&state.pool, id, viewer)
             .await
             .map_err(|e| {
                 if e == AccessError::NotFound {
@@ -140,7 +140,7 @@ async fn catalog(
                     continue;
                 }
                 let repo =
-                    match crate::backend::repositories::access::check_read(&state.pool, id, viewer)
+                    match codeyard_identity::repository_access::check_read(&state.pool, id, viewer)
                         .await
                     {
                         Ok(repo) => repo,

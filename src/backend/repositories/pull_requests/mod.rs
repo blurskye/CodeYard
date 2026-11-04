@@ -136,8 +136,8 @@ pub(super) async fn repository(
     pool: &codeyard_db_core::DbPool,
     id: i64,
 ) -> Result<(codeyard_db_core::models::Repository, String), OperationError> {
-    use crate::backend::repositories::access::current_repository_with_owner;
-    use crate::backend::repositories::access::AccessError;
+    use codeyard_identity::repository_access::current_repository_with_owner;
+    use codeyard_identity::repository_access::AccessError;
     current_repository_with_owner(pool, id)
         .await
         .map_err(|error| match error {
@@ -168,7 +168,7 @@ async fn can_read(
     user: &codeyard_db_core::models::User,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<bool, OperationError> {
-    crate::backend::repositories::access::can_read(pool, Some(user), repo)
+    codeyard_identity::repository_access::can_read(pool, Some(user), repo)
         .await
         .map_err(|_| OperationError::Unavailable {
             code: "database_error",
@@ -196,7 +196,7 @@ pub(super) async fn require_write(
     user: &codeyard_db_core::models::User,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
-    if crate::backend::repositories::access::can_write(pool, user, repo)
+    if codeyard_identity::repository_access::can_write(pool, user, repo)
         .await
         .map_err(|_| OperationError::Unavailable {
             code: "database_error",
@@ -224,7 +224,7 @@ pub(super) async fn require_admin(
     user: &codeyard_db_core::models::User,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
-    if crate::backend::repositories::access::can_admin(pool, user, repo)
+    if codeyard_identity::repository_access::can_admin(pool, user, repo)
         .await
         .map_err(|_| OperationError::Unavailable {
             code: "database_error",

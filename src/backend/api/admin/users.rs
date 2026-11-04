@@ -16,11 +16,11 @@ use crate::backend::api::user::responses::Fields;
 
 use crate::backend::app::AppState;
 
-use crate::backend::identity::credentials::PasswordAccount;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
+use codeyard_identity::credentials::PasswordAccount;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::{
     account,
@@ -255,7 +255,7 @@ pub(crate) async fn managed_user_post(
     } else {
         let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
         let email = optional_field(&form, "email");
-        crate::backend::identity::accounts::create_managed_account(
+        codeyard_identity::accounts::create_managed_account(
             &ctx.state.pool,
             session_id.as_deref(),
             PasswordAccount {
@@ -340,7 +340,7 @@ pub(crate) async fn signup_post(
     }
     let listing = listing_from_form(&form);
     let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
-    let result = crate::backend::identity::accounts::review_signup(
+    let result = codeyard_identity::accounts::review_signup(
         &ctx.state.pool,
         session_id.as_deref(),
         id,
@@ -391,14 +391,10 @@ pub(crate) async fn ban_post(
         }
     };
     let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
-    let result = crate::backend::identity::accounts::set_ban(
-        &ctx.state.pool,
-        session_id.as_deref(),
-        id,
-        banned,
-    )
-    .await
-    .map_err(crate::backend::api::auth::errors::ban_failure);
+    let result =
+        codeyard_identity::accounts::set_ban(&ctx.state.pool, session_id.as_deref(), id, banned)
+            .await
+            .map_err(crate::backend::api::auth::errors::ban_failure);
     match result {
         Ok(_) => ctx.redirect(&users_path(&listing, "ban")),
         Err(error) => {
@@ -429,12 +425,8 @@ pub(crate) async fn two_factor_reset_post(
     }
     let listing = listing_from_form(&form);
     let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
-    match crate::backend::identity::two_factor::admin_turn_off(
-        &ctx.state.pool,
-        session_id.as_deref(),
-        id,
-    )
-    .await
+    match codeyard_identity::two_factor::admin_turn_off(&ctx.state.pool, session_id.as_deref(), id)
+        .await
     {
         Ok(()) => ctx.redirect(&users_path(&listing, "two-factor-reset")),
         Err(error) => {
@@ -473,7 +465,7 @@ pub(crate) async fn role_post(
         }
     };
     let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
-    match crate::backend::identity::accounts::set_admin_role(
+    match codeyard_identity::accounts::set_admin_role(
         &ctx.state.pool,
         session_id.as_deref(),
         id,

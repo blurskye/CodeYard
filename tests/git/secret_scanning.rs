@@ -184,7 +184,7 @@ async fn contract(pg: bool) {
         fixture.pool(),
         owner,
         repo.id,
-        &codeyard::backend::identity::tokens::token_hash(&secret),
+        &codeyard_identity::tokens::token_hash(&secret),
         "codeyard_personal_access_token",
     )
     .await

@@ -13,10 +13,10 @@ use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 use codeyard_support::secrets::SecretEncryptor;
 
-use crate::backend::identity::two_factor::TwoFactorError;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_identity::two_factor::TwoFactorError;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::{
     account,
@@ -88,7 +88,7 @@ pub(crate) async fn setup_post(
     };
     let setup = match encryptor(&ctx) {
         Ok(key) => {
-            crate::backend::identity::two_factor::begin_setup(
+            codeyard_identity::two_factor::begin_setup(
                 &ctx.state.pool,
                 key,
                 &user,
@@ -147,7 +147,7 @@ pub(crate) async fn enable_post(
     let token = field(&form, "setup");
     let confirmed = match encryptor(&ctx) {
         Ok(key) => {
-            crate::backend::identity::two_factor::confirm_setup(
+            codeyard_identity::two_factor::confirm_setup(
                 &ctx.state.pool,
                 key,
                 &user,
@@ -179,13 +179,13 @@ pub(crate) async fn enable_post(
         // A wrong code keeps the same secret on the page, so the app can be tried again.
         Err(TwoFactorError::InvalidCode) => {
             let reopened = match encryptor(&ctx) {
-                Ok(key) => crate::backend::identity::two_factor::open_setup(
+                Ok(key) => codeyard_identity::two_factor::open_setup(
                     key,
                     &user,
                     &crate::backend::api::http::session::extract_session_id(&ctx.headers)
                         .unwrap_or_default(),
                     token,
-                    crate::backend::identity::two_factor::now_unix(),
+                    codeyard_identity::two_factor::now_unix(),
                 ),
                 Err(error) => Err(error),
             };
@@ -236,7 +236,7 @@ pub(crate) async fn recovery_codes_post(
         Ok(model) => model,
         Err(response) => return response,
     };
-    match crate::backend::identity::two_factor::regenerate_recovery_codes(
+    match codeyard_identity::two_factor::regenerate_recovery_codes(
         &ctx.state.pool,
         &user,
         &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
@@ -279,7 +279,7 @@ pub(crate) async fn disable_post(
         Ok(user) => user.clone(),
         Err(response) => return response,
     };
-    match crate::backend::identity::two_factor::disable(
+    match codeyard_identity::two_factor::disable(
         &ctx.state.pool,
         &user,
         &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),

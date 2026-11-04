@@ -13,10 +13,10 @@ use codeyard_db_core::queries::fine_grained_tokens::Token;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations::OrganizationPage;
 
-use crate::backend::identity::fine_grained::Access;
-use crate::backend::identity::fine_grained::Owner;
-use crate::backend::identity::fine_grained::Request;
-use crate::backend::identity::fine_grained::TokenError;
+use codeyard_identity::fine_grained::Access;
+use codeyard_identity::fine_grained::Owner;
+use codeyard_identity::fine_grained::Request;
+use codeyard_identity::fine_grained::TokenError;
 use codeyard_model::fine_grained::catalog;
 use codeyard_model::fine_grained::Group;
 use codeyard_model::fine_grained::PERMISSIONS;
@@ -271,7 +271,7 @@ async fn choices(ctx: &PageContext, user: &User, draft: &Draft) -> anyhow::Resul
         .repositories
         .iter()
         .copied()
-        .take(crate::backend::identity::fine_grained::MAX_REPOSITORIES)
+        .take(codeyard_identity::fine_grained::MAX_REPOSITORIES)
         .collect();
     let choices = codeyard_db_identity::fine_grained_tokens::repository_choices(
         pool,
@@ -292,7 +292,7 @@ async fn choices(ctx: &PageContext, user: &User, draft: &Draft) -> anyhow::Resul
         .map(|(id, name)| (id, format!("{prefix}/{name}")))
         .collect();
     let never_allowed = if let Some(org) = org {
-        crate::backend::identity::fine_grained::max_lifetime(
+        codeyard_identity::fine_grained::max_lifetime(
             owner,
             Some(&codeyard_db_identity::fine_grained_tokens::policy(pool, org).await?),
         )
@@ -498,7 +498,7 @@ async fn create(
         }
     };
     let session = extract_session_id(&ctx.headers);
-    match crate::backend::identity::fine_grained::create(
+    match codeyard_identity::fine_grained::create(
         &ctx.state.pool,
         user.id,
         session.as_deref(),
@@ -555,7 +555,7 @@ async fn detail(ctx: &PageContext, user: &User, id: i64) -> Result<Detail, Token
         .await
         .map_err(unavailable)?;
     let never_allowed = match token.owner_org_id {
-        Some(org) => crate::backend::identity::fine_grained::max_lifetime(
+        Some(org) => codeyard_identity::fine_grained::max_lifetime(
             Owner::Organization(org),
             Some(
                 &codeyard_db_identity::fine_grained_tokens::policy(pool, org)
@@ -660,7 +660,7 @@ async fn regenerate(
         Utc::now(),
     ) {
         Some(expires_at) => {
-            crate::backend::identity::fine_grained::regenerate(
+            codeyard_identity::fine_grained::regenerate(
                 &ctx.state.pool,
                 user.id,
                 session.as_deref(),
@@ -723,14 +723,13 @@ async fn delete(
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE),
     }
     let session = extract_session_id(&ctx.headers);
-    match crate::backend::identity::tokens::delete(&ctx.state.pool, user.id, session.as_deref(), id)
-        .await
+    match codeyard_identity::tokens::delete(&ctx.state.pool, user.id, session.as_deref(), id).await
     {
         Ok(()) => ctx.redirect(&format!("{BASE}?deleted=1")),
-        Err(crate::backend::identity::tokens::TokenError::Missing) => {
+        Err(codeyard_identity::tokens::TokenError::Missing) => {
             ctx.error(StatusCode::NOT_FOUND, MISSING)
         }
-        Err(crate::backend::identity::tokens::TokenError::Denied) => {
+        Err(codeyard_identity::tokens::TokenError::Denied) => {
             ctx.error(StatusCode::FORBIDDEN, "Sign in again to delete this token.")
         }
         Err(_) => ctx.error(StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE),

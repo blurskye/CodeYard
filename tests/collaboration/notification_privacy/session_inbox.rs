@@ -426,23 +426,21 @@ async fn done_marks_are_announced(pg: bool) {
     fixture.notify(user, Some(repo), "done-second").await;
     let original = session(fixture.pool(), user).await;
     let pool = fixture.pool();
-    let broadcaster = codeyard::backend::notifications::NotificationBroadcaster::new(pool);
+    let broadcaster = codeyard_notifications::NotificationBroadcaster::new(pool);
     let mut events = broadcaster.subscribe(user);
     async fn announced(
         pool: &codeyard_db_core::DbPool,
         session: &str,
         user: i64,
-        events: &mut tokio::sync::broadcast::Receiver<
-            codeyard::backend::notifications::NotificationEvent,
-        >,
+        events: &mut tokio::sync::broadcast::Receiver<codeyard_notifications::NotificationEvent>,
     ) -> (i64, i64) {
         let hint = events.try_recv().unwrap();
-        match codeyard::backend::notifications::current_event(pool, session, user, &hint)
+        match codeyard_notifications::current_event(pool, session, user, &hint)
             .await
             .unwrap()
             .unwrap()
         {
-            codeyard::backend::notifications::NotificationEvent::UnreadCount {
+            codeyard_notifications::NotificationEvent::UnreadCount {
                 user_id,
                 unread_count,
             } => (user_id, unread_count),
@@ -454,7 +452,7 @@ async fn done_marks_are_announced(pg: bool) {
         notification_id: first,
         done: true,
     };
-    codeyard::backend::notifications::inbox::inbox(pool, &broadcaster, &original, user, done_first)
+    codeyard_notifications::inbox::inbox(pool, &broadcaster, &original, user, done_first)
         .await
         .unwrap();
     assert_eq!(
@@ -466,7 +464,7 @@ async fn done_marks_are_announced(pg: bool) {
         notification_id: first,
         done: true,
     };
-    codeyard::backend::notifications::inbox::inbox(pool, &broadcaster, &original, user, again)
+    codeyard_notifications::inbox::inbox(pool, &broadcaster, &original, user, again)
         .await
         .unwrap();
     assert!(
@@ -477,7 +475,7 @@ async fn done_marks_are_announced(pg: bool) {
     let all = Action::DoneAll {
         filter: NotificationFilter::inbox(false),
     };
-    codeyard::backend::notifications::inbox::inbox(pool, &broadcaster, &original, user, all)
+    codeyard_notifications::inbox::inbox(pool, &broadcaster, &original, user, all)
         .await
         .unwrap();
     assert_eq!(
@@ -589,12 +587,12 @@ async fn hidden_backlog(pg: bool) {
         assert_eq!(result.unread_count, if listing { 256 } else { 0 });
         assert_eq!(result.updated, if listing { 0 } else { 256 });
     }
-    let broadcaster = codeyard::backend::notifications::NotificationBroadcaster::new(pool);
+    let broadcaster = codeyard_notifications::NotificationBroadcaster::new(pool);
     let mut events = broadcaster.subscribe(user);
-    codeyard::backend::notifications::create::create_and_broadcast_notification(
+    codeyard_notifications::create::create_and_broadcast_notification(
         pool,
         &broadcaster,
-        codeyard::backend::notifications::create::NotificationRequest {
+        codeyard_notifications::create::NotificationRequest {
             user_id: user,
             actor_id: None,
             repo_id: Some(visible),
@@ -608,7 +606,7 @@ async fn hidden_backlog(pg: bool) {
     .await
     .unwrap();
     let event = events.try_recv().unwrap();
-    let current = codeyard::backend::notifications::current_event(pool, &original, user, &event)
+    let current = codeyard_notifications::current_event(pool, &original, user, &event)
         .await
         .unwrap()
         .unwrap();

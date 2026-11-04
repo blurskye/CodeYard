@@ -104,8 +104,12 @@ and results stay the same. A stage can be the last one.
    (including pulls and issues), `actions`, `security` and `cluster` each own both
    engines. Shared transaction helpers and their records live under `db/core/src/queries`.
    Workspace validation remains deferred until the source split is finished.
-6. **Services:** `identity`, `notifications`, `repositories`, `ci`, `cluster`, in the order
-   that the circle cuts allow.
+6. **Services (partial).** `identity` and `notifications` are extracted. Repository
+   authority, identity mail links and delivery helpers have one lower owner.
+   `RepoStore` is a concrete enum-backed type, not the trait assumed above; its local
+   and remote implementations call cluster RPC and CI, which call the concrete store
+   back. These three services remain together under the move-only stop rule. A later
+   cut needs the planned store interface and injection, which is more than a move.
 7. **API:** `api/http` first (the helpers `api/github` shares move there), then `api/github`
    as one crate with its folders renamed to GitHub's categories, then `api/repos`,
    `api/graphql` and the rest.

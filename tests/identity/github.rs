@@ -1206,7 +1206,7 @@ async fn contract(pg: bool) {
         company: Some("Must not be saved"),
         ..db::users::profiles::ProfilePatch::default()
     };
-    let denied = codeyard::backend::identity::profiles::save(
+    let denied = codeyard_identity::profiles::save(
         f.pool(),
         alice,
         &db::users::accounts::AccountCredential::Token(read_token.id, read_hash),
@@ -1214,17 +1214,14 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap_err();
-    assert_eq!(
-        denied,
-        codeyard::backend::identity::profiles::ProfileError::Denied
-    );
+    assert_eq!(denied, codeyard_identity::profiles::ProfileError::Denied);
     let write_token = credentials
         .iter()
         .find(|token| token.scope == "write")
         .unwrap();
     let write_hash = &token_hashes[&write_token.id];
     // Hash mismatch is distinct from read-only scope and revocation: this write token is live.
-    let denied = codeyard::backend::identity::profiles::save(
+    let denied = codeyard_identity::profiles::save(
         f.pool(),
         alice,
         &db::users::accounts::AccountCredential::Token(write_token.id, read_hash),
@@ -1232,16 +1229,13 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap_err();
-    assert_eq!(
-        denied,
-        codeyard::backend::identity::profiles::ProfileError::Denied
-    );
+    assert_eq!(denied, codeyard_identity::profiles::ProfileError::Denied);
     f.execute(
         "DELETE FROM personal_access_tokens WHERE id=$1",
         &[write_token.id],
     )
     .await;
-    let denied = codeyard::backend::identity::profiles::save(
+    let denied = codeyard_identity::profiles::save(
         f.pool(),
         alice,
         &db::users::accounts::AccountCredential::Token(write_token.id, write_hash),
@@ -1249,10 +1243,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap_err();
-    assert_eq!(
-        denied,
-        codeyard::backend::identity::profiles::ProfileError::Denied
-    );
+    assert_eq!(denied, codeyard_identity::profiles::ProfileError::Denied);
     assert_eq!(
         db::users::profiles::get_profile_settings(f.pool(), alice)
             .await
@@ -1279,7 +1270,7 @@ async fn contract(pg: bool) {
             error.downcast_ref::<codeyard_model::identity::SshKeyWriteRefusal>(),
             Some(&codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted)
         );
-        let error = codeyard::backend::identity::keys::enroll_signing(
+        let error = codeyard_identity::keys::enroll_signing(
             f.pool(),
             alice,
             &db::users::accounts::AccountCredential::Token(token, hash),
@@ -1288,10 +1279,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap_err();
-        assert_eq!(
-            error,
-            codeyard::backend::identity::keys::KeyError::AccountRestricted
-        );
+        assert_eq!(error, codeyard_identity::keys::KeyError::AccountRestricted);
     }
     let key = db::users::ssh_keys::add_ssh_key(f.pool(), alice, "Kept", public_key)
         .await

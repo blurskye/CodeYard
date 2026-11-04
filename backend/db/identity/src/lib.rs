@@ -32,4 +32,6 @@ pub mod signature_verifications;
 
 pub mod sqlite;
 
+pub mod auth_admission;
+pub mod mail_config;
 pub mod users;

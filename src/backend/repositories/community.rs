@@ -301,7 +301,7 @@ pub async fn load(
                 .map_err(RepoError::from)?
         {
             if !default.is_private
-                && crate::backend::repositories::access::can_read(pool, None, &default)
+                && codeyard_identity::repository_access::can_read(pool, None, &default)
                     .await
                     .map_err(RepoError::from)?
             {
@@ -310,7 +310,7 @@ pub async fn load(
                     Err(_) => return Ok(profile), // Optional owner defaults cannot hide local files.
                 };
                 // Defaults are public inheritance, not a retained grant to a later private revision.
-                if crate::backend::repositories::access::check_read(pool, default.id, None)
+                if codeyard_identity::repository_access::check_read(pool, default.id, None)
                     .await
                     .is_err()
                 {

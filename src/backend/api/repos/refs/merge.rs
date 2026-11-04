@@ -226,7 +226,7 @@ async fn submit(
                 ctx.require_user()
                     .map_err(|_| {
                         RefError::Access(
-                            crate::backend::repositories::access::AccessError::WriteDenied,
+                            codeyard_identity::repository_access::AccessError::WriteDenied,
                         )
                     })?
                     .id,

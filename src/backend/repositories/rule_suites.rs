@@ -63,7 +63,7 @@ async fn exempted(
     let deploy_key = matches!(credential, Some(ReceiveCredential::DeployKey(_)));
     let has = |kind| !deploy_key && entries.iter().any(|entry| entry.actor_type == kind);
     let role = if has(ActorType::RepositoryRole) {
-        crate::backend::repositories::access::user_access(pool, actor, repository).await?
+        codeyard_identity::repository_access::user_access(pool, actor, repository).await?
     } else {
         AccessLevel::None
     };

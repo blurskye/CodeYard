@@ -117,7 +117,7 @@ async fn selected(
         else {
             continue;
         };
-        if !crate::backend::repositories::access::can_read(&state.pool, Some(&actor.user), &repo)
+        if !codeyard_identity::repository_access::can_read(&state.pool, Some(&actor.user), &repo)
             .await
             .map_err(Error::unavailable)?
         {

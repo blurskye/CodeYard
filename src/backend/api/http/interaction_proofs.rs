@@ -112,12 +112,13 @@ pub(crate) async fn prepare(
                         .ok()
                     };
                     if let Some(actor) = actor {
-                        if let Err(error) = crate::backend::identity::interactions::prepare(
-                            &state,
-                            &actor,
-                            &repository,
-                        )
-                        .await
+                        if let Err(error) =
+                            crate::backend::repositories::identity_interactions::prepare(
+                                &state,
+                                &actor,
+                                &repository,
+                            )
+                            .await
                         {
                             tracing::warn!(repo_id=repository.id,user_id=actor.id,%error,"Contributor proof preparation unavailable");
                         }

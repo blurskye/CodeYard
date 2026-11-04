@@ -8,12 +8,12 @@ use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 
-use crate::backend::identity::blocks::BlockError;
 use axum::{
     extract::{Form, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_identity::blocks::BlockError;
 use std::sync::Arc;
 
 pub(crate) async fn blocks_post(
@@ -35,7 +35,7 @@ pub(crate) async fn blocks_post(
     };
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match crate::backend::identity::blocks::change(
+    match codeyard_identity::blocks::change(
         &ctx.state.pool,
         actor.id,
         &AccountCredential::Session(&session),

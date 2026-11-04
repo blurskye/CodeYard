@@ -92,7 +92,7 @@ async fn change(
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    crate::backend::identity::blocks::change(
+    codeyard_identity::blocks::change(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -101,14 +101,14 @@ async fn change(
     )
     .await
     .map_err(|error| match error {
-        crate::backend::identity::blocks::BlockError::Missing => Error::missing(),
-        crate::backend::identity::blocks::BlockError::SelfBlock => {
+        codeyard_identity::blocks::BlockError::Missing => Error::missing(),
+        codeyard_identity::blocks::BlockError::SelfBlock => {
             Error::validation("User", "username", "invalid")
         }
-        crate::backend::identity::blocks::BlockError::Denied => {
+        codeyard_identity::blocks::BlockError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Account is restricted")
         }
-        crate::backend::identity::blocks::BlockError::Unavailable => Error::unavailable(error),
+        codeyard_identity::blocks::BlockError::Unavailable => Error::unavailable(error),
     })?;
     Ok(StatusCode::NO_CONTENT)
 }

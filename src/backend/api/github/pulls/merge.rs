@@ -59,7 +59,7 @@ async fn merge_pull(
         .map_err(crate::backend::api::github::auth::scope_error)?;
     let authority = auth.database_actor();
     let actor = auth.user;
-    if !crate::backend::repositories::access::can_write(&state.pool, &actor, &repo)
+    if !codeyard_identity::repository_access::can_write(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {

@@ -27,6 +27,7 @@ pub mod traffic;
 
 pub mod engagement;
 pub mod git_sessions;
+pub mod identity_interactions;
 pub mod reads;
 pub mod refs;
 pub mod releases;

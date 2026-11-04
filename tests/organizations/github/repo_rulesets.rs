@@ -11,8 +11,8 @@ use axum::{
 use codeyard_db_orgs::organizations::NewOrganization;
 use codeyard_db_orgs::organizations::OrganizationProfile;
 
-use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
@@ -84,7 +84,7 @@ async fn contract(pg: bool) {
         (admin, "read"),
     ] {
         let browser = Client::login(&router, f.pool(), user).await;
-        let token = codeyard::backend::identity::tokens::create(
+        let token = codeyard_identity::tokens::create(
             f.pool(),
             user,
             Some(&browser.session),

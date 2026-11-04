@@ -1,6 +1,6 @@
 //! Public profile activity: pushes, issues, pull requests and comments, newest first.
-use crate::backend::identity::activity::ActivityPage;
 use codeyard_db_repos::activity::ActivityRow;
+use codeyard_identity::activity::ActivityPage;
 use codeyard_webui::pages::users::{ProfileActivity, ProfileActivityItem};
 use serde::Deserialize;
 

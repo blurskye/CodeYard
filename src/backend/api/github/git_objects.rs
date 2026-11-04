@@ -45,10 +45,10 @@ async fn tag_document(
     repo: i64,
 ) -> Result<Value> {
     let url = repo_url(owner, name);
-    let verification = crate::backend::identity::signatures::verification(
+    let verification = codeyard_identity::signatures::verification(
         &state.pool,
         &mut Default::default(),
-        crate::backend::identity::signatures::Signed {
+        codeyard_identity::signatures::Signed {
             signature: tag.signature.as_deref(),
             payload: tag.signature_payload.as_deref(),
             email: tag.tagger.as_ref().map(|tagger| tagger.email.as_str()),
@@ -112,10 +112,10 @@ async fn create_blob(
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = auth.user.id;
-    crate::backend::repositories::access::check_write(&state.pool, repo.id, actor)
+    codeyard_identity::repository_access::check_write(&state.pool, repo.id, actor)
         .await
         .map_err(|error| match error {
-            crate::backend::repositories::access::AccessError::Unavailable => {
+            codeyard_identity::repository_access::AccessError::Unavailable => {
                 Error::unavailable(())
             }
             _ => Error::new(StatusCode::FORBIDDEN, "Repository write denied"),

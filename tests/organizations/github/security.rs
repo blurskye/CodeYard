@@ -15,9 +15,9 @@ use codeyard_db_orgs::organizations::TeamPrivacy;
 use codeyard_db_orgs::organizations::TeamProfile;
 use codeyard_db_orgs::organizations::TeamRole;
 
-use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 const LIST: &str = "orgs/list-security-manager-teams";
 const ADD: &str = "orgs/add-security-manager-team";
@@ -158,7 +158,7 @@ async fn contract(pg: bool) {
         (outsider, "write"),
     ] {
         let session = Client::login(&router, f.pool(), id).await;
-        let token = codeyard::backend::identity::tokens::create(
+        let token = codeyard_identity::tokens::create(
             f.pool(),
             id,
             Some(&session.session),

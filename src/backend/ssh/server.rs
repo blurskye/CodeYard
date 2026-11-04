@@ -684,9 +684,7 @@ mod tests {
             Arc::new(crate::backend::ci::CiConfig::default()),
             Arc::new(tokio::sync::Notify::new()),
             None,
-            Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
-                &pool,
-            )),
+            Arc::new(codeyard_notifications::NotificationBroadcaster::new(&pool)),
         ));
         (pool, ci)
     }

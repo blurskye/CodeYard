@@ -67,7 +67,7 @@ async fn scope(ctx: &PageContext) -> Result<Scope, Response> {
                     ))
                 }
             };
-            match crate::backend::repositories::access::can_read(
+            match codeyard_identity::repository_access::can_read(
                 &ctx.state.pool,
                 ctx.user.as_ref(),
                 &repository,

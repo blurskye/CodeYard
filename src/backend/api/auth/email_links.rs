@@ -9,13 +9,13 @@ use crate::backend::api::user::responses::within_bounds;
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::email::links::LinkError;
-use crate::backend::email::links::Purpose;
+use codeyard_identity::email_links::LinkError;
+use codeyard_identity::email_links::Purpose;
 
-use crate::backend::identity::accounts::PasswordResetError;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_identity::accounts::PasswordResetError;
 use codeyard_webui::pages::account;
 use std::sync::Arc;
 
@@ -49,7 +49,7 @@ async fn forgot_page(
     status: StatusCode,
     message: Option<&str>,
 ) -> Response {
-    let mail_available = crate::backend::email::config::is_configured(&ctx.state.pool).await;
+    let mail_available = codeyard_db_identity::mail_config::is_configured(&ctx.state.pool).await;
     ctx.page_model_status(
         status,
         "Forgot your password?",
@@ -100,7 +100,7 @@ pub(crate) async fn forgot_post(
         )
         .await;
     }
-    let sent = crate::backend::email::links::send_password_reset(
+    let sent = codeyard_identity::email_links::send_password_reset(
         &ctx.state.pool,
         crate::backend::api::http::session::client_address(&ctx.headers),
         address,
@@ -183,8 +183,7 @@ pub(crate) async fn reset_code_post(
     }
     // The code is the token from the link, so a pasted code works the same way.
     let code = field(&form, "code").trim();
-    match crate::backend::identity::accounts::reset_password(&ctx.state.pool, code, password).await
-    {
+    match codeyard_identity::accounts::reset_password(&ctx.state.pool, code, password).await {
         Ok(()) => {
             let target = if redirect == "/" {
                 "/login?reset=done".to_owned()
@@ -236,7 +235,7 @@ async fn link_state<'a>(
     status: StatusCode,
     message: Option<&'a str>,
 ) -> Result<(bool, StatusCode, Option<&'a str>), Response> {
-    let valid = crate::backend::email::links::is_valid(&ctx.state.pool, purpose, token)
+    let valid = codeyard_identity::email_links::is_valid(&ctx.state.pool, purpose, token)
         .await
         .map_err(|error| {
             let (status, message) = link_failure(&error);
@@ -309,8 +308,7 @@ pub(crate) async fn reset_post(
         )
         .await;
     }
-    match crate::backend::identity::accounts::reset_password(&ctx.state.pool, token, password).await
-    {
+    match codeyard_identity::accounts::reset_password(&ctx.state.pool, token, password).await {
         Ok(()) => ctx.redirect("/login?reset=done"),
         Err(PasswordResetError::Input(_)) => {
             reset_page(
@@ -396,7 +394,7 @@ pub(crate) async fn verify_post(
         return response;
     }
     let token = field(&form, "token");
-    match crate::backend::email::links::verify_address(&ctx.state.pool, token).await {
+    match codeyard_identity::email_links::verify_address(&ctx.state.pool, token).await {
         Ok(true) => {
             verify_page(
                 &ctx,

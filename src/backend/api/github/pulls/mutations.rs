@@ -102,7 +102,7 @@ async fn create_value(
     }
     .map_err(Error::unavailable)?
     .ok_or_else(|| Error::invalid("Invalid head repository"))?;
-    if !crate::backend::repositories::access::can_read(&state.pool, Some(&actor), &head)
+    if !codeyard_identity::repository_access::can_read(&state.pool, Some(&actor), &head)
         .await
         .map_err(Error::unavailable)?
     {

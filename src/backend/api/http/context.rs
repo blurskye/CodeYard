@@ -192,14 +192,14 @@ impl PageContext {
             let (verified_session, pending_session_cookie) = match existing_session {
                 Some(s) => (s, None),
                 None => {
-                    match crate::backend::identity::admission::admit_anonymous_session(
+                    match codeyard_db_identity::auth_admission::admit_anonymous_session(
                         &state.pool,
                         crate::backend::api::http::session::client_address(&headers),
                     )
                     .await
                     {
                         Ok(()) => {}
-                        Err(crate::backend::identity::admission::AdmissionError::Limited) => {
+                        Err(codeyard_db_identity::auth_admission::AdmissionError::Limited) => {
                             return Err(public_error(
                                 StatusCode::TOO_MANY_REQUESTS,
                                 "Too many sign-in page requests. Try again later.",

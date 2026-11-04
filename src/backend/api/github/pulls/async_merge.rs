@@ -46,7 +46,7 @@ async fn start(
     auth.repository_scope(&state.pool, repo.id, "contents", true)
         .await
         .map_err(crate::backend::api::github::auth::scope_error)?;
-    if !crate::backend::repositories::access::can_write(&state.pool, &auth.user, &repo)
+    if !codeyard_identity::repository_access::can_write(&state.pool, &auth.user, &repo)
         .await
         .map_err(Error::unavailable)?
     {

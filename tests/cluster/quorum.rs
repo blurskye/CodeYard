@@ -15,7 +15,6 @@ use codeyard::backend::cluster::NodeContext;
 use codeyard::backend::cluster::PairingHandler;
 use codeyard::backend::cluster::Relay;
 
-use codeyard::backend::notifications::NotificationBroadcaster;
 use codeyard::backend::repositories::git_sessions::receive_session;
 use codeyard::backend::repositories::git_sessions::ReceiveCredential;
 use codeyard::backend::repositories::git_sessions::ReceiveSession;
@@ -25,6 +24,7 @@ use codeyard::backend::repositories::store::GitStreams;
 use codeyard::backend::repositories::store::RepoStore;
 use codeyard_db_core::models::RefValue;
 use codeyard_db_core::DbPool;
+use codeyard_notifications::NotificationBroadcaster;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::time::{timeout, Instant};
 

@@ -203,11 +203,11 @@ pub(crate) async fn load_database(
             .is_owner();
         }
         let effective_access =
-            crate::backend::repositories::access::user_access(&ctx.state.pool, user, &repository)
+            codeyard_identity::repository_access::user_access(&ctx.state.pool, user, &repository)
                 .await
                 .map_err(|_| unavailable(ctx))?;
         chrome.can_write =
-            crate::backend::repositories::access::can_write(&ctx.state.pool, user, &repository)
+            codeyard_identity::repository_access::can_write(&ctx.state.pool, user, &repository)
                 .await
                 .map_err(|_| unavailable(ctx))?;
         chrome.can_admin = effective_access.can_admin();

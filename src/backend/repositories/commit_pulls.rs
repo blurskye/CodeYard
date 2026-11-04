@@ -13,7 +13,7 @@ use std::{collections::HashMap, time::Duration};
 
 #[derive(Debug)]
 pub enum AssociationError {
-    Access(crate::backend::repositories::access::AccessError),
+    Access(codeyard_identity::repository_access::AccessError),
     Git(RepoError),
     Limit,
     Unavailable,
@@ -105,7 +105,7 @@ pub async fn associated_pulls(
         return Err(AssociationError::Limit);
     }
     tokio::time::timeout(Duration::from_secs(30), async {
-        let repository = crate::backend::repositories::access::check_read(
+        let repository = codeyard_identity::repository_access::check_read(
             pool,
             query.repository_id,
             query.actor,
@@ -180,7 +180,7 @@ pub async fn associated_pulls(
                     continue;
                 }
                 if pulls.len() == query.limit {
-                    let repository = crate::backend::repositories::access::check_read(
+                    let repository = codeyard_identity::repository_access::check_read(
                         pool,
                         repository.id,
                         query.actor,
@@ -198,7 +198,7 @@ pub async fn associated_pulls(
             }
         }
         let repository =
-            crate::backend::repositories::access::check_read(pool, repository.id, query.actor)
+            codeyard_identity::repository_access::check_read(pool, repository.id, query.actor)
                 .await
                 .map_err(AssociationError::Access)?;
         Ok(CommitPullPage {

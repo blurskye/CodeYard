@@ -8,7 +8,7 @@ use crate::backend::repositories::pull_requests::branches::refresh_one;
 use crate::backend::repositories::pull_requests::branches::revisions;
 use crate::backend::repositories::pull_requests::branches::ListedRefs;
 
-use crate::backend::notifications::NotificationBroadcaster;
+use codeyard_notifications::NotificationBroadcaster;
 
 use crate::backend::repositories::store::repo_store;
 use codeyard_db_core::models::PullRequest;

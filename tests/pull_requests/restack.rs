@@ -1138,7 +1138,7 @@ async fn slow_ci_admission_contract(restack: bool) {
                 Arc::new(CiConfig::default()),
                 Arc::new(tokio::sync::Notify::new()),
                 None,
-                Arc::new(codeyard::backend::notifications::NotificationBroadcaster::new(f.pool())),
+                Arc::new(codeyard_notifications::NotificationBroadcaster::new(f.pool())),
             );
             codeyard::backend::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
                 f.pool(), &ci, &app.repository, &[pull], app.owner).await;

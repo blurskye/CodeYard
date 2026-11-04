@@ -153,7 +153,7 @@ async fn download(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-        if !crate::backend::repositories::access::can_read(&state.pool, Some(&user), &repo)
+        if !codeyard_identity::repository_access::can_read(&state.pool, Some(&user), &repo)
             .await
             .map_err(Error::unavailable)?
         {

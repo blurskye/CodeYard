@@ -94,7 +94,7 @@ pub async fn add_collaborator(
         }
     };
     let repository = find_repository(&state.pool, &owner, &repo).await?;
-    let target_user = crate::backend::repositories::access::change_collaborator(
+    let target_user = codeyard_identity::repository_access::change_collaborator(
         &state.pool,
         codeyard_db_core::queries::credentials::Actor::from((
             user.id,
@@ -125,7 +125,7 @@ pub async fn remove_collaborator(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
 
-    crate::backend::repositories::access::change_collaborator(
+    codeyard_identity::repository_access::change_collaborator(
         &state.pool,
         codeyard_db_core::queries::credentials::Actor::from((
             user.id,

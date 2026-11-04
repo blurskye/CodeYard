@@ -1,11 +1,11 @@
 //! Shared manual team requests and notification delivery for native and GitHub adapters.
 use crate::backend::repositories::pull_requests::OperationError;
 
-use crate::backend::notifications::NotificationBroadcaster;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::Team;
 use codeyard_db_core::models::User;
+use codeyard_notifications::NotificationBroadcaster;
 
 pub async fn set_requests(
     pool: &codeyard_db_core::DbPool,

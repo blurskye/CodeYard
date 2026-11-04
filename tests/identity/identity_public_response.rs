@@ -37,11 +37,11 @@ async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
             "display_name": "é".repeat(50), "bio": "é".repeat(2000),
             "location": "é".repeat(100), "website": format!("https://example.com/{}", "x".repeat(235)),
         });
-        let token = codeyard::backend::identity::tokens::create(
+        let token = codeyard_identity::tokens::create(
             pool,
             user.id,
             Some(&client.session),
-            codeyard::backend::identity::tokens::TokenInput {
+            codeyard_identity::tokens::TokenInput {
                 name: "profile",
                 scope: "write",
                 expires_at: None,
@@ -116,7 +116,7 @@ async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
 
 #[tokio::test]
 async fn setup_rejects_nul_email_on_both_engines() {
-    use codeyard::backend::identity::{
+    use codeyard_identity::{
         credentials::PasswordAccount,
         sessions::{InitiatingSession, SessionContext},
         setup::{self, SetupError, SetupInput},

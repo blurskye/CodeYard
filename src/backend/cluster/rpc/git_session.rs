@@ -1075,7 +1075,7 @@ impl RpcHandler {
                     Arc::new(CiConfig::from_env().map_err(RepoError::from)?),
                     Arc::new(tokio::sync::Notify::new()),
                     Some(self.context.clone()),
-                    Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
+                    Arc::new(codeyard_notifications::NotificationBroadcaster::new(
                         &pool,
                     )),
                 ));

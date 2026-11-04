@@ -94,8 +94,8 @@ pub(super) async fn repository(
     pool: &codeyard_db_core::DbPool,
     id: i64,
 ) -> Result<(codeyard_db_core::models::Repository, String), OperationError> {
-    use crate::backend::repositories::access::current_repository_with_owner;
-    use crate::backend::repositories::access::AccessError;
+    use codeyard_identity::repository_access::current_repository_with_owner;
+    use codeyard_identity::repository_access::AccessError;
     current_repository_with_owner(pool, id)
         .await
         .map_err(|error| match error {
@@ -124,24 +124,24 @@ pub(super) async fn actor(
 /// Repository access decisions belong to `repositories::access`; this only says them in the
 /// terms of these operations. Only someone who can read the repository learns why a write is
 /// refused.
-fn access_error(error: crate::backend::repositories::access::AccessError) -> OperationError {
+fn access_error(error: codeyard_identity::repository_access::AccessError) -> OperationError {
     match error {
-        crate::backend::repositories::access::AccessError::Unavailable => {
+        codeyard_identity::repository_access::AccessError::Unavailable => {
             OperationError::Unavailable {
                 code: "database_error",
                 message: "Repository authority is unavailable".into(),
             }
         }
-        crate::backend::repositories::access::AccessError::WriteDenied
-        | crate::backend::repositories::access::AccessError::PasswordChangeRequired => {
+        codeyard_identity::repository_access::AccessError::WriteDenied
+        | codeyard_identity::repository_access::AccessError::PasswordChangeRequired => {
             OperationError::Denied {
                 code: "write_denied",
                 message: "Archived repositories and password-change-required accounts cannot write"
                     .into(),
             }
         }
-        crate::backend::repositories::access::AccessError::NotFound
-        | crate::backend::repositories::access::AccessError::InvalidCollaboratorOwner => {
+        codeyard_identity::repository_access::AccessError::NotFound
+        | codeyard_identity::repository_access::AccessError::InvalidCollaboratorOwner => {
             OperationError::Missing {
                 code: "not_found",
                 message: "Repository not found".into(),
@@ -155,7 +155,7 @@ pub(super) async fn require_read(
     user: &codeyard_db_core::models::User,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
-    crate::backend::repositories::access::check_read(pool, repo.id, Some(user.id))
+    codeyard_identity::repository_access::check_read(pool, repo.id, Some(user.id))
         .await
         .map(|_| ())
         .map_err(access_error)
@@ -166,7 +166,7 @@ pub(super) async fn require_write(
     user: &codeyard_db_core::models::User,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<(), OperationError> {
-    crate::backend::repositories::access::check_write(pool, repo.id, user.id)
+    codeyard_identity::repository_access::check_write(pool, repo.id, user.id)
         .await
         .map(|_| ())
         .map_err(access_error)

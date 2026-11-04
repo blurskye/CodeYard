@@ -1,6 +1,6 @@
 //! Picture forms: a settings form that sends a picture as `multipart/form-data`,
 //! a few small text fields (the CSRF token) and one file named `picture`.
-use crate::backend::identity::avatars::MAX_PICTURE_BYTES;
+use crate::backend::api::avatar_ops::MAX_PICTURE_BYTES;
 use axum::{extract::Multipart, http::StatusCode};
 use std::collections::HashMap;
 

@@ -11,11 +11,11 @@ use codeyard_db_orgs::organizations::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
-use codeyard::backend::identity::fine_grained::Access;
-use codeyard::backend::identity::fine_grained::Owner;
-use codeyard::backend::identity::fine_grained::TokenError;
+use codeyard_identity::fine_grained::Access;
+use codeyard_identity::fine_grained::Owner;
+use codeyard_identity::fine_grained::TokenError;
 
-use codeyard::backend::identity::tokens::TokenInput;
+use codeyard_identity::tokens::TokenInput;
 
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
@@ -23,7 +23,7 @@ use codeyard_webui::app::Page;
 use serde_json::{json, Value};
 
 async fn classic(pool: &codeyard_db_core::DbPool, user: i64, session: &str) -> String {
-    let token = codeyard::backend::identity::tokens::create(
+    let token = codeyard_identity::tokens::create(
         pool,
         user,
         Some(session),
@@ -45,11 +45,11 @@ async fn fine(
     org: i64,
     days: i64,
 ) -> Result<(i64, String, String), TokenError> {
-    codeyard::backend::identity::fine_grained::create(
+    codeyard_identity::fine_grained::create(
         pool,
         user,
         Some(session),
-        codeyard::backend::identity::fine_grained::Request {
+        codeyard_identity::fine_grained::Request {
             name: format!("token-{user}-{days}"),
             description: "Release automation".into(),
             owner: Owner::Organization(org),

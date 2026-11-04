@@ -11,12 +11,12 @@ use crate::backend::cluster::NodeContext;
 use crate::backend::files::DownloadError;
 use crate::backend::files::UploadDeclaration;
 use crate::backend::files::UploadError;
-use crate::backend::notifications::watchers::notify_watchers;
-use crate::backend::notifications::watchers::WatchEvent;
-use crate::backend::notifications::watchers::WatchedItem;
-use crate::backend::notifications::NotificationBroadcaster;
+use codeyard_notifications::watchers::notify_watchers;
+use codeyard_notifications::watchers::WatchEvent;
+use codeyard_notifications::watchers::WatchedItem;
+use codeyard_notifications::NotificationBroadcaster;
 
-use crate::backend::repositories::access::AccessError;
+use codeyard_identity::repository_access::AccessError;
 
 use crate::backend::repositories::refs::RefError;
 use crate::backend::repositories::store::repo_store;
@@ -145,7 +145,7 @@ async fn writable(
         .await
         .map_err(|_| ReleaseError::Unavailable)?
         .ok_or(AccessError::NotFound)?;
-    Ok(crate::backend::repositories::access::check_write(pool, repository.id, actor).await?)
+    Ok(codeyard_identity::repository_access::check_write(pool, repository.id, actor).await?)
 }
 
 async fn can_write(
@@ -156,7 +156,7 @@ async fn can_write(
     match viewer {
         Some(actor) => {
             let repo =
-                crate::backend::repositories::access::current_repository(pool, repo_id).await?;
+                codeyard_identity::repository_access::current_repository(pool, repo_id).await?;
             let Some(user) = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
                 .await
                 .map_err(unavailable)?
@@ -164,7 +164,7 @@ async fn can_write(
                 return Ok(false);
             };
             Ok(
-                crate::backend::repositories::access::user_access(pool, &user, &repo)
+                codeyard_identity::repository_access::user_access(pool, &user, &repo)
                     .await
                     .map_err(unavailable)?
                     .can_write(),
@@ -430,7 +430,7 @@ pub async fn create(
     input: &ReleaseInput,
 ) -> Result<Release, ReleaseError> {
     let (repository, user) =
-        crate::backend::repositories::access::check_write(pool, input.repository_id, actor).await?;
+        codeyard_identity::repository_access::check_write(pool, input.repository_id, actor).await?;
     validate_tag(&input.tag)?;
     validate_fields(&input.fields)?;
     if codeyard_db_repos::releases::get_release_by_tag(pool, repository.id, &input.tag)

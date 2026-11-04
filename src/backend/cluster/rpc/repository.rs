@@ -638,14 +638,14 @@ impl RpcHandler {
             .actor
             .ok_or_else(|| invalid("repository mutation requires an actor"))?;
         let pool = self.context.database()?;
-        let (repository, user) = crate::backend::repositories::access::check_write(
+        let (repository, user) = codeyard_identity::repository_access::check_write(
             pool,
             repo_id.ok_or_else(|| invalid("repository unavailable"))?,
             actor,
         )
         .await
         .map_err(|error| match error {
-            crate::backend::repositories::access::AccessError::Unavailable => {
+            codeyard_identity::repository_access::AccessError::Unavailable => {
                 RepoError::authority_unavailable()
             }
             _ => RepoError::write_denied(),

@@ -111,7 +111,7 @@ async fn mutate(
 ) -> Result<Response> {
     let (repo, actor) = visible(&state, &headers, &params, true).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
-    if !crate::backend::repositories::access::can_maintain(&state.pool, &actor.user, &repo)
+    if !codeyard_identity::repository_access::can_maintain(&state.pool, &actor.user, &repo)
         .await
         .map_err(Error::unavailable)?
     {

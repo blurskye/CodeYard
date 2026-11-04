@@ -222,7 +222,7 @@ async fn cli_account_contract(pool: &codeyard_db_core::DbPool, url: &str) {
         .unwrap();
     assert!(admin.is_admin);
     assert!(
-        codeyard::backend::identity::passwords::verify_password(
+        codeyard_identity::passwords::verify_password(
             "bootstrap-password",
             admin.password_hash.as_deref()
         )

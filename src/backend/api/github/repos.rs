@@ -235,7 +235,7 @@ async fn document_with(
         }
     }
     if let Some(viewer) = viewer.map(|auth| &auth.user) {
-        let level = crate::backend::repositories::access::user_access(&state.pool, viewer, repo)
+        let level = codeyard_identity::repository_access::user_access(&state.pool, viewer, repo)
             .await
             .map_err(Error::unavailable)?;
         if level.can_admin() {

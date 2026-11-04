@@ -9,11 +9,11 @@ use crate::backend::api::user::responses::within_bounds;
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::identity::keys::KeyError;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
+use codeyard_identity::keys::KeyError;
 use codeyard_webui::pages::fields::may_be_private_key;
 use std::sync::Arc;
 
@@ -105,7 +105,7 @@ async fn save_key_form(
     }
     let session_id = extract_session_id(&ctx.headers);
     let result = if signing {
-        crate::backend::identity::keys::enroll_signing(
+        codeyard_identity::keys::enroll_signing(
             &ctx.state.pool,
             actor,
             &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -117,7 +117,7 @@ async fn save_key_form(
         .await
         .map(|_| ())
     } else {
-        crate::backend::identity::keys::enroll(
+        codeyard_identity::keys::enroll(
             &ctx.state.pool,
             actor,
             session_id.as_deref(),
@@ -154,7 +154,7 @@ pub(crate) async fn signing_key_delete_post(
         Err(response) => return response,
     };
     let session = extract_session_id(&ctx.headers).unwrap_or_default();
-    let result = crate::backend::identity::keys::delete_signing(
+    let result = codeyard_identity::keys::delete_signing(
         &ctx.state.pool,
         actor,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
@@ -181,7 +181,7 @@ pub(crate) async fn key_delete_post(
         Err(response) => return response,
     };
     let session = extract_session_id(&ctx.headers).unwrap_or_default();
-    let result = crate::backend::identity::keys::delete(
+    let result = codeyard_identity::keys::delete(
         &ctx.state.pool,
         actor,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),

@@ -42,7 +42,7 @@ pub(super) async fn resolve(
     match field {
         "repository" => Ok(crate::backend::api::graphql::repository::object(repo)),
         "authorAssociation" => Ok(json!(
-            crate::backend::repositories::access::author_association(
+            codeyard_identity::repository_access::author_association(
                 pool,
                 repo,
                 parent["_author"].as_i64().ok_or_else(missing)?
@@ -234,7 +234,7 @@ pub(super) async fn resolve_comment(
     .await?;
     match field {
         "authorAssociation" => Ok(json!(
-            crate::backend::repositories::access::author_association(
+            codeyard_identity::repository_access::author_association(
                 &request.state.pool,
                 &repo,
                 parent["_author"].as_i64().ok_or_else(missing)?

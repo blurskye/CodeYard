@@ -2,21 +2,21 @@
 
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::error::ApiFailure;
-use crate::backend::identity::accounts::BanError;
-use crate::backend::identity::accounts::EmailChangeError;
-use crate::backend::identity::accounts::ManagedAccountError;
-use crate::backend::identity::accounts::PasswordChangeError;
-use crate::backend::identity::accounts::RoleError;
-use crate::backend::identity::accounts::SignupReviewError;
-use crate::backend::identity::admission::AdmissionError;
-use crate::backend::identity::login::LoginError;
-use crate::backend::identity::passwords::PasswordError;
-use crate::backend::identity::registration::RegistrationError;
-use crate::backend::identity::sessions::AccountAuthorityError;
-use crate::backend::identity::sessions::SessionIssueError;
-use crate::backend::identity::setup::SetupError;
-use crate::backend::identity::two_factor::TwoFactorError;
 use axum::http::StatusCode;
+use codeyard_db_identity::auth_admission::AdmissionError;
+use codeyard_identity::accounts::BanError;
+use codeyard_identity::accounts::EmailChangeError;
+use codeyard_identity::accounts::ManagedAccountError;
+use codeyard_identity::accounts::PasswordChangeError;
+use codeyard_identity::accounts::RoleError;
+use codeyard_identity::accounts::SignupReviewError;
+use codeyard_identity::login::LoginError;
+use codeyard_identity::passwords::PasswordError;
+use codeyard_identity::registration::RegistrationError;
+use codeyard_identity::sessions::AccountAuthorityError;
+use codeyard_identity::sessions::SessionIssueError;
+use codeyard_identity::setup::SetupError;
+use codeyard_identity::two_factor::TwoFactorError;
 use codeyard_model::account_input::AccountInputError;
 
 pub(crate) fn database_failure() -> ApiFailure {

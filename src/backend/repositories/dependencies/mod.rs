@@ -11,7 +11,7 @@ use codeyard_db_repos::repositories::dependencies::{self as records, Feature};
 use codeyard_git::error::{ErrorKind, RepoError};
 #[derive(Debug)]
 pub enum DependencyError {
-    Access(crate::backend::repositories::access::AccessError),
+    Access(codeyard_identity::repository_access::AccessError),
     Store(RepoError),
 }
 #[derive(Clone, Copy, serde::Serialize)]
@@ -27,10 +27,10 @@ async fn delegated_admin(
     let Some(actor) = actor else {
         return Ok(false);
     };
-    match crate::backend::repositories::access::check_admin(pool, repo, actor).await {
+    match codeyard_identity::repository_access::check_admin(pool, repo, actor).await {
         Ok(_) => Ok(true),
-        Err(crate::backend::repositories::access::AccessError::Unavailable) => Err(
-            DependencyError::Access(crate::backend::repositories::access::AccessError::Unavailable),
+        Err(codeyard_identity::repository_access::AccessError::Unavailable) => Err(
+            DependencyError::Access(codeyard_identity::repository_access::AccessError::Unavailable),
         ),
         Err(_) => Ok(false),
     }
@@ -41,7 +41,7 @@ pub async fn status(
     repo: i64,
     feature: Feature,
 ) -> Result<Status, DependencyError> {
-    let repository = crate::backend::repositories::access::check_admin(pool, repo, actor)
+    let repository = codeyard_identity::repository_access::check_admin(pool, repo, actor)
         .await
         .map_err(DependencyError::Access)?;
     let current = records::state(pool, repo)
@@ -99,7 +99,7 @@ pub async fn set_enabled(
     enabled: bool,
     private_consent: bool,
 ) -> Result<(), DependencyError> {
-    let repository = crate::backend::repositories::access::check_admin(pool, repo, actor)
+    let repository = codeyard_identity::repository_access::check_admin(pool, repo, actor)
         .await
         .map_err(DependencyError::Access)?;
     if repository.is_archived {

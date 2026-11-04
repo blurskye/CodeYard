@@ -360,7 +360,7 @@ async fn legacy_target(
     if let Some(repo) =
         db::repositories::records::get_repository(&ctx.state.pool, "gists", id).await?
     {
-        if crate::backend::repositories::access::can_read(&ctx.state.pool, ctx.user.as_ref(), &repo)
+        if codeyard_identity::repository_access::can_read(&ctx.state.pool, ctx.user.as_ref(), &repo)
             .await?
         {
             let mut target = format!(

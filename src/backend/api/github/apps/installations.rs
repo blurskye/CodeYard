@@ -30,7 +30,7 @@ use std::{collections::HashMap, sync::Arc};
 pub(super) async fn jwt(state: &AppState, headers: &HeaderMap) -> Result<App> {
     let value = crate::backend::api::github::auth::credential(headers)
         .ok_or_else(crate::backend::api::github::auth::required)?;
-    crate::backend::identity::github_apps::authenticate(&state.pool, value)
+    codeyard_identity::github_apps::authenticate(&state.pool, value)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(crate::backend::api::github::auth::required)
@@ -348,7 +348,7 @@ async fn issue(
         .get("permissions")
         .map_or_else(
             || Some(grant.clone()),
-            |value| crate::backend::identity::github_apps::subset(value, &grant),
+            |value| codeyard_identity::github_apps::subset(value, &grant),
         )
         .ok_or_else(|| Error::invalid("Permissions exceed the app grant"))?;
     let parent_repos = parent.map(selection).transpose()?.unwrap_or_default();
@@ -398,7 +398,7 @@ async fn issue(
     let value = if actor.is_some() {
         format!("ghu_{}", codeyard_support::crypto::random_hex())
     } else {
-        crate::backend::identity::tokens::installation_token()
+        codeyard_identity::tokens::installation_token()
     };
     let source = body
         .get("access_token")
@@ -413,7 +413,7 @@ async fn issue(
         &token_hash(&value),
         &permissions.to_string(),
         &serde_json::to_string(&ids).map_err(Error::unavailable)?,
-        crate::backend::identity::github_apps::write(&permissions),
+        codeyard_identity::github_apps::write(&permissions),
     )
     .await
     .map_err(Error::unavailable)?

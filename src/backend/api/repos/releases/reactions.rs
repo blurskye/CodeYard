@@ -3,7 +3,7 @@ use crate::backend::api::repos::forms::authorize_post;
 use crate::backend::api::repos::forms::field;
 use crate::backend::app::AppState;
 
-use crate::backend::repositories::access::AccessError;
+use codeyard_identity::repository_access::AccessError;
 
 use crate::backend::repositories::releases::ReleaseError;
 use axum::{

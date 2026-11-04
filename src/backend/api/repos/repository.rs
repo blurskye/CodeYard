@@ -33,7 +33,7 @@ use crate::backend::api::repos::responses::RepoResponse;
 
 use crate::backend::app::AppState;
 
-use crate::backend::repositories::access::AccessError;
+use codeyard_identity::repository_access::AccessError;
 
 use crate::backend::webhooks::settings::HookError;
 use axum::extract::{OriginalUri, Path, Query, State};
@@ -1686,7 +1686,7 @@ async fn mutate(
             Ok(format!("{base}/branches"))
         }
         "default-branch" => {
-            crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
+            codeyard_identity::repository_access::check_admin(pool, repository.id, actor.id)
                 .await
                 .map_err(access_error)?;
             crate::backend::repositories::refs::set_default_branch(
@@ -1743,7 +1743,7 @@ async fn mutate(
             Ok(format!("{base}/tags"))
         }
         "settings" => {
-            crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
+            codeyard_identity::repository_access::check_admin(pool, repository.id, actor.id)
                 .await
                 .map_err(access_error)?;
             crate::backend::repositories::lifecycle::validate_description(&field(
@@ -2028,7 +2028,7 @@ async fn mutate(
             Ok(base)
         }
         "rename" => {
-            crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
+            codeyard_identity::repository_access::check_admin(pool, repository.id, actor.id)
                 .await
                 .map_err(access_error)?;
             let updated = codeyard_db_repos::repositories::records::rename_repository(
@@ -2055,7 +2055,7 @@ async fn mutate(
             Ok(codeyard_webui::repository_path(&new_owner, &updated.name))
         }
         "archive" | "unarchive" => {
-            crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
+            codeyard_identity::repository_access::check_admin(pool, repository.id, actor.id)
                 .await
                 .map_err(access_error)?;
             // Archiving an archived repository, or the reverse, changes nothing and is not an error.
@@ -2217,7 +2217,7 @@ async fn mutate(
                     )
                 })?)
             };
-            crate::backend::repositories::access::change_collaborator(
+            codeyard_identity::repository_access::change_collaborator(
                 pool,
                 ctx.database_actor(actor.id),
                 repository.id,

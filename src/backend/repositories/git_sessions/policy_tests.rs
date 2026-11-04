@@ -295,9 +295,7 @@ mod fixture {
                 Arc::new(crate::backend::ci::CiConfig::default()),
                 Arc::new(tokio::sync::Notify::new()),
                 None,
-                Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
-                    &pool,
-                )),
+                Arc::new(codeyard_notifications::NotificationBroadcaster::new(&pool)),
             ));
             let command = format!("{oid} {ZERO_SHA} refs/heads/main\0report-status\n");
             let request = format!("{:04x}{command}0000", command.len() + 4).into_bytes();
@@ -1454,7 +1452,7 @@ mod fixture {
             }),
             Arc::new(tokio::sync::Notify::new()),
             None,
-            Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
+            Arc::new(codeyard_notifications::NotificationBroadcaster::new(
                 &fixture.pool,
             )),
         ));
@@ -1567,7 +1565,7 @@ mod fixture {
                 unreachable: Default::default(),
                 ci_replicas: Default::default(),
             }),
-            Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
+            Arc::new(codeyard_notifications::NotificationBroadcaster::new(
                 &fixture.pool,
             )),
         ));
@@ -1651,7 +1649,7 @@ mod fixture {
             }),
             Arc::new(tokio::sync::Notify::new()),
             None,
-            Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
+            Arc::new(codeyard_notifications::NotificationBroadcaster::new(
                 &fixture.pool,
             )),
         ));
@@ -1716,7 +1714,7 @@ mod fixture {
             }),
             Arc::new(tokio::sync::Notify::new()),
             None,
-            Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
+            Arc::new(codeyard_notifications::NotificationBroadcaster::new(
                 &fixture.pool,
             )),
         ));
@@ -1847,7 +1845,7 @@ mod fixture {
                 }),
                 Arc::new(tokio::sync::Notify::new()),
                 None,
-                Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
+                Arc::new(codeyard_notifications::NotificationBroadcaster::new(
                     &fixture.pool,
                 )),
             ));

@@ -2,7 +2,7 @@
 use super::{db, Fixture};
 use crate::support::database::wait_until_blocked;
 use chrono::{Duration, Utc};
-use codeyard::backend::notifications::{current_event, NotificationEvent};
+use codeyard_notifications::{current_event, NotificationEvent};
 
 fn hint(user_id: i64, notification_id: i64) -> NotificationEvent {
     NotificationEvent::Created {
@@ -29,7 +29,7 @@ async fn contract(pg: bool) {
     let session = "12".repeat(32);
     let replacement = "34".repeat(32);
     let pool = f.pool();
-    let broadcaster = codeyard::backend::notifications::NotificationBroadcaster::new(pool);
+    let broadcaster = codeyard_notifications::NotificationBroadcaster::new(pool);
     let mut receiver = broadcaster.subscribe(recipient);
     broadcaster.send(hint(recipient, account)).await;
     let local = serde_json::to_value(receiver.recv().await.unwrap()).unwrap();

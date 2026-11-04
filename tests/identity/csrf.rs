@@ -131,7 +131,7 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::SEE_OTHER, "setup: {body}");
 
-    let password_hash = codeyard::backend::identity::passwords::hash_password("current-password")
+    let password_hash = codeyard_identity::passwords::hash_password("current-password")
         .await
         .unwrap();
     let login_user = db::users::accounts::create_user_with_password_and_flags(

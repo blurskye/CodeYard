@@ -8,10 +8,10 @@ use crate::backend::api::user::responses::Fields;
 
 use crate::backend::app::AppState;
 
-use crate::backend::identity::accounts::PasswordChange;
 use axum::extract::{Form, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_identity::accounts::PasswordChange;
 use std::sync::Arc;
 
 pub(crate) async fn password_post(
@@ -38,7 +38,7 @@ pub(crate) async fn password_post(
         .await;
     }
     let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
-    let result = crate::backend::identity::accounts::change_password(
+    let result = codeyard_identity::accounts::change_password(
         &ctx.state.pool,
         session_id.as_deref(),
         PasswordChange {

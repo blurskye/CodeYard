@@ -8,7 +8,7 @@ use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 
-use crate::backend::identity::avatars::AvatarError;
+use crate::backend::api::avatar_ops::AvatarError;
 use axum::extract::multipart::MultipartRejection;
 use axum::extract::{DefaultBodyLimit, Form, Multipart, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -92,7 +92,7 @@ async fn upload(
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential = AccountCredential::Session(&session);
-    match crate::backend::identity::avatars::upload_user_avatar(
+    match crate::backend::api::avatar_ops::upload_user_avatar(
         &ctx.state.pool,
         &ctx.state.storage,
         &user,
@@ -125,7 +125,7 @@ async fn remove_form(
     };
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match crate::backend::identity::avatars::remove_user_avatar(
+    match crate::backend::api::avatar_ops::remove_user_avatar(
         &ctx.state.pool,
         &user,
         &AccountCredential::Session(&session),

@@ -24,3 +24,9 @@ uuid.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies.lettre]
+workspace = true
+
+[dependencies.tokio]
+workspace = true

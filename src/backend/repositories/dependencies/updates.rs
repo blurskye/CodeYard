@@ -4,7 +4,6 @@ use crate::backend::ci::CiRuns;
 use crate::backend::repositories::dependencies::registry::Client;
 use crate::backend::repositories::dependencies::worker::Pinned;
 
-use crate::backend::notifications::NotificationBroadcaster;
 use codeyard_db_repos::repositories::dependencies as records;
 use codeyard_db_repos::repositories::dependencies::AlertState;
 use codeyard_db_repos::repositories::dependencies::Feature;
@@ -12,6 +11,7 @@ use codeyard_db_repos::repositories::dependencies::Job;
 use codeyard_db_repos::repositories::dependencies::Publication;
 use codeyard_db_repos::repositories::dependencies::Refusal;
 use codeyard_db_repos::repositories::dependencies::Update;
+use codeyard_notifications::NotificationBroadcaster;
 
 use crate::backend::repositories::pull_requests::mutations::create_pull_request;
 use crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest;

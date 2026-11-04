@@ -4,8 +4,8 @@ use crate::backend::api::github::repository;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::repositories::access::AccessError;
 use codeyard_db_repos::repositories::dependencies::Feature;
+use codeyard_identity::repository_access::AccessError;
 
 use crate::backend::repositories::dependencies::DependencyError;
 use crate::backend::repositories::dependencies::Status;

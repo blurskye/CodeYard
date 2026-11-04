@@ -11,7 +11,7 @@ use crate::backend::api::graphql::RequestContext;
 use crate::backend::api::graphql::Result;
 use crate::backend::api::graphql::Value;
 
-use crate::backend::repositories::access::AccessError;
+use codeyard_identity::repository_access::AccessError;
 use db::repositories::github::{self, RepositoryList, RepositoryListQuery};
 use serde_json::json;
 
@@ -278,7 +278,7 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
         let Some(id) = hit.repository_id else {
             continue;
         };
-        match crate::backend::repositories::access::check_read(pool, id, viewer).await {
+        match codeyard_identity::repository_access::check_read(pool, id, viewer).await {
             Ok(repo) => nodes.push(crate::backend::api::graphql::repository::object(&repo)),
             Err(AccessError::NotFound) => {}
             Err(_) => return Err(unavailable(())),

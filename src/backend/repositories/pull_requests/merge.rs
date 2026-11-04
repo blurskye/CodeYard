@@ -3,14 +3,14 @@ use crate::backend::ci::RefUpdate;
 use crate::backend::repositories::pull_requests::database_error;
 use crate::backend::repositories::pull_requests::OperationError;
 
-use crate::backend::notifications::create::create_and_broadcast_notification;
-use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::protection::check_branch_write;
 use crate::backend::repositories::protection::BranchWrite;
 use crate::backend::repositories::protection::History;
 use crate::backend::repositories::protection::Refusal;
 use crate::backend::repositories::protection::WriteVia;
+use codeyard_notifications::create::create_and_broadcast_notification;
+use codeyard_notifications::create::NotificationRequest;
+use codeyard_notifications::NotificationBroadcaster;
 
 use crate::backend::repositories::store::allowed_merge_methods;
 use crate::backend::repositories::store::repo_store;
@@ -1657,13 +1657,8 @@ async fn publish_prepared_merge_owned(
         {
             notified.push(layer.author_id);
         }
-        crate::backend::notifications::create::notify_subscribers(
-            pool,
-            broadcaster,
-            notice,
-            &notified,
-        )
-        .await;
+        codeyard_notifications::create::notify_subscribers(pool, broadcaster, notice, &notified)
+            .await;
     }
     // As on GitHub, closing keywords in a description close the issues only when the pull
     // request lands on the default branch.

@@ -2,10 +2,10 @@
 //! request pages and issue creation all change assignees through these functions, so every change
 //! records the same timeline events and notifies the same people.
 
-use crate::backend::notifications::assignments::notify_assignees;
-use crate::backend::notifications::assignments::Assignment;
-use crate::backend::notifications::NotificationBroadcaster;
 use codeyard_db_repos::assignees::AssignedItem;
+use codeyard_notifications::assignments::notify_assignees;
+use codeyard_notifications::assignments::Assignment;
+use codeyard_notifications::NotificationBroadcaster;
 
 /// The issue or pull request whose assignees change, and who changes them.
 pub struct Target<'a> {

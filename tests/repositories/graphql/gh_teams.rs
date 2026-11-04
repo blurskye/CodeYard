@@ -572,7 +572,7 @@ async fn contract(pg: bool) {
     assert_eq!(data["repo_000"]["defaultBranchRef"], json!({"name":"main"}));
     assert_eq!(data["repo_000"]["isPrivate"], false);
     assert!(data["repo_000"]["id"].is_string());
-    let broadcaster = codeyard::backend::notifications::NotificationBroadcaster::new(f.pool());
+    let broadcaster = codeyard_notifications::NotificationBroadcaster::new(f.pool());
     lifecycle::fork(
         f.pool(),
         None,

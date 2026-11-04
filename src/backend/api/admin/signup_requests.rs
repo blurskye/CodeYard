@@ -5,12 +5,10 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use codeyard_webui::pages::admin::{Signup, SIGNUP_REQUESTS_PER_PAGE};
 
-pub(crate) fn signup_decision(
-    action: &str,
-) -> Option<crate::backend::identity::accounts::SignupDecision> {
+pub(crate) fn signup_decision(action: &str) -> Option<codeyard_identity::accounts::SignupDecision> {
     match action.trim().to_ascii_lowercase().as_str() {
-        "approve" => Some(crate::backend::identity::accounts::SignupDecision::Approve),
-        "reject" => Some(crate::backend::identity::accounts::SignupDecision::Reject),
+        "approve" => Some(codeyard_identity::accounts::SignupDecision::Approve),
+        "reject" => Some(codeyard_identity::accounts::SignupDecision::Reject),
         _ => None,
     }
 }

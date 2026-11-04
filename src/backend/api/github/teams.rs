@@ -792,7 +792,7 @@ async fn team_member(
                 .await
                 .map_err(Error::unavailable)?,
             )?;
-            crate::backend::notifications::create::organization_invitation(
+            codeyard_notifications::create::organization_invitation(
                 &state.pool,
                 &state.notification_broadcaster,
                 auth.user.id,

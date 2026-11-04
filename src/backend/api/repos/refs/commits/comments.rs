@@ -112,7 +112,7 @@ pub(super) async fn discussion(
             .is_some_and(|user| !user.is_banned && !user.must_change_password);
     let maintain = match ctx.user.as_ref() {
         Some(user) => {
-            crate::backend::repositories::access::can_maintain(pool, user, &loaded.repository)
+            codeyard_identity::repository_access::can_maintain(pool, user, &loaded.repository)
                 .await
                 .map_err(|_| unavailable())?
         }
@@ -383,7 +383,7 @@ pub(super) async fn submit(
             let own = comment.author_id == Some(actor);
             if !own
                 && (!route.as_str().ends_with("/delete")
-                    || !crate::backend::repositories::access::can_maintain(
+                    || !codeyard_identity::repository_access::can_maintain(
                         &ctx.state.pool,
                         ctx.user.as_ref().ok_or(CommentError::Denied)?,
                         &loaded.repository,

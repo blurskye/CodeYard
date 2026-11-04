@@ -31,17 +31,17 @@ use std::{collections::HashMap, sync::Arc};
 /// The Git commit document, with its signature checked against the signer's keys.
 pub(super) async fn git_document(
     state: &AppState,
-    signers: &mut crate::backend::identity::signatures::Signers,
+    signers: &mut codeyard_identity::signatures::Signers,
     commit: &CommitInfo,
     owner: &str,
     name: &str,
     repo: i64,
 ) -> Result<Value> {
     let mut value = commit_json(commit, owner, name, repo);
-    value["verification"] = crate::backend::identity::signatures::verification(
+    value["verification"] = codeyard_identity::signatures::verification(
         &state.pool,
         signers,
-        crate::backend::identity::signatures::Signed {
+        codeyard_identity::signatures::Signed {
             signature: commit.signature.as_deref(),
             payload: commit.signature_payload.as_deref(),
             email: Some(&commit.committer_email),
@@ -82,7 +82,7 @@ pub(super) async fn documents(
         .map(|(email, user)| (email, Person::of(&user)))
         .collect();
     let mut values = Vec::with_capacity(commits.len());
-    let mut signers = crate::backend::identity::signatures::Signers::default();
+    let mut signers = codeyard_identity::signatures::Signers::default();
     for commit in commits {
         values.push(crate::backend::webhooks::payloads::commit(
             commit,

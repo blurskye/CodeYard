@@ -8,12 +8,12 @@ use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 
-use crate::backend::identity::gpg::GpgError;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_identity::gpg::GpgError;
 use std::sync::Arc;
 
 async fn result(ctx: &PageContext, result: Result<(), GpgError>) -> Response {
@@ -52,7 +52,7 @@ pub(crate) async fn add_post(
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     result(
         &ctx,
-        crate::backend::identity::gpg::enroll(
+        codeyard_identity::gpg::enroll(
             &ctx.state.pool,
             actor.id,
             &AccountCredential::Session(&session),
@@ -86,7 +86,7 @@ pub(crate) async fn delete_post(
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     result(
         &ctx,
-        crate::backend::identity::gpg::delete(
+        codeyard_identity::gpg::delete(
             &ctx.state.pool,
             actor.id,
             &AccountCredential::Session(&session),

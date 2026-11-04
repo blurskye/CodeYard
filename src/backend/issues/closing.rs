@@ -168,7 +168,7 @@ pub async fn references(
                             .await?
                         {
                             Some(repo) => {
-                                crate::backend::repositories::access::can_read(pool, viewer, &repo)
+                                codeyard_identity::repository_access::can_read(pool, viewer, &repo)
                                     .await?
                             }
                             None => false,

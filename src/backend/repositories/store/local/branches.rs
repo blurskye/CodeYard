@@ -207,7 +207,7 @@ impl LocalStore {
         }
         // Renaming a protected or default branch needs a token's administration permission.
         if let Some(token) = authority.token_id() {
-            if !crate::backend::identity::tokens::repository_scope(
+            if !codeyard_identity::tokens::repository_scope(
                 pool,
                 token,
                 actor,

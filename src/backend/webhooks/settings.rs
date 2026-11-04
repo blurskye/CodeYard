@@ -94,7 +94,7 @@ pub async fn authorize(pool: &DbPool, actor: &User, owner: HookOwner) -> Result<
                 .await
                 .map_err(unavailable)?
                 .ok_or(HookError::NotFound)?;
-            crate::backend::repositories::access::can_admin(pool, actor, &repo)
+            codeyard_identity::repository_access::can_admin(pool, actor, &repo)
                 .await
                 .map_err(unavailable)?
         }

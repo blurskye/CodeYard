@@ -1,14 +1,14 @@
 //! Repository star/watch changes and explicit best-effort notices.
 
-use crate::backend::notifications::create::create_and_broadcast_notification;
-use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::NotificationBroadcaster;
+use codeyard_notifications::create::create_and_broadcast_notification;
+use codeyard_notifications::create::NotificationRequest;
+use codeyard_notifications::NotificationBroadcaster;
 
 use serde_json::json;
 
 #[derive(Debug)]
 pub enum EngagementError {
-    Access(crate::backend::repositories::access::AccessError),
+    Access(codeyard_identity::repository_access::AccessError),
     Unavailable,
     ChangedCountUnavailable,
 }
@@ -17,7 +17,7 @@ fn mutation_error(error: anyhow::Error) -> EngagementError {
     if error.is::<codeyard_db_identity::users::blocks::InteractionBlocked>()
         || error.is::<codeyard_support::credentials::AccountRestricted>()
     {
-        EngagementError::Access(crate::backend::repositories::access::AccessError::WriteDenied)
+        EngagementError::Access(codeyard_identity::repository_access::AccessError::WriteDenied)
     } else {
         EngagementError::Unavailable
     }
@@ -40,7 +40,7 @@ pub async fn set_level(
 ) -> Result<(), EngagementError> {
     let authority = actor.into();
     let actor = authority.user_id;
-    crate::backend::repositories::access::check_read(pool, repo_id, Some(actor))
+    codeyard_identity::repository_access::check_read(pool, repo_id, Some(actor))
         .await
         .map_err(EngagementError::Access)?;
     let saved = match level {
@@ -96,7 +96,7 @@ pub async fn set_subscription(
         )
         .await?;
     } else {
-        crate::backend::repositories::access::check_read(pool, repo_id, Some(actor))
+        codeyard_identity::repository_access::check_read(pool, repo_id, Some(actor))
             .await
             .map_err(EngagementError::Access)?;
         codeyard_db_repos::repositories::engagement::set_watch_level(
@@ -122,14 +122,14 @@ pub async fn change(
 ) -> Result<i32, EngagementError> {
     let authority = actor.into();
     let actor = authority.user_id;
-    crate::backend::repositories::access::check_read(pool, repo_id, Some(actor))
+    codeyard_identity::repository_access::check_read(pool, repo_id, Some(actor))
         .await
         .map_err(EngagementError::Access)?;
     let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| EngagementError::Unavailable)?
         .ok_or(EngagementError::Access(
-            crate::backend::repositories::access::AccessError::NotFound,
+            codeyard_identity::repository_access::AccessError::NotFound,
         ))?;
     let changed = match (kind, enabled) {
         (Engagement::Star, true) => {
@@ -218,7 +218,7 @@ pub async fn change(
             {
                 notified.push(recipient);
             }
-            crate::backend::notifications::create::notify_subscribers(
+            codeyard_notifications::create::notify_subscribers(
                 pool,
                 broadcaster,
                 notice,

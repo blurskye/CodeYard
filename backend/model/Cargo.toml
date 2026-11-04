@@ -60,3 +60,9 @@ workspace = true
 
 [dependencies.subtle]
 workspace = true
+
+[dependencies.iroh]
+workspace = true
+
+[dependencies.uuid]
+workspace = true

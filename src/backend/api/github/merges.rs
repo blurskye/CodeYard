@@ -4,7 +4,7 @@ use crate::backend::api::github::repository;
 use crate::backend::api::github::Error;
 use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
-use crate::backend::repositories::access::AccessError;
+use codeyard_identity::repository_access::AccessError;
 
 use crate::backend::repositories::merges::BranchMerge;
 use crate::backend::repositories::refs::RefError;

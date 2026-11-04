@@ -517,7 +517,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     });
     let (stop_email, email_stop) = tokio::sync::watch::channel(false);
     let email = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(crate::backend::email::outbox::run(
+        tokio::spawn(codeyard_notifications::email::outbox::run(
             pool.clone(),
             state.secret_encryptor.clone(),
             email_stop,

@@ -6,7 +6,7 @@ use axum::{
     Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use codeyard::backend::identity::tokens::{self, TokenInput};
+use codeyard_identity::tokens::{self, TokenInput};
 use codeyard::backend::{ci, db, repositories};
 use rsa::{
     pkcs1v15::{Signature, VerifyingKey},

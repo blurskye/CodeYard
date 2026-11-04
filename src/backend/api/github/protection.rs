@@ -53,7 +53,7 @@ pub(super) async fn protected(
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &auth.user;
-    if !crate::backend::repositories::access::can_admin(&state.pool, actor, &repo)
+    if !codeyard_identity::repository_access::can_admin(&state.pool, actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {

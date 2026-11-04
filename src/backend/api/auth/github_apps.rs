@@ -236,13 +236,13 @@ async fn uninstall(
 }
 fn key_failure(
     ctx: &PageContext,
-    error: crate::backend::identity::github_apps::RegistrationKeyError,
+    error: codeyard_identity::github_apps::RegistrationKeyError,
 ) -> Response {
     let status = match error {
-        crate::backend::identity::github_apps::RegistrationKeyError::Limited => {
+        codeyard_identity::github_apps::RegistrationKeyError::Limited => {
             StatusCode::TOO_MANY_REQUESTS
         }
-        crate::backend::identity::github_apps::RegistrationKeyError::Unavailable => {
+        codeyard_identity::github_apps::RegistrationKeyError::Unavailable => {
             StatusCode::SERVICE_UNAVAILABLE
         }
     };
@@ -280,8 +280,7 @@ async fn regenerate(
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Apps unavailable"),
     }
     let (private, public) =
-        match crate::backend::identity::github_apps::registration_key(&ctx.state.pool, actor).await
-        {
+        match codeyard_identity::github_apps::registration_key(&ctx.state.pool, actor).await {
             Ok(keys) => keys,
             Err(error) => return key_failure(&ctx, error),
         };
@@ -348,12 +347,12 @@ async fn register(
         return manifest_approve(&ctx, &form).await;
     }
     let slug = field(&form, "slug");
-    let name = crate::backend::identity::github_apps::valid_name(field(&form, "name"));
+    let name = codeyard_identity::github_apps::valid_name(field(&form, "name"));
     let homepage = field(&form, "homepage");
     let url = url::Url::parse(homepage).ok();
     let permissions = serde_json::from_str::<Value>(field(&form, "permissions"))
         .ok()
-        .and_then(|value| crate::backend::identity::github_apps::permissions(&value))
+        .and_then(|value| codeyard_identity::github_apps::permissions(&value))
         .map(Value::Object);
     let chosen: Vec<String> = field(&form, "events")
         .split(',')
@@ -366,7 +365,7 @@ async fn register(
     } else {
         codeyard_model::webhook_events::subscription(&chosen)
     };
-    if !crate::backend::identity::github_apps::valid_slug(slug)
+    if !codeyard_identity::github_apps::valid_slug(slug)
         || name.is_none()
         || field(&form, "description").len() > 1000
         || homepage.len() > 2048
@@ -385,7 +384,7 @@ async fn register(
                     .split(',')
                     .filter(|event| !event.is_empty())
                     .any(|event| {
-                        !crate::backend::identity::github_apps::event_permission(
+                        !codeyard_identity::github_apps::event_permission(
                             permissions.as_ref().unwrap_or(&Value::Null),
                             event,
                         )
@@ -400,7 +399,7 @@ async fn register(
     let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let (private, public) = match crate::backend::identity::github_apps::registration_key(
+    let (private, public) = match codeyard_identity::github_apps::registration_key(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,
     )
@@ -427,7 +426,7 @@ async fn register(
         events: events.unwrap(),
         access_level: if codeyard_model::github_apps::allows(&permissions, "administration", true) {
             5
-        } else if crate::backend::identity::github_apps::write(&permissions) {
+        } else if codeyard_identity::github_apps::write(&permissions) {
             3
         } else {
             1

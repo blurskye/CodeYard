@@ -351,7 +351,7 @@ async fn token_raw_page(
         Err(error) => return raw_store_error(error).into_response(),
     };
     let current =
-        match crate::backend::repositories::access::current_repository(&state.pool, repository.id)
+        match codeyard_identity::repository_access::current_repository(&state.pool, repository.id)
             .await
         {
             Ok(current) => current,

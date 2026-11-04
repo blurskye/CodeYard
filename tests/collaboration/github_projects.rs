@@ -255,15 +255,15 @@ async fn fields(pg: bool) {
             // An organization token cannot reach alice's private repository, so the project
             // lists its issue and pull request with their content redacted and cannot add them.
 
-            let created = codeyard::backend::identity::fine_grained::create(
+            let created = codeyard_identity::fine_grained::create(
                 f.pool(),
                 alice,
                 Some(&session.session),
-                codeyard::backend::identity::fine_grained::Request {
+                codeyard_identity::fine_grained::Request {
                     name: "projects".into(),
                     description: "Project reader".into(),
-                    owner: codeyard::backend::identity::fine_grained::Owner::Organization(org),
-                    access: codeyard::backend::identity::fine_grained::Access::All,
+                    owner: codeyard_identity::fine_grained::Owner::Organization(org),
+                    access: codeyard_identity::fine_grained::Access::All,
                     repositories: vec![],
                     permissions: json!({"organization_projects":"write","issues":"read","pull_requests":"read"})
                         .as_object()

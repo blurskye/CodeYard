@@ -10,12 +10,12 @@ use crate::backend::api::repos::responses::repository_topics;
 use crate::backend::api::repos::responses::RepoResponse;
 use crate::backend::app::AppState;
 
-use crate::backend::repositories::access::AccessError;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_orgs::organizations as orgs;
 use codeyard_db_orgs::organizations::OrganizationPage;
 use codeyard_db_repos::repositories::records::RepositoryFilter;
 use codeyard_db_repos::repositories::records::RepositorySort;
+use codeyard_identity::repository_access::AccessError;
 
 use crate::backend::repositories::lifecycle::InitialFiles;
 

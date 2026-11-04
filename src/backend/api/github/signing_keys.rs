@@ -6,7 +6,6 @@ use crate::backend::api::github::Result;
 use crate::backend::app::AppState;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 
-use crate::backend::identity::keys::KeyError;
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -14,6 +13,7 @@ use axum::{
     routing::{delete, get, post, MethodRouter},
     Json,
 };
+use codeyard_identity::keys::KeyError;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
@@ -121,7 +121,7 @@ async fn create(
         .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
     let Json(input) = input.map_err(crate::backend::api::github::json_error)?;
-    let key = crate::backend::identity::keys::enroll_signing(
+    let key = codeyard_identity::keys::enroll_signing(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -153,7 +153,7 @@ async fn remove(
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    crate::backend::identity::keys::delete_signing(
+    codeyard_identity::keys::delete_signing(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),

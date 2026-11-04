@@ -9,8 +9,8 @@ use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 
-use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::AccessLevel;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::json;
 
 async fn contract(pg: bool) {
@@ -31,7 +31,7 @@ async fn contract(pg: bool) {
         (alice, &session.session, "read"),
         (bob, &other_session.session, "write"),
     ] {
-        let token = codeyard::backend::identity::tokens::create(
+        let token = codeyard_identity::tokens::create(
             f.pool(),
             actor,
             Some(session),
@@ -615,7 +615,7 @@ async fn contract(pg: bool) {
             .await
             .unwrap()
     );
-    let error = codeyard::backend::identity::blocks::change(
+    let error = codeyard_identity::blocks::change(
         f.pool(),
         alice,
         &AccountCredential::Session("revoked"),
@@ -623,10 +623,7 @@ async fn contract(pg: bool) {
         true,
     )
     .await;
-    assert_eq!(
-        error,
-        Err(codeyard::backend::identity::blocks::BlockError::Denied)
-    );
+    assert_eq!(error, Err(codeyard_identity::blocks::BlockError::Denied));
     if pg {
         // Every contribution effect waits behind policy changes, then reloads their outcome.
         let mut gate = f.pg().begin().await.unwrap();

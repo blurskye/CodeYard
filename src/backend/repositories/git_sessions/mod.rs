@@ -179,9 +179,9 @@ impl ReceiveCredential {
                     && codeyard_db_cluster::node_config::get_node_configuration(pool)
                         .await?
                         .is_some_and(|config| config.setup_completed && !config.is_private());
-                let bounds = crate::backend::identity::github_apps::authority(pool, id).await?;
+                let bounds = codeyard_identity::github_apps::authority(pool, id).await?;
                 anyhow::ensure!(
-                    crate::backend::identity::oauth_apps::allows_git(
+                    codeyard_identity::oauth_apps::allows_git(
                         pool,
                         id,
                         bounds.as_ref(),

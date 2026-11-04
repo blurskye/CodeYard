@@ -33,7 +33,7 @@ async fn allowed(state: &AppState, headers: &HeaderMap) -> bool {
     }
     // Repository-scoped and OAuth credentials do not grant site-wide monitoring access.
     matches!(
-        crate::backend::identity::github_apps::authority(&state.pool, auth.token.id).await,
+        codeyard_identity::github_apps::authority(&state.pool, auth.token.id).await,
         Ok(None)
     ) && matches!(
         codeyard_db_identity::oauth_apps::token(&state.pool, auth.token.id).await,

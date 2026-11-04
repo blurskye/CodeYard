@@ -4,7 +4,6 @@ use crate::support::{
     http_client::Client,
 };
 
-use codeyard::backend::identity::tokens::{self, TokenInput};
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_db_identity::interactions::InteractionExpiry;
@@ -12,6 +11,7 @@ use codeyard_db_identity::interactions::InteractionGroup;
 use codeyard_db_identity::interactions::InteractionRefusal;
 use codeyard_db_identity::interactions::InteractionScope;
 use codeyard_db_identity::interactions::NewRestriction;
+use codeyard_identity::tokens::{self, TokenInput};
 use codeyard_support::credentials::AccountRestricted;
 use serde_json::json;
 

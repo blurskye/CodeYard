@@ -126,7 +126,7 @@ pub(crate) fn notification_session_denied() -> (StatusCode, Json<ApiError>) {
 pub(crate) struct ListParams {
     pub view: NotificationView,
     pub repository: Option<i64>,
-    /// The reason name, one of `crate::backend::notifications::reasons::REASONS`.
+    /// The reason name, one of `codeyard_notifications::reasons::REASONS`.
     pub reason: Option<&'static str>,
     pub query: Option<String>,
     pub unread_only: bool,
@@ -160,7 +160,7 @@ impl ListParams {
         let reason = match text("reason") {
             None => None,
             Some(name) => Some(
-                crate::backend::notifications::reasons::REASONS
+                codeyard_notifications::reasons::REASONS
                     .iter()
                     .find(|(known, _, _)| *known == name)
                     .map(|(known, _, _)| *known)
@@ -194,7 +194,7 @@ impl ListParams {
             repository_id: self.repository,
             kinds: self
                 .reason
-                .and_then(crate::backend::notifications::reasons::kinds)
+                .and_then(codeyard_notifications::reasons::kinds)
                 .unwrap_or_default()
                 .iter()
                 .map(|kind| (*kind).to_owned())
@@ -238,7 +238,7 @@ pub(crate) async fn json_action(
     let user = get_current_user(&state.pool, headers).await?;
     let action = action()?;
     let session_id = extract_session_id(headers).ok_or_else(notification_session_denied)?;
-    crate::backend::notifications::inbox::inbox(
+    codeyard_notifications::inbox::inbox(
         &state.pool,
         &state.notification_broadcaster,
         &session_id,
@@ -306,11 +306,11 @@ pub async fn list_notifications(
 }
 
 pub(crate) fn inbox_error(
-    error: crate::backend::notifications::inbox::InboxError,
+    error: codeyard_notifications::inbox::InboxError,
 ) -> (StatusCode, Json<ApiError>) {
     match error {
-        crate::backend::notifications::inbox::InboxError::Denied => notification_session_denied(),
-        crate::backend::notifications::inbox::InboxError::Unavailable => {
+        codeyard_notifications::inbox::InboxError::Denied => notification_session_denied(),
+        codeyard_notifications::inbox::InboxError::Unavailable => {
             notification_unavailable(anyhow::anyhow!("unavailable"))
         }
     }
@@ -441,7 +441,7 @@ pub(crate) async fn notification_list(
                     .get("subject")
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned),
-                reason: crate::backend::notifications::reasons::label_for_kind(&item.kind)
+                reason: codeyard_notifications::reasons::label_for_kind(&item.kind)
                     .map(str::to_owned),
                 title: item.title,
                 body: item
@@ -467,7 +467,7 @@ pub(crate) async fn notification_list(
         repository: params.repository,
         repositories,
         reason: params.reason.map(str::to_owned),
-        reasons: crate::backend::notifications::reasons::REASONS
+        reasons: codeyard_notifications::reasons::REASONS
             .iter()
             .map(|(slug, label, _)| view::ReasonOption {
                 slug: (*slug).to_owned(),
@@ -535,7 +535,7 @@ pub(crate) async fn native_action(
         params.unread_only,
         before.as_deref(),
     );
-    let result = crate::backend::notifications::inbox::inbox(
+    let result = codeyard_notifications::inbox::inbox(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         &session_id,
@@ -568,10 +568,8 @@ pub(crate) async fn native_action(
         ),
         Err(error) => {
             let status = match error {
-                crate::backend::notifications::inbox::InboxError::Denied => {
-                    StatusCode::UNAUTHORIZED
-                }
-                crate::backend::notifications::inbox::InboxError::Unavailable => {
+                codeyard_notifications::inbox::InboxError::Denied => StatusCode::UNAUTHORIZED,
+                codeyard_notifications::inbox::InboxError::Unavailable => {
                     StatusCode::SERVICE_UNAVAILABLE
                 }
             };

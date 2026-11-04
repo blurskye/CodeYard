@@ -46,7 +46,7 @@ async fn private_fork_owned(
     ghsa: &str,
 ) -> Result<Repository> {
     let actor = authority.user_id;
-    crate::backend::repositories::access::credential_user(pool, &authority, true).await?;
+    codeyard_identity::repository_access::credential_user(pool, &authority, true).await?;
     anyhow::ensure!(
         codeyard_db_security::advisories::can_administer(pool, actor, repo.id).await?,
         Refusal::Denied
@@ -59,15 +59,15 @@ async fn private_fork_owned(
         Refusal::Conflict
     );
     if let Some(id) = advisory.private_fork_id {
-        let fork = crate::backend::repositories::access::check_read(pool, id, Some(actor))
+        let fork = codeyard_identity::repository_access::check_read(pool, id, Some(actor))
             .await
             .map_err(|error| match error {
-                crate::backend::repositories::access::AccessError::Unavailable => {
+                codeyard_identity::repository_access::AccessError::Unavailable => {
                     anyhow::anyhow!("Repository authority is unavailable")
                 }
                 _ => Refusal::Missing.into(),
             })?;
-        crate::backend::repositories::access::credential_user(pool, &authority, true).await?;
+        codeyard_identity::repository_access::credential_user(pool, &authority, true).await?;
         anyhow::ensure!(
             codeyard_db_security::advisories::can_administer(pool, actor, repo.id).await?,
             Refusal::Denied
@@ -119,17 +119,17 @@ async fn private_fork_owned(
         }
         return Err(error);
     }
-    crate::backend::repositories::access::check_read(pool, fork.id, Some(actor))
+    codeyard_identity::repository_access::check_read(pool, fork.id, Some(actor))
         .await
         .map_err(authority_error)
 }
 
-fn authority_error(error: crate::backend::repositories::access::AccessError) -> anyhow::Error {
+fn authority_error(error: codeyard_identity::repository_access::AccessError) -> anyhow::Error {
     match error {
-        crate::backend::repositories::access::AccessError::Unavailable => {
+        codeyard_identity::repository_access::AccessError::Unavailable => {
             anyhow::anyhow!("Repository authority is unavailable")
         }
-        crate::backend::repositories::access::AccessError::NotFound => Refusal::Missing.into(),
+        codeyard_identity::repository_access::AccessError::NotFound => Refusal::Missing.into(),
         _ => Refusal::Denied.into(),
     }
 }

@@ -607,7 +607,7 @@ jobs:
             &[bob],
         )
         .await;
-    let hash = codeyard::backend::identity::tokens::token_hash(writer);
+    let hash = codeyard_identity::tokens::token_hash(writer);
     f.execute(
         "DELETE FROM personal_access_tokens WHERE id=$1",
         &[credential],

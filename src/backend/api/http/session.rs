@@ -178,7 +178,7 @@ pub(crate) async fn get_current_user(
 ) -> Result<codeyard_db_core::models::User, (StatusCode, Json<ApiError>)> {
     get_optional_user(pool, headers).await?.ok_or_else(|| {
         crate::backend::api::auth::errors::admin_authority_failure(
-            crate::backend::identity::sessions::AccountAuthorityError::NotAuthenticated,
+            codeyard_identity::sessions::AccountAuthorityError::NotAuthenticated,
         )
     })
 }
@@ -197,7 +197,7 @@ pub(crate) async fn get_optional_user(
     let user = user.filter(optional_user_allowed);
     if user.as_ref().is_some_and(|user| user.must_change_password) {
         return Err(crate::backend::api::auth::errors::admin_authority_failure(
-            crate::backend::identity::sessions::AccountAuthorityError::PasswordChangeRequired,
+            codeyard_identity::sessions::AccountAuthorityError::PasswordChangeRequired,
         ));
     }
     Ok(user)

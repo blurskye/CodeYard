@@ -5,10 +5,10 @@ use crate::backend::api::organizations::organization::unavailable;
 use crate::backend::api::organizations::organization::unit;
 use crate::backend::api::organizations::organization::Fields;
 
-use crate::backend::notifications::create::organization_invitation;
 use axum::response::Response;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_notifications::create::organization_invitation;
 use codeyard_webui::pages::orgs as view;
 use std::collections::HashMap;
 

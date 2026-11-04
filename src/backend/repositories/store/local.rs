@@ -156,7 +156,7 @@ async fn live_pull_read(
             .map_err(|_| RepoError::authority_unavailable())?
             .filter(|user| user.id == actor.user)
             .ok_or_else(|| RepoError::new(ErrorKind::Invalid, "repository read denied"))?;
-        if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, token)
+        if let Some(bounds) = codeyard_identity::github_apps::authority(pool, token)
             .await
             .map_err(|_| RepoError::authority_unavailable())?
         {
@@ -202,15 +202,15 @@ async fn live_read(
         .map_err(|_| RepoError::authority_unavailable())?
         .filter(|user| !user.is_banned && !user.must_change_password)
         .ok_or_else(|| RepoError::new(ErrorKind::Invalid, "repository read denied"))?;
-    let repository = crate::backend::repositories::access::current_repository(pool, repo_id)
+    let repository = codeyard_identity::repository_access::current_repository(pool, repo_id)
         .await
         .map_err(|error| match error {
-            crate::backend::repositories::access::AccessError::Unavailable => {
+            codeyard_identity::repository_access::AccessError::Unavailable => {
                 RepoError::authority_unavailable()
             }
             _ => RepoError::new(ErrorKind::Invalid, "repository read denied"),
         })?;
-    if !crate::backend::repositories::access::can_read_git(pool, Some(&user), &repository)
+    if !codeyard_identity::repository_access::can_read_git(pool, Some(&user), &repository)
         .await
         .map_err(|_| RepoError::authority_unavailable())?
         || !repository_matches_path(&repository, path, node_id)
@@ -233,10 +233,10 @@ async fn live_write(
     node_id: Option<Option<i64>>,
 ) -> Result<codeyard_db_core::models::Repository, RepoError> {
     let (repository, user) =
-        crate::backend::repositories::access::check_write(pool, repo_id, actor)
+        codeyard_identity::repository_access::check_write(pool, repo_id, actor)
             .await
             .map_err(|error| match error {
-                crate::backend::repositories::access::AccessError::Unavailable => {
+                codeyard_identity::repository_access::AccessError::Unavailable => {
                     RepoError::authority_unavailable()
                 }
                 _ => RepoError::write_denied(),
@@ -280,18 +280,18 @@ async fn live_pull_head_write(
         .await
         .map_err(|_| RepoError::authority_unavailable())?
         .ok_or_else(RepoError::write_denied)?;
-    let head = crate::backend::repositories::access::current_repository(pool, head_id)
+    let head = codeyard_identity::repository_access::current_repository(pool, head_id)
         .await
         .map_err(|error| match error {
-            crate::backend::repositories::access::AccessError::Unavailable => {
+            codeyard_identity::repository_access::AccessError::Unavailable => {
                 RepoError::authority_unavailable()
             }
             _ => RepoError::write_denied(),
         })?;
-    let base = crate::backend::repositories::access::current_repository(pool, base_id)
+    let base = codeyard_identity::repository_access::current_repository(pool, base_id)
         .await
         .map_err(|error| match error {
-            crate::backend::repositories::access::AccessError::Unavailable => {
+            codeyard_identity::repository_access::AccessError::Unavailable => {
                 RepoError::authority_unavailable()
             }
             _ => RepoError::write_denied(),
@@ -322,7 +322,7 @@ async fn live_pull_head_write(
     }
     if let Some(token) = request.token {
         for (repo, write) in [(base_id, false), (head_id, true)] {
-            if !crate::backend::identity::tokens::repository_scope(
+            if !codeyard_identity::tokens::repository_scope(
                 pool, token, actor, repo, "contents", write,
             )
             .await
@@ -935,10 +935,10 @@ impl LocalStore {
         prepared_repository: Option<&Path>,
     ) -> Result<Arc<RefChange>, RepoError> {
         let (repository, user) =
-            crate::backend::repositories::access::check_write(pool, repo_id, actor)
+            codeyard_identity::repository_access::check_write(pool, repo_id, actor)
                 .await
                 .map_err(|error| match error {
-                    crate::backend::repositories::access::AccessError::Unavailable => {
+                    codeyard_identity::repository_access::AccessError::Unavailable => {
                         RepoError::authority_unavailable()
                     }
                     _ => RepoError::write_denied(),
@@ -1044,7 +1044,7 @@ impl LocalStore {
         let Some(token) = token else {
             return Ok(());
         };
-        if !crate::backend::identity::oauth_apps::allows_workflows(pool, token)
+        if !codeyard_identity::oauth_apps::allows_workflows(pool, token)
             .await
             .map_err(|_| RepoError::authority_unavailable())?
         {
@@ -1328,10 +1328,10 @@ impl LocalStore {
         let _publication = git::locks::lock(self.path()).await;
         // A pending gist has no ready gist row yet; its explicit owner is its only writer.
         // Ordinary copies recheck destination authority after potentially slow copying.
-        let destination = crate::backend::repositories::access::current_repository(pool, repo_id)
+        let destination = codeyard_identity::repository_access::current_repository(pool, repo_id)
             .await
             .map_err(|error| match error {
-                crate::backend::repositories::access::AccessError::Unavailable => {
+                codeyard_identity::repository_access::AccessError::Unavailable => {
                     RepoError::authority_unavailable()
                 }
                 _ => RepoError::write_denied(),
@@ -1382,7 +1382,7 @@ impl LocalStore {
         live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
         if let Some(token_id) = authority.token_id() {
             let source_repository =
-                crate::backend::repositories::access::current_repository(pool, source_repo_id)
+                codeyard_identity::repository_access::current_repository(pool, source_repo_id)
                     .await
                     .map_err(|_| RepoError::authority_unavailable())?;
             crate::backend::repositories::git_sessions::ReceiveCredential::Token(token_id)
@@ -1402,7 +1402,7 @@ impl LocalStore {
             )
             .await?;
         }
-        crate::backend::repositories::access::credential_user(pool, &authority, true)
+        codeyard_identity::repository_access::credential_user(pool, &authority, true)
             .await
             .map_err(RepoError::from)?;
         require_legacy_publisher(pool, repo_id).await?;
@@ -3849,7 +3849,7 @@ impl LocalStore {
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &references, &publication, None)
             .await?;
-        let repository = crate::backend::repositories::access::current_repository(pool, repo_id)
+        let repository = codeyard_identity::repository_access::current_repository(pool, repo_id)
             .await
             .map_err(|_| RepoError::write_denied())?;
         crate::backend::repositories::access::check_publication_actor(
@@ -3886,7 +3886,7 @@ impl LocalStore {
                     .await?;
                 }
                 let repository =
-                    crate::backend::repositories::access::current_repository(pool, repo_id)
+                    codeyard_identity::repository_access::current_repository(pool, repo_id)
                         .await
                         .map_err(|_| RepoError::authority_unavailable())?;
                 crate::backend::repositories::access::check_publication_actor(
@@ -4180,10 +4180,10 @@ impl LocalStore {
         tokio::spawn(async move {
             let _lock = git::locks::lock(store.path()).await;
             let repository =
-                crate::backend::repositories::access::check_admin(&pool, repo_id, actor)
+                codeyard_identity::repository_access::check_admin(&pool, repo_id, actor)
                     .await
                     .map_err(|error| {
-                        if error == crate::backend::repositories::access::AccessError::Unavailable {
+                        if error == codeyard_identity::repository_access::AccessError::Unavailable {
                             RepoError::authority_unavailable()
                         } else {
                             RepoError::write_denied()
@@ -4192,7 +4192,7 @@ impl LocalStore {
             if !repository_matches_path(&repository, store.path(), store.node_id) {
                 return Err(RepoError::write_denied());
             }
-            crate::backend::repositories::access::credential_user(&pool, &authority, true)
+            codeyard_identity::repository_access::credential_user(&pool, &authority, true)
                 .await
                 .map_err(RepoError::from)?;
             let (target, owner) =
@@ -4473,10 +4473,10 @@ impl LocalStore {
         changes: &codeyard_db_repos::repositories::records::RepositoryChanges<String>,
     ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         let repository =
-            crate::backend::repositories::access::check_admin(pool, repo_id, authority.user_id)
+            codeyard_identity::repository_access::check_admin(pool, repo_id, authority.user_id)
                 .await
                 .map_err(|error| match error {
-                    crate::backend::repositories::access::AccessError::Unavailable => {
+                    codeyard_identity::repository_access::AccessError::Unavailable => {
                         RepoError::authority_unavailable()
                     }
                     _ => RepoError::write_denied(),
@@ -4486,11 +4486,11 @@ impl LocalStore {
         {
             return Err(RepoError::write_denied());
         }
-        crate::backend::repositories::access::credential_user(pool, authority, true)
+        codeyard_identity::repository_access::credential_user(pool, authority, true)
             .await
             .map_err(RepoError::from)?;
         for token in [authority.token_id(), changes.token].into_iter().flatten() {
-            if !crate::backend::identity::tokens::repository_scope(
+            if !codeyard_identity::tokens::repository_scope(
                 pool,
                 token,
                 authority.user_id,

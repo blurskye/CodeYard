@@ -5,9 +5,9 @@ use crate::backend::ci::config::CiConfig;
 use crate::backend::ci::config::CiPipelineKind;
 use codeyard_db_core::ci_messages::branch_name;
 
-use crate::backend::notifications::NotificationBroadcaster;
 use anyhow::Result;
 use codeyard_db_core::DbPool;
+use codeyard_notifications::NotificationBroadcaster;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -159,7 +159,7 @@ impl CiRuns {
         let user = codeyard_db_identity::users::accounts::get_user_by_id(&self.pool, actor_id)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
-        if !crate::backend::repositories::access::can_read(&self.pool, Some(&user), &repository)
+        if !codeyard_identity::repository_access::can_read(&self.pool, Some(&user), &repository)
             .await?
         {
             return Err(AdmissionError::Missing("Repository not found"));

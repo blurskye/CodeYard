@@ -6,13 +6,13 @@ use crate::backend::issues::comments::CommentTarget;
 use crate::backend::issues::discussion_link;
 use crate::backend::issues::discussion_page;
 use crate::backend::issues::COMMENTS_PER_PAGE;
-use crate::backend::notifications::create::create_and_broadcast_notification;
-use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::mentions::mentions_anyone;
-use crate::backend::notifications::mentions::notify_mentions;
-use crate::backend::notifications::mentions::MentionSource;
-use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::store::repo_store;
+use codeyard_notifications::create::create_and_broadcast_notification;
+use codeyard_notifications::create::NotificationRequest;
+use codeyard_notifications::mentions::mentions_anyone;
+use codeyard_notifications::mentions::notify_mentions;
+use codeyard_notifications::mentions::MentionSource;
+use codeyard_notifications::NotificationBroadcaster;
 
 use crate::backend::webhooks::payloads::Scope;
 use serde::Deserialize;
@@ -781,7 +781,7 @@ async fn save_comment(
             subject: &pull_request.title,
             link: &link,
             comment_id: Some(
-                crate::backend::notifications::mentions::MentionComment::PullRequest(comment.id),
+                codeyard_notifications::mentions::MentionComment::PullRequest(comment.id),
             ),
             old_text: None,
             text: &req.body,
@@ -790,8 +790,7 @@ async fn save_comment(
     )
     .await;
     notified.extend(mentioned);
-    crate::backend::notifications::create::notify_subscribers(pool, broadcaster, notice, &notified)
-        .await;
+    codeyard_notifications::create::notify_subscribers(pool, broadcaster, notice, &notified).await;
 
     emit_comment_webhook(pool, repository, pull_request, &comment, "created", user.id).await;
     Ok(comment)
@@ -833,7 +832,7 @@ pub async fn set_comment_resolved(
         });
     }
     if pull_request.author_id != user.id
-        && !crate::backend::repositories::access::can_write(pool, &user, &repository)
+        && !codeyard_identity::repository_access::can_write(pool, &user, &repository)
             .await
             .map_err(database_error)?
     {
@@ -948,7 +947,7 @@ pub async fn edit_pull_request_comment(
         return Err(archived_refusal());
     }
     if previous.author_id != user.id
-        && !crate::backend::repositories::access::can_write(pool, &user, &repository)
+        && !codeyard_identity::repository_access::can_write(pool, &user, &repository)
             .await
             .map_err(database_error)?
     {
@@ -1009,9 +1008,7 @@ pub async fn edit_pull_request_comment(
                 subject: &pull_request.title,
                 link: &link,
                 comment_id: Some(
-                    crate::backend::notifications::mentions::MentionComment::PullRequest(
-                        comment.id,
-                    ),
+                    codeyard_notifications::mentions::MentionComment::PullRequest(comment.id),
                 ),
                 old_text: Some(&previous.body),
                 text: &body,

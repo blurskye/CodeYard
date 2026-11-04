@@ -399,7 +399,7 @@ async fn browser_logs(
     run: &codeyard_db_core::models::CiRun,
 ) {
     use axum::{body::Body, http::Request};
-    use codeyard::backend::identity::tokens::{self, TokenInput};
+    use codeyard_identity::tokens::{self, TokenInput};
     use tower::ServiceExt;
 
     let path = format!("/api/v3/repos/alice/proj/actions/runs/{}/logs", run.id);

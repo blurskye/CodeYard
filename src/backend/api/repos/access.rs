@@ -3,13 +3,13 @@ use crate::backend::api::http::error::ApiError;
 
 use crate::backend::api::repos::chrome::ApiResult;
 
-use crate::backend::repositories::access::AccessError;
 use axum::{
     http::{HeaderMap, StatusCode},
     Json,
 };
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
+use codeyard_identity::repository_access::AccessError;
 
 pub(crate) fn access_error(error: AccessError) -> (StatusCode, Json<ApiError>) {
     let (status, code, message) = match error {
@@ -39,7 +39,7 @@ pub(crate) fn access_error(error: AccessError) -> (StatusCode, Json<ApiError>) {
 }
 
 async fn current_repository(pool: &codeyard_db_core::DbPool, id: i64) -> ApiResult<Repository> {
-    crate::backend::repositories::access::current_repository(pool, id)
+    codeyard_identity::repository_access::current_repository(pool, id)
         .await
         .map_err(|error| {
             if error == AccessError::Unavailable {
@@ -99,7 +99,7 @@ async fn read_access(
         return Ok(());
     }
     let user = crate::backend::api::http::session::get_optional_user(pool, headers).await?;
-    if crate::backend::repositories::access::can_read(pool, user.as_ref(), repository)
+    if codeyard_identity::repository_access::can_read(pool, user.as_ref(), repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {
@@ -119,7 +119,7 @@ pub(crate) async fn check_repo_admin_access(
     if user.must_change_password {
         return Err(access_error(AccessError::PasswordChangeRequired));
     }
-    if crate::backend::repositories::access::can_admin(pool, user, &repository)
+    if codeyard_identity::repository_access::can_admin(pool, user, &repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {
@@ -136,13 +136,13 @@ pub(crate) async fn check_repo_write_access(
     user: &User,
 ) -> ApiResult<()> {
     let repository = current_repository(pool, repository.id).await?;
-    if crate::backend::repositories::access::can_write(pool, user, &repository)
+    if codeyard_identity::repository_access::can_write(pool, user, &repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {
         return Ok(());
     }
-    if !crate::backend::repositories::access::can_read(pool, Some(user), &repository)
+    if !codeyard_identity::repository_access::can_read(pool, Some(user), &repository)
         .await
         .map_err(|_| access_error(AccessError::Unavailable))?
     {

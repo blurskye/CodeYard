@@ -44,7 +44,7 @@ pub async fn merge_branch(
     let authority = actor.into();
     let actor = authority.user_id;
     let (repository, user) =
-        crate::backend::repositories::access::check_write(pool, repo_id, actor)
+        codeyard_identity::repository_access::check_write(pool, repo_id, actor)
             .await
             .map_err(RefError::Access)?;
     let base_ref = git::branch_ref(input.base).ok_or(RefError::Invalid("Invalid base branch"))?;

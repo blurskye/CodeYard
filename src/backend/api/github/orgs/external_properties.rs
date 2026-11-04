@@ -91,7 +91,7 @@ async fn register(
     let (actor, org) = scope(&state, &headers, &name, true).await?;
     let installation_id = match input.installation_id {
         Some(id) => Some(id),
-        None => crate::backend::identity::github_apps::authority(&state.pool, actor.token.id)
+        None => codeyard_identity::github_apps::authority(&state.pool, actor.token.id)
             .await
             .map_err(Error::unavailable)?
             .and_then(|authority| authority.installation()),

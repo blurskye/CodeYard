@@ -30,7 +30,7 @@ fn accepts(
     let permissions: Value = serde_json::from_str(&subscription.permissions)?;
     Ok(subscription.hook.active
         && codeyard_model::webhook_events::subscribes(&subscription.hook.events, event)
-        && crate::backend::identity::github_apps::event_permission(&permissions, event))
+        && codeyard_identity::github_apps::event_permission(&permissions, event))
 }
 
 pub(super) async fn has_subscription(
@@ -151,7 +151,7 @@ pub async fn current(
     else {
         return Ok(false);
     };
-    Ok(crate::backend::identity::github_apps::event_permission(
+    Ok(codeyard_identity::github_apps::event_permission(
         &serde_json::from_str(&subscription.permissions)?,
         &outgoing.event,
     ))

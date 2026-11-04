@@ -91,11 +91,11 @@ async fn scope(
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let allowed = if admin {
-        crate::backend::repositories::access::can_admin(&state.pool, &auth.user, &repo).await
+        codeyard_identity::repository_access::can_admin(&state.pool, &auth.user, &repo).await
     } else if write {
-        crate::backend::repositories::access::can_write(&state.pool, &auth.user, &repo).await
+        codeyard_identity::repository_access::can_write(&state.pool, &auth.user, &repo).await
     } else {
-        crate::backend::repositories::access::user_access(&state.pool, &auth.user, &repo)
+        codeyard_identity::repository_access::user_access(&state.pool, &auth.user, &repo)
             .await
             .map(|level| level.can_write())
     }

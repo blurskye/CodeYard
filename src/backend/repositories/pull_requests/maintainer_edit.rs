@@ -20,7 +20,7 @@ pub(crate) async fn publication_authorized(
     if user.is_banned || user.must_change_password {
         return Ok(false);
     }
-    crate::backend::repositories::access::can_read(pool, Some(&user), head).await
+    codeyard_identity::repository_access::can_read(pool, Some(&user), head).await
 }
 
 pub(crate) async fn can_update_head(
@@ -38,12 +38,12 @@ pub(crate) async fn can_update_head(
         || pull.state != "open"
         || pull.repo_id != base.id
         || pull.head_repo_id != Some(head.id)
-        || !crate::backend::repositories::access::can_read(pool, Some(actor), base).await?
+        || !codeyard_identity::repository_access::can_read(pool, Some(actor), base).await?
     {
         return Ok(false);
     }
     // A writer of the head acts on their own authority, and publishes the updated head with it.
-    if crate::backend::repositories::access::can_write(pool, actor, head).await? {
+    if codeyard_identity::repository_access::can_write(pool, actor, head).await? {
         return Ok(true);
     }
     if head.id != base.id && !publication_authorized(pool, pull.head_publisher_id, head).await? {
@@ -65,5 +65,5 @@ pub(crate) async fn can_update_head(
     let active = codeyard_db_identity::users::accounts::get_user_by_id(pool, grantor)
         .await?
         .is_some_and(|owner| !owner.is_banned && !owner.must_change_password);
-    Ok(active && crate::backend::repositories::access::can_write(pool, actor, base).await?)
+    Ok(active && codeyard_identity::repository_access::can_write(pool, actor, base).await?)
 }

@@ -5,8 +5,8 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::discussion::unavailable;
 
-use crate::backend::repositories::access::can_read;
 use axum::response::Response;
+use codeyard_identity::repository_access::can_read;
 use codeyard_webui::components::references::{self, References};
 
 pub(crate) fn autolink(

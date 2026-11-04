@@ -9,8 +9,8 @@ use chrono::{Duration, Utc};
 use codeyard_db_orgs::organizations::NewOrganization;
 use codeyard_db_orgs::organizations::OrganizationProfile;
 
-use codeyard::backend::identity::fine_grained::Access;
-use codeyard::backend::identity::fine_grained::Owner;
+use codeyard_identity::fine_grained::Access;
+use codeyard_identity::fine_grained::Owner;
 use codeyard_db_core::models::OrgRole;
 
 async fn contract(pg: bool) {
@@ -55,11 +55,11 @@ async fn contract(pg: bool) {
         assert!(reply.location.unwrap().starts_with("/login"), "{path}");
     }
 
-    let created = codeyard::backend::identity::fine_grained::create(
+    let created = codeyard_identity::fine_grained::create(
         f.pool(),
         carol,
         Some(&member.session),
-        codeyard::backend::identity::fine_grained::Request {
+        codeyard_identity::fine_grained::Request {
             name: "nightly export".into(),
             description: "Exports issues".into(),
             owner: Owner::Organization(org),

@@ -6,9 +6,9 @@ use crate::backend::cluster::Relay;
 use crate::backend::repositories::protocol::TransactionPhase;
 use codeyard_support::node_identity::NodeKey;
 
-use crate::backend::notifications::NotificationBroadcaster;
 use base64::Engine;
 use codeyard_db_core::models::RefValue;
+use codeyard_notifications::NotificationBroadcaster;
 use std::sync::RwLock;
 
 fn commit(repo: &git2::Repository, message: &str) -> String {

@@ -31,7 +31,7 @@ pub(super) async fn convert(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let value: Value = serde_json::from_str(&draft.manifest).map_err(Error::unavailable)?;
-    let manifest = crate::backend::identity::github_apps::manifest(&value).ok_or_else(|| {
+    let manifest = codeyard_identity::github_apps::manifest(&value).ok_or_else(|| {
         Error::invalid_simple(
             "Invalid manifest or unsupported permissions, events or setup automation",
         )
@@ -77,7 +77,7 @@ pub(super) async fn convert(
     .await
     .map_err(Error::unavailable)?
     .ok_or_else(Error::missing)?;
-    let (private, public) = crate::backend::identity::github_apps::generate_key()
+    let (private, public) = codeyard_identity::github_apps::generate_key()
         .await
         .map_err(Error::unavailable)?;
     let client_secret = codeyard_support::crypto::random_hex();
@@ -100,7 +100,7 @@ pub(super) async fn convert(
             true,
         ) {
             5
-        } else if crate::backend::identity::github_apps::write(&manifest.permissions) {
+        } else if codeyard_identity::github_apps::write(&manifest.permissions) {
             3
         } else {
             1

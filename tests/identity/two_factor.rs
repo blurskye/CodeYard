@@ -16,16 +16,16 @@ use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
 use codeyard_support::secrets::SecretEncryptor;
 
-use codeyard::backend::identity::login::FirstFactor;
-use codeyard::backend::identity::login::LoginError;
-use codeyard::backend::identity::login::PasswordCredentials;
+use codeyard_identity::login::FirstFactor;
+use codeyard_identity::login::LoginError;
+use codeyard_identity::login::PasswordCredentials;
 
-use codeyard::backend::identity::sessions::InitiatingSession;
-use codeyard::backend::identity::sessions::SessionContext;
+use codeyard_identity::sessions::InitiatingSession;
+use codeyard_identity::sessions::SessionContext;
 
-use codeyard::backend::identity::two_factor::TwoFactorError;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::User;
+use codeyard_identity::two_factor::TwoFactorError;
 use std::sync::Arc;
 use tower::ServiceExt;
 
@@ -39,7 +39,7 @@ async fn fixture(pg: bool) -> Database {
 }
 
 async fn new_user(database: &Database, name: &str, admin: bool) -> User {
-    let hash = codeyard::backend::identity::passwords::hash_password(PASSWORD)
+    let hash = codeyard_identity::passwords::hash_password(PASSWORD)
         .await
         .unwrap();
     codeyard_db_identity::users::accounts::create_user_with_password_and_flags(
@@ -69,13 +69,13 @@ fn context<'a>(fresh: &'a str, user_agent: Option<&'a str>) -> SessionContext<'a
 }
 
 fn step() -> u64 {
-    codeyard::backend::identity::two_factor::now_unix() / 30
+    codeyard_identity::two_factor::now_unix() / 30
 }
 
 fn code_at(secret: &[u8], step: u64) -> String {
     format!(
         "{:06}",
-        codeyard::backend::identity::two_factor::totp_code(secret, step)
+        codeyard_identity::two_factor::totp_code(secret, step)
     )
 }
 
@@ -113,17 +113,12 @@ async fn enable(database: &Database, key: &SecretEncryptor, user: &User) -> (Vec
     )
     .await
     .unwrap();
-    let setup = codeyard::backend::identity::two_factor::begin_setup(
-        database.pool(),
-        key,
-        user,
-        &session,
-        PASSWORD,
-    )
-    .await
-    .unwrap();
+    let setup =
+        codeyard_identity::two_factor::begin_setup(database.pool(), key, user, &session, PASSWORD)
+            .await
+            .unwrap();
     let secret = secret_bytes(&setup.secret);
-    let codes = codeyard::backend::identity::two_factor::confirm_setup(
+    let codes = codeyard_identity::two_factor::confirm_setup(
         database.pool(),
         key,
         user,
@@ -145,7 +140,7 @@ async fn pending_after_password(
     user_agent: Option<&str>,
 ) -> String {
     let fresh = token();
-    match codeyard::backend::identity::login::password_login(
+    match codeyard_identity::login::password_login(
         database.pool(),
         Some(key),
         PasswordCredentials {
@@ -177,9 +172,9 @@ async fn second_factor(
     pending: &str,
     code: &str,
     user_agent: Option<&str>,
-) -> Result<codeyard::backend::identity::AuthenticatedAccount, LoginError> {
+) -> Result<codeyard_identity::AuthenticatedAccount, LoginError> {
     let fresh = token();
-    codeyard::backend::identity::login::second_factor_login(
+    codeyard_identity::login::second_factor_login(
         database.pool(),
         Some(key),
         pending,
@@ -197,7 +192,7 @@ async fn sign_in_flow(pg: bool) {
     let (secret, codes) = enable(&database, &key, &alice).await;
     assert_eq!(codes.len(), 10);
     assert!(
-        codeyard::backend::identity::two_factor::is_enabled(database.pool(), alice.id)
+        codeyard_identity::two_factor::is_enabled(database.pool(), alice.id)
             .await
             .unwrap()
     );
@@ -286,7 +281,7 @@ async fn password_changes_need_the_password(pg: bool) {
     let (_, codes) = enable(&database, &key, &alice).await;
     let session = account_session(&database, alice.id).await;
     assert!(matches!(
-        codeyard::backend::identity::two_factor::regenerate_recovery_codes(
+        codeyard_identity::two_factor::regenerate_recovery_codes(
             database.pool(),
             &alice,
             &session,
@@ -296,22 +291,17 @@ async fn password_changes_need_the_password(pg: bool) {
         Err(TwoFactorError::InvalidPassword)
     ));
     assert!(matches!(
-        codeyard::backend::identity::two_factor::disable(
-            database.pool(),
-            &alice,
-            &session,
-            "wrong password"
-        )
-        .await,
+        codeyard_identity::two_factor::disable(database.pool(), &alice, &session, "wrong password")
+            .await,
         Err(TwoFactorError::InvalidPassword)
     ));
     assert!(
-        codeyard::backend::identity::two_factor::is_enabled(database.pool(), alice.id)
+        codeyard_identity::two_factor::is_enabled(database.pool(), alice.id)
             .await
             .unwrap()
     );
 
-    let regenerated = codeyard::backend::identity::two_factor::regenerate_recovery_codes(
+    let regenerated = codeyard_identity::two_factor::regenerate_recovery_codes(
         database.pool(),
         &alice,
         &session,
@@ -333,18 +323,18 @@ async fn password_changes_need_the_password(pg: bool) {
             .is_ok()
     );
 
-    codeyard::backend::identity::two_factor::disable(database.pool(), &alice, &session, PASSWORD)
+    codeyard_identity::two_factor::disable(database.pool(), &alice, &session, PASSWORD)
         .await
         .unwrap();
     assert!(
-        !codeyard::backend::identity::two_factor::is_enabled(database.pool(), alice.id)
+        !codeyard_identity::two_factor::is_enabled(database.pool(), alice.id)
             .await
             .unwrap()
     );
     // With two-factor off, the password alone signs in again.
     let fresh = token();
     assert!(matches!(
-        codeyard::backend::identity::login::password_login(
+        codeyard_identity::login::password_login(
             database.pool(),
             Some(&key),
             PasswordCredentials {
@@ -367,8 +357,7 @@ async fn administrator_recovery(pg: bool) {
     let root = new_user(&database, "root", true).await;
     enable(&database, &key, &alice).await;
     assert!(matches!(
-        codeyard::backend::identity::two_factor::admin_turn_off(database.pool(), None, alice.id)
-            .await,
+        codeyard_identity::two_factor::admin_turn_off(database.pool(), None, alice.id).await,
         Err(TwoFactorError::Authority(_))
     ));
     // A signed-in account that is not an administrator is refused too.
@@ -384,7 +373,7 @@ async fn administrator_recovery(pg: bool) {
     .await
     .unwrap();
     assert!(matches!(
-        codeyard::backend::identity::two_factor::admin_turn_off(
+        codeyard_identity::two_factor::admin_turn_off(
             database.pool(),
             Some(&member_session),
             alice.id
@@ -403,15 +392,11 @@ async fn administrator_recovery(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::identity::two_factor::admin_turn_off(
-        database.pool(),
-        Some(&admin_session),
-        alice.id,
-    )
-    .await
-    .unwrap();
+    codeyard_identity::two_factor::admin_turn_off(database.pool(), Some(&admin_session), alice.id)
+        .await
+        .unwrap();
     assert!(
-        !codeyard::backend::identity::two_factor::is_enabled(database.pool(), alice.id)
+        !codeyard_identity::two_factor::is_enabled(database.pool(), alice.id)
             .await
             .unwrap()
     );
@@ -486,7 +471,7 @@ async fn settings_forms(pg: bool) {
         .await;
     assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
     assert!(
-        !codeyard::backend::identity::two_factor::is_enabled(database.pool(), alice.id)
+        !codeyard_identity::two_factor::is_enabled(database.pool(), alice.id)
             .await
             .unwrap()
     );
@@ -562,7 +547,7 @@ async fn settings_forms(pg: bool) {
             .await;
     }
     assert!(
-        codeyard::backend::identity::two_factor::is_enabled(database.pool(), alice.id)
+        codeyard_identity::two_factor::is_enabled(database.pool(), alice.id)
             .await
             .unwrap()
     );
@@ -578,7 +563,7 @@ async fn settings_forms(pg: bool) {
     assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
     assert!(String::from_utf8_lossy(&wrong.body).contains("Current password is incorrect"));
     assert!(
-        codeyard::backend::identity::two_factor::is_enabled(database.pool(), alice.id)
+        codeyard_identity::two_factor::is_enabled(database.pool(), alice.id)
             .await
             .unwrap()
     );
@@ -597,7 +582,7 @@ async fn settings_forms(pg: bool) {
         .unwrap_or_default()
         .contains("saved=two-factor-off"));
     assert!(
-        !codeyard::backend::identity::two_factor::is_enabled(database.pool(), alice.id)
+        !codeyard_identity::two_factor::is_enabled(database.pool(), alice.id)
             .await
             .unwrap()
     );
@@ -788,10 +773,10 @@ async fn password_change_ends_pending_sign_ins(pg: bool) {
     )
     .await
     .unwrap();
-    codeyard::backend::identity::accounts::change_password(
+    codeyard_identity::accounts::change_password(
         database.pool(),
         Some(&session),
-        codeyard::backend::identity::accounts::PasswordChange {
+        codeyard_identity::accounts::PasswordChange {
             current_password: PASSWORD,
             new_password: "replacement password",
         },
@@ -971,7 +956,7 @@ async fn recovery_code_survives_session_failure(pg: bool) {
     let (_, codes) = enable(&database, &key, &alice).await;
     let pending = pending_after_password(&database, &key, "alice", None).await;
     let collision = account_session(&database, alice.id).await;
-    assert!(codeyard::backend::identity::login::second_factor_login(
+    assert!(codeyard_identity::login::second_factor_login(
         database.pool(),
         Some(&key),
         &pending,
@@ -1073,18 +1058,12 @@ async fn enrollment_authority(pg: bool) {
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::identity::two_factor::begin_setup(
-            database.pool(),
-            &key,
-            &user,
-            &session,
-            "wrong"
-        )
-        .await
-        .err(),
+        codeyard_identity::two_factor::begin_setup(database.pool(), &key, &user, &session, "wrong")
+            .await
+            .err(),
         Some(TwoFactorError::InvalidPassword)
     );
-    let setup = codeyard::backend::identity::two_factor::begin_setup(
+    let setup = codeyard_identity::two_factor::begin_setup(
         database.pool(),
         &key,
         &user,
@@ -1094,12 +1073,12 @@ async fn enrollment_authority(pg: bool) {
     .await
     .unwrap();
     assert_eq!(
-        codeyard::backend::identity::two_factor::open_setup(
+        codeyard_identity::two_factor::open_setup(
             &key,
             &user,
             "another session",
             &setup.token,
-            codeyard::backend::identity::two_factor::now_unix()
+            codeyard_identity::two_factor::now_unix()
         )
         .err(),
         Some(TwoFactorError::SetupExpired)
@@ -1107,19 +1086,19 @@ async fn enrollment_authority(pg: bool) {
     let mut changed = user.clone();
     changed.password_hash = Some("changed".into());
     assert_eq!(
-        codeyard::backend::identity::two_factor::open_setup(
+        codeyard_identity::two_factor::open_setup(
             &key,
             &changed,
             &session,
             &setup.token,
-            codeyard::backend::identity::two_factor::now_unix()
+            codeyard_identity::two_factor::now_unix()
         )
         .err(),
         Some(TwoFactorError::SetupExpired)
     );
     changed.password_hash = None;
     assert_eq!(
-        codeyard::backend::identity::two_factor::begin_setup(
+        codeyard_identity::two_factor::begin_setup(
             database.pool(),
             &key,
             &changed,
@@ -1132,7 +1111,7 @@ async fn enrollment_authority(pg: bool) {
     );
     let code = code_at(&secret_bytes(&setup.secret), step());
     assert_eq!(
-        codeyard::backend::identity::two_factor::confirm_setup(
+        codeyard_identity::two_factor::confirm_setup(
             database.pool(),
             &key,
             &changed,
@@ -1148,7 +1127,7 @@ async fn enrollment_authority(pg: bool) {
     codeyard_db_identity::users::sessions::delete_session(database.pool(), &session)
         .await
         .unwrap();
-    assert!(codeyard::backend::identity::two_factor::confirm_setup(
+    assert!(codeyard_identity::two_factor::confirm_setup(
         database.pool(),
         &key,
         &user,
@@ -1160,7 +1139,7 @@ async fn enrollment_authority(pg: bool) {
     .await
     .is_err());
     assert!(
-        !codeyard::backend::identity::two_factor::is_enabled(database.pool(), user.id)
+        !codeyard_identity::two_factor::is_enabled(database.pool(), user.id)
             .await
             .unwrap()
     );
@@ -1170,7 +1149,7 @@ async fn enrollment_authority(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    codeyard::backend::identity::two_factor::disable(
+    codeyard_identity::two_factor::disable(
         database.pool(),
         &user,
         &account_session(&database, user.id).await,
@@ -1214,7 +1193,7 @@ async fn enrollment_authority(pg: bool) {
     .await
     .is_err());
     assert!(
-        codeyard::backend::identity::two_factor::is_enabled(database.pool(), user.id)
+        codeyard_identity::two_factor::is_enabled(database.pool(), user.id)
             .await
             .unwrap()
     );

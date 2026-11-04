@@ -19,7 +19,7 @@ use codeyard_git::{
 
 #[derive(Debug)]
 pub enum RefError {
-    Access(crate::backend::repositories::access::AccessError),
+    Access(codeyard_identity::repository_access::AccessError),
     Invalid(&'static str),
     /// A rule of the branch refuses the change; the text says which.
     Protected(&'static str),
@@ -40,7 +40,7 @@ async fn writable(
     RefError,
 > {
     let (repository, user) =
-        crate::backend::repositories::access::check_write(pool, repo_id, actor.user_id)
+        codeyard_identity::repository_access::check_write(pool, repo_id, actor.user_id)
             .await
             .map_err(RefError::Access)?;
     crate::backend::repositories::access::check_publication_actor(pool, actor, &repository)
@@ -59,7 +59,7 @@ pub(super) fn publication_error(error: RepoError) -> RefError {
     } else if error.is_merge_commit_blocked() {
         RefError::Protected(MERGE_COMMIT_BLOCKED)
     } else if error.is_write_denied() {
-        RefError::Access(crate::backend::repositories::access::AccessError::WriteDenied)
+        RefError::Access(codeyard_identity::repository_access::AccessError::WriteDenied)
     } else {
         RefError::Git(error)
     }

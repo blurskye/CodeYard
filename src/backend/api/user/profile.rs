@@ -10,7 +10,7 @@ use crate::backend::api::user::responses::within_bounds;
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::identity::profiles::ProfileError;
+use codeyard_identity::profiles::ProfileError;
 
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
@@ -316,7 +316,7 @@ pub(crate) async fn load_settings(
         if tab != "email" || user.email_verified || user.email.as_deref().is_none_or(str::is_empty)
         {
             EmailVerification::Verified
-        } else if crate::backend::email::config::is_configured(&ctx.state.pool).await {
+        } else if codeyard_db_identity::mail_config::is_configured(&ctx.state.pool).await {
             EmailVerification::Unverified
         } else {
             EmailVerification::Unavailable
@@ -361,7 +361,7 @@ pub(crate) async fn load_settings(
         must_change_password: user.must_change_password,
         values,
         two_factor: TwoFactor {
-            enabled: crate::backend::identity::two_factor::is_enabled(&ctx.state.pool, user.id)
+            enabled: codeyard_identity::two_factor::is_enabled(&ctx.state.pool, user.id)
                 .await
                 .map_err(|_| {
                     ctx.error(
@@ -477,7 +477,7 @@ pub(crate) async fn social_accounts_post(
         Ok(user) => user,
         Err(response) => return response,
     };
-    let account = match crate::backend::identity::profiles::social_account(field(&form, "url")) {
+    let account = match codeyard_identity::profiles::social_account(field(&form, "url")) {
         Ok(account) => account,
         Err(_) => {
             return settings_response(
@@ -554,7 +554,7 @@ pub(crate) async fn profile_post(
         .id;
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let result = crate::backend::identity::profiles::save(
+    let result = codeyard_identity::profiles::save(
         &ctx.state.pool,
         actor,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),

@@ -21,9 +21,9 @@ use codeyard::backend::cluster::NodeContext;
 use codeyard::backend::cluster::Relay;
 use codeyard_support::node_identity::NodeKey;
 
-use codeyard::backend::identity::tokens::TokenInput;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use std::{collections::BTreeSet, sync::Arc};
 use tower::ServiceExt;
@@ -78,7 +78,7 @@ async fn token(
     let session = Client::login(router, pool, actor).await;
     format!(
         "Bearer {}",
-        codeyard::backend::identity::tokens::create(
+        codeyard_identity::tokens::create(
             pool,
             actor,
             Some(&session.session),

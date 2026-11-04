@@ -130,3 +130,11 @@ pub fn verify_challenge(challenge: &str, verifier: &str) -> bool {
 pub(crate) fn pkce_challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
+pub fn validated_public_origin(value: &str) -> Option<String> {
+    let url = crate::http_config::parse_public_url(value).ok()?;
+    let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
+    if !(url.scheme() == "https" || (url.scheme() == "http" && loopback)) {
+        return None;
+    }
+    Some(url.origin().ascii_serialization())
+}

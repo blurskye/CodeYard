@@ -20,7 +20,7 @@ use codeyard::backend::files::UploadCapability;
 use codeyard::backend::files::UploadDeclaration;
 use codeyard::backend::files::UploadError;
 
-use codeyard::backend::identity::avatars::AvatarError;
+use crate::backend::api::avatar_ops::AvatarError;
 use codeyard::backend::storage::local::LocalStore;
 use codeyard::backend::storage::s3::S3Config;
 use codeyard::backend::storage::ObjectStore;
@@ -3158,7 +3158,7 @@ async fn a_banned_account_keeps_its_picture() {
         .await
         .unwrap()
         .unwrap();
-    codeyard::backend::identity::avatars::set_user_avatar(
+    crate::backend::api::avatar_ops::set_user_avatar(
         &fixture.pool,
         &user,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -3174,7 +3174,7 @@ async fn a_banned_account_keeps_its_picture() {
         .await
         .unwrap();
 
-    let changed = codeyard::backend::identity::avatars::set_user_avatar(
+    let changed = crate::backend::api::avatar_ops::set_user_avatar(
         &fixture.pool,
         &user,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -3184,7 +3184,7 @@ async fn a_banned_account_keeps_its_picture() {
     )
     .await;
     assert_eq!(changed, Err(AvatarError::Denied));
-    let cleared = codeyard::backend::identity::avatars::remove_user_avatar(
+    let cleared = crate::backend::api::avatar_ops::remove_user_avatar(
         &fixture.pool,
         &user,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(

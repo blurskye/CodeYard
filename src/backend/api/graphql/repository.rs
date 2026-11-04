@@ -72,7 +72,7 @@ async fn check(
     request: &RequestContext,
 ) -> Result<codeyard_db_core::models::Repository> {
     request.authorize(repo.id, "metadata", false).await?;
-    if !crate::backend::repositories::access::can_read(
+    if !codeyard_identity::repository_access::can_read(
         &request.state.pool,
         Some(&request.auth.user),
         &repo,
@@ -262,7 +262,7 @@ pub(super) async fn resolve(
                 else {
                     return Ok(Value::Null);
                 };
-                if !crate::backend::repositories::access::can_read(
+                if !codeyard_identity::repository_access::can_read(
                     pool,
                     Some(&request.auth.user),
                     &parent,
@@ -281,7 +281,7 @@ pub(super) async fn resolve(
         },
         "viewerPermission" | "viewerCanAdminister" => {
             let level =
-                crate::backend::repositories::access::user_access(pool, &request.auth.user, &repo)
+                codeyard_identity::repository_access::user_access(pool, &request.auth.user, &repo)
                     .await
                     .map_err(unavailable)?;
             Ok(if field == "viewerCanAdminister" {

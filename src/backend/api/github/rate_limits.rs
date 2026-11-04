@@ -108,10 +108,9 @@ pub(super) async fn enforce(
             } else if let Some(value) =
                 crate::backend::api::github::auth::credential(request.headers())
             {
-                if let Some(app) =
-                    crate::backend::identity::github_apps::authenticate(&state.pool, value)
-                        .await
-                        .map_err(Error::unavailable)?
+                if let Some(app) = codeyard_identity::github_apps::authenticate(&state.pool, value)
+                    .await
+                    .map_err(Error::unavailable)?
                 {
                     key = Some(format!("app:{}", app.id));
                 }

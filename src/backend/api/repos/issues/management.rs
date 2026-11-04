@@ -369,7 +369,7 @@ async fn readable_target(
             .await
             .map_err(|_| unavailable(ctx))?;
     if let Some(target) = target {
-        if crate::backend::repositories::access::can_read(
+        if codeyard_identity::repository_access::can_read(
             &ctx.state.pool,
             ctx.user.as_ref(),
             &target,

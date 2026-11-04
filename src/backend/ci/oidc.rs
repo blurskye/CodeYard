@@ -41,7 +41,7 @@ impl SigningKeys {
             let pem = match codeyard_db_actions::oidc::key(&self.pool).await? {
                 Some(pem) => pem,
                 None => {
-                    let (pem, _) = crate::backend::identity::github_apps::generate_key().await?;
+                    let (pem, _) = codeyard_identity::github_apps::generate_key().await?;
                     codeyard_db_actions::oidc::store_key(&self.pool, &pem).await?
                 }
             };

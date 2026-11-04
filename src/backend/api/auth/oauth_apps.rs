@@ -108,7 +108,7 @@ async fn admit(state: &AppState, headers: &HeaderMap, key: &str) -> Result<(), R
     {
         return Err(StatusCode::SERVICE_UNAVAILABLE.into_response());
     }
-    crate::backend::identity::admission::admit_operation(
+    codeyard_db_identity::auth_admission::admit_operation(
         &state.pool,
         crate::backend::api::http::session::client_address(headers),
         "device",
@@ -120,10 +120,10 @@ async fn admit(state: &AppState, headers: &HeaderMap, key: &str) -> Result<(), R
     .await
     .map(|_| ())
     .map_err(|error| match error {
-        crate::backend::identity::admission::AdmissionError::Limited => {
+        codeyard_db_identity::auth_admission::AdmissionError::Limited => {
             StatusCode::TOO_MANY_REQUESTS.into_response()
         }
-        crate::backend::identity::admission::AdmissionError::Unavailable => {
+        codeyard_db_identity::auth_admission::AdmissionError::Unavailable => {
             StatusCode::SERVICE_UNAVAILABLE.into_response()
         }
     })
@@ -141,13 +141,12 @@ async fn device_code(
         return failure(&headers, "invalid_request");
     };
     let id = field(&form, "client_id");
-    match crate::backend::identity::oauth_apps::client(&state.pool, id).await {
+    match codeyard_identity::oauth_apps::client(&state.pool, id).await {
         Ok(Some(_)) => (),
         Ok(None) => return failure(&headers, "incorrect_client_credentials"),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
-    let Some(mut scopes) = crate::backend::identity::oauth_apps::scopes(field(&form, "scope"))
-    else {
+    let Some(mut scopes) = codeyard_identity::oauth_apps::scopes(field(&form, "scope")) else {
         return failure(&headers, "invalid_scope");
     };
     match codeyard_db_identity::github_apps::app(&state.pool, id).await {
@@ -156,7 +155,7 @@ async fn device_code(
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
     let value = codeyard_support::crypto::random_hex();
-    let user_code = crate::backend::identity::oauth_apps::user_code();
+    let user_code = codeyard_identity::oauth_apps::user_code();
     let grant = Grant {
         hash: token_hash(&value),
         client_id: id.to_owned(),
@@ -194,7 +193,7 @@ async fn access_token(
         return failure(&headers, "invalid_request");
     };
     let id = field(&form, "client_id");
-    let app = match crate::backend::identity::oauth_apps::client(&state.pool, id).await {
+    let app = match codeyard_identity::oauth_apps::client(&state.pool, id).await {
         Ok(Some(app)) => app,
         Ok(None) => return failure(&headers, "incorrect_client_credentials"),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
@@ -203,8 +202,7 @@ async fn access_token(
     if !device && !matches!(field(&form, "grant_type"), "" | "authorization_code") {
         return failure(&headers, "unsupported_grant_type");
     }
-    if !device
-        && !crate::backend::identity::oauth_apps::valid_secret(&app, field(&form, "client_secret"))
+    if !device && !codeyard_identity::oauth_apps::valid_secret(&app, field(&form, "client_secret"))
     {
         return failure(&headers, "incorrect_client_credentials");
     }
@@ -313,7 +311,7 @@ async fn device_post(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    let code = crate::backend::identity::oauth_apps::normalize_code(field(&form, "user_code"));
+    let code = codeyard_identity::oauth_apps::normalize_code(field(&form, "user_code"));
     if let Err(response) = admit(&ctx.state, &ctx.headers, "oauth-user-code").await {
         return response;
     }
@@ -329,9 +327,7 @@ async fn device_post(
         }
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Authorization unavailable"),
     };
-    let app = match crate::backend::identity::oauth_apps::client(&ctx.state.pool, &grant.client_id)
-        .await
-    {
+    let app = match codeyard_identity::oauth_apps::client(&ctx.state.pool, &grant.client_id).await {
         Ok(Some(app)) => app,
         _ => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"),
     };
@@ -393,11 +389,10 @@ async fn authorization(
     ),
     Response,
 > {
-    let mut app =
-        crate::backend::identity::oauth_apps::client(&ctx.state.pool, field(form, "client_id"))
-            .await
-            .map_err(|_| ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"))?
-            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Application not found"))?;
+    let mut app = codeyard_identity::oauth_apps::client(&ctx.state.pool, field(form, "client_id"))
+        .await
+        .map_err(|_| ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Application unavailable"))?
+        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Application not found"))?;
     if let Some(uri) = form.get("redirect_uri") {
         if codeyard_db_identity::github_app_manifests::callback(
             &ctx.state.pool,
@@ -410,12 +405,10 @@ async fn authorization(
             app.redirect_uri = uri.clone();
         }
     }
-    let redirect = crate::backend::identity::oauth_apps::redirect(
-        &app,
-        form.get("redirect_uri").map(String::as_str),
-    )
-    .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid redirect URI"))?;
-    let scopes = crate::backend::identity::oauth_apps::scopes(field(form, "scope"))
+    let redirect =
+        codeyard_identity::oauth_apps::redirect(&app, form.get("redirect_uri").map(String::as_str))
+            .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid redirect URI"))?;
+    let scopes = codeyard_identity::oauth_apps::scopes(field(form, "scope"))
         .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Unsupported OAuth scope"))?;
     if field(form, "state").len() > 1024
         || (!field(form, "code_challenge").is_empty()
@@ -624,8 +617,8 @@ async fn register_post(
     if name.is_empty()
         || name.len() > 100
         || name.contains('\0')
-        || !crate::backend::identity::oauth_apps::valid_url(field(&form, "homepage"))
-        || !crate::backend::identity::oauth_apps::valid_url(field(&form, "redirect_uri"))
+        || !codeyard_identity::oauth_apps::valid_url(field(&form, "homepage"))
+        || !codeyard_identity::oauth_apps::valid_url(field(&form, "redirect_uri"))
     {
         return ctx.error(
             StatusCode::UNPROCESSABLE_ENTITY,

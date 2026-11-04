@@ -50,11 +50,11 @@ async fn branch_operations_contract(pg: bool) {
         (alice, &session.session, "branch reader", "read"),
         (bob, &other.session, "branch outsider", "write"),
     ] {
-        let token = codeyard::backend::identity::tokens::create(
+        let token = codeyard_identity::tokens::create(
             f.pool(),
             actor,
             Some(session),
-            codeyard::backend::identity::tokens::TokenInput {
+            codeyard_identity::tokens::TokenInput {
                 name,
                 scope,
                 expires_at: None,

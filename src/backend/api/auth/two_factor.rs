@@ -12,10 +12,10 @@ use crate::backend::api::user::responses::within_bounds;
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::identity::login::LoginError;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
+use codeyard_identity::login::LoginError;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::{account, auth::AuthMode};
 use std::sync::Arc;
@@ -68,7 +68,7 @@ pub(crate) async fn sign_in_post(
     }
     let session_request =
         crate::backend::api::auth::session::LoginSessionRequest::from_headers(&ctx.headers);
-    let result = crate::backend::identity::login::second_factor_login(
+    let result = codeyard_identity::login::second_factor_login(
         &ctx.state.pool,
         ctx.state.secret_encryptor.as_deref(),
         pending,

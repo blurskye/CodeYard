@@ -1,5 +1,5 @@
 use super::{db, Fixture};
-use codeyard::backend::identity::tokens::{self, TokenInput};
+use codeyard_identity::tokens::{self, TokenInput};
 use db::notifications::{
     records::{NotificationCredential, NotificationInboxAction},
     threads::{ThreadAction, ThreadFilter, ThreadInbox},

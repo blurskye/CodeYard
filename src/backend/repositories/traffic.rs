@@ -26,12 +26,12 @@ pub fn weekly(per: Option<&str>) -> Result<bool> {
 }
 async fn authorize(pool: &DbPool, viewer: Option<&User>, repo: &Repository) -> Result<()> {
     ensure!(
-        crate::backend::repositories::access::can_read(pool, viewer, repo).await?,
+        codeyard_identity::repository_access::can_read(pool, viewer, repo).await?,
         Refusal::Missing
     );
     let viewer = viewer.ok_or(Refusal::Denied)?;
     ensure!(
-        crate::backend::repositories::access::user_access(pool, viewer, repo)
+        codeyard_identity::repository_access::user_access(pool, viewer, repo)
             .await?
             .can_write(),
         Refusal::Denied

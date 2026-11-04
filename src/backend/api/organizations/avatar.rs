@@ -104,7 +104,7 @@ async fn upload(
         )
         .await;
     };
-    match crate::backend::identity::avatars::upload_org_avatar(
+    match crate::backend::api::avatar_ops::upload_org_avatar(
         &ctx.state.pool,
         &ctx.state.storage,
         &actor,
@@ -142,8 +142,7 @@ async fn remove(
         Ok(org) => org,
         Err(response) => return response,
     };
-    match crate::backend::identity::avatars::set_org_avatar(&ctx.state.pool, &actor, org, None)
-        .await
+    match crate::backend::api::avatar_ops::set_org_avatar(&ctx.state.pool, &actor, org, None).await
     {
         Ok(()) => ctx.redirect(
             &crate::backend::api::organizations::organization::destination(&ctx, Some(org), false),

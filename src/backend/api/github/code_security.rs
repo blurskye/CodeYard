@@ -313,7 +313,7 @@ async fn repository_configuration(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
-    if !crate::backend::repositories::access::can_admin(&state.pool, &auth.user, &repo)
+    if !codeyard_identity::repository_access::can_admin(&state.pool, &auth.user, &repo)
         .await
         .map_err(Error::unavailable)?
     {

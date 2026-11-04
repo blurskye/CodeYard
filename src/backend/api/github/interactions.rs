@@ -75,7 +75,7 @@ pub(super) async fn resolve(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-            if !crate::backend::repositories::access::can_read(
+            if !codeyard_identity::repository_access::can_read(
                 &state.pool,
                 Some(actor),
                 &repository,

@@ -166,7 +166,7 @@ async fn permission(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let level = crate::backend::repositories::access::user_access(&state.pool, &user, &repo)
+    let level = codeyard_identity::repository_access::user_access(&state.pool, &user, &repo)
         .await
         .map_err(Error::unavailable)?;
     let permission = if level.can_admin() {

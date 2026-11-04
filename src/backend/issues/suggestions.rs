@@ -1,7 +1,7 @@
 //! Shared post-commit effects for REST and native suggestion review.
 
-use crate::backend::notifications::assignments::Assignment;
-use crate::backend::notifications::NotificationBroadcaster;
+use codeyard_notifications::assignments::Assignment;
+use codeyard_notifications::NotificationBroadcaster;
 
 use crate::backend::webhooks::payloads::Scope;
 use anyhow::Result;
@@ -37,7 +37,7 @@ pub async fn resolve(
             codeyard_webui::encode_component(&repo.name),
             issue.number
         );
-        crate::backend::notifications::assignments::notify_assignees(
+        codeyard_notifications::assignments::notify_assignees(
             pool,
             broadcaster,
             &Assignment {

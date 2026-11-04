@@ -81,7 +81,7 @@ async fn set(
             .await
             .map_err(Error::unavailable)?,
         )?;
-        crate::backend::notifications::create::organization_invitation(
+        codeyard_notifications::create::organization_invitation(
             &state.pool,
             &state.notification_broadcaster,
             actor.user.id,

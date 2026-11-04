@@ -4,10 +4,10 @@ use crate::backend::api::repos::access::access_error;
 use crate::backend::api::repos::access::readable_repository;
 use crate::backend::app::AppState;
 
-use crate::backend::repositories::access::AccessError;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
+use codeyard_identity::repository_access::AccessError;
 use serde::Serialize;
 use std::sync::Arc;
 #[derive(Serialize)]
@@ -31,11 +31,11 @@ pub async fn get_repo_permissions(
     let (can_write, can_admin, role) = if let Some(user) = current_user {
         let unavailable = || access_error(AccessError::Unavailable);
         let can_write =
-            crate::backend::repositories::access::can_write(&state.pool, &user, &repository)
+            codeyard_identity::repository_access::can_write(&state.pool, &user, &repository)
                 .await
                 .map_err(|_| unavailable())?;
         let can_admin =
-            crate::backend::repositories::access::can_admin(&state.pool, &user, &repository)
+            codeyard_identity::repository_access::can_admin(&state.pool, &user, &repository)
                 .await
                 .map_err(|_| unavailable())?;
         let role = if user.is_admin && repository.owner_kind == "user" {

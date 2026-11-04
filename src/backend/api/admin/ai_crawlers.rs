@@ -151,8 +151,7 @@ pub(crate) async fn settings_post(
     }
     // Each section of the page posts its own field.
     let (saved, section, failure) = if form.contains_key("node_mode") {
-        let Some(mode) = crate::backend::identity::setup::node_mode(field(&form, "node_mode"))
-        else {
+        let Some(mode) = codeyard_identity::setup::node_mode(field(&form, "node_mode")) else {
             return settings_response(
                 &ctx,
                 StatusCode::BAD_REQUEST,

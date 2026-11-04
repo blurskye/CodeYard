@@ -1,7 +1,7 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
 
-use crate::backend::repositories::access::AccessError;
+use codeyard_identity::repository_access::AccessError;
 
 use crate::backend::repositories::releases::ReleaseError;
 use axum::{

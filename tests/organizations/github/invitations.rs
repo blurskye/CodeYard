@@ -10,8 +10,8 @@ use codeyard_db_orgs::organizations::OrganizationProfile;
 use codeyard_db_orgs::organizations::TeamPrivacy;
 use codeyard_db_orgs::organizations::TeamProfile;
 
-use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 
 async fn contract(pg: bool) {
@@ -98,7 +98,7 @@ async fn contract(pg: bool) {
         (other, "write"),
     ] {
         let session = Client::login(&router, f.pool(), user).await;
-        let token = codeyard::backend::identity::tokens::create(
+        let token = codeyard_identity::tokens::create(
             f.pool(),
             user,
             Some(&session.session),
@@ -496,7 +496,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .id;
     let late_browser = Client::login(&router, f.pool(), late).await;
-    let late_token = codeyard::backend::identity::tokens::create(
+    let late_token = codeyard_identity::tokens::create(
         f.pool(),
         late,
         Some(&late_browser.session),
@@ -546,7 +546,7 @@ async fn contract(pg: bool) {
             user_id: late,
             purpose: "verify",
             email: "late@example.com",
-            token_hash: &codeyard::backend::identity::tokens::token_hash(code),
+            token_hash: &codeyard_identity::tokens::token_hash(code),
             ttl_seconds: 3600,
             subject: "Verify your email",
             body_text: "Verification code",

@@ -88,7 +88,7 @@ async fn fill(
     if payload["issue"].is_null() && payload["pull_request"].is_object() {
         if let Some(user) = payload["comment"]["user"]["id"].as_i64() {
             payload["comment"]["author_association"] = json!(
-                crate::backend::repositories::access::author_association(pool, repo, user).await?
+                codeyard_identity::repository_access::author_association(pool, repo, user).await?
             );
         }
         if payload["comment"].is_object() {
@@ -97,7 +97,7 @@ async fn fill(
     }
     if let Some(user) = payload["review"]["user"]["id"].as_i64() {
         payload["review"]["author_association"] = json!(
-            crate::backend::repositories::access::author_association(pool, repo, user).await?
+            codeyard_identity::repository_access::author_association(pool, repo, user).await?
         );
     }
     if let Some(id) = payload["release"]["id"].as_i64() {
@@ -153,7 +153,7 @@ async fn comment(
 ) -> anyhow::Result<()> {
     if let Some(user) = comment["user"]["id"].as_i64() {
         comment["author_association"] = json!(
-            crate::backend::repositories::access::author_association(pool, repo, user).await?
+            codeyard_identity::repository_access::author_association(pool, repo, user).await?
         );
     }
     if comment.get("performed_via_github_app").is_none() {
@@ -261,7 +261,7 @@ async fn pull_request(
         return Ok(());
     };
     document["author_association"] = json!(
-        crate::backend::repositories::access::author_association(pool, repo, pull.author_id)
+        codeyard_identity::repository_access::author_association(pool, repo, pull.author_id)
             .await?
     );
     let base_user = document["base"]["repo"]["owner"].clone();

@@ -72,7 +72,7 @@ pub(super) async fn document(state: &AppState, user: &User, token: Option<i64>) 
         codeyard_db_repos::repositories::count_user_repositories(&state.pool, user.id, None)
             .await
             .map_err(Error::unavailable)?;
-    let status = crate::backend::identity::following::status(&state.pool, user.id, None)
+    let status = codeyard_notifications::following::status(&state.pool, user.id, None)
         .await
         .map_err(Error::unavailable)?;
     let profile = codeyard_db_identity::users::profiles::get_profile_settings(&state.pool, user.id)
@@ -148,7 +148,7 @@ async fn update(
                 .ok_or_else(|| Error::validation("User", "hireable", "invalid"))
         })
         .transpose()?;
-    let user = crate::backend::identity::profiles::save(
+    let user = codeyard_identity::profiles::save(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -166,11 +166,11 @@ async fn update(
     )
     .await
     .map_err(|error| match error {
-        crate::backend::identity::profiles::ProfileError::Denied => {
+        codeyard_identity::profiles::ProfileError::Denied => {
             Error::new(StatusCode::FORBIDDEN, "Account is restricted")
         }
-        crate::backend::identity::profiles::ProfileError::Unavailable => Error::unavailable(error),
-        crate::backend::identity::profiles::ProfileError::Email => {
+        codeyard_identity::profiles::ProfileError::Unavailable => Error::unavailable(error),
+        codeyard_identity::profiles::ProfileError::Email => {
             Error::validation("User", "email", "invalid")
         }
         _ => Error::validation("User", "profile", "invalid"),
@@ -439,7 +439,7 @@ async fn change_follow(
     if !follow && actor.user.username == username {
         return Ok(StatusCode::NO_CONTENT);
     }
-    crate::backend::identity::following::change(
+    codeyard_notifications::following::change(
         &state.pool,
         &state.notification_broadcaster,
         actor.user.id,
@@ -449,12 +449,12 @@ async fn change_follow(
     )
     .await
     .map_err(|error| match error {
-        crate::backend::identity::following::FollowError::Missing => Error::missing(),
-        crate::backend::identity::following::FollowError::SelfFollow
-        | crate::backend::identity::following::FollowError::SelfUnfollow => {
+        codeyard_notifications::following::FollowError::Missing => Error::missing(),
+        codeyard_notifications::following::FollowError::SelfFollow
+        | codeyard_notifications::following::FollowError::SelfUnfollow => {
             Error::validation("User", "login", "invalid")
         }
-        crate::backend::identity::following::FollowError::Restricted => {
+        codeyard_notifications::following::FollowError::Restricted => {
             Error::new(StatusCode::FORBIDDEN, "Account is restricted")
         }
         _ => Error::unavailable(error),
@@ -740,7 +740,7 @@ async fn create_key(
         .as_deref()
         .filter(|title| !title.is_empty())
         .unwrap_or("SSH key");
-    crate::backend::identity::keys::validate_name(title)
+    codeyard_identity::keys::validate_name(title)
         .map_err(|_| Error::validation("Key", "title", "invalid"))?;
     let key = codeyard_db_identity::users::ssh_keys::add_ssh_key_for_token(
         &state.pool,

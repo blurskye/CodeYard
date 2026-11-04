@@ -1,0 +1,30 @@
+[package]
+name = "codeyard-notifications"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+anyhow.workspace = true
+codeyard-db-cluster.workspace = true
+codeyard-db-core.workspace = true
+codeyard-db-identity.workspace = true
+codeyard-db-orgs.workspace = true
+codeyard-db-repos.workspace = true
+codeyard-identity.workspace = true
+codeyard-model.workspace = true
+codeyard-support.workspace = true
+codeyard-webui.workspace = true
+lettre.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+
+[lints]
+workspace = true

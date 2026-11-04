@@ -55,7 +55,7 @@ struct RequestContext {
     /// Scopes granted to an OAuth token; other credentials have none.
     oauth_scopes: Option<String>,
     /// Admission distinguishes personal tokens from integrations, which GraphQL does not accept.
-    personal: Option<crate::backend::identity::fine_grained::Grant>,
+    personal: Option<codeyard_identity::fine_grained::Grant>,
     nodes: AtomicUsize,
     /// Bytes of text the request has loaded or returned, bounded by `MAX_RESPONSE_BYTES`.
     bytes: AtomicUsize,
@@ -116,7 +116,7 @@ impl RequestContext {
         // Integration credentials were excluded at admission. Do not rediscover Apps for
         // every scalar; personal bounds and job permissions still have to be live.
         if self.personal.is_some() {
-            let grant = crate::backend::identity::fine_grained::grant(pool, self.auth.token.id)
+            let grant = codeyard_identity::fine_grained::grant(pool, self.auth.token.id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(token_denied)?;
@@ -215,7 +215,7 @@ impl RequestContext {
         }
         if self.personal.is_some() {
             let grant =
-                crate::backend::identity::fine_grained::grant(&self.state.pool, self.auth.token.id)
+                codeyard_identity::fine_grained::grant(&self.state.pool, self.auth.token.id)
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(token_denied)?;
@@ -256,7 +256,7 @@ impl RequestContext {
             return Ok(false);
         }
         if self.personal.is_some() {
-            return Ok(crate::backend::identity::fine_grained::grant(
+            return Ok(codeyard_identity::fine_grained::grant(
                 &self.state.pool,
                 self.auth.token.id,
             )
@@ -547,7 +547,7 @@ async fn execute(
             return error.into_response();
         }
     };
-    let personal = match crate::backend::identity::github_apps::authority(&state.pool, authentication.token.id).await {
+    let personal = match codeyard_identity::github_apps::authority(&state.pool, authentication.token.id).await {
         Ok(Some(bounds)) if bounds.personal().is_some() => bounds.personal().cloned(),
         Ok(Some(_)) => return (StatusCode::FORBIDDEN, Json(json!({"message":"Integration credentials require repository-scoped REST or Git access"}))).into_response(),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),

@@ -11,7 +11,6 @@ use crate::backend::app::AppState;
 
 use crate::backend::files::DownloadError;
 use crate::backend::files::UploadError;
-use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::refs::RefError;
 use crate::backend::repositories::releases;
 use crate::backend::repositories::releases::ReleaseError;
@@ -24,6 +23,7 @@ use axum::response::{IntoResponse, Response};
 use codeyard_db_core::models::ReleaseAsset;
 use codeyard_db_core::models::ReleaseRow;
 use codeyard_git::error::ErrorKind;
+use codeyard_identity::repository_access::AccessError;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos::chrome::RepoChrome;
 use codeyard_webui::pages::repos::page::Page as RepoPage;

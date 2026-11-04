@@ -7,11 +7,11 @@ use crate::backend::api::discovery::search::RESULTS_PER_PAGE;
 use crate::backend::api::discovery::DiscoveryReadError;
 use crate::backend::app::AppState;
 
-use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::RepoStore;
 use crate::backend::repositories::store::MAX_COMMIT_OFFSET;
 use codeyard_git::{error::RepoError, CommitFilter};
+use codeyard_identity::repository_access::AccessError;
 use codeyard_webui::pages::discovery::{CodeHit, CommitHit, SearchScan};
 use futures_util::{stream, StreamExt};
 use std::collections::{HashMap, HashSet};
@@ -225,7 +225,7 @@ async fn repository_page(
     else {
         return Ok(content);
     };
-    match crate::backend::repositories::access::check_read(&state.pool, repo.id, viewer).await {
+    match codeyard_identity::repository_access::check_read(&state.pool, repo.id, viewer).await {
         Ok(_) => {}
         Err(AccessError::NotFound) => return Ok(content),
         Err(_) => return Err(DiscoveryReadError::Unavailable),
@@ -265,7 +265,7 @@ async fn repository_page(
             Vec::new()
         }
     };
-    match crate::backend::repositories::access::check_read(&state.pool, repo.id, viewer).await {
+    match codeyard_identity::repository_access::check_read(&state.pool, repo.id, viewer).await {
         Ok(_) => {}
         Err(AccessError::NotFound) => return Ok(ContentPage::default()),
         Err(_) => return Err(DiscoveryReadError::Unavailable),

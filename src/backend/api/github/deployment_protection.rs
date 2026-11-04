@@ -69,7 +69,7 @@ async fn rules(
             .as_ref()
             .ok_or_else(crate::backend::api::github::auth::required)?
             .user;
-        if !crate::backend::repositories::access::can_admin(&state.pool, actor, &repo)
+        if !codeyard_identity::repository_access::can_admin(&state.pool, actor, &repo)
             .await
             .map_err(Error::unavailable)?
         {
@@ -137,7 +137,7 @@ async fn integrations(
     let actor = authentication
         .ok_or_else(crate::backend::api::github::auth::required)?
         .user;
-    if !crate::backend::repositories::access::can_admin(&state.pool, &actor, &repo)
+    if !codeyard_identity::repository_access::can_admin(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {

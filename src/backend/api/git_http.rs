@@ -95,7 +95,7 @@ async fn authenticate(
     // Successful Git requests do not spend the failed-login budget: a clone/fetch can make many
     // RPCs. A refused token counts against the client address and the token's user. An unknown
     // token is its own account key, like an unknown username.
-    match crate::backend::identity::admission::admit_login(
+    match codeyard_db_identity::auth_admission::admit_login(
         &state.pool,
         crate::backend::api::http::session::client_address(headers),
         user_id,
@@ -104,10 +104,12 @@ async fn authenticate(
     .await
     {
         Ok(_) => Err(challenge()),
-        Err(crate::backend::identity::admission::AdmissionError::Limited) => {
+        Err(codeyard_db_identity::auth_admission::AdmissionError::Limited) => {
             Err((StatusCode::TOO_MANY_REQUESTS, "Too many failed Git logins").into_response())
         }
-        Err(crate::backend::identity::admission::AdmissionError::Unavailable) => Err(unavailable()),
+        Err(codeyard_db_identity::auth_admission::AdmissionError::Unavailable) => {
+            Err(unavailable())
+        }
     }
 }
 

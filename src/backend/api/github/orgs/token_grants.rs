@@ -13,8 +13,8 @@ use crate::backend::app::AppState;
 use codeyard_db_core::queries::fine_grained_tokens::Token;
 use codeyard_db_identity::fine_grained_tokens::TokenFilter;
 
-use crate::backend::identity::fine_grained::Access;
 use codeyard_db_orgs::organizations::OrganizationPage;
+use codeyard_identity::fine_grained::Access;
 use codeyard_model::fine_grained::catalog;
 use codeyard_model::fine_grained::Group;
 
@@ -65,7 +65,7 @@ async fn context(
     if write {
         actor.require_write()?;
     }
-    if crate::backend::identity::github_apps::authority(&state.pool, actor.token.id)
+    if codeyard_identity::github_apps::authority(&state.pool, actor.token.id)
         .await
         .map_err(Error::unavailable)?
         .is_some()

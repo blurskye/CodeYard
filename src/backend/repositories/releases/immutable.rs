@@ -69,7 +69,7 @@ pub async fn enabled(
             .await?
             .ok_or(Refusal::Denied)?;
     ensure!(
-        crate::backend::repositories::access::can_admin(pool, &actor, &repository).await?,
+        codeyard_identity::repository_access::can_admin(pool, &actor, &repository).await?,
         Refusal::Denied
     );
     codeyard_db_repos::repositories::immutable_releases::enabled(pool, repository.id).await

@@ -495,9 +495,9 @@ pub async fn start(
         secrets: codeyard_support::secrets::SecretEncryptor::configured_from_env()?
             .map(std::sync::Arc::new),
         context: Some(context.clone()),
-        notifications: std::sync::Arc::new(
-            crate::backend::notifications::NotificationBroadcaster::new(pool),
-        ),
+        notifications: std::sync::Arc::new(codeyard_notifications::NotificationBroadcaster::new(
+            pool,
+        )),
     };
     let events = ci::CiHandler::new(context.clone(), queue);
     // Claims wait until publish has recorded this node's address; see `Cluster::publish`.

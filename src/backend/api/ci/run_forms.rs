@@ -50,7 +50,7 @@ async fn readable_run(
             .await
             .map_err(|_| unavailable())?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
-    if !crate::backend::repositories::access::can_read(&ctx.state.pool, Some(user), &repository)
+    if !codeyard_identity::repository_access::can_read(&ctx.state.pool, Some(user), &repository)
         .await
         .map_err(|_| unavailable())?
     {

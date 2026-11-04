@@ -277,7 +277,7 @@ async fn change_reviewers(
         .ok_or_else(crate::backend::api::github::auth::required)?
         .user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
-    if !crate::backend::repositories::access::can_write(&state.pool, &actor, &repo)
+    if !codeyard_identity::repository_access::can_write(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -300,7 +300,7 @@ async fn change_reviewers(
                 .ok_or_else(|| Error::invalid("Reviewer not found"))?;
         if !remove
             && (user.id == pull.author_id
-                || !crate::backend::repositories::access::can_write(&state.pool, &user, &repo)
+                || !codeyard_identity::repository_access::can_write(&state.pool, &user, &repo)
                     .await
                     .map_err(Error::unavailable)?)
         {

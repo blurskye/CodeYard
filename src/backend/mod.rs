@@ -13,14 +13,13 @@ pub mod code_scanning;
 
 pub mod dashboard;
 
-pub mod email;
 pub mod files;
 
 pub mod gists;
-pub mod identity;
+
 pub mod issues;
 pub mod node;
-pub mod notifications;
+
 pub(crate) mod npm;
 pub(crate) mod nuget;
 pub mod organizations;

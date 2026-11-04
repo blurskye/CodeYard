@@ -139,7 +139,7 @@ async fn current(
     pool: &codeyard_db_core::DbPool,
     submitted: Option<&Fields>,
 ) -> Result<view::Settings, String> {
-    let mut settings = match crate::backend::email::config::describe(pool).await? {
+    let mut settings = match codeyard_db_identity::mail_config::describe(pool).await? {
         Some((config, source, password_set)) => view::Settings {
             source: match source {
                 Source::Database => "database",
@@ -263,7 +263,7 @@ async fn test_form(
     ctx.return_to = Some("/admin/email".into());
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match crate::backend::email::send_test(
+    match crate::backend::api::admin::email_test::send_test(
         &ctx.state.pool,
         ctx.state.secret_encryptor.as_deref(),
         &session,
@@ -281,12 +281,18 @@ async fn test_form(
         }
         Err(error) => {
             let status = match &error {
-                crate::backend::email::TestMailError::Authority(
-                    crate::backend::identity::sessions::AccountAuthorityError::SessionUnavailable,
+                crate::backend::api::admin::email_test::TestMailError::Authority(
+                    codeyard_identity::sessions::AccountAuthorityError::SessionUnavailable,
                 ) => StatusCode::SERVICE_UNAVAILABLE,
-                crate::backend::email::TestMailError::Authority(_) => StatusCode::FORBIDDEN,
-                crate::backend::email::TestMailError::NoAddress => StatusCode::BAD_REQUEST,
-                crate::backend::email::TestMailError::Delivery(_) => StatusCode::BAD_GATEWAY,
+                crate::backend::api::admin::email_test::TestMailError::Authority(_) => {
+                    StatusCode::FORBIDDEN
+                }
+                crate::backend::api::admin::email_test::TestMailError::NoAddress => {
+                    StatusCode::BAD_REQUEST
+                }
+                crate::backend::api::admin::email_test::TestMailError::Delivery(_) => {
+                    StatusCode::BAD_GATEWAY
+                }
             };
             render(
                 &ctx,

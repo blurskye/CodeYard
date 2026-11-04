@@ -54,7 +54,7 @@ async fn administrator(
 )> {
     let (repo, actor) = repository(state, headers, owner, name, write).await?;
     let actor = actor.ok_or_else(crate::backend::api::github::auth::required)?;
-    if !crate::backend::repositories::access::can_admin(&state.pool, &actor.user, &repo)
+    if !codeyard_identity::repository_access::can_admin(&state.pool, &actor.user, &repo)
         .await
         .map_err(Error::unavailable)?
     {

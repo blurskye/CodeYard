@@ -77,15 +77,11 @@ pub(crate) async fn profile_response(
         .clamp(1, 10_000);
     let repository_query = ctx.query.get("q").map(String::as_str).unwrap_or("");
     let listing = if stars_tab {
-        crate::backend::identity::profiles::repository_count_on_profile(
-            &ctx.state.pool,
-            username,
-            viewer,
-        )
-        .await
-        .map(|(target, count)| (target, count, Vec::new()))
+        codeyard_identity::profiles::repository_count_on_profile(&ctx.state.pool, username, viewer)
+            .await
+            .map(|(target, count)| (target, count, Vec::new()))
     } else {
-        crate::backend::identity::profiles::repositories_on_profile(
+        codeyard_identity::profiles::repositories_on_profile(
             &ctx.state.pool,
             username,
             viewer,
@@ -97,19 +93,19 @@ pub(crate) async fn profile_response(
     };
     let (target, repository_count, repositories) = match listing {
         Ok(value) => value,
-        Err(crate::backend::identity::profiles::ProfileReadError::Missing) => {
+        Err(codeyard_identity::profiles::ProfileReadError::Missing) => {
             return ctx.error(
                 StatusCode::NOT_FOUND,
                 "No page, user or organization has this name.",
             )
         }
-        Err(crate::backend::identity::profiles::ProfileReadError::UserUnavailable) => {
+        Err(codeyard_identity::profiles::ProfileReadError::UserUnavailable) => {
             return ctx.error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Unable to load this profile.",
             )
         }
-        Err(crate::backend::identity::profiles::ProfileReadError::RepositoriesUnavailable) => {
+        Err(codeyard_identity::profiles::ProfileReadError::RepositoriesUnavailable) => {
             return ctx.error(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Unable to load this user's repositories.",
@@ -176,7 +172,7 @@ pub(crate) async fn profile_response(
     let activity = if stars_tab {
         users::ProfileActivity::default()
     } else {
-        match crate::backend::identity::activity::profile_activity(
+        match codeyard_identity::activity::profile_activity(
             &ctx.state.pool,
             ctx.user
                 .as_ref()

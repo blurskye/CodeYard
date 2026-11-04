@@ -13,7 +13,7 @@ use axum::{
     Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
-use codeyard::backend::identity::tokens::{self, TokenInput};
+use codeyard_identity::tokens::{self, TokenInput};
 use serde_json::{json, Value};
 use tower::ServiceExt;
 

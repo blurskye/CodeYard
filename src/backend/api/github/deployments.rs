@@ -135,10 +135,10 @@ async fn create(
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
     let actor = &auth.user;
-    crate::backend::repositories::access::check_write(&state.pool, repo.id, actor.id)
+    codeyard_identity::repository_access::check_write(&state.pool, repo.id, actor.id)
         .await
         .map_err(|error| match error {
-            crate::backend::repositories::access::AccessError::Unavailable => {
+            codeyard_identity::repository_access::AccessError::Unavailable => {
                 Error::unavailable(())
             }
             _ => Error::new(StatusCode::FORBIDDEN, "Deployment write denied"),

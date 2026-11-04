@@ -82,8 +82,8 @@ async fn set_avatar(
     pool: &codeyard_db_core::DbPool,
     user: &codeyard_db_core::models::User,
     file_id: &str,
-) -> Result<(), codeyard::backend::identity::avatars::AvatarError> {
-    codeyard::backend::identity::avatars::set_user_avatar(
+) -> Result<(), crate::backend::api::avatar_ops::AvatarError> {
+    crate::backend::api::avatar_ops::set_user_avatar(
         pool,
         user,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -224,7 +224,7 @@ async fn contract(pg: bool) {
     ] {
         assert_eq!(
             set_avatar(f.pool(), &alice_user, file).await,
-            Err(codeyard::backend::identity::avatars::AvatarError::NotUsable),
+            Err(crate::backend::api::avatar_ops::AvatarError::NotUsable),
             "{file}"
         );
     }
@@ -460,7 +460,7 @@ async fn contract(pg: bool) {
         let storage = storage.clone();
         let user = request_user.clone();
         tokio::spawn(async move {
-            codeyard::backend::identity::avatars::upload_user_avatar(
+            crate::backend::api::avatar_ops::upload_user_avatar(
                 &pool,
                 &storage,
                 &user,
@@ -478,7 +478,7 @@ async fn contract(pg: bool) {
         let user = request_user.clone();
         let bytes = changed_png.clone();
         tokio::spawn(async move {
-            codeyard::backend::identity::avatars::upload_user_avatar(
+            crate::backend::api::avatar_ops::upload_user_avatar(
                 &pool,
                 &storage,
                 &user,
@@ -774,7 +774,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    codeyard::backend::identity::avatars::set_org_avatar(
+    crate::backend::api::avatar_ops::set_org_avatar(
         f.pool(),
         &bob_user,
         org,
@@ -968,29 +968,26 @@ async fn contract(pg: bool) {
 
     // Picture types are recognized by their bytes.
     assert_eq!(
-        codeyard::backend::identity::avatars::picture_type(PNG),
+        crate::backend::api::avatar_ops::picture_type(PNG),
         Some("image/png")
     );
     assert_eq!(
-        codeyard::backend::identity::avatars::picture_type(b"\xff\xd8\xff\xe0"),
+        crate::backend::api::avatar_ops::picture_type(b"\xff\xd8\xff\xe0"),
         Some("image/jpeg")
     );
     assert_eq!(
-        codeyard::backend::identity::avatars::picture_type(b"GIF89a.."),
+        crate::backend::api::avatar_ops::picture_type(b"GIF89a.."),
         Some("image/gif")
     );
     assert_eq!(
-        codeyard::backend::identity::avatars::picture_type(b"RIFF\0\0\0\0WEBPVP8 "),
+        crate::backend::api::avatar_ops::picture_type(b"RIFF\0\0\0\0WEBPVP8 "),
         Some("image/webp")
     );
     assert_eq!(
-        codeyard::backend::identity::avatars::picture_type(b"<svg></svg>"),
+        crate::backend::api::avatar_ops::picture_type(b"<svg></svg>"),
         None
     );
-    assert_eq!(
-        codeyard::backend::identity::avatars::picture_type(b""),
-        None
-    );
+    assert_eq!(crate::backend::api::avatar_ops::picture_type(b""), None);
 
     f.finish().await;
 }

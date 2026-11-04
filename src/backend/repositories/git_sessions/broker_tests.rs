@@ -3,9 +3,9 @@
 use super::*;
 use crate::backend::ci::queue::RunQueue;
 use crate::backend::ci::CiWorkers;
-use crate::backend::notifications::NotificationBroadcaster;
 use base64::Engine;
 use codeyard_db_core::models::AccessLevel;
+use codeyard_notifications::NotificationBroadcaster;
 use std::os::unix::fs::PermissionsExt;
 use std::process::{Output, Stdio};
 use tokio::process::Command;

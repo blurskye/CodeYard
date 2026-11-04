@@ -160,7 +160,7 @@ async fn documents(
     authors.sort_unstable();
     authors.dedup();
     let associations =
-        crate::backend::repositories::access::author_associations(pool, repo, &authors)
+        codeyard_identity::repository_access::author_associations(pool, repo, &authors)
             .await
             .map_err(Error::unavailable)?;
     let mut ids = authors;

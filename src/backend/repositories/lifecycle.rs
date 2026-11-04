@@ -892,10 +892,10 @@ pub async fn delete(
     repo_id: i64,
 ) -> Result<(), StorageError> {
     let actor = actor.into();
-    crate::backend::repositories::access::check_admin(pool, repo_id, actor.user_id)
+    codeyard_identity::repository_access::check_admin(pool, repo_id, actor.user_id)
         .await
         .map_err(|error| StorageError {
-            kind: if error == crate::backend::repositories::access::AccessError::Unavailable {
+            kind: if error == codeyard_identity::repository_access::AccessError::Unavailable {
                 LifecycleFailure::Unavailable
             } else {
                 LifecycleFailure::Denied
@@ -1017,7 +1017,7 @@ pub async fn fork(
     pool: &codeyard_db_core::DbPool,
     context: Option<&NodeContext>,
     repos_path: &Path,
-    broadcaster: &crate::backend::notifications::NotificationBroadcaster,
+    broadcaster: &codeyard_notifications::NotificationBroadcaster,
     actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     source_id: i64,
     owner: &str,
@@ -1057,7 +1057,7 @@ pub async fn fork_into(
     pool: &codeyard_db_core::DbPool,
     context: Option<&NodeContext>,
     repos_path: &Path,
-    broadcaster: &crate::backend::notifications::NotificationBroadcaster,
+    broadcaster: &codeyard_notifications::NotificationBroadcaster,
     options: ForkOptions<'_>,
     source_id: i64,
     owner: &str,
@@ -1067,10 +1067,10 @@ pub async fn fork_into(
     codeyard_db_repos::repositories::creation::check_creation_authority(pool, options.owner)
         .await
         .map_err(storage_error)?;
-    let source = crate::backend::repositories::access::check_read(pool, source_id, Some(actor))
+    let source = codeyard_identity::repository_access::check_read(pool, source_id, Some(actor))
         .await
         .map_err(|error| StorageError {
-            kind: if error == crate::backend::repositories::access::AccessError::Unavailable {
+            kind: if error == codeyard_identity::repository_access::AccessError::Unavailable {
                 LifecycleFailure::Unavailable
             } else {
                 LifecycleFailure::Denied
@@ -1166,7 +1166,7 @@ pub async fn fork_into(
         let title = format!("{} forked {}/{}", user.username, owner, source.name);
         let body = format!("New fork: {fork_owner}/{}", fork.name);
         let link = format!("/{fork_owner}/{}", fork.name);
-        let notice = crate::backend::notifications::create::NotificationRequest {
+        let notice = codeyard_notifications::create::NotificationRequest {
             user_id: recipient,
             actor_id: Some(actor),
             repo_id: Some(source.id),
@@ -1178,10 +1178,10 @@ pub async fn fork_into(
         };
         let mut notified = Vec::new();
         // The source owner may not be able to read the fork's destination.
-        if crate::backend::repositories::access::check_read(pool, fork.id, Some(recipient))
+        if codeyard_identity::repository_access::check_read(pool, fork.id, Some(recipient))
             .await
             .is_ok()
-            && crate::backend::notifications::create::create_and_broadcast_notification(
+            && codeyard_notifications::create::create_and_broadcast_notification(
                 pool,
                 broadcaster,
                 notice.clone(),
@@ -1191,13 +1191,8 @@ pub async fn fork_into(
         {
             notified.push(recipient);
         }
-        crate::backend::notifications::create::notify_subscribers(
-            pool,
-            broadcaster,
-            notice,
-            &notified,
-        )
-        .await;
+        codeyard_notifications::create::notify_subscribers(pool, broadcaster, notice, &notified)
+            .await;
     }
     // Even a redacted source-scoped event reveals confidential remediation activity. A
     // source subscription cannot establish readability of a private destination.
@@ -1248,7 +1243,7 @@ async fn live_creation_actor(
                 codeyard_support::credentials::AccountRestricted.into(),
             ));
         }
-        crate::backend::repositories::access::credential_user(pool, authority, true)
+        codeyard_identity::repository_access::credential_user(pool, authority, true)
             .await
             .map_err(storage_error)?;
     }
@@ -1268,10 +1263,10 @@ async fn existing_fork(
     else {
         return Ok(None);
     };
-    let repo = crate::backend::repositories::access::check_read(pool, repo.id, Some(actor))
+    let repo = codeyard_identity::repository_access::check_read(pool, repo.id, Some(actor))
         .await
         .map_err(|error| StorageError {
-            kind: if error == crate::backend::repositories::access::AccessError::Unavailable {
+            kind: if error == codeyard_identity::repository_access::AccessError::Unavailable {
                 LifecycleFailure::Unavailable
             } else {
                 LifecycleFailure::Denied
@@ -1324,10 +1319,10 @@ pub async fn generate(
         .await
         .map_err(storage_error)?;
     let source =
-        crate::backend::repositories::access::check_read(node.0, source_id, Some(owner.actor_id))
+        codeyard_identity::repository_access::check_read(node.0, source_id, Some(owner.actor_id))
             .await
             .map_err(|error| StorageError {
-                kind: if error == crate::backend::repositories::access::AccessError::Unavailable {
+                kind: if error == codeyard_identity::repository_access::AccessError::Unavailable {
                     LifecycleFailure::Unavailable
                 } else {
                     LifecycleFailure::Denied

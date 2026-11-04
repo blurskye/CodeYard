@@ -1,14 +1,14 @@
 use crate::backend::issues::database_error;
 use crate::backend::issues::OperationError;
 
-use crate::backend::notifications::create::create_and_broadcast_notification;
-use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::mentions::mentions_anyone;
-use crate::backend::notifications::mentions::notify_mentions;
-use crate::backend::notifications::mentions::MentionComment;
-use crate::backend::notifications::mentions::MentionSource;
-use crate::backend::notifications::NotificationBroadcaster;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
+use codeyard_notifications::create::create_and_broadcast_notification;
+use codeyard_notifications::create::NotificationRequest;
+use codeyard_notifications::mentions::mentions_anyone;
+use codeyard_notifications::mentions::notify_mentions;
+use codeyard_notifications::mentions::MentionComment;
+use codeyard_notifications::mentions::MentionSource;
+use codeyard_notifications::NotificationBroadcaster;
 
 use crate::backend::webhooks::payloads::Scope;
 use serde::Deserialize;
@@ -90,7 +90,7 @@ async fn require_change(
         });
     }
     if issue.locked
-        && !crate::backend::repositories::access::can_write(pool, user, repository)
+        && !codeyard_identity::repository_access::can_write(pool, user, repository)
             .await
             .map_err(database_error)?
     {
@@ -187,8 +187,7 @@ pub async fn create_issue_comment(
     )
     .await;
     notified.extend(mentioned);
-    crate::backend::notifications::create::notify_subscribers(pool, broadcaster, notice, &notified)
-        .await;
+    codeyard_notifications::create::notify_subscribers(pool, broadcaster, notice, &notified).await;
 
     // The comment moved the issue's revision, so the hook names the issue as it is now.
     let commented = match codeyard_db_repos::issues::get_issue_by_id(pool, issue.id).await {
@@ -273,7 +272,7 @@ pub async fn edit_issue_comment(
     require_change(pool, &user, &repository, &issue).await?;
     let previous = issue_comment(pool, &issue, comment_id).await?;
     if previous.author_id != user.id
-        && !crate::backend::repositories::access::can_write(pool, &user, &repository)
+        && !codeyard_identity::repository_access::can_write(pool, &user, &repository)
             .await
             .map_err(database_error)?
     {

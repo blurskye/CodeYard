@@ -98,9 +98,7 @@ mod tests {
             config: Arc::new(CiConfig::default()),
             secrets: None,
             context: Some(context.clone()),
-            notifications: Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
-                &pool,
-            )),
+            notifications: Arc::new(codeyard_notifications::NotificationBroadcaster::new(&pool)),
         };
         let handler = CiHandler::new(context.clone(), queue);
         handler.stop_claiming();
@@ -161,10 +159,10 @@ mod tests {
 
     #[tokio::test]
     async fn oversized_environment_claim_fails_instead_of_leaving_an_undeliverable_lease() {
-        use crate::backend::notifications::NotificationBroadcaster;
         use codeyard_db_actions::environment_values as values;
         use codeyard_db_actions::environment_values::Save;
         use codeyard_db_orgs::organization_values::Kind;
+        use codeyard_notifications::NotificationBroadcaster;
         use codeyard_support::secrets::SecretEncryptor;
 
         let (root, pool, context) = test_context().await;

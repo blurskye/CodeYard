@@ -1888,7 +1888,7 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
         queue::{ClaimedRun, RunQueue},
         CiConfig, CiExecutionMode,
     };
-    use codeyard::backend::notifications::NotificationBroadcaster;
+    use codeyard_notifications::NotificationBroadcaster;
     let database = native::PostgresDatabase::new().await;
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
@@ -3694,7 +3694,7 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
         Arc::new(CiConfig::default()),
         Arc::new(tokio::sync::Notify::new()),
         Some(web.context.clone()),
-        Arc::new(codeyard::backend::notifications::NotificationBroadcaster::new(pool)),
+        Arc::new(codeyard_notifications::NotificationBroadcaster::new(pool)),
     );
     // The refs must come from the primary, which is down. The refresh fails and writes nothing.
     let refreshed = codeyard::backend::repositories::pull_requests::refresh_open_pull_request(
@@ -4125,7 +4125,7 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
         .unwrap();
     let error = codeyard::backend::repositories::pull_requests::reviews::create_pull_request_review(
         &database.pool, Some(&web.context),
-        &codeyard::backend::notifications::NotificationBroadcaster::new(&database.pool), repo.actor,
+        &codeyard_notifications::NotificationBroadcaster::new(&database.pool), repo.actor,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, repo.actor).await),
         (actor.username, repo.repository.name.clone(), pull.number),
         codeyard::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {

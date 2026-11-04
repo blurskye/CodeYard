@@ -20,9 +20,9 @@ use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
 
-use codeyard::backend::notifications::NotificationEvent;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::repositories::AccessLevel;
+use codeyard_notifications::NotificationEvent;
 use fixture::Fixture;
 use pulls::Client;
 use serde_json::{json, Value};
@@ -713,7 +713,7 @@ async fn assert_created_event(
     kind: &str,
 ) {
     let session = session_inbox::session(pool, user_id).await;
-    let event = codeyard::backend::notifications::current_event(pool, &session, user_id, &hint)
+    let event = codeyard_notifications::current_event(pool, &session, user_id, &hint)
         .await
         .unwrap()
         .unwrap();

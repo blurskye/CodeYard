@@ -139,14 +139,12 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         }
         if request.personal.is_some() {
             let owner = match owner {
-                RepositoryTarget::Personal(id) => {
-                    crate::backend::identity::fine_grained::Owner::User(id)
-                }
+                RepositoryTarget::Personal(id) => codeyard_identity::fine_grained::Owner::User(id),
                 RepositoryTarget::Organization(id) => {
-                    crate::backend::identity::fine_grained::Owner::Organization(id)
+                    codeyard_identity::fine_grained::Owner::Organization(id)
                 }
             };
-            let grant = crate::backend::identity::fine_grained::grant(pool, request.auth.token.id)
+            let grant = codeyard_identity::fine_grained::grant(pool, request.auth.token.id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(token_denied)?;

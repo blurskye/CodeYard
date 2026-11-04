@@ -842,9 +842,7 @@ mod tests {
             Default::default(),
             Arc::new(tokio::sync::Notify::new()),
             None,
-            Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
-                &pool,
-            )),
+            Arc::new(codeyard_notifications::NotificationBroadcaster::new(&pool)),
         ));
         let mut handler = GitSshHandler::new(pool.clone(), RateLimiter::new(), ci);
         // Enrollment stays valid for host OpenSSH; the built-in verifier cannot require touch.
@@ -926,9 +924,7 @@ mod tests {
             Arc::new(crate::backend::ci::CiConfig::default()),
             Arc::new(tokio::sync::Notify::new()),
             None,
-            Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
-                &pool,
-            )),
+            Arc::new(codeyard_notifications::NotificationBroadcaster::new(&pool)),
         ));
         let limiter = RateLimiter::new();
         let ip: IpAddr = "192.0.2.7".parse().unwrap();
@@ -986,9 +982,7 @@ mod tests {
             Arc::new(crate::backend::ci::CiConfig::default()),
             Arc::new(tokio::sync::Notify::new()),
             None,
-            Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
-                &pool,
-            )),
+            Arc::new(codeyard_notifications::NotificationBroadcaster::new(&pool)),
         ));
         let mut server = GitSshHandler::new(pool, RateLimiter::new(), ci_service);
         server.user = Some(user());

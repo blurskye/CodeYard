@@ -73,7 +73,7 @@ pub async fn requested(pool: &DbPool, run: &CiRun) -> anyhow::Result<()> {
         }) || !codeyard_model::webhook_events::subscribes(
             &subscription.hook.events,
             codeyard_model::webhook_events::DEPLOYMENT_PROTECTION_RULE,
-        ) || !crate::backend::identity::github_apps::event_permission(
+        ) || !codeyard_identity::github_apps::event_permission(
             &serde_json::from_str(&subscription.permissions)?,
             codeyard_model::webhook_events::DEPLOYMENT_PROTECTION_RULE,
         ) {

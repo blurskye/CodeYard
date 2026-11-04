@@ -7,7 +7,6 @@ use crate::backend::app::AppState;
 
 use codeyard_db_core::queries::fine_grained_tokens::Policy;
 
-use crate::backend::identity::fine_grained::MAX_DAYS;
 use axum::{
     extract::{rejection::FormRejection, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -17,6 +16,7 @@ use axum::{
 };
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_identity::fine_grained::MAX_DAYS;
 use codeyard_model::fine_grained::catalog;
 use codeyard_webui::pages::orgs as view;
 use serde_json::{Map, Value};

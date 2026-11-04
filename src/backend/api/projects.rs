@@ -716,7 +716,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 return Ok(format!("{path}/settings"));
             }
             anyhow::ensure!(
-                crate::backend::repositories::access::can_read(pool, ctx.user.as_ref(), &repo)
+                codeyard_identity::repository_access::can_read(pool, ctx.user.as_ref(), &repo)
                     .await?,
                 codeyard_model::project_query::Refusal::Missing
             );

@@ -61,7 +61,7 @@ pub(super) async fn association(
     repo: &codeyard_db_core::models::Repository,
     user_id: i64,
 ) -> Result<&'static str> {
-    crate::backend::repositories::access::author_association(pool, repo, user_id)
+    codeyard_identity::repository_access::author_association(pool, repo, user_id)
         .await
         .map_err(Error::unavailable)
 }

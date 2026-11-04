@@ -5,7 +5,7 @@ use crate::backend::api::http::render::public_error;
 
 use crate::backend::app::AppState;
 
-use crate::backend::identity::oauth::OAuthError;
+use codeyard_identity::oauth::OAuthError;
 
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
@@ -16,15 +16,6 @@ use std::sync::Arc;
 /// No request header determines a callback origin. HTTP is permitted only on loopback fixtures.
 pub fn configured_public_origin() -> Option<String> {
     validated_public_origin(&std::env::var("PUBLIC_URL").ok()?)
-}
-
-pub(crate) fn validated_public_origin(value: &str) -> Option<String> {
-    let url = codeyard_model::http_config::parse_public_url(value).ok()?;
-    let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-    if !(url.scheme() == "https" || (url.scheme() == "http" && loopback)) {
-        return None;
-    }
-    Some(url.origin().ascii_serialization())
 }
 
 /// The provider sends the browser back here, so a failure is an error page, not JSON.
@@ -98,10 +89,10 @@ pub async fn oauth_redirect(
     Query(query): Query<std::collections::HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    if crate::backend::identity::oauth::providers::provider_meta(&provider).is_none() {
+    if codeyard_identity::oauth::providers::provider_meta(&provider).is_none() {
         return failure(OAuthError::UnknownProvider, &provider);
     }
-    if crate::backend::identity::oauth::providers::provider_credentials(&provider).is_none() {
+    if codeyard_identity::oauth::providers::provider_credentials(&provider).is_none() {
         return failure(OAuthError::Disabled, &provider);
     }
     let Some(origin) = configured_public_origin() else {
@@ -110,31 +101,31 @@ pub async fn oauth_redirect(
             "Configure PUBLIC_URL with the public OAuth origin.",
         );
     };
-    match crate::backend::identity::admission::admit_oauth_start(
+    match codeyard_db_identity::auth_admission::admit_oauth_start(
         &state.pool,
         crate::backend::api::http::session::client_address(&headers),
     )
     .await
     {
         Ok(_) => {}
-        Err(crate::backend::identity::admission::AdmissionError::Limited) => {
+        Err(codeyard_db_identity::auth_admission::AdmissionError::Limited) => {
             return public_error(StatusCode::TOO_MANY_REQUESTS, "Too many sign-in attempts")
         }
-        Err(crate::backend::identity::admission::AdmissionError::Unavailable) => {
+        Err(codeyard_db_identity::auth_admission::AdmissionError::Unavailable) => {
             return public_error(StatusCode::SERVICE_UNAVAILABLE, "Sign-in unavailable")
         }
     }
     // Always replace the browser nonce; only the latest flow in this browser completes.
     let nonce = crate::backend::api::http::session::generate_session_id();
     let token = crate::backend::api::http::session::generate_session_id();
-    let verifier = if crate::backend::identity::oauth::providers::supports_pkce(&provider) {
+    let verifier = if codeyard_identity::oauth::providers::supports_pkce(&provider) {
         crate::backend::api::http::session::generate_session_id()
     } else {
         String::new()
     };
     let redirect = format!("{origin}/login/oauth/{provider}/callback");
     let return_to = local_return_to(query.get("redirect").map(String::as_str).unwrap_or("/"));
-    match crate::backend::identity::oauth::begin(
+    match codeyard_identity::oauth::begin(
         &state.pool,
         &provider,
         &redirect,
@@ -172,20 +163,20 @@ pub async fn oauth_callback(
     Query(query): Query<OAuthCallbackQuery>,
     headers: HeaderMap,
 ) -> Response {
-    if crate::backend::identity::oauth::providers::provider_meta(&provider).is_none() {
+    if codeyard_identity::oauth::providers::provider_meta(&provider).is_none() {
         return failure(OAuthError::UnknownProvider, &provider);
     }
     let (Some(code), Some(token)) = (query.code, query.state) else {
         return public_error(StatusCode::BAD_REQUEST, "Missing code or state.");
     };
-    if crate::backend::identity::oauth::providers::provider_credentials(&provider).is_none() {
+    if codeyard_identity::oauth::providers::provider_credentials(&provider).is_none() {
         return failure(OAuthError::Disabled, &provider);
     }
-    if let Err(error) = crate::backend::identity::oauth::validate_callback(&code, &token) {
+    if let Err(error) = codeyard_identity::oauth::validate_callback(&code, &token) {
         return failure(error, &provider);
     }
     // Preserve setup's precedence over missing browser binding.
-    if let Err(error) = crate::backend::identity::oauth::require_setup(&state.pool).await {
+    if let Err(error) = codeyard_identity::oauth::require_setup(&state.pool).await {
         return failure(error, &provider);
     }
     let Some(nonce) = crate::backend::api::http::session::random_cookie(
@@ -205,9 +196,9 @@ pub async fn oauth_callback(
     };
     let redirect = format!("{origin}/login/oauth/{provider}/callback");
     let initiating = LoginSessionRequest::from_headers(&headers);
-    match crate::backend::identity::oauth::complete(
+    match codeyard_identity::oauth::complete(
         &state.pool,
-        crate::backend::identity::oauth::Callback {
+        codeyard_identity::oauth::Callback {
             provider: &provider,
             code: &code,
             token: &token,
@@ -256,3 +247,5 @@ mod return_tests {
         }
     }
 }
+
+use codeyard_model::oauth_apps::validated_public_origin;

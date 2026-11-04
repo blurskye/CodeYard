@@ -28,13 +28,12 @@ async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
     let user = format!("{}/api/activity-feeds/users/{{user}}", origin());
     let mut value = json!({"timeline_url":timeline,"user_url":user,"_links":{"timeline":{"href":timeline,"type":"application/atom+xml"},"user":{"href":user,"type":"application/atom+xml"}}});
     if let Some(viewer) = viewer {
-        let token =
-            crate::backend::identity::tokens::activity_feed_token(&state.pool, viewer.token.id)
-                .await
-                .map_err(|e| match e {
-                    crate::backend::identity::tokens::TokenError::Denied => auth::required(),
-                    _ => Error::unavailable(()),
-                })?;
+        let token = codeyard_identity::tokens::activity_feed_token(&state.pool, viewer.token.id)
+            .await
+            .map_err(|e| match e {
+                codeyard_identity::tokens::TokenError::Denied => auth::required(),
+                _ => Error::unavailable(()),
+            })?;
         let username = encode_component(&viewer.user.username);
         for (key, url) in [
             (
@@ -172,10 +171,10 @@ async fn feed(
         params.get("kind").or_else(|| params.get("org"))
     {
         let token = query.token.as_deref().ok_or_else(Error::missing)?;
-        let feed = crate::backend::identity::tokens::activity_feed_user(&state.pool, token)
+        let feed = codeyard_identity::tokens::activity_feed_user(&state.pool, token)
             .await
             .map_err(|e| {
-                if e == crate::backend::identity::tokens::TokenError::Unavailable {
+                if e == codeyard_identity::tokens::TokenError::Unavailable {
                     Error::unavailable(())
                 } else {
                     Error::missing()

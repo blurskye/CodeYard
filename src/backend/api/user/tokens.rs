@@ -10,13 +10,13 @@ use crate::backend::api::user::responses::mutation_guard;
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 
-use crate::backend::identity::tokens::TokenError;
-use crate::backend::identity::tokens::TokenInput;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
 use chrono::{DateTime, NaiveDate, Utc};
+use codeyard_identity::tokens::TokenError;
+use codeyard_identity::tokens::TokenInput;
 use codeyard_webui::pages::account;
 use std::sync::Arc;
 
@@ -75,7 +75,7 @@ pub(crate) async fn token_add_post(
         .expect("mutation guard checked account")
         .id;
     let session_id = extract_session_id(&ctx.headers);
-    let result = crate::backend::identity::tokens::create(
+    let result = codeyard_identity::tokens::create(
         &ctx.state.pool,
         actor,
         session_id.as_deref(),
@@ -130,7 +130,7 @@ pub(crate) async fn token_delete_post(
     // A revoked token stops working at once, so the server refuses a delete that did not confirm.
     let result = if field(&form, "confirm") == "yes" {
         let session_id = extract_session_id(&ctx.headers);
-        crate::backend::identity::tokens::delete(&ctx.state.pool, actor, session_id.as_deref(), id)
+        codeyard_identity::tokens::delete(&ctx.state.pool, actor, session_id.as_deref(), id)
             .await
             .map_err(token_failure)
     } else {

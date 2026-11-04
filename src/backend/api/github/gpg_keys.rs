@@ -7,7 +7,7 @@ use codeyard_db_core::queries::users::accounts::AccountCredential;
 
 use codeyard_db_identity::users::gpg_keys::GpgKey;
 
-use crate::backend::identity::gpg::GpgError;
+use codeyard_identity::gpg::GpgError;
 
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -34,7 +34,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 async fn documents(state: &AppState, user: &User, keys: &[GpgKey]) -> Result<Vec<Value>> {
-    let verified: Vec<String> = crate::backend::identity::signatures::addresses(&state.pool, user)
+    let verified: Vec<String> = codeyard_identity::signatures::addresses(&state.pool, user)
         .await
         .map_err(Error::unavailable)?
         .into_iter()
@@ -130,7 +130,7 @@ async fn create(
     actor.require_write()?;
     let Json(input) =
         input.map_err(|_| Error::validation("GpgKey", "armored_public_key", "invalid"))?;
-    let key = crate::backend::identity::gpg::enroll(
+    let key = codeyard_identity::gpg::enroll(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
@@ -169,7 +169,7 @@ async fn remove(
         .await?
         .ok_or_else(crate::backend::api::github::auth::required)?;
     actor.require_write()?;
-    crate::backend::identity::gpg::delete(
+    codeyard_identity::gpg::delete(
         &state.pool,
         actor.user.id,
         &AccountCredential::Token(actor.token.id, &actor.token.token_hash),

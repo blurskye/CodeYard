@@ -46,3 +46,4 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(nodes::router())
         .merge(storage::router())
 }
+pub mod email_test;

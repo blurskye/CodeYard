@@ -324,7 +324,7 @@ pub(super) async fn resolve(
             else {
                 return Ok(Value::Null);
             };
-            if !crate::backend::repositories::access::can_read(&request.state.pool, Some(&request.auth.user), &head)
+            if !codeyard_identity::repository_access::can_read(&request.state.pool, Some(&request.auth.user), &head)
                 .await
                 .map_err(unavailable)?
             {

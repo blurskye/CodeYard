@@ -621,7 +621,7 @@ impl Gateway {
             .into());
         }
         let check_workflows = if let ReceiveCredential::Token(id) = operation.credential {
-            !crate::backend::identity::oauth_apps::allows_workflows(&self.pool, id).await?
+            !codeyard_identity::oauth_apps::allows_workflows(&self.pool, id).await?
         } else {
             false
         };

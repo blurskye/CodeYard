@@ -64,9 +64,7 @@ impl Fixture {
             Default::default(),
             Arc::new(tokio::sync::Notify::new()),
             None,
-            Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
-                &pool,
-            )),
+            Arc::new(codeyard_notifications::NotificationBroadcaster::new(&pool)),
         ));
         // Another test can take the probed port before the listener binds it; try a new one.
         let (limiter, address, stop, running) = 'start: {

@@ -496,9 +496,9 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
         }),
         std::sync::Arc::new(tokio::sync::Notify::new()),
         None,
-        std::sync::Arc::new(
-            codeyard::backend::notifications::NotificationBroadcaster::new(&f.pool),
-        ),
+        std::sync::Arc::new(codeyard_notifications::NotificationBroadcaster::new(
+            &f.pool,
+        )),
     );
     let request = |branch: &str, event: &str| CiRunRequest {
         repo_id: f.repo.id,

@@ -7,11 +7,11 @@ use crate::backend::api::user::responses::Fields;
 use crate::backend::api::users::profile::profile_response;
 use crate::backend::app::AppState;
 
-use crate::backend::identity::following::FollowError;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
+use codeyard_notifications::following::FollowError;
 use std::sync::Arc;
 
 pub(crate) fn follow_failure(error: FollowError) -> (StatusCode, Json<ApiError>) {
@@ -65,7 +65,7 @@ pub(crate) async fn follow_post(
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential =
         codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
-    let result = crate::backend::identity::following::change(
+    let result = codeyard_notifications::following::change(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         actor,

@@ -90,10 +90,10 @@ async fn upstream(
         .filter(|_| repo.is_fork)
         .ok_or_else(|| Error::invalid("Repository is not a fork"))?;
     let parent =
-        crate::backend::repositories::access::check_read(&state.pool, parent, Some(actor.id))
+        codeyard_identity::repository_access::check_read(&state.pool, parent, Some(actor.id))
             .await
             .map_err(|error| match error {
-                crate::backend::repositories::access::AccessError::Unavailable => {
+                codeyard_identity::repository_access::AccessError::Unavailable => {
                     Error::unavailable(())
                 }
                 _ => Error::missing(),

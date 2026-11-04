@@ -170,7 +170,7 @@ pub(crate) async fn native_detail(
                 .await
                 .map_err(|_| unavailable(&ctx))?
                 .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
-                if !crate::backend::repositories::access::can_read(
+                if !codeyard_identity::repository_access::can_read(
                     &ctx.state.pool,
                     ctx.user.as_ref(),
                     &target,

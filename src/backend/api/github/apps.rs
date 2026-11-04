@@ -129,15 +129,15 @@ pub(super) async fn application(
     let credentials = crate::backend::api::http::credentials::basic(headers)
         .filter(|(client, _)| client == id)
         .map(|(_, secret)| secret);
-    let app = crate::backend::identity::oauth_apps::client(&state.pool, id)
+    let app = codeyard_identity::oauth_apps::client(&state.pool, id)
         .await
         .map_err(Error::unavailable)?;
     if let (Some(app), Some(secret)) = (app, credentials) {
-        if crate::backend::identity::oauth_apps::valid_secret(&app, &secret) {
+        if codeyard_identity::oauth_apps::valid_secret(&app, &secret) {
             return Ok(app);
         }
     }
-    match crate::backend::identity::admission::admit_login(
+    match codeyard_db_identity::auth_admission::admit_login(
         &state.pool,
         crate::backend::api::http::session::client_address(headers),
         None,
@@ -146,11 +146,11 @@ pub(super) async fn application(
     .await
     {
         Ok(_) => Err(Error::new(StatusCode::UNAUTHORIZED, "Bad credentials")),
-        Err(crate::backend::identity::admission::AdmissionError::Limited) => Err(Error::new(
+        Err(codeyard_db_identity::auth_admission::AdmissionError::Limited) => Err(Error::new(
             StatusCode::TOO_MANY_REQUESTS,
             "Too many failed logins",
         )),
-        Err(crate::backend::identity::admission::AdmissionError::Unavailable) => {
+        Err(codeyard_db_identity::auth_admission::AdmissionError::Unavailable) => {
             Err(Error::unavailable(()))
         }
     }

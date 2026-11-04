@@ -4,7 +4,7 @@ use crate::backend::repositories::pull_requests::database_error;
 use crate::backend::ci::CiRuns;
 use crate::backend::repositories::pull_requests::OperationError;
 
-use crate::backend::notifications::NotificationBroadcaster;
+use codeyard_notifications::NotificationBroadcaster;
 
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::RevertRequest as RevertCommit;

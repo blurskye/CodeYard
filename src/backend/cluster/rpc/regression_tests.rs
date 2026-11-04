@@ -584,9 +584,7 @@ async fn stopping_workers_signals_and_joins_the_started_owner() {
     let context = context(directory.path()).await;
     let pool = context.database().unwrap().clone();
     let config = Arc::new(CiConfig::default());
-    let notifications = Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
-        &pool,
-    ));
+    let notifications = Arc::new(codeyard_notifications::NotificationBroadcaster::new(&pool));
     let queue = crate::backend::ci::queue::RunQueue::Database {
         pool: pool.clone(),
         config,

@@ -10,7 +10,7 @@ use codeyard_db_repos::notifications::threads::ThreadAction;
 use codeyard_db_repos::notifications::threads::ThreadFilter;
 use codeyard_db_repos::notifications::threads::ThreadInbox;
 
-use crate::backend::notifications::inbox::InboxError;
+use codeyard_notifications::inbox::InboxError;
 
 use axum::{
     body::Bytes,
@@ -42,7 +42,7 @@ async fn act(state: &AppState, headers: &HeaderMap, action: ThreadAction) -> Res
     if action.requires_write() {
         actor.require_write()?;
     }
-    crate::backend::notifications::inbox::token_inbox(
+    codeyard_notifications::inbox::token_inbox(
         &state.pool,
         &state.notification_broadcaster,
         actor.token.id,

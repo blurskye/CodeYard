@@ -249,7 +249,7 @@ pub(super) async fn mutation(
     request.authorize(repo.id, "pull-requests", true).await?;
     let pool = &request.state.pool;
     let actor = &request.auth.user;
-    if !crate::backend::repositories::access::can_write(pool, actor, &repo)
+    if !codeyard_identity::repository_access::can_write(pool, actor, &repo)
         .await
         .map_err(unavailable)?
     {

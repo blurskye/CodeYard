@@ -12,8 +12,8 @@ use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
-use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 
 async fn contract(pg: bool) {
@@ -81,7 +81,7 @@ async fn contract(pg: bool) {
         (outsider, "write"),
     ] {
         let session = Client::login(&router, f.pool(), user).await;
-        let token = codeyard::backend::identity::tokens::create(
+        let token = codeyard_identity::tokens::create(
             f.pool(),
             user,
             Some(&session.session),

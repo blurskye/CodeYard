@@ -2,10 +2,10 @@
 use super::action_secrets::{pat, request};
 use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
 
-use codeyard::backend::identity::tokens::token_hash;
 use codeyard_db_actions::deployment_protection::Refusal;
 use codeyard_db_actions::deployment_protection::Review;
 use codeyard_db_identity::github_apps::App;
+use codeyard_identity::tokens::token_hash;
 
 use codeyard_db_core::models::CiRun;
 use serde_json::{json, Value};

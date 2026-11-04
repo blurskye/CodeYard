@@ -12,9 +12,9 @@ use codeyard::backend::api::create_router;
 use codeyard::backend::app::AppState;
 use codeyard::backend::ci::CiConfig;
 
-use codeyard::backend::identity::tokens::TokenInput;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -126,7 +126,7 @@ async fn contract(pg: bool) {
         let client = Client::login(&router, f.pool(), user).await;
         tokens.push(format!(
             "Bearer {}",
-            codeyard::backend::identity::tokens::create(
+            codeyard_identity::tokens::create(
                 f.pool(),
                 user,
                 Some(&client.session),
@@ -643,15 +643,15 @@ async fn contract(pg: bool) {
         .as_i64()
         .unwrap();
     {
-        let created = codeyard::backend::identity::fine_grained::create(
+        let created = codeyard_identity::fine_grained::create(
             f.pool(),
             alice,
             Some(&session.session),
-            codeyard::backend::identity::fine_grained::Request {
+            codeyard_identity::fine_grained::Request {
                 name: "team-admin".into(),
                 description: "Team administration".into(),
-                owner: codeyard::backend::identity::fine_grained::Owner::Organization(org.id),
-                access: codeyard::backend::identity::fine_grained::Access::Selected,
+                owner: codeyard_identity::fine_grained::Owner::Organization(org.id),
+                access: codeyard_identity::fine_grained::Access::Selected,
                 repositories: vec![other_repo],
                 permissions: json!({"members":"write","administration":"write"})
                     .as_object()

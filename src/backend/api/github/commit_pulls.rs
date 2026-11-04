@@ -25,7 +25,7 @@ fn operation_error(error: AssociationError) -> Error {
     match error {
         AssociationError::Git(error) => store_error(error),
         AssociationError::Access(
-            crate::backend::repositories::access::AccessError::Unavailable,
+            codeyard_identity::repository_access::AccessError::Unavailable,
         )
         | AssociationError::Unavailable => Error::unavailable(()),
         AssociationError::Access(_) => Error::missing(),

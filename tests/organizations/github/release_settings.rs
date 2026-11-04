@@ -6,8 +6,8 @@ use crate::support::{
 use codeyard_db_orgs::organizations::NewOrganization;
 use codeyard_db_orgs::organizations::OrganizationProfile;
 
-use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::OrgRole;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 
 async fn contract(pg: bool) {
@@ -47,7 +47,7 @@ async fn contract(pg: bool) {
     let mut credentials = Vec::new();
     for (actor, scope) in [(owner, "write"), (owner, "read"), (member, "write")] {
         let session = Client::login(&router, f.pool(), actor).await;
-        let token = codeyard::backend::identity::tokens::create(
+        let token = codeyard_identity::tokens::create(
             f.pool(),
             actor,
             Some(&session.session),

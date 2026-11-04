@@ -1,6 +1,6 @@
 //! Collaborator invitations keep admission separate from permission grants.
 
-use crate::backend::repositories::access::AccessError;
+use codeyard_identity::repository_access::AccessError;
 
 use codeyard_db_core::models::AccessLevel;
 pub use codeyard_db_repos::repositories::collaborators::{
@@ -51,7 +51,7 @@ pub async fn list(
     // The roster shows each person's permission, and an organization's members, so it needs
     // write-level access and, for an organization repository, membership of that organization.
     // Reading it changes nothing, so an archived or migration-locked repository still shows it.
-    let repository = crate::backend::repositories::access::check_read(pool, repo_id, Some(actor))
+    let repository = codeyard_identity::repository_access::check_read(pool, repo_id, Some(actor))
         .await
         .map_err(access_error)?;
     let user = codeyard_db_identity::users::accounts::get_user_by_id(pool, actor)
@@ -116,7 +116,7 @@ pub async fn invitations(
     limit: i64,
 ) -> Result<Vec<Invitation>, Error> {
     if let Some(repo) = repo_id {
-        crate::backend::repositories::access::check_admin(pool, repo, actor)
+        codeyard_identity::repository_access::check_admin(pool, repo, actor)
             .await
             .map_err(access_error)?;
     }

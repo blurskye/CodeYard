@@ -237,5 +237,6 @@ async fn wait_for_stop(stop: &mut tokio::sync::watch::Receiver<bool>) {
     let _ = stop.wait_for(|stopped| *stopped).await;
 }
 
+pub mod avatar_ops;
 #[cfg(test)]
 mod tests;

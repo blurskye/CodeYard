@@ -92,12 +92,12 @@ impl History<'_> {
                 git::repository::introduced_signatures(repository, None, old, new).await?
             }
         };
-        let mut signers = crate::backend::identity::signatures::Signers::default();
+        let mut signers = codeyard_identity::signatures::Signers::default();
         for commit in &commits {
-            let reason = crate::backend::identity::signatures::check(
+            let reason = codeyard_identity::signatures::check(
                 pool,
                 &mut signers,
-                crate::backend::identity::signatures::Signed {
+                codeyard_identity::signatures::Signed {
                     signature: commit.signature.as_deref(),
                     payload: commit.payload.as_deref(),
                     email: Some(&commit.committer_email),
@@ -239,7 +239,7 @@ pub async fn check_branch_write_with(
     let force_push_blocked = blocks_force_push(&matching, actor.id);
     let is_admin = write.via != WriteVia::DeployKey
         && matching.iter().any(|rule| !rule.enforce_admins)
-        && crate::backend::repositories::access::can_admin(pool, actor, repository)
+        && codeyard_identity::repository_access::can_admin(pool, actor, repository)
             .await
             .map_err(|_| Refusal::Unavailable)?;
 

@@ -111,7 +111,7 @@ pub(super) fn ref_error(error: crate::backend::repositories::refs::RefError) -> 
             Error::invalid("Invalid reference target or reference already exists")
         }
         RefError::Git(error) => store_error(error),
-        RefError::Access(crate::backend::repositories::access::AccessError::Unavailable)
+        RefError::Access(codeyard_identity::repository_access::AccessError::Unavailable)
         | RefError::Unavailable
         | RefError::AppliedFollowupFailed => Error::unavailable(()),
         RefError::Access(_) | RefError::Protected(_) => {

@@ -111,7 +111,7 @@ pub(super) async fn documents(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        if !crate::backend::repositories::access::can_read(
+        if !codeyard_identity::repository_access::can_read(
             pool,
             credential.map(|auth| &auth.user),
             &current,
@@ -250,7 +250,7 @@ async fn documents_page(
             .collect(),
     );
     let associations =
-        crate::backend::repositories::access::author_associations(pool, repo, &authors)
+        codeyard_identity::repository_access::author_associations(pool, repo, &authors)
             .await
             .map_err(Error::unavailable)?;
     let issue_labels = codeyard_db_repos::labels::get_issues_labels(pool, repo.id, &issue_ids)
@@ -827,7 +827,7 @@ pub(in crate::backend::api) async fn metadata(
     actor: &codeyard_db_core::models::User,
     input: &Value,
 ) -> Result<Metadata> {
-    if !crate::backend::repositories::access::can_triage(pool, actor, repo)
+    if !codeyard_identity::repository_access::can_triage(pool, actor, repo)
         .await
         .map_err(Error::unavailable)?
     {

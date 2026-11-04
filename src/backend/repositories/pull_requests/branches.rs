@@ -579,7 +579,7 @@ pub async fn refresh_updated_head(
         .await
         .map_err(|_| RefreshError::Database)?;
     let writer = match actor {
-        Some(actor) => crate::backend::repositories::access::can_write(pool, &actor, head)
+        Some(actor) => codeyard_identity::repository_access::can_write(pool, &actor, head)
             .await
             .map_err(|_| RefreshError::Database)?,
         None => false,

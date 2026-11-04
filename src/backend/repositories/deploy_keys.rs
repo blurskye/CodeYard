@@ -3,13 +3,13 @@
 //! UI. Its pushes are attributed to the account that added it, and it gets no more than that
 //! account's access, capped at write.
 
-use crate::backend::repositories::access::can_admin;
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::DeployKey;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
 use codeyard_db_identity::deploy_keys::NewDeployKey;
+use codeyard_identity::repository_access::can_admin;
 use codeyard_model::identity::SshKeyWriteRefusal;
 use codeyard_model::repositories::DeployKeyError;
 use codeyard_webui::components::deploy_keys::{DeployKeyPanel, DeployKeyRow};

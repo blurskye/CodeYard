@@ -283,7 +283,7 @@ pub(super) async fn repository(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    if !crate::backend::repositories::access::can_read(
+    if !codeyard_identity::repository_access::can_read(
         &state.pool,
         auth.as_ref().map(|auth| &auth.user),
         &repo,

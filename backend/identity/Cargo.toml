@@ -1,0 +1,39 @@
+[package]
+name = "codeyard-identity"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+anyhow.workspace = true
+argon2.workspace = true
+axum.workspace = true
+base64.workspace = true
+chrono.workspace = true
+codeyard-db-actions.workspace = true
+codeyard-db-cluster.workspace = true
+codeyard-db-core.workspace = true
+codeyard-db-identity.workspace = true
+codeyard-db-repos.workspace = true
+codeyard-model.workspace = true
+codeyard-support.workspace = true
+codeyard-webui.workspace = true
+data-encoding.workspace = true
+hex.workspace = true
+hmac.workspace = true
+pgp.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+rsa.workspace = true
+serde_json.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+ssh-key.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[lints]
+workspace = true

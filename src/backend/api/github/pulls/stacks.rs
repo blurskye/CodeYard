@@ -117,7 +117,7 @@ async fn change(
     let actor = viewer
         .ok_or_else(crate::backend::api::github::auth::required)?
         .user;
-    if !crate::backend::repositories::access::can_write(&state.pool, &actor, &repo)
+    if !codeyard_identity::repository_access::can_write(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {

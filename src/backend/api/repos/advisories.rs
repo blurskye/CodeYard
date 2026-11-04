@@ -106,7 +106,7 @@ async fn render(
                 )
                 .await?
                 {
-                    if crate::backend::repositories::access::can_read(
+                    if codeyard_identity::repository_access::can_read(
                         &ctx.state.pool,
                         ctx.user.as_ref(),
                         &fork,

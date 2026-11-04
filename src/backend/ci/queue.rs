@@ -6,13 +6,13 @@ use crate::backend::ci::CiExecutionMode;
 use crate::backend::cluster::NodeContext;
 use codeyard_support::secrets::SecretEncryptor;
 
-use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::RepoStore;
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::DbPool;
 use codeyard_model::ci::LogLine;
+use codeyard_notifications::NotificationBroadcaster;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::watch;

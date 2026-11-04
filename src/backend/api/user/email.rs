@@ -34,7 +34,7 @@ pub(crate) async fn email_post(
         return response;
     }
     let session_id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
-    let result = crate::backend::identity::accounts::change_email(
+    let result = codeyard_identity::accounts::change_email(
         &ctx.state.pool,
         session_id.as_deref(),
         field(&form, "current_password"),
@@ -66,7 +66,7 @@ pub(crate) async fn verification_post(
     if user.email_verified {
         return ctx.redirect("/settings?tab=email");
     }
-    match crate::backend::email::links::send_verification(&ctx.state.pool, user).await {
+    match codeyard_identity::email_links::send_verification(&ctx.state.pool, user).await {
         Ok(()) => ctx.redirect("/settings?tab=email&saved=verification-sent"),
         Err(error) => {
             let (status, message) = link_failure(&error);
@@ -92,8 +92,11 @@ pub(crate) async fn verification_code_post(
     if let Err(response) = require_account(&ctx, false) {
         return response;
     }
-    match crate::backend::email::links::verify_address(&ctx.state.pool, field(&form, "code").trim())
-        .await
+    match codeyard_identity::email_links::verify_address(
+        &ctx.state.pool,
+        field(&form, "code").trim(),
+    )
+    .await
     {
         Ok(true) => ctx.redirect("/settings?tab=email&saved=email-verified"),
         Ok(false) => {
@@ -137,7 +140,7 @@ pub(crate) async fn visibility_post(
     } else {
         "private"
     };
-    let result = crate::backend::identity::profiles::save(
+    let result = codeyard_identity::profiles::save(
         &ctx.state.pool,
         user.id,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
@@ -177,7 +180,7 @@ pub(crate) async fn secondary_post(
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let remove = field(&form, "remove") == "yes";
     let address = field(&form, if remove { "email" } else { "secondary_email" }).to_owned();
-    match crate::backend::identity::emails::change(
+    match codeyard_identity::emails::change(
         &ctx.state.pool,
         user.id,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session),
@@ -189,8 +192,8 @@ pub(crate) async fn secondary_post(
         Ok(_) => ctx.redirect("/settings?tab=email&saved=secondary-email"),
         Err(error) => {
             let status = match error {
-                crate::backend::identity::emails::EmailError::Denied => StatusCode::FORBIDDEN,
-                crate::backend::identity::emails::EmailError::Unavailable => {
+                codeyard_identity::emails::EmailError::Denied => StatusCode::FORBIDDEN,
+                codeyard_identity::emails::EmailError::Unavailable => {
                     StatusCode::SERVICE_UNAVAILABLE
                 }
                 _ => StatusCode::UNPROCESSABLE_ENTITY,
@@ -218,8 +221,12 @@ pub(crate) async fn secondary_verification_post(
         Err(response) => return response,
     };
     let email = [field(&form, "email").to_owned()];
-    match crate::backend::email::links::send_secondary_verifications(&ctx.state.pool, user, &email)
-        .await
+    match codeyard_identity::email_links::send_secondary_verifications(
+        &ctx.state.pool,
+        user,
+        &email,
+    )
+    .await
     {
         Ok(()) => ctx.redirect("/settings?tab=email&saved=verification-sent"),
         Err(error) => {

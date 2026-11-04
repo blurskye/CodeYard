@@ -41,7 +41,7 @@ pub(super) async fn prepare(
         .iter()
         .any(|key| input.get(*key).is_some());
     if changed
-        && !crate::backend::repositories::access::can_triage(
+        && !codeyard_identity::repository_access::can_triage(
             &request.state.pool,
             &request.auth.user,
             repo,

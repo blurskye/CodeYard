@@ -227,7 +227,7 @@ async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissibl
         }),
         std::sync::Arc::new(tokio::sync::Notify::new()),
         None,
-        std::sync::Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
+        std::sync::Arc::new(codeyard_notifications::NotificationBroadcaster::new(
             &a.pool,
         )),
     );
@@ -3503,9 +3503,9 @@ async fn a_repository_past_the_ref_limit_stays_readable_and_repairable() {
 
     // The API path checks the default branch before it deletes, so it runs here too.
     use crate::backend::ci::CiRuns;
-    use crate::backend::notifications::NotificationBroadcaster;
     use crate::backend::repositories::refs::delete_branch;
     use crate::backend::repositories::refs::RefError;
+    use codeyard_notifications::NotificationBroadcaster;
     use std::sync::Arc;
     let ci = CiRuns::new(
         pool.clone(),

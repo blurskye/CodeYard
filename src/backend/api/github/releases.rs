@@ -20,7 +20,7 @@ use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 
 pub(super) fn release_error(error: ReleaseError) -> Error {
-    use crate::backend::repositories::access::AccessError;
+    use codeyard_identity::repository_access::AccessError;
     match error {
         ReleaseError::Access(AccessError::Unavailable) | ReleaseError::Unavailable => {
             Error::unavailable(())
@@ -232,7 +232,7 @@ async fn may_create_tag(
     auth: &crate::backend::api::github::auth::Authentication,
 ) -> Result<bool> {
     Ok(auth.is_job()
-        || crate::backend::identity::oauth_apps::allows_workflows(&state.pool, auth.token.id)
+        || codeyard_identity::oauth_apps::allows_workflows(&state.pool, auth.token.id)
             .await
             .map_err(Error::unavailable)?)
 }
@@ -491,7 +491,7 @@ async fn upload(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, request.headers(), &owner, &name, true).await?;
     let auth = auth.ok_or_else(crate::backend::api::github::auth::required)?;
-    crate::backend::repositories::access::check_write(&state.pool, repo.id, auth.user.id)
+    codeyard_identity::repository_access::check_write(&state.pool, repo.id, auth.user.id)
         .await
         .map_err(|error| release_error(ReleaseError::Access(error)))?;
     let content_type = request

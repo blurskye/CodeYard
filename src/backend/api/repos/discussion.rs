@@ -147,7 +147,7 @@ pub(crate) async fn repository(
     let record = loaded.repository;
     let access = match &ctx.user {
         Some(user) => {
-            crate::backend::repositories::access::user_access(&ctx.state.pool, user, &record)
+            codeyard_identity::repository_access::user_access(&ctx.state.pool, user, &record)
                 .await
                 .map_err(|_| unavailable(ctx))?
         }
@@ -287,7 +287,7 @@ async fn can_view_head(
     ctx: &PageContext,
     head: &codeyard_db_core::models::Repository,
 ) -> ResultPage<bool> {
-    crate::backend::repositories::access::can_read(&ctx.state.pool, ctx.user.as_ref(), head)
+    codeyard_identity::repository_access::can_read(&ctx.state.pool, ctx.user.as_ref(), head)
         .await
         .map_err(|_| unavailable(ctx))
 }
@@ -1048,7 +1048,7 @@ pub(crate) async fn discussion(
     };
     Ok(view::CommentPage {
         can_triage: match &ctx.user {
-            Some(user) => crate::backend::repositories::access::can_triage(
+            Some(user) => codeyard_identity::repository_access::can_triage(
                 &ctx.state.pool,
                 user,
                 &repo.record,

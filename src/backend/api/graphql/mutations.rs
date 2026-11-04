@@ -368,7 +368,7 @@ pub(super) async fn resolve(
             boxed(|| async move {
                 let repo = crate::backend::api::graphql::repository::by_id(target(&input, "repositoryId", "R")?, request).await?;
                 request.authorize(repo.id, "pull-requests", true).await?;
-                crate::backend::identity::interactions::prepare(
+                crate::backend::repositories::identity_interactions::prepare(
                     &request.state,
                     &request.auth.user,
                     &repo,
@@ -390,7 +390,7 @@ pub(super) async fn resolve(
                         .await
                         .map_err(unavailable)?
                         .ok_or_else(missing)?;
-                    if !crate::backend::repositories::access::can_read(
+                    if !codeyard_identity::repository_access::can_read(
                         pool,
                         Some(&request.auth.user),
                         &head,
@@ -756,7 +756,7 @@ pub(super) async fn resolve(
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
-                crate::backend::identity::following::change(
+                codeyard_notifications::following::change(
                     pool,
                     broadcaster,
                     actor,
@@ -766,9 +766,9 @@ pub(super) async fn resolve(
                 )
                 .await
                 .map_err(|error| match error {
-                    crate::backend::identity::following::FollowError::Missing => missing(),
-                    crate::backend::identity::following::FollowError::Unavailable
-                    | crate::backend::identity::following::FollowError::CountsUnavailableAfterSave => unavailable(()),
+                    codeyard_notifications::following::FollowError::Missing => missing(),
+                    codeyard_notifications::following::FollowError::Unavailable
+                    | codeyard_notifications::following::FollowError::CountsUnavailableAfterSave => unavailable(()),
                     error => Error::new(error.to_string()),
                 })?;
                 payload["user"] = crate::backend::api::graphql::user::object(&current, actor);

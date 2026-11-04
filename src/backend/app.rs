@@ -1,9 +1,9 @@
 //! Shared application state: database, storage, CI and notification services.
 use crate::backend::ci::CiConfig;
 use crate::backend::ci::CiRuns;
-use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::storage::ObjectStore;
 use codeyard_db_core::DbPool;
+use codeyard_notifications::NotificationBroadcaster;
 use codeyard_support::secrets::SecretEncryptor;
 use std::{path::PathBuf, sync::Arc};
 

@@ -12,8 +12,8 @@ use codeyard_db_orgs::organizations::NewOrganization;
 use codeyard_db_orgs::organizations::OrganizationPage;
 use codeyard_db_orgs::organizations::OrganizationProfile;
 
-use codeyard::backend::identity::accounts::EmailChangeError;
 use codeyard_db_core::models::OrgRole;
+use codeyard_identity::accounts::EmailChangeError;
 
 async fn make_administrator(f: &Database, id: i64) {
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[id])
@@ -190,7 +190,7 @@ async fn administrator_roles(pg: bool) {
 async fn email_changes(pg: bool) {
     let mut f = Database::new(pg).await;
     let pool = f.pool();
-    let hash = codeyard::backend::identity::passwords::hash_password("correct-password")
+    let hash = codeyard_identity::passwords::hash_password("correct-password")
         .await
         .unwrap();
     let user = codeyard_db_identity::users::accounts::create_user_with_password(
@@ -222,7 +222,7 @@ async fn email_changes(pg: bool) {
 
     // A wrong password changes nothing.
     assert!(matches!(
-        codeyard::backend::identity::accounts::change_email(
+        codeyard_identity::accounts::change_email(
             pool,
             Some("email-session"),
             "wrong-password",
@@ -239,7 +239,7 @@ async fn email_changes(pg: bool) {
 
     // Malformed and taken addresses are refused, with the right password.
     assert!(matches!(
-        codeyard::backend::identity::accounts::change_email(
+        codeyard_identity::accounts::change_email(
             pool,
             Some("email-session"),
             "correct-password",
@@ -249,7 +249,7 @@ async fn email_changes(pg: bool) {
         Err(EmailChangeError::InvalidEmail)
     ));
     assert!(matches!(
-        codeyard::backend::identity::accounts::change_email(
+        codeyard_identity::accounts::change_email(
             pool,
             Some("email-session"),
             "correct-password",
@@ -259,7 +259,7 @@ async fn email_changes(pg: bool) {
         Err(EmailChangeError::InvalidEmail)
     ));
     assert!(matches!(
-        codeyard::backend::identity::accounts::change_email(
+        codeyard_identity::accounts::change_email(
             pool,
             Some("email-session"),
             "correct-password",
@@ -274,7 +274,7 @@ async fn email_changes(pg: bool) {
         &[user.id],
     )
     .await;
-    let saved = codeyard::backend::identity::accounts::change_email(
+    let saved = codeyard_identity::accounts::change_email(
         pool,
         Some("email-session"),
         "correct-password",

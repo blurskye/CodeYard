@@ -2,17 +2,17 @@ use crate::backend::ci::CiRuns;
 use crate::backend::repositories::pull_requests::database_error;
 use crate::backend::repositories::pull_requests::OperationError;
 
-use crate::backend::notifications::create::create_and_broadcast_notification;
-use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::mentions::notify_mentions;
-use crate::backend::notifications::mentions::MentionSource;
-use crate::backend::notifications::watchers::notify_watchers;
-use crate::backend::notifications::watchers::WatchEvent;
-use crate::backend::notifications::watchers::WatchedItem;
-use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::pull_requests::queue_pull_request_ci;
 use crate::backend::repositories::store::repo_store;
 use codeyard_git::error::{ErrorKind, RepoError};
+use codeyard_notifications::create::create_and_broadcast_notification;
+use codeyard_notifications::create::NotificationRequest;
+use codeyard_notifications::mentions::notify_mentions;
+use codeyard_notifications::mentions::MentionSource;
+use codeyard_notifications::watchers::notify_watchers;
+use codeyard_notifications::watchers::WatchEvent;
+use codeyard_notifications::watchers::WatchedItem;
+use codeyard_notifications::NotificationBroadcaster;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -190,7 +190,7 @@ pub async fn create_pull_request(
     let mut converted_retry = None;
     let (source_issue, title, body) = match req.source {
         PullRequestSource::Issue { issue } => {
-            if !crate::backend::repositories::access::can_write(pool, &user, &repository)
+            if !codeyard_identity::repository_access::can_write(pool, &user, &repository)
                 .await
                 .map_err(database_error)?
             {
@@ -615,7 +615,7 @@ pub async fn update_pull_request(
                 message: "Pull request not found".to_owned(),
             })?;
 
-    let writer = crate::backend::repositories::access::can_write(pool, &user, &repository)
+    let writer = codeyard_identity::repository_access::can_write(pool, &user, &repository)
         .await
         .map_err(database_error)?;
     let head = if req.maintainer_can_modify.is_some() {

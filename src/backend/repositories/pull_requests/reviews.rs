@@ -2,12 +2,12 @@ use crate::backend::cluster::NodeContext;
 use crate::backend::repositories::pull_requests::database_error;
 use crate::backend::repositories::pull_requests::OperationError;
 
-use crate::backend::notifications::create::create_and_broadcast_notification;
-use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::mentions::notify_mentions;
-use crate::backend::notifications::mentions::MentionSource;
-use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::store::repo_store;
+use codeyard_notifications::create::create_and_broadcast_notification;
+use codeyard_notifications::create::NotificationRequest;
+use codeyard_notifications::mentions::notify_mentions;
+use codeyard_notifications::mentions::MentionSource;
+use codeyard_notifications::NotificationBroadcaster;
 
 use crate::backend::webhooks::payloads::Scope;
 use codeyard_git::error::ErrorKind;
@@ -537,9 +537,7 @@ async fn create_review(
                 subject: &pull_request.title,
                 link: &comment_link,
                 comment_id: Some(
-                    crate::backend::notifications::mentions::MentionComment::PullRequest(
-                        entry.comment.id,
-                    ),
+                    codeyard_notifications::mentions::MentionComment::PullRequest(entry.comment.id),
                 ),
                 old_text: None,
                 text: &entry.comment.body,
@@ -559,8 +557,7 @@ async fn create_review(
         .await;
     }
     notified.extend(mentioned);
-    crate::backend::notifications::create::notify_subscribers(pool, broadcaster, notice, &notified)
-        .await;
+    codeyard_notifications::create::notify_subscribers(pool, broadcaster, notice, &notified).await;
 
     if review.state != "pending" {
         emit_review_webhook(

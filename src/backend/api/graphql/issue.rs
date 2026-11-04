@@ -438,9 +438,13 @@ pub(super) async fn mutation(
         }
         let repo = crate::backend::api::graphql::repository::by_id(id, request).await?;
         request.authorize(repo.id, "issues", true).await?;
-        crate::backend::identity::interactions::prepare(&request.state, &request.auth.user, &repo)
-            .await
-            .map_err(unavailable)?;
+        crate::backend::repositories::identity_interactions::prepare(
+            &request.state,
+            &request.auth.user,
+            &repo,
+        )
+        .await
+        .map_err(unavailable)?;
         let metadata =
             crate::backend::api::graphql::metadata_mutations::prepare(&input, &repo, request)
                 .await?;
@@ -469,9 +473,13 @@ pub(super) async fn mutation(
             .ok_or_else(missing)?;
         let repo = crate::backend::api::graphql::repository::by_id(pull.repo_id, request).await?;
         request.authorize(repo.id, "pull-requests", true).await?;
-        crate::backend::identity::interactions::prepare(&request.state, &request.auth.user, &repo)
-            .await
-            .map_err(unavailable)?;
+        crate::backend::repositories::identity_interactions::prepare(
+            &request.state,
+            &request.auth.user,
+            &repo,
+        )
+        .await
+        .map_err(unavailable)?;
         let body = crate::backend::repositories::pull_requests::comments::CreatePullRequestCommentRequest {
             body:string("body")?.to_owned(),repository_id:Some(repo.id),path:None,line:None,side:None,start_line:None,start_side:None,commit_sha:None,base_sha:None,in_reply_to_comment_id:None,review_id:None,pending:false,
         };
@@ -511,9 +519,13 @@ pub(super) async fn mutation(
             .ok_or_else(missing)?;
         let repo = crate::backend::api::graphql::repository::by_id(issue.repo_id, request).await?;
         request.authorize(repo.id, "issues", true).await?;
-        crate::backend::identity::interactions::prepare(&request.state, &request.auth.user, &repo)
-            .await
-            .map_err(unavailable)?;
+        crate::backend::repositories::identity_interactions::prepare(
+            &request.state,
+            &request.auth.user,
+            &repo,
+        )
+        .await
+        .map_err(unavailable)?;
         let owner = crate::backend::api::graphql::repository::owner(&repo, request).await?;
         let state_error = |error| {
             crate::backend::api::graphql::mutations::issue_change_error(

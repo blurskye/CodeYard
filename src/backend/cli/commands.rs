@@ -67,7 +67,7 @@ fn validate_cli_username(username: &str) -> Result<()> {
     codeyard_model::account_input::validate_namespace(username, 3).map_err(|_| anyhow::anyhow!(
         "Username must be 3-1024 bytes, at most 255 characters, and contain only letters, numbers, hyphens and underscores"
     ))?;
-    crate::backend::identity::credentials::validate_new_account_name(username)
+    codeyard_identity::credentials::validate_new_account_name(username)
         .map_err(|_| anyhow::anyhow!("That username is reserved"))
 }
 
@@ -77,13 +77,13 @@ pub async fn bootstrap_user_cmd(pool: &DbPool, username: &str, mode: &str) -> Re
     validate_cli_username(username)?;
     let mut password = String::new();
     std::io::stdin()
-        .take(crate::backend::identity::passwords::MAX_PASSWORD_BYTES as u64 + 3)
+        .take(codeyard_identity::passwords::MAX_PASSWORD_BYTES as u64 + 3)
         .read_to_string(&mut password)?;
     let password = password.strip_suffix('\n').unwrap_or(&password);
     let password = password.strip_suffix('\r').unwrap_or(password);
-    crate::backend::identity::credentials::validate_new_password(password)
+    codeyard_identity::credentials::validate_new_password(password)
         .map_err(|_| anyhow::anyhow!("Password must be 8-1024 bytes"))?;
-    let hash = crate::backend::identity::passwords::hash_password(password)
+    let hash = codeyard_identity::passwords::hash_password(password)
         .await
         .map_err(|_| anyhow::anyhow!("Could not hash administrator password"))?;
     match codeyard_db_identity::users::transitions::bootstrap_admin(pool, username, &hash, mode)
@@ -134,7 +134,7 @@ pub async fn add_key_cmd(
     key_name: &str,
     public_key: &str,
 ) -> Result<()> {
-    crate::backend::identity::keys::validate_name(key_name)?;
+    codeyard_identity::keys::validate_name(key_name)?;
     let user = codeyard_db_identity::users::accounts::get_user_by_username(pool, username)
         .await?
         .ok_or_else(|| anyhow::anyhow!("User not found: {}", username))?;

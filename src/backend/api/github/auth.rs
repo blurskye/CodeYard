@@ -77,11 +77,11 @@ pub(super) async fn recheck_repository_read(
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
     if let Some(reader) = &auth {
-        let bounds = crate::backend::identity::github_apps::authority(&state.pool, reader.token.id)
+        let bounds = codeyard_identity::github_apps::authority(&state.pool, reader.token.id)
             .await
             .map_err(Error::unavailable)?;
         if scope == "contents"
-            && !crate::backend::identity::oauth_apps::allows_git(
+            && !codeyard_identity::oauth_apps::allows_git(
                 &state.pool,
                 reader.token.id,
                 bounds.as_ref(),
@@ -100,7 +100,7 @@ pub(super) async fn recheck_repository_read(
                 .map_err(scope_error)?;
         }
     }
-    if !crate::backend::repositories::access::can_read(
+    if !codeyard_identity::repository_access::can_read(
         &state.pool,
         auth.as_ref().map(|reader| &reader.user),
         &repo,
@@ -157,7 +157,7 @@ impl Authentication {
         // An App or fine-grained credential reaches only its selected repositories with its
         // granted permissions, also when a request reads a second repository, such as a
         // compared fork. Job scopes are spelled with hyphens; App permissions with underscores.
-        if let Some(bounds) = crate::backend::identity::github_apps::authority(pool, self.token.id)
+        if let Some(bounds) = codeyard_identity::github_apps::authority(pool, self.token.id)
             .await
             .map_err(|_| ScopeError::Unavailable)?
         {
@@ -333,7 +333,7 @@ pub(super) async fn referenced_repository(
             }
         }
     }
-    if crate::backend::repositories::access::can_read(
+    if codeyard_identity::repository_access::can_read(
         &state.pool,
         auth.map(|auth| &auth.user),
         &repo,
@@ -432,13 +432,12 @@ pub(super) async fn authorize_request(
             .strip_prefix("/api/v3")
             .or_else(|| request_path.strip_prefix("/api/uploads"))
             .unwrap_or(&request_path);
-        if let Some(bounds) =
-            crate::backend::identity::github_apps::authority(&state.pool, auth.token.id)
-                .await
-                .map_err(Error::unavailable)?
+        if let Some(bounds) = codeyard_identity::github_apps::authority(&state.pool, auth.token.id)
+            .await
+            .map_err(Error::unavailable)?
         {
             if let Some(grant) = bounds.personal() {
-                let need = crate::backend::identity::fine_grained::need(path, write);
+                let need = codeyard_identity::fine_grained::need(path, write);
                 if let Some(key) = need.permission() {
                     let _ = accepted_permission.set(format!("{key}={}", level(write)));
                 }
@@ -482,14 +481,13 @@ pub(super) async fn authorize_request(
                 return Ok(None);
             }
             let params = params.as_ref().ok_or_else(Error::missing)?;
-            let permission =
-                crate::backend::identity::github_apps::repository_permission(path, write)
-                    .ok_or_else(|| {
-                        Error::new(
-                            StatusCode::FORBIDDEN,
-                            "Resource not accessible by integration",
-                        )
-                    })?;
+            let permission = codeyard_identity::github_apps::repository_permission(path, write)
+                .ok_or_else(|| {
+                    Error::new(
+                        StatusCode::FORBIDDEN,
+                        "Resource not accessible by integration",
+                    )
+                })?;
             let _ = accepted_permission.set(format!("{permission}={}", level(write)));
             match repository_bounds(
                 &state, &auth, &bounds, params, path, write, deleting, permission,
@@ -639,7 +637,7 @@ pub(super) async fn authorize_request(
             {
                 Some("administration")
             }
-            _ => crate::backend::identity::github_apps::repository_permission(path, write),
+            _ => codeyard_identity::github_apps::repository_permission(path, write),
         }
         .ok_or_else(|| Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token"))?;
         // Jobs share repository route classification, but cannot acquire a credential's
@@ -767,7 +765,7 @@ async fn pull_conversation(pool: &codeyard_db_core::DbPool, repo: i64, path: &st
 async fn repository_bounds(
     state: &AppState,
     auth: &Authentication,
-    bounds: &crate::backend::identity::github_apps::Authority,
+    bounds: &codeyard_identity::github_apps::Authority,
     params: &std::collections::HashMap<String, String>,
     path: &str,
     write: bool,
@@ -802,7 +800,7 @@ async fn repository_bounds(
     // A refusal must not reveal a private repository its user cannot read.
     if !allowed
         && repo.is_private
-        && !crate::backend::repositories::access::can_read(&state.pool, Some(&auth.user), &repo)
+        && !codeyard_identity::repository_access::can_read(&state.pool, Some(&auth.user), &repo)
             .await
             .map_err(Error::unavailable)?
     {
@@ -820,16 +818,16 @@ async fn repository_bounds(
 async fn personal(
     state: &AppState,
     auth: &Authentication,
-    bounds: &crate::backend::identity::github_apps::Authority,
-    grant: &crate::backend::identity::fine_grained::Grant,
-    need: crate::backend::identity::fine_grained::Need,
+    bounds: &codeyard_identity::github_apps::Authority,
+    grant: &codeyard_identity::fine_grained::Grant,
+    need: codeyard_identity::fine_grained::Need,
     params: Option<&axum::extract::Path<std::collections::HashMap<String, String>>>,
     path: &str,
     write: bool,
     deleting: bool,
 ) -> Result<bool> {
-    use crate::backend::identity::fine_grained::Need;
-    use crate::backend::identity::fine_grained::Owner;
+    use codeyard_identity::fine_grained::Need;
+    use codeyard_identity::fine_grained::Owner;
     use codeyard_model::fine_grained::allows;
     let denied = || {
         Error::new(
@@ -942,9 +940,9 @@ pub(super) async fn require_copy_owner(
     auth: &Authentication,
     target: codeyard_db_repos::repositories::creation::RepositoryTarget,
 ) -> Result<()> {
-    use crate::backend::identity::fine_grained::Owner;
     use codeyard_db_repos::repositories::creation::RepositoryTarget;
-    let Some(bounds) = crate::backend::identity::github_apps::authority(&state.pool, auth.token.id)
+    use codeyard_identity::fine_grained::Owner;
+    let Some(bounds) = codeyard_identity::github_apps::authority(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?
     else {
@@ -1100,7 +1098,7 @@ async fn authenticate_uncached(
         }
         user_id = Some(token.user_id);
     }
-    match crate::backend::identity::admission::admit_login(
+    match codeyard_db_identity::auth_admission::admit_login(
         &state.pool,
         crate::backend::api::http::session::client_address(headers),
         user_id,
@@ -1109,11 +1107,11 @@ async fn authenticate_uncached(
     .await
     {
         Ok(_) => Err(Error::new(StatusCode::UNAUTHORIZED, "Bad credentials")),
-        Err(crate::backend::identity::admission::AdmissionError::Limited) => Err(Error::new(
+        Err(codeyard_db_identity::auth_admission::AdmissionError::Limited) => Err(Error::new(
             StatusCode::TOO_MANY_REQUESTS,
             "Too many failed logins",
         )),
-        Err(crate::backend::identity::admission::AdmissionError::Unavailable) => {
+        Err(codeyard_db_identity::auth_admission::AdmissionError::Unavailable) => {
             Err(Error::unavailable(()))
         }
     }

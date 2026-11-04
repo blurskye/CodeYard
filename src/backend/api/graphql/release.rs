@@ -18,7 +18,7 @@ pub(super) async fn drafts_visible(
     if request.private_viewer(repo.id, "contents").await?.is_none() {
         return Ok(false);
     }
-    Ok(crate::backend::repositories::access::user_access(
+    Ok(codeyard_identity::repository_access::user_access(
         &request.state.pool,
         &request.auth.user,
         repo,

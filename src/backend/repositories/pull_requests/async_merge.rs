@@ -5,7 +5,7 @@ use crate::backend::app::AppState;
 use crate::backend::ci::CiRuns;
 use crate::backend::repositories::pull_requests::OperationError;
 
-use crate::backend::notifications::NotificationBroadcaster;
+use codeyard_notifications::NotificationBroadcaster;
 use serde_json::{json, Value};
 
 pub struct Job {

@@ -18,9 +18,9 @@ use codeyard_db_orgs::organizations::OrganizationProfile;
 
 use codeyard_db_repos::webhooks::HookOwner;
 
-use codeyard::backend::identity::tokens::TokenInput;
 use codeyard::backend::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
+use codeyard_identity::tokens::TokenInput;
 use codeyard_support::crypto::hmac_sha256;
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
@@ -101,7 +101,7 @@ async fn contract(pg: bool) {
         (outsider, "write"),
     ] {
         let client = Client::login(&router, f.pool(), user).await;
-        let token = codeyard::backend::identity::tokens::create(
+        let token = codeyard_identity::tokens::create(
             f.pool(),
             user,
             Some(&client.session),

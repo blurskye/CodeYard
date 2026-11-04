@@ -28,7 +28,7 @@ pub(super) async fn object(
         json!({"__typename":"CommitComment","_repo":repo.id,"id":node_id::encode("CC",row.id),"databaseId":row.id,"body":row.body,"path":row.path,"position":row.position,
         "author":match row.author_id {Some(id)=>crate::backend::api::graphql::user::retained_author(id,request).await?,None=>Value::Null},"createdAt":row.created_at,"updatedAt":row.updated_at,
         "includesCreatedEdit":row.updated_at>row.created_at,"lastEditedAt":if row.updated_at>row.created_at {Some(row.updated_at)} else {None},"isMinimized":false,"minimizedReason":null,
-        "viewerDidAuthor":authored,"viewerCanUpdate":writable&&authored,"viewerCanDelete":writable&&(authored || crate::backend::repositories::access::can_maintain(&request.state.pool,&request.auth.user,&repo).await.map_err(unavailable)?),
+        "viewerDidAuthor":authored,"viewerCanUpdate":writable&&authored,"viewerCanDelete":writable&&(authored || codeyard_identity::repository_access::can_maintain(&request.state.pool,&request.auth.user,&repo).await.map_err(unavailable)?),
         "repository":repository::object(&repo),"commit":{"__typename":"Commit","_repo":repo.id,"_scope":"contents","oid":row.sha},"url":url(&crate::backend::repositories::commit_comments::comment_link(&owner,&repo.name,row))}),
     )
 }

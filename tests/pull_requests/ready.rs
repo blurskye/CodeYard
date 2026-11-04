@@ -303,7 +303,7 @@ async fn cookie_bound_mutations(pg: bool) {
     let alice = fixture.actor("alice").await;
     let bob_id = fixture.actor("bob").await;
     let newcomer = fixture.actor("newcomer").await;
-    let hash = codeyard::backend::identity::passwords::hash_password("first-login-password")
+    let hash = codeyard_identity::passwords::hash_password("first-login-password")
         .await
         .unwrap();
     db::users::accounts::update_user_password(fixture.pool(), newcomer, &hash, false)

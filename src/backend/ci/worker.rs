@@ -2408,9 +2408,9 @@ mod tests {
                 config: config.clone(),
                 secrets: None,
                 context: None,
-                notifications: Arc::new(
-                    crate::backend::notifications::NotificationBroadcaster::new(&pool),
-                ),
+                notifications: Arc::new(codeyard_notifications::NotificationBroadcaster::new(
+                    &pool,
+                )),
             },
             config,
             false,
@@ -3461,9 +3461,7 @@ jobs:
             config: Arc::new(CiConfig::default()),
             secrets: None,
             context: None,
-            notifications: Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
-                &pool,
-            )),
+            notifications: Arc::new(codeyard_notifications::NotificationBroadcaster::new(&pool)),
         };
         let claim = ClaimedRun {
             run,
@@ -3711,9 +3709,7 @@ jobs:
             config: Arc::new(crate::backend::ci::CiConfig::default()),
             secrets: None,
             context: None,
-            notifications: Arc::new(crate::backend::notifications::NotificationBroadcaster::new(
-                &pool,
-            )),
+            notifications: Arc::new(codeyard_notifications::NotificationBroadcaster::new(&pool)),
         };
         let (stop_sender, mut stop) = watch::channel(false);
         // "unknown" is not a final state, so the database refuses the result every time.

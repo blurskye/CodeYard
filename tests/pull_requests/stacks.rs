@@ -25,7 +25,7 @@ struct Runs {
     alice: i64,
     bob: i64,
     ci: Arc<codeyard::backend::ci::CiRuns>,
-    broadcaster: Arc<codeyard::backend::notifications::NotificationBroadcaster>,
+    broadcaster: Arc<codeyard_notifications::NotificationBroadcaster>,
 }
 
 async fn application_with_runs(f: &mut Database, root: &Path) -> Runs {

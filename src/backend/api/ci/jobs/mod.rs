@@ -64,7 +64,7 @@ pub(super) async fn ensure_repo_read_access(
     user: &codeyard_db_core::models::User,
     repository: &codeyard_db_core::models::Repository,
 ) -> Result<(), CiReadError> {
-    if crate::backend::repositories::access::can_read(&state.pool, Some(user), repository)
+    if codeyard_identity::repository_access::can_read(&state.pool, Some(user), repository)
         .await
         .map_err(unavailable)?
     {

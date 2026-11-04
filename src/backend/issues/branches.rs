@@ -43,7 +43,7 @@ pub async fn create(
     oid: &str,
 ) -> Result<db::issues::management::LinkedBranch, OperationError> {
     let authority = actor.into();
-    crate::backend::repositories::access::check_write(
+    codeyard_identity::repository_access::check_write(
         &state.pool,
         issue.repo_id,
         authority.user_id,

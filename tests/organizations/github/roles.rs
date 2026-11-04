@@ -14,9 +14,9 @@ use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
-use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::{json, Value};
 
 pub(super) async fn run(f: &Database, repo: i64, actor: i64, status: &str) {
@@ -185,7 +185,7 @@ async fn contract(pg: bool) {
         (outsider, "write"),
     ] {
         let session = Client::login(&router, f.pool(), id).await;
-        let token = codeyard::backend::identity::tokens::create(
+        let token = codeyard_identity::tokens::create(
             f.pool(),
             id,
             Some(&session.session),
@@ -1161,7 +1161,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let nested_browser = Client::login(&router, f.pool(), nested).await;
-    let nested_token = codeyard::backend::identity::tokens::create(
+    let nested_token = codeyard_identity::tokens::create(
         f.pool(),
         nested,
         Some(&nested_browser.session),

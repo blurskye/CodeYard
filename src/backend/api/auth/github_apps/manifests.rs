@@ -31,7 +31,7 @@ pub(super) async fn manifest_start(
     }
     // Keyed by client, so one client cannot spend everyone's manifest budget.
     let client = crate::backend::api::http::session::client_address(&headers);
-    match crate::backend::identity::admission::admit_operation(
+    match codeyard_db_identity::auth_admission::admit_operation(
         &state.pool,
         client,
         "app-manifest",
@@ -40,7 +40,7 @@ pub(super) async fn manifest_start(
     .await
     {
         Ok(_) => {}
-        Err(crate::backend::identity::admission::AdmissionError::Limited) => {
+        Err(codeyard_db_identity::auth_admission::AdmissionError::Limited) => {
             return public_error(StatusCode::TOO_MANY_REQUESTS, "Too many manifest requests")
         }
         Err(_) => {
@@ -53,7 +53,7 @@ pub(super) async fn manifest_start(
     let value = serde_json::from_str::<Value>(field(form, "manifest")).ok();
     if value
         .as_ref()
-        .and_then(crate::backend::identity::github_apps::manifest)
+        .and_then(codeyard_identity::github_apps::manifest)
         .is_none()
     {
         return public_error(
@@ -99,7 +99,7 @@ pub(super) async fn manifest_preview(ctx: &PageContext, code: &str) -> Response 
     let Some(manifest) = serde_json::from_str::<Value>(&draft.manifest)
         .ok()
         .as_ref()
-        .and_then(crate::backend::identity::github_apps::manifest)
+        .and_then(codeyard_identity::github_apps::manifest)
     else {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid manifest");
     };
@@ -148,7 +148,7 @@ pub(super) async fn manifest_approve(ctx: &PageContext, form: &Fields) -> Respon
     let Some(manifest) = serde_json::from_str::<Value>(&draft.manifest)
         .ok()
         .as_ref()
-        .and_then(crate::backend::identity::github_apps::manifest)
+        .and_then(codeyard_identity::github_apps::manifest)
     else {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid manifest");
     };

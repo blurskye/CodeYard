@@ -169,7 +169,7 @@ async fn bounded_previews_and_current_targets(pg: bool) {
         assert!(item["body"].as_str().unwrap().chars().count() <= 160);
         assert_eq!(item["link"], "/moved_org/renamed/issues/7?page=3#comment-9");
     }
-    use codeyard::backend::notifications::{current_event, NotificationEvent};
+    use codeyard_notifications::{current_event, NotificationEvent};
     let hint = NotificationEvent::Created {
         user_id: w.alice_id,
         notification_id: ids[0],

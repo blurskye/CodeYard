@@ -308,7 +308,7 @@ pub async fn ensure_readable(
             kind: WriteFailure::NotFound,
             message: "Repository not found.".into(),
         })?;
-    if !crate::backend::repositories::access::can_read(pool, Some(user), &repository)
+    if !codeyard_identity::repository_access::can_read(pool, Some(user), &repository)
         .await
         .map_err(|_| unavailable())?
     {
@@ -475,7 +475,7 @@ async fn authorize_write(
                 kind: WriteFailure::NotFound,
                 message: "Repository not found.".into(),
             })?;
-    if !crate::backend::repositories::access::can_read(pool, Some(&user), &repository)
+    if !codeyard_identity::repository_access::can_read(pool, Some(&user), &repository)
         .await
         .map_err(|_| unavailable())?
     {
@@ -485,7 +485,7 @@ async fn authorize_write(
         });
     }
     check()?;
-    if !crate::backend::repositories::access::can_write(pool, &user, &repository)
+    if !codeyard_identity::repository_access::can_write(pool, &user, &repository)
         .await
         .map_err(|_| unavailable())?
     {
@@ -692,7 +692,7 @@ async fn publish_commit(
         }
     };
     // The branch moved: pull requests that use it follow, and push workflows run.
-    let current = crate::backend::repositories::access::current_repository_with_owner(pool, repository.id).await;
+    let current = codeyard_identity::repository_access::current_repository_with_owner(pool, repository.id).await;
     let followup_repository = current.as_ref().map(|(repo, _)| repo).unwrap_or(repository);
     let refreshed = crate::backend::repositories::pull_requests::refresh_open_pull_requests(
         pool,

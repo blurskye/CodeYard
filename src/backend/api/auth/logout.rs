@@ -39,7 +39,7 @@ pub(crate) async fn logout_post(
         return response;
     }
     let id = crate::backend::api::http::session::extract_session_id(&ctx.headers);
-    if crate::backend::identity::sessions::end_session(&ctx.state.pool, id.as_deref())
+    if codeyard_identity::sessions::end_session(&ctx.state.pool, id.as_deref())
         .await
         .is_err()
     {

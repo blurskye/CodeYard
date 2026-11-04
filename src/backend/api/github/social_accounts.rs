@@ -111,7 +111,7 @@ async fn change(
     let accounts = input
         .account_urls
         .iter()
-        .map(|url| crate::backend::identity::profiles::social_account(url))
+        .map(|url| codeyard_identity::profiles::social_account(url))
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(|_| Error::validation("SocialAccount", "account_urls", "invalid"))?;
     codeyard_db_identity::users::social_accounts::change_social_accounts(

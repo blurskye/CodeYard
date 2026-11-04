@@ -28,7 +28,7 @@ async fn contract(pg: bool) {
 
     for name in [String::new(), "x".repeat(101)] {
         assert_eq!(
-            codeyard::backend::identity::keys::enroll(
+            codeyard_identity::keys::enroll(
                 f.pool(),
                 alice_id,
                 Some(&alice.session),
@@ -37,7 +37,7 @@ async fn contract(pg: bool) {
             )
             .await
             .unwrap_err(),
-            codeyard::backend::identity::keys::KeyError::InvalidName,
+            codeyard_identity::keys::KeyError::InvalidName,
         );
         let (status, _) = alice
             .form("/settings/keys", &[("name", &name), ("public_key", PUBLIC)])
@@ -342,7 +342,7 @@ async fn contract(pg: bool) {
             ssh_key::PrivateKey::random(&mut rand::rngs::OsRng, ssh_key::Algorithm::Ed25519)
                 .unwrap();
         let existing_public = existing_private.public_key().to_openssh().unwrap();
-        let existing = codeyard::backend::identity::keys::enroll(
+        let existing = codeyard_identity::keys::enroll(
             f.pool(),
             user,
             Some(&client.session),
@@ -374,7 +374,7 @@ async fn contract(pg: bool) {
             Some(&codeyard_model::identity::SshKeyWriteRefusal::AccountRestricted)
         );
         assert_eq!(
-            codeyard::backend::identity::keys::delete(
+            codeyard_identity::keys::delete(
                 f.pool(),
                 user,
                 &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -384,7 +384,7 @@ async fn contract(pg: bool) {
             )
             .await
             .unwrap_err(),
-            codeyard::backend::identity::keys::KeyError::AccountRestricted
+            codeyard_identity::keys::KeyError::AccountRestricted
         );
 
         let (status, page) = client
@@ -431,8 +431,8 @@ async fn contract(pg: bool) {
 }
 
 async fn session_enrollment_contract(pg: bool) {
-    use codeyard::backend::identity::keys::{self, KeyError};
     use codeyard_db_identity::users::{sessions, ssh_keys, transitions};
+    use codeyard_identity::keys::{self, KeyError};
 
     let mut f = Database::new(pg).await;
     let user = codeyard_db_identity::users::accounts::create_user_with_password_and_flags(

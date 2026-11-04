@@ -118,7 +118,7 @@ pub async fn prepare(
     let readme = query.needs_readme();
     for repo in repos {
         // Search candidates are not authority to read a later Git snapshot.
-        if crate::backend::repositories::access::check_read(pool, repo.id, viewer)
+        if codeyard_identity::repository_access::check_read(pool, repo.id, viewer)
             .await
             .is_err()
         {

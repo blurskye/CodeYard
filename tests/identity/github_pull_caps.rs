@@ -8,9 +8,9 @@ use axum::http::StatusCode;
 use codeyard_db_repos::pull_caps::PullCapReached;
 use codeyard_db_repos::pull_requests::records::NewPullRequest;
 
-use codeyard::backend::identity::tokens::TokenInput;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::PullRequest;
+use codeyard_identity::tokens::TokenInput;
 use serde_json::json;
 
 async fn open(
@@ -81,7 +81,7 @@ async fn contract(pg: bool) {
         (bob, &bob_session.session, "write"),
         (alice, &session.session, "read"),
     ] {
-        let token = codeyard::backend::identity::tokens::create(
+        let token = codeyard_identity::tokens::create(
             f.pool(),
             actor,
             Some(session),

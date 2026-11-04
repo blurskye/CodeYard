@@ -29,7 +29,7 @@ pub fn router() -> Router<Arc<AppState>> {
 
 async fn writable(ctx: &PageContext, repo: &Repository) -> bool {
     if let Some(user) = &ctx.user {
-        crate::backend::repositories::access::can_write(&ctx.state.pool, user, repo)
+        codeyard_identity::repository_access::can_write(&ctx.state.pool, user, repo)
             .await
             .unwrap_or(false)
     } else {

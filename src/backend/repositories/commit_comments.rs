@@ -1,15 +1,15 @@
 //! Discussions anchored to immutable commits, shared by REST and native forms.
 use crate::backend::cluster::NodeContext;
 
-use crate::backend::notifications::create::create_and_broadcast_notification;
-use crate::backend::notifications::create::NotificationRequest;
-use crate::backend::notifications::mentions::notify_mentions;
-use crate::backend::notifications::mentions::MentionComment;
-use crate::backend::notifications::mentions::MentionSource;
-use crate::backend::notifications::NotificationBroadcaster;
 use codeyard_db_repos::repositories::commit_comments::CommentCreate;
 use codeyard_db_repos::repositories::commit_comments::CommentEdit;
 use codeyard_db_repos::repositories::commit_comments::CommentRefusal;
+use codeyard_notifications::create::create_and_broadcast_notification;
+use codeyard_notifications::create::NotificationRequest;
+use codeyard_notifications::mentions::notify_mentions;
+use codeyard_notifications::mentions::MentionComment;
+use codeyard_notifications::mentions::MentionSource;
+use codeyard_notifications::NotificationBroadcaster;
 
 use crate::backend::repositories::store::repo_store;
 use codeyard_git::error::{ErrorKind, RepoError};
@@ -186,10 +186,10 @@ async fn writable(
     if user.is_banned || user.must_change_password {
         return Err(CommentError::Denied);
     }
-    let repository = crate::backend::repositories::access::check_read(pool, repo, Some(actor))
+    let repository = codeyard_identity::repository_access::check_read(pool, repo, Some(actor))
         .await
         .map_err(|error| {
-            if error == crate::backend::repositories::access::AccessError::NotFound {
+            if error == codeyard_identity::repository_access::AccessError::NotFound {
                 CommentError::Missing
             } else {
                 CommentError::Unavailable
@@ -289,7 +289,7 @@ async fn notify(
             if author.id == user.id
                 || author.is_banned
                 || author.must_change_password
-                || !crate::backend::repositories::access::can_read(pool, Some(&author), repo)
+                || !codeyard_identity::repository_access::can_read(pool, Some(&author), repo)
                     .await
                     .ok()?
             {
@@ -346,13 +346,8 @@ async fn notify(
     // Thread subscribers hear about every new comment on the commit.
     if let Some(notice) = subscriber_notice {
         notified.extend(mentioned);
-        crate::backend::notifications::create::notify_subscribers(
-            pool,
-            broadcaster,
-            notice,
-            &notified,
-        )
-        .await;
+        codeyard_notifications::create::notify_subscribers(pool, broadcaster, notice, &notified)
+            .await;
     }
 }
 

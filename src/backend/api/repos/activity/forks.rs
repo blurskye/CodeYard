@@ -110,7 +110,7 @@ pub async fn check_fork(
         .await
         .map_err(|_| {
             crate::backend::api::repos::access::access_error(
-                crate::backend::repositories::access::AccessError::Unavailable,
+                codeyard_identity::repository_access::AccessError::Unavailable,
             )
         })? {
             return Ok(Json(CheckForkResponse {

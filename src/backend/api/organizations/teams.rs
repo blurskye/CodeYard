@@ -235,7 +235,7 @@ pub(super) async fn apply(
                     )
                     .await;
                     if let Ok(OrganizationOutcome::Applied(invitation)) = &result {
-                        crate::backend::notifications::create::organization_invitation(
+                        codeyard_notifications::create::organization_invitation(
                             pool,
                             &ctx.state.notification_broadcaster,
                             actor,
