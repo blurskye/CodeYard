@@ -1,5 +1,5 @@
 #![recursion_limit = "256"]
-#![allow(clippy::result_large_err)]
+#![allow(clippy::allow_attributes_without_reason, clippy::result_large_err)]
 //! GitHub Enterprise REST adapters. Domain operations keep their existing access checks.
 use crate::routes::Operation;
 use crate::routes::Support;
