@@ -28,7 +28,7 @@ async fn errors(
 ) -> Result<Json<Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let reference = query.reference.as_deref().unwrap_or(&repo.default_branch);
-    let errors = codeyard_repos_core::repositories::code_owners::diagnostics::load_diagnostics(
+    let errors = codeyard_ci_engine::code_owners::diagnostics::load_diagnostics(
         &state.pool,
         &repo,
         state.cluster.as_ref(),

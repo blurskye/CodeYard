@@ -1,13 +1,13 @@
 //! CODEOWNERS: which owners a path has at a commit, and which of them may review it.
 //! Parsing and matching are pure. Resolving owners reads users and teams.
-use crate::context::NodeContext;
-use crate::repositories::store::repo_store;
 use codeyard_db_core::models::Repository;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_model::repositories::MAX_REVIEWERS;
 use codeyard_model::workflow_glob::code_owner_glob_matches_bounded;
 use codeyard_model::workflow_glob::WorkflowMatchBudget;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_storage::range::ByteRange as BlobRange;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -336,7 +336,9 @@ pub async fn resolve_owners<'a>(
     }
     for emails in emails.chunks(500) {
         // The same verified-address attribution as commits; banned accounts own nothing.
-        for (email, user) in crate::repositories::reads::commit_authors(pool, emails).await? {
+        for (email, user) in
+            codeyard_repos_core::repositories::reads::commit_authors(pool, emails).await?
+        {
             if let Some(ids) = resolved.get_mut(&email) {
                 ids.push(user.id);
             }

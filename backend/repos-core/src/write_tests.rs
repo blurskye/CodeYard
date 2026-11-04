@@ -191,13 +191,13 @@ fn voting_and_apply_are_storage_only_and_never_fail_over() {
             id: uuid::Uuid::new_v4().to_string(),
         },
     ] {
-        assert!(crate::cluster::rpc::repository::authorize_operation(
+        assert!(codeyard_repos_rpc::repository::authorize_operation(
             &["storage".into()],
             &operation
         )
         .is_ok());
         for role in ["web", "ssh", "runner"] {
-            assert!(crate::cluster::rpc::repository::authorize_operation(
+            assert!(codeyard_repos_rpc::repository::authorize_operation(
                 &[role.into()],
                 &operation
             )

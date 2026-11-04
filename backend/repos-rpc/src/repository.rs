@@ -1,7 +1,17 @@
+use crate::RpcHandler;
+use anyhow::Result;
+use codeyard_git::error::RepoError;
+use codeyard_git::MAX_CI_WORKFLOW_BYTES;
+use codeyard_repos::protection::check_branch_write;
+use codeyard_repos::protection::matching_rules;
+use codeyard_repos::protection::BranchWrite;
+use codeyard_repos::protection::History;
+use codeyard_repos::protection::Refusal;
+use codeyard_repos::protection::WriteVia;
+use codeyard_repos::protection::ANY_TIP;
 use codeyard_repos_core::cluster::replicas::copy_path;
 use codeyard_repos_core::cluster::replicas::moving;
 use codeyard_repos_core::cluster::replicas::MOVE_WAIT;
-use crate::RpcHandler;
 use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_repos_core::store_types::BlobMetadata;
 use codeyard_repos_core::store_types::GitService;
@@ -13,16 +23,6 @@ use codeyard_repos_core::wire::Failure;
 use codeyard_repos_core::wire::Operation;
 use codeyard_repos_core::wire::Request;
 use codeyard_repos_core::wire::MAX_BYTES;
-use anyhow::Result;
-use codeyard_git::error::RepoError;
-use codeyard_git::MAX_CI_WORKFLOW_BYTES;
-use codeyard_repos::protection::check_branch_write;
-use codeyard_repos::protection::matching_rules;
-use codeyard_repos::protection::BranchWrite;
-use codeyard_repos::protection::History;
-use codeyard_repos::protection::Refusal;
-use codeyard_repos::protection::WriteVia;
-use codeyard_repos::protection::ANY_TIP;
 use serde_json::Value;
 use std::path::Path;
 use std::path::PathBuf;
@@ -216,7 +216,10 @@ pub(super) struct ReadAdmission {
 }
 
 /// Blob bytes go in the raw reply body; the JSON value carries only their metadata.
-fn blob_reply(blob: codeyard_repos_core::store_types::BlobBytes, output: &mut Vec<u8>) -> Result<Value, Failure> {
+fn blob_reply(
+    blob: codeyard_repos_core::store_types::BlobBytes,
+    output: &mut Vec<u8>,
+) -> Result<Value, Failure> {
     *output = blob.bytes;
     serde_json::to_value(BlobMetadata {
         id: blob.id,
@@ -306,7 +309,8 @@ impl RpcHandler {
             codeyard_db_cluster::cluster::get_repository_by_uuid(pool, &uuid.to_string())
                 .await
                 .map_err(|_| unavailable())?;
-        let primary = codeyard_repos_core::repositories::store::primary_path(&self.context.repos_path, uuid);
+        let primary =
+            codeyard_repos_core::repositories::store::primary_path(&self.context.repos_path, uuid);
         let Some(repo) = repository else {
             // Deletion removes the row before its directory.
             if removing {
@@ -514,7 +518,8 @@ impl RpcHandler {
                     .authorize(
                         pool,
                         &repo,
-                        session.service == codeyard_repos_core::store_types::GitService::ReceivePack,
+                        session.service
+                            == codeyard_repos_core::store_types::GitService::ReceivePack,
                     )
                     .await
                     .map_err(|_| {
@@ -608,8 +613,11 @@ impl RpcHandler {
         {
             return Err(unavailable());
         }
-        let path =
-            codeyard_repos_core::context::term_path(&self.context.repos_path, request.repository, write.term);
+        let path = codeyard_repos_core::context::term_path(
+            &self.context.repos_path,
+            request.repository,
+            write.term,
+        );
         codeyard_repos_core::context::literal_directory(&self.context.repos_path, &path).await?;
         Ok((store_at(&path, self.context.node_id)?, Some(repo.id)))
     }
@@ -1150,12 +1158,14 @@ impl RpcHandler {
                         || git_ref == default_branch
                         || git_ref == format!("refs/heads/{default_branch}"))
                 {
-                    json!(codeyard_repos_core::repositories::languages::compute_and_store(
-                        pool,
-                        &store,
-                        &repository,
-                        &default_branch
-                    ))
+                    json!(
+                        codeyard_repos_core::repositories::languages::compute_and_store(
+                            pool,
+                            &store,
+                            &repository,
+                            &default_branch
+                        )
+                    )
                 } else {
                     json!(store.languages(&git_ref))
                 }
@@ -1394,10 +1404,9 @@ impl RpcHandler {
                 &email
             )),
             Operation::Merge { request } => {
-                let result = store
-                    .prepare_merge(&request)
-                    .await
-                    .map_err(|_| Failure::Merge(codeyard_repos_core::store_types::MergeFailure::CannotMerge))?;
+                let result = store.prepare_merge(&request).await.map_err(|_| {
+                    Failure::Merge(codeyard_repos_core::store_types::MergeFailure::CannotMerge)
+                })?;
                 let repo_id = repo_id.ok_or_else(|| invalid("repository unavailable"))?;
                 let repository =
                     codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)

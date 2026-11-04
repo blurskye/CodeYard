@@ -1,8 +1,8 @@
+use crate::context::NodeContext;
+use crate::repositories::store::RepoStore;
 use crate::rpc_client::attempt_deadline;
 use crate::rpc_client::cannot_serve;
 use crate::rpc_client::log_failover;
-use crate::context::NodeContext;
-use crate::repositories::store::RepoStore;
 use crate::store_types::GitService;
 use crate::store_types::GitStreams;
 use crate::wire::read_frame;
@@ -172,7 +172,10 @@ impl NodeContext {
         result.map(|status| (value, status))
     }
 
-    async fn own_copy(&self, request: &Request) -> Result<(RepoStore, bool, tokio::sync::OwnedRwLockReadGuard<()>), RepoError> {
+    async fn own_copy(
+        &self,
+        request: &Request,
+    ) -> Result<(RepoStore, bool, tokio::sync::OwnedRwLockReadGuard<()>), RepoError> {
         self.rpc.create(self.clone()).own_copy(request).await
     }
 
@@ -876,4 +879,3 @@ pub async fn apply_refs(path: &Path, write: &WriteRecord, limit: Duration) -> Re
     .await??;
     write_refs(path, &script, limit).await
 }
-

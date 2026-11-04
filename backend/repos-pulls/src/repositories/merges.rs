@@ -1,12 +1,12 @@
 //! Direct branch merges use normal ref-admission policy, not pull-request approval authority.
 
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitInfo;
-use codeyard_repos_core::push_workflows::RefUpdate;
-use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::push_workflows::RefUpdate;
 use codeyard_repos_core::ref_errors::publication_error;
 use codeyard_repos_core::ref_errors::RefError;
 use codeyard_repos_core::repositories::store::repo_store;
@@ -156,17 +156,16 @@ pub async fn merge_branch(
             Err(RefError::AppliedFollowupFailed) => true,
             Err(error) => return Err(error),
         };
-        let refreshed =
-            codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
-                &pool,
-                &repository,
-                Some(&[base_name.as_str()]),
-                &ci,
-                actor,
-                codeyard_db_core::models::AccessLevel::Owner,
-            )
-            .await
-            .is_ok();
+        let refreshed = codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
+            &pool,
+            &repository,
+            Some(&[base_name.as_str()]),
+            &ci,
+            actor,
+            codeyard_db_core::models::AccessLevel::Owner,
+        )
+        .await
+        .is_ok();
         ci.queue_push_runs(
             &repository,
             &owner,

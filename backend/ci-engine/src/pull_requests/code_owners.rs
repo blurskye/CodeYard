@@ -1,14 +1,14 @@
 //! Code owners on pull requests: the review requests a pull request gets when it opens or its head
 //! moves, and the approvals that a branch rule with `require_code_owner_review` waits for.
 
+use crate::code_owners::load_rules;
+use crate::code_owners::resolve_owners;
 use crate::runs::CiRuns;
-use codeyard_repos_core::repositories::code_owners::load_rules;
-use codeyard_repos_core::repositories::code_owners::resolve_owners;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
 use codeyard_repos_core::repositories::pull_requests::reviewers::emit_reviewer_event;
 use codeyard_repos_core::repositories::pull_requests::reviewers::notify_review_request;
 use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Repository;
 
 /// A changed file with review requirements. Unresolved emails still require approval;
 /// changing an account's email must not remove that requirement. Self-review is excluded separately.

@@ -3,13 +3,13 @@
 //! same fork still follows it. A pull ref that got ahead of its row, because an earlier refresh
 //! lost the row update, is recorded before a newer head is published.
 use codeyard_ci::config::CiConfig;
-use codeyard_db_core::models::PullRequest;
-use codeyard_db_core::models::Repository;
-use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_ci_engine::runs::CiRuns;
 use codeyard_ci_engine::pull_requests::branches::refresh_one;
 use codeyard_ci_engine::pull_requests::branches::revisions;
 use codeyard_ci_engine::pull_requests::branches::ListedRefs;
+use codeyard_ci_engine::runs::CiRuns;
+use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos_core::repositories::store::repo_store;
 use std::sync::Arc;
 use tokio::sync::Notify;

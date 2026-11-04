@@ -3,8 +3,8 @@
 use crate::support::native_database as support;
 
 use codeyard_ci::config::CiConfig;
-use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_ci_engine::runs::CiRuns;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_ssh::server::SshServer;
 use russh::keys::ssh_key::private::Ed25519Keypair;
 use russh::keys::{ssh_key::LineEnding, PrivateKey};

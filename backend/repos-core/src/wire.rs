@@ -1051,4 +1051,3 @@ pub fn repository_uuid(path: &str) -> Result<Uuid, RepoError> {
         .ok_or_else(|| invalid("invalid repository UUID"))?;
     Uuid::parse_str(uuid).map_err(|_| invalid("invalid repository UUID"))
 }
-

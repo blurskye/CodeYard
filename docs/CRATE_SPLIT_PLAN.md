@@ -114,7 +114,7 @@ and results stay the same. A stage can be the last one.
    (including pulls and issues), `actions`, `security` and `cluster` each own both
    engines. Shared transaction helpers and their records live under `db/core/src/queries`.
    All workspace targets check.
-6. **Services (partial).** Repository policy, imports, lockfile parsing, traffic,
+6. **Services.** Repository policy, imports, lockfile parsing, traffic,
    templates and Git editor preparation live in `backend/repos/`. CI configuration,
    credentials, logs and environment values live in `backend/ci/`. Membership,
    transport, settings and quorum writes live in `backend/cluster/`. Webhook payloads,
@@ -123,7 +123,8 @@ and results stay the same. A stage can be the last one.
    helpers have one lower owner.
    `backend/repos-core/` owns the concrete store, Git sessions, publication checks
    and workflow readers. `backend/repos-rpc/` owns repository RPC handlers. `backend/ci-engine/` owns admission,
-   queues, workers and pull-request refresh. Receive hooks use a lower resource trait. Local RPC fallback uses an injected factory. Cluster startup,
+   queues, workers and pull-request refresh. Receive hooks use a lower resource trait. Local RPC fallback uses an injected factory.
+   Code-owner resolution lives in the CI engine. Store fixtures are an integration target. Cluster startup,
    replica maintenance and CI request handling live in `backend/cluster/`; transport
    and quorum primitives live in `backend/cluster/core/`. Document readers
    use resource-access traits implemented by `AppState`. Token authentication lives

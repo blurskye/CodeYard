@@ -363,7 +363,7 @@ async fn owner_regressions_contract(pg: bool) {
 }
 
 async fn private_teams_and_unverified_email_do_not_resolve(pg: bool) {
-    use codeyard_repos_core::repositories::code_owners::resolve_owners;
+    use codeyard_ci_engine::code_owners::resolve_owners;
     let mut world = World::new(pg).await;
     let pool = world._database.pool();
     let repo = codeyard_db_repos::repositories::records::get_repository(pool, "alice", "proj")

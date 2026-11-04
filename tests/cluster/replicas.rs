@@ -728,9 +728,7 @@ async fn assert_current(
 ) {
     pass(primary).await;
     pass(copy).await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let primary_store = RepoStore::from_disk_path(primary_path(primary, uuid).to_str().unwrap());
     let copy_store = RepoStore::from_disk_path(copy_path(copy, uuid).to_str().unwrap());
     assert_eq!(
@@ -790,9 +788,7 @@ async fn copies_follow_commits_tags_branches_and_force_moves() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "copied").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
 
     let first = repo
         .save("main", "README.md", "unborn", b"# copied\n")
@@ -896,9 +892,7 @@ async fn replicas_keep_recorded_ci_inputs_after_the_branch_is_deleted() {
     );
     repo.delete_branch("ci-input").await;
     assert_current(&primary, &copy, &repo).await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let copied = RepoStore::from_disk_path(copy_path(&copy, uuid).to_str().unwrap());
     assert_eq!(
         copied
@@ -942,9 +936,7 @@ async fn empty_repositories_and_large_files_copy() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "empty").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
 
     // No refs yet: the copy is created empty, with the same HEAD.
     assert!(repo.store.refs().await.unwrap().is_empty());
@@ -992,9 +984,7 @@ async fn only_nodes_holding_a_copy_may_ask_for_its_packs() {
     let root = tempfile::tempdir().unwrap();
     let (primary, holder) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "guarded").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     repo.save("main", "a.txt", "unborn", b"a").await;
     // Assign the copy while there is only one eligible holder.
     assert_current(&primary, &holder, &repo).await;
@@ -1078,9 +1068,7 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
     let first = start_storage(pool, root.path(), "store-b").await;
     let second = start_storage(pool, root.path(), "store-c").await;
     let repo = create_repository(pool, &primary, "counted").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     repo.save("main", "a.txt", "unborn", b"a").await;
     let has_copy = |node: &codeyard_cluster::Cluster| copy_path(node, uuid).exists();
 
@@ -1152,9 +1140,7 @@ async fn the_loop_copies_on_its_own_and_stops_at_shutdown() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "looped").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     repo.save("main", "a.txt", "unborn", b"a").await;
 
     let (stop, stop_signal) = watch::channel(false);
@@ -1253,9 +1239,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
     let (primary, copy) = two_storage_nodes(pool, &root).await;
     let web = web_node(pool, &root).await;
     let repo = create_repository(pool, &primary, "packing").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo.save("main", "README.md", "unborn", b"readable").await;
     pass(&primary).await;
     let mirror = copy_path(&copy, uuid);
@@ -1449,9 +1433,7 @@ async fn a_copy_waits_while_a_ref_change_is_counted() {
     let repo = create_repository(pool, &primary, "waiting").await;
     repo.save("main", "a.txt", "unborn", b"a").await;
     assert_current(&primary, &copy, &repo).await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let current = codeyard_db_cluster::cluster::get_write_version(pool, repo.id())
         .await
         .unwrap()
@@ -1884,9 +1866,9 @@ async fn delete_names_the_promoted_primary_on_postgres() {
 async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     use codeyard_ci::config::CiConfig;
     use codeyard_ci::config::CiExecutionMode;
-    use codeyard_notifications::broadcast::NotificationBroadcaster;
     use codeyard_ci_engine::queue::ClaimedRun;
     use codeyard_ci_engine::queue::RunQueue;
+    use codeyard_notifications::broadcast::NotificationBroadcaster;
     let database = native::PostgresDatabase::new().await;
     codeyard_db_cluster::cluster::enable_cluster(&database.pool)
         .await
@@ -1999,9 +1981,7 @@ async fn a_promoted_copy_takes_writes_and_the_old_primary_follows() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "moved").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     repo.save("main", "a.txt", "unborn", b"a").await;
     assert_current(&primary, &copy, &repo).await;
 
@@ -2120,10 +2100,7 @@ async fn returning_former_primary_cleanup_on_postgres() {
     former.publish().await.unwrap();
     pass(&former).await;
     for row in [&repo, &deleted] {
-        let uuid = codeyard_repos_core::wire::repository_uuid(
-            &row.repository.disk_path,
-        )
-        .unwrap();
+        let uuid = codeyard_repos_core::wire::repository_uuid(&row.repository.disk_path).unwrap();
         assert!(
             !primary_path(&former, uuid).exists(),
             "an unassigned former primary must be retired"
@@ -2132,8 +2109,7 @@ async fn returning_former_primary_cleanup_on_postgres() {
     }
     assert!(primary_path(
         &former,
-        codeyard_repos_core::wire::repository_uuid(&live.repository.disk_path)
-            .unwrap()
+        codeyard_repos_core::wire::repository_uuid(&live.repository.disk_path).unwrap()
     )
     .is_dir());
     assert!(
@@ -2156,9 +2132,7 @@ async fn a_former_primary_with_a_copy_keeps_the_repository_through_cleanup() {
     let root = tempfile::tempdir().unwrap();
     let (former, primary) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &former, "kept").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     repo.save("main", "README.md", "unborn", b"kept\n").await;
     assert_current(&former, &primary, &repo).await;
     codeyard_cluster::replicas::promote::promote(
@@ -2192,9 +2166,7 @@ async fn a_former_primary_without_a_copy_row_drops_its_directory() {
     let root = tempfile::tempdir().unwrap();
     let (former, primary) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &former, "dropped").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     repo.save("main", "README.md", "unborn", b"dropped\n").await;
     assert_current(&former, &primary, &repo).await;
     codeyard_cluster::replicas::promote::promote(
@@ -2322,9 +2294,7 @@ async fn take_over(pool: &DbPool, node: i64, silent: &mut Silent, wait: Duration
         .unwrap()
     {
         if row.applied_version >= 0 {
-            let uuid =
-                codeyard_repos_core::wire::repository_uuid(&row.disk_path)
-                    .unwrap();
+            let uuid = codeyard_repos_core::wire::repository_uuid(&row.disk_path).unwrap();
             git2::Repository::init_bare(root.path().join("mirrors").join(format!("{uuid}.git")))
                 .unwrap();
         }
@@ -2503,9 +2473,7 @@ async fn check_missing_copy_blocks_take_over(pool: &DbPool) {
     let paths: Vec<_> = rows
         .iter()
         .map(|row| {
-            let uuid =
-                codeyard_repos_core::wire::repository_uuid(&row.disk_path)
-                    .unwrap();
+            let uuid = codeyard_repos_core::wire::repository_uuid(&row.disk_path).unwrap();
             root.path().join("mirrors").join(format!("{uuid}.git"))
         })
         .collect();
@@ -2604,9 +2572,7 @@ async fn lost_current_copies_are_rebuilt_without_a_primary_write() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &primary, "rebuild").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo.save("main", "README.md", "unborn", b"survives").await;
     assert_current(&primary, &copy, &repo).await;
     let version = codeyard_db_cluster::cluster::get_write_version(pool, repo.id())
@@ -2726,9 +2692,7 @@ async fn a_copy_git_cannot_open_is_cleared_and_rebuilt() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &primary, "damaged").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo.save("main", "README.md", "unborn", b"survives").await;
     assert_current(&primary, &copy, &repo).await;
     let version = codeyard_db_cluster::cluster::get_write_version(pool, repo.id())
@@ -2779,9 +2743,7 @@ async fn a_complete_copy_removes_stale_unusable_directories_only() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &primary, "stale").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo.save("main", "README.md", "unborn", b"kept").await;
     assert_current(&primary, &copy, &repo).await;
     let copy_id = copy.context.node_id;
@@ -2845,9 +2807,7 @@ async fn an_incremental_copy_clears_stale_unusable_directories_after_it_succeeds
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(pool, root.path()).await;
     let repo = create_repository(pool, &primary, "incremental").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let first = repo.save("main", "README.md", "unborn", b"one").await;
     assert_current(&primary, &copy, &repo).await;
     let quarantines = quarantines(&copy_path(&copy, uuid));
@@ -2978,9 +2938,7 @@ async fn retiring_a_replica_removes_quarantined_directories_too() {
     let repo = create_repository(&database.pool, &primary, "quarantined").await;
     repo.save("main", "README.md", "unborn", b"one").await;
     assert_current(&primary, &copy, &repo).await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let aside = copy_path(&copy, uuid).with_file_name(format!("{uuid}.git.unusable-123"));
     std::fs::create_dir(&aside).unwrap();
     std::fs::write(aside.join("data"), b"failed rebuild").unwrap();
@@ -3066,9 +3024,7 @@ async fn check_unreadable_copy_does_not_stop_takeover(pool: &DbPool) {
     let uuid = rows
         .iter()
         .find(|row| row.repository_id == unreadable)
-        .map(|row| {
-            codeyard_repos_core::wire::repository_uuid(&row.disk_path).unwrap()
-        })
+        .map(|row| codeyard_repos_core::wire::repository_uuid(&row.disk_path).unwrap())
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let mirrors = root.path().join("mirrors");
@@ -3129,12 +3085,9 @@ async fn an_unreadable_copy_does_not_stop_the_others_from_being_rebuilt() {
     let first = create_repository(pool, &primary, "unreadable").await;
     let second = create_repository(pool, &primary, "rebuilt").await;
     let first_uuid =
-        codeyard_repos_core::wire::repository_uuid(&first.repository.disk_path)
-            .unwrap();
-    let second_uuid = codeyard_repos_core::wire::repository_uuid(
-        &second.repository.disk_path,
-    )
-    .unwrap();
+        codeyard_repos_core::wire::repository_uuid(&first.repository.disk_path).unwrap();
+    let second_uuid =
+        codeyard_repos_core::wire::repository_uuid(&second.repository.disk_path).unwrap();
     let first_head = first.save("main", "README.md", "unborn", b"first").await;
     let second_head = second.save("main", "README.md", "unborn", b"second").await;
     assert_current(&primary, &copy, &first).await;
@@ -3180,9 +3133,7 @@ async fn a_copy_takes_over_when_its_primary_stops() {
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "failover").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     repo.save("main", "a.txt", "unborn", b"a").await;
     assert_current(&primary, &copy, &repo).await;
     let copy_id = copy.context.node_id;
@@ -3533,9 +3484,7 @@ async fn reads_are_served_by_a_copy_while_the_primary_is_down() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "failover").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo
         .save("main", "README.md", "unborn", b"# failover\n")
         .await;
@@ -3619,9 +3568,7 @@ async fn git_fetches_use_the_primary_instead_of_a_lagging_copy() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "current-clone").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let base = repo.save("main", "README.md", "unborn", b"base\n").await;
     assert_current(&primary, &copy, &repo).await;
     let head = repo.save("main", "new.txt", &base, b"new\n").await;
@@ -3717,16 +3664,15 @@ async fn a_pull_request_refresh_does_not_read_heads_from_a_lagging_copy() {
         Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(pool)),
     );
     // The refs must come from the primary, which is down. The refresh fails and writes nothing.
-    let refreshed =
-        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
-            pool,
-            &repo.repository,
-            &ci,
-            repo.actor,
-            pull.id,
-            Some(codeyard_db_core::models::AccessLevel::Owner),
-        )
-        .await;
+    let refreshed = codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
+        pool,
+        &repo.repository,
+        &ci,
+        repo.actor,
+        pull.id,
+        Some(codeyard_db_core::models::AccessLevel::Owner),
+    )
+    .await;
     assert!(matches!(
         refreshed,
         Err(codeyard_repos_core::receive_ci::RefreshError::Storage)
@@ -3788,9 +3734,7 @@ async fn a_read_aimed_at_the_old_primary_reaches_the_promoted_copy() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "moved-away").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     repo.save("main", "README.md", "unborn", b"# moved\n").await;
     assert_current(&primary, &copy, &repo).await;
     let primary_id = primary.context.node_id;
@@ -3838,9 +3782,7 @@ async fn a_copy_holder_reads_its_own_copy_while_the_primary_is_down() {
     // and it cannot dial itself.
     let copy = start_node(&database.pool, root.path(), "store-b", "web,storage").await;
     let repo = create_repository(&database.pool, &primary, "own-copy").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo.save("main", "README.md", "unborn", b"# own\n").await;
     assert_current(&primary, &copy, &repo).await;
     let primary_id = primary.context.node_id;
@@ -3917,9 +3859,7 @@ async fn unreadable_fallbacks_are_skipped_but_an_answering_primary_is_not() {
     ));
     let client = http::Client::anonymous(&router);
     let url = "/api/repos/unreadable_owner/unreadable/raw/main/README.md";
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     repo.save("main", "README.md", "unborn", b"healthy").await;
     assert_current(&primary, &first, &repo).await;
     pass(&healthy).await;
@@ -4001,9 +3941,7 @@ async fn a_moved_primary_that_answers_is_final_even_when_a_copy_could_serve() {
         .await
         .unwrap());
     let repo = create_repository(pool, &old, "moved").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     repo.save("main", "README.md", "unborn", b"healthy").await;
     assert_current(&old, &new, &repo).await;
     pass(&copy).await;
@@ -4058,9 +3996,7 @@ async fn a_read_moves_on_when_the_own_copy_cannot_serve() {
     let own = start_node(&database.pool, root.path(), "store-b", "web,storage").await;
     let other = start_storage(&database.pool, root.path(), "store-c").await;
     let repo = create_repository(&database.pool, &primary, "skip-own").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo.save("main", "README.md", "unborn", b"# skip\n").await;
     assert_current(&primary, &own, &repo).await;
     pass(&other).await;
@@ -4195,9 +4131,7 @@ async fn writes_are_refused_while_the_primary_is_down() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "writes").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo
         .save("main", "README.md", "unborn", b"# writes\n")
         .await;
@@ -4274,9 +4208,7 @@ async fn a_node_without_a_copy_row_refuses_reads() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "outside").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo.save("main", "a.txt", "unborn", b"a").await;
     // Assign the copy while there is only one eligible holder.
     assert_current(&primary, &copy, &repo).await;
@@ -4337,10 +4269,8 @@ async fn a_read_without_a_copy_that_has_copied_is_unavailable() {
     let web = web_node(&database.pool, root.path()).await;
     // The copy row exists, but the copy has never been brought up to date.
     let copying = create_repository(&database.pool, &primary, "copying").await;
-    let copying_uuid = codeyard_repos_core::wire::repository_uuid(
-        &copying.repository.disk_path,
-    )
-    .unwrap();
+    let copying_uuid =
+        codeyard_repos_core::wire::repository_uuid(&copying.repository.disk_path).unwrap();
     copying.save("main", "a.txt", "unborn", b"a").await;
     pass(&primary).await;
     assert_eq!(
@@ -4349,10 +4279,8 @@ async fn a_read_without_a_copy_that_has_copied_is_unavailable() {
     );
     // This repository has no copy row at all.
     let uncopied = create_repository(&database.pool, &primary, "uncopied").await;
-    let uncopied_uuid = codeyard_repos_core::wire::repository_uuid(
-        &uncopied.repository.disk_path,
-    )
-    .unwrap();
+    let uncopied_uuid =
+        codeyard_repos_core::wire::repository_uuid(&uncopied.repository.disk_path).unwrap();
     let primary_id = primary.context.node_id;
     primary.shutdown().await;
 
@@ -4379,9 +4307,7 @@ async fn a_not_found_from_the_primary_does_not_fail_over() {
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "answers").await;
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let head = repo
         .save("main", "README.md", "unborn", b"# answers\n")
         .await;

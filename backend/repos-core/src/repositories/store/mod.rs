@@ -1729,9 +1729,7 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::MergeUpstream {
-                            source: crate::wire::repository_uuid(
-                                &from.disk_path,
-                            )?,
+                            source: crate::wire::repository_uuid(&from.disk_path)?,
                             branch: branch.into(),
                             token,
                         },
@@ -2259,9 +2257,7 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::UpdatePullBranch {
-                            source: crate::wire::repository_uuid(
-                                &from.disk_path,
-                            )?,
+                            source: crate::wire::repository_uuid(&from.disk_path)?,
                             request: request.clone(),
                         },
                         b"",
@@ -2707,6 +2703,3 @@ impl RepoStore {
         }
     }
 }
-
-#[cfg(test)]
-mod tests;

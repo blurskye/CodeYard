@@ -1,5 +1,4 @@
 pub mod access;
-pub mod code_owners;
 pub mod dependencies;
 pub mod git_sessions;
 pub mod languages;

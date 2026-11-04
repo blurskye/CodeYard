@@ -1,9 +1,9 @@
 //! Admission snapshots called workflows so workers never fetch a moving ref or another repository.
-use codeyard_repos_core::workflows::is_safe_ref;
-use codeyard_repos_core::workflows::is_safe_workflow_path;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::ci_admission::AdmissionError;
 use codeyard_git::error::ErrorKind;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::workflows::is_safe_ref;
+use codeyard_repos_core::workflows::is_safe_workflow_path;
 use serde_yaml::Value;
 use sha2::Digest;
 use sha2::Sha256;
@@ -224,7 +224,8 @@ impl<'a> Resolver<'a> {
                     let name = parts.next().unwrap_or("");
                     let path = parts.next().unwrap_or("");
                     if !crate::admission::is_safe_owner(owner)
-                        || codeyard_repos_core::repositories::lifecycle::validate_name(name).is_err()
+                        || codeyard_repos_core::repositories::lifecycle::validate_name(name)
+                            .is_err()
                         || !is_safe_workflow_path(path)
                         || !(is_safe_ref(reference) || codeyard_git::is_full_commit_id(reference))
                     {

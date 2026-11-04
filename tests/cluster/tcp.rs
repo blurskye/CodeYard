@@ -5,6 +5,7 @@
 use crate::support::native_database as native;
 
 use codeyard_ci::config::CiExecutionMode;
+use codeyard_ci_engine::queue::RunQueue;
 use codeyard_cluster_core::link::Link;
 use codeyard_cluster_core::pairing::InviteOptions;
 use codeyard_cluster_core::pairing::JoinTicket;
@@ -15,7 +16,6 @@ use codeyard_cluster_core::transport::Relay;
 use codeyard_cluster_core::transport::ALPN_EVENTS;
 use codeyard_cluster_core::transport::ALPN_PAIR;
 use codeyard_cluster_core::transport::ALPN_RPC;
-use codeyard_ci_engine::queue::RunQueue;
 use codeyard_support::node_identity::NodeKey;
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::{

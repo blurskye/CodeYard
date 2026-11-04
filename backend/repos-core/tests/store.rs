@@ -1,23 +1,29 @@
 //! The store against real bare repositories in temporary directories.
-use super::*;
-use crate::wire as rpc;
-use crate::repositories::store::local::begin_ref_change;
-use crate::repositories::store::local::ensure_ref_room;
-use crate::repositories::store::repo_store;
-use crate::repositories::store::RepoStore;
-use crate::store_types::GitService;
-use crate::store_types::GitSession;
-use crate::store_types::GitStreams;
-use crate::store_types::MergeMethod;
-use crate::store_types::MergeRequest;
-use crate::store_types::MAX_BLOB_RESPONSE_BYTES;
-use crate::store_types::MAX_COMMIT_OFFSET;
-use crate::store_types::MAX_COMMIT_PAGE_SIZE;
+use codeyard_db_core::models::Repository;
+use codeyard_git::error::ErrorKind;
+use codeyard_git::error::RepoError;
 use codeyard_git::error::RepoErrorReason;
 use codeyard_git::repository::MAX_DIFF_FILE_PATCH_BYTES;
 use codeyard_git::repository::MAX_REPOSITORY_REFS;
 use codeyard_git::repository::MAX_TREE_ENTRIES;
+use codeyard_git::CiCommit;
+use codeyard_git::CommitFilter;
+use codeyard_git::CommitInfo;
 use codeyard_repos::editor::FileWrite;
+use codeyard_repos_core::repositories::store::local::begin_ref_change;
+use codeyard_repos_core::repositories::store::local::ensure_ref_room;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
+use codeyard_repos_core::repositories::store::*;
+use codeyard_repos_core::store_types::GitService;
+use codeyard_repos_core::store_types::GitSession;
+use codeyard_repos_core::store_types::GitStreams;
+use codeyard_repos_core::store_types::MergeMethod;
+use codeyard_repos_core::store_types::MergeRequest;
+use codeyard_repos_core::store_types::MAX_BLOB_RESPONSE_BYTES;
+use codeyard_repos_core::store_types::MAX_COMMIT_OFFSET;
+use codeyard_repos_core::store_types::MAX_COMMIT_PAGE_SIZE;
+use codeyard_repos_core::wire as rpc;
 use codeyard_storage::range::ByteRange as BlobRange;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -252,7 +258,7 @@ async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissibl
         ),
     );
     let run = ci
-        .trigger_run(crate::receive_ci::CiRunRequest {
+        .trigger_run(codeyard_repos_core::receive_ci::CiRunRequest {
             repo_id: a.repo_id,
             repo_owner: "store_actor".into(),
             repo_name: row.name,
@@ -584,7 +590,7 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
         let path = destination.clone();
         let task = tokio::spawn(async move {
             entered.send(()).unwrap();
-            crate::repositories::store::local::LocalStore::checkout_pack(
+            codeyard_repos_core::repositories::store::local::LocalStore::checkout_pack(
                 &path,
                 &"1".repeat(40),
                 "/repository.git",
@@ -3554,10 +3560,10 @@ async fn a_repository_past_the_ref_limit_stays_readable_and_repairable() {
     assert_eq!(error.message, FULL);
 
     // The API path checks the default branch before it deletes, so it runs here too.
+    use codeyard_ci_engine::refs::delete_branch;
     use codeyard_ci_engine::runs::CiRuns;
-    use crate::repositories::refs::delete_branch;
-    use crate::ref_errors::RefError;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
+    use codeyard_repos_core::ref_errors::RefError;
     use std::sync::Arc;
     let ci = CiRuns::new(
         pool.clone(),

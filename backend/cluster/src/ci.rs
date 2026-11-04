@@ -1,12 +1,12 @@
 //! CI queue RPCs. The authenticated node key owns every worker id it supplies.
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_cluster_core::link::Link;
 use codeyard_ci_engine::queue::Operation;
 use codeyard_ci_engine::queue::Reply;
 use codeyard_ci_engine::queue::Request;
 use codeyard_ci_engine::queue::RunQueue;
 use codeyard_ci_engine::queue::CORE_UNAVAILABLE;
+use codeyard_cluster_core::link::Link;
 use codeyard_repos_core::context::NodeContext;
 use iroh::endpoint::Connection;
 use iroh::protocol::AcceptError;
@@ -76,7 +76,7 @@ mod tests {
         .unwrap();
         let context = NodeContext {
             pool: Some(pool.clone()),
-        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
+            rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
             iroh: IrohDialer::new(Relay::Off, key.clone()),
             key,
             node_id: node.id,

@@ -1,7 +1,4 @@
 //! One CI queue, reached through the database or a paired core node.
-use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
@@ -13,6 +10,9 @@ use codeyard_db_core::models::CiRun;
 use codeyard_db_core::DbPool;
 use codeyard_model::ci::LogLine;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_support::secrets::SecretEncryptor;
 use serde::Deserialize;
 use serde::Serialize;
@@ -430,8 +430,7 @@ impl RunQueue {
                         )
                         .await?
                         .context("the repository no longer exists")?;
-                    let uuid =
-                        crate::cluster::rpc::repository::repository_uuid(&repository.disk_path)?;
+                    let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path)?;
                     let owner = codeyard_db_actions::ci::ci_repository_owner(pool, run.repo_id)
                         .await?
                         .unwrap_or_default();
@@ -1031,8 +1030,11 @@ impl RunQueue {
                 .await?;
                 link.finish().await?;
                 let reply: Reply = serde_json::from_slice(
-                    &codeyard_repos_core::wire::read_frame(&mut link.reader, codeyard_db_core::limits::MAX_JSON)
-                        .await?,
+                    &codeyard_repos_core::wire::read_frame(
+                        &mut link.reader,
+                        codeyard_db_core::limits::MAX_JSON,
+                    )
+                    .await?,
                 )?;
                 Ok::<_, anyhow::Error>(reply)
             })

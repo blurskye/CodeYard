@@ -11,9 +11,9 @@ pub mod runs;
 pub mod schedule;
 pub mod workers;
 
-pub mod worker;
 pub mod pull_requests;
 mod receive;
+pub mod worker;
 
 #[cfg(test)]
 mod tests {
@@ -34,4 +34,5 @@ mod tests {
     }
 }
 
+pub mod code_owners;
 pub mod refs;

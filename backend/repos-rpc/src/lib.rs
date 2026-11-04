@@ -1,4 +1,7 @@
 //! Repository protocol composition; wire format and policy have explicit owners.
+use anyhow::Result;
+use codeyard_cluster_core::link::Link;
+use codeyard_db_core::limits::MAX_JSON;
 use codeyard_repos_core::context::NodeContext;
 use codeyard_repos_core::wire::invalid;
 use codeyard_repos_core::wire::read_frame;
@@ -9,9 +12,6 @@ use codeyard_repos_core::wire::Reply;
 use codeyard_repos_core::wire::Request;
 use codeyard_repos_core::wire::MAX_BYTES;
 use codeyard_repos_core::wire::TIMEOUT;
-use anyhow::Result;
-use codeyard_cluster_core::link::Link;
-use codeyard_db_core::limits::MAX_JSON;
 use iroh::endpoint::Connection;
 use iroh::protocol::AcceptError;
 use iroh::protocol::ProtocolHandler;
@@ -306,9 +306,36 @@ mod tests {
 #[derive(Debug)]
 pub struct RpcFactory;
 impl codeyard_repos_core::local_rpc::RpcFactory for RpcFactory {
-    fn create(&self, context: NodeContext) -> Box<dyn codeyard_repos_core::local_rpc::LocalRpc> { Box::new(RpcHandler::new(context)) }
+    fn create(&self, context: NodeContext) -> Box<dyn codeyard_repos_core::local_rpc::LocalRpc> {
+        Box::new(RpcHandler::new(context))
+    }
 }
 impl codeyard_repos_core::local_rpc::LocalRpc for RpcHandler {
-    fn execute(&self, request: Request, body: Vec<u8>, caller: iroh::PublicKey) -> futures_util::future::BoxFuture<'_, Result<(serde_json::Value, Vec<u8>), codeyard_repos_core::wire::Failure>> { Box::pin(self.execute(request, body, caller)) }
-    fn own_copy<'a>(&'a self, request: &'a Request) -> futures_util::future::BoxFuture<'a, Result<(codeyard_repos_core::repositories::store::RepoStore, bool, tokio::sync::OwnedRwLockReadGuard<()>), codeyard_git::error::RepoError>> { Box::pin(self.own_copy(request)) }
+    fn execute(
+        &self,
+        request: Request,
+        body: Vec<u8>,
+        caller: iroh::PublicKey,
+    ) -> futures_util::future::BoxFuture<
+        '_,
+        Result<(serde_json::Value, Vec<u8>), codeyard_repos_core::wire::Failure>,
+    > {
+        Box::pin(self.execute(request, body, caller))
+    }
+    fn own_copy<'a>(
+        &'a self,
+        request: &'a Request,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        Result<
+            (
+                codeyard_repos_core::repositories::store::RepoStore,
+                bool,
+                tokio::sync::OwnedRwLockReadGuard<()>,
+            ),
+            codeyard_git::error::RepoError,
+        >,
+    > {
+        Box::pin(self.own_copy(request))
+    }
 }

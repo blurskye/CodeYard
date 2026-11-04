@@ -333,8 +333,7 @@ impl Gateway {
                         codeyard_cluster_core::writes::OutcomeUnknown
                     );
                     let (repo, _) = self.operation_repository(operation).await?;
-                    let repository =
-                        crate::wire::repository_uuid(&repo.disk_path)?;
+                    let repository = crate::wire::repository_uuid(&repo.disk_path)?;
                     let cluster = self.ci.cluster().context("cluster unavailable")?;
                     let lease = operation
                         .publication_lease
@@ -357,8 +356,7 @@ impl Gateway {
                         codeyard_cluster_core::writes::OutcomeUnknown
                     );
                     let (repo, _) = self.operation_repository(operation).await?;
-                    let repository =
-                        crate::wire::repository_uuid(&repo.disk_path)?;
+                    let repository = crate::wire::repository_uuid(&repo.disk_path)?;
                     let cluster = self.ci.cluster().context("cluster unavailable")?;
                     let lease = operation
                         .publication_lease
@@ -931,15 +929,17 @@ impl Gateway {
             .filter_map(|update| update.reference.strip_prefix("refs/heads/"))
             .collect();
         if !branches.is_empty()
-            && self.ci.refresh_open_pull_requests(
-                &self.pool,
-                &repo,
-                Some(branches.as_slice()),
-                actor_id,
-                ci_access,
-            )
-            .await
-            .is_err()
+            && self
+                .ci
+                .refresh_open_pull_requests(
+                    &self.pool,
+                    &repo,
+                    Some(branches.as_slice()),
+                    actor_id,
+                    ci_access,
+                )
+                .await
+                .is_err()
         {
             tracing::warn!(
                 repo_id = repo.id,
@@ -1144,8 +1144,7 @@ impl Gateway {
                 }
             };
             for workflow in matched {
-                let pipeline =
-                    crate::workflows::infer_pipeline_from_workflow_path(&workflow.path);
+                let pipeline = crate::workflows::infer_pipeline_from_workflow_path(&workflow.path);
                 // Recheck live identity/access for each dispatch, in particular
                 // CD/full. Neither event=push nor the prior pre-hook is a bypass.
                 let fresh_repo = codeyard_db_repos::repositories::records::get_repository_by_id(

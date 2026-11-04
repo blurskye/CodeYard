@@ -1,6 +1,6 @@
 //! Revert through the normal branch publication and pull request creation paths.
-use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_ci_engine::runs::CiRuns;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos_core::repositories::pull_requests::database_error;
 use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_repos_core::repositories::store::repo_store;
@@ -118,18 +118,14 @@ pub async fn revert_pull_request(
             crate::repositories::pull_requests::merge::prepare_error(error)
         }
         codeyard_repos_core::ref_errors::RefError::Access(_)
-        | codeyard_repos_core::ref_errors::RefError::Protected(_) => {
-            OperationError::Denied {
-                code: "write_denied",
-                message: "Revert branch creation denied".into(),
-            }
-        }
-        codeyard_repos_core::ref_errors::RefError::Invalid(message) => {
-            OperationError::Invalid {
-                code: "validation_error",
-                message: message.into(),
-            }
-        }
+        | codeyard_repos_core::ref_errors::RefError::Protected(_) => OperationError::Denied {
+            code: "write_denied",
+            message: "Revert branch creation denied".into(),
+        },
+        codeyard_repos_core::ref_errors::RefError::Invalid(message) => OperationError::Invalid {
+            code: "validation_error",
+            message: message.into(),
+        },
         _ => OperationError::Unavailable {
             code: "storage_unavailable",
             message: format!(

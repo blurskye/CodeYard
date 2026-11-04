@@ -2305,8 +2305,8 @@ fn file_name(workflow: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codeyard_repos_core::repositories::store::RepoStore;
     use codeyard_ci::config::CiConfig;
+    use codeyard_repos_core::repositories::store::RepoStore;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -2879,17 +2879,13 @@ mod tests {
         let lines = Arc::new(Mutex::new(Vec::new()));
         let captured = lines.clone();
         let (_stop_tx, stop) = watch::channel(false);
-        let status = crate::process::tests::run(
-            command,
-            Duration::from_secs(30),
-            stop,
-            move |line, _| {
+        let status =
+            crate::process::tests::run(command, Duration::from_secs(30), stop, move |line, _| {
                 captured.lock().unwrap().push(line);
                 async { Ok(()) }
-            },
-        )
-        .await
-        .unwrap();
+            })
+            .await
+            .unwrap();
         let lines = lines.lock().unwrap();
         if !status.success() {
             panic!(

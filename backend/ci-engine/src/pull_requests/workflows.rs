@@ -1,17 +1,17 @@
-use codeyard_repos_core::receive_ci::CiRunRequest;
 use crate::runs::CiRuns;
-use codeyard_repos_core::workflows::commit_message_for_ref;
-use codeyard_repos_core::workflows::infer_pipeline_from_workflow_path;
-use codeyard_repos_core::workflows::list_workflows_for_ref;
-use codeyard_repos_core::workflows::should_skip_run_from_message;
-use codeyard_repos_core::repositories::pull_requests::OperationError;
-use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::Context;
 use codeyard_db_core::ci_admission::AdmissionError;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
 use codeyard_model::workflow_glob::WorkflowMatchBudget;
+use codeyard_repos_core::receive_ci::CiRunRequest;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::workflows::commit_message_for_ref;
+use codeyard_repos_core::workflows::infer_pipeline_from_workflow_path;
+use codeyard_repos_core::workflows::list_workflows_for_ref;
+use codeyard_repos_core::workflows::should_skip_run_from_message;
 
 /// Queues the workflows that `pulls` now need on their new base.
 /// Let admission finish: cancelling it after a saved revision would lose these runs.
@@ -380,7 +380,8 @@ pub async fn run_pull_request_workflows(
 ) -> Result<PullRequest, OperationError> {
     // The caller resolved and authorized this repository; a rename must not switch it.
     let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
-    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, repository).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, repository)
+        .await?;
     // Only trusted actors can queue these workflows, so no one else may record an
     // approval for them.
     if !user.is_admin && !ci.config.trusted_actor_ids.contains(&user.id) {

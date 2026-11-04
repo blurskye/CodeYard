@@ -1,8 +1,8 @@
 //! Shared application state: database, storage, CI and notification services.
 use codeyard_ci::config::CiConfig;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_db_core::DbPool;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_ci_engine::runs::CiRuns;
 use codeyard_storage::ObjectStore;
 use codeyard_support::secrets::SecretEncryptor;
 use std::path::PathBuf;

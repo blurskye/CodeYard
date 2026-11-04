@@ -9,6 +9,14 @@ pub trait RpcFactory: Send + Sync + std::fmt::Debug {
 }
 
 pub trait LocalRpc: Send + Sync {
-    fn execute(&self, request: Request, body: Vec<u8>, caller: iroh::PublicKey) -> BoxFuture<'_, Result<(serde_json::Value, Vec<u8>), Failure>>;
-    fn own_copy<'a>(&'a self, request: &'a Request) -> BoxFuture<'a, Result<(RepoStore, bool, tokio::sync::OwnedRwLockReadGuard<()>), RepoError>>;
+    fn execute(
+        &self,
+        request: Request,
+        body: Vec<u8>,
+        caller: iroh::PublicKey,
+    ) -> BoxFuture<'_, Result<(serde_json::Value, Vec<u8>), Failure>>;
+    fn own_copy<'a>(
+        &'a self,
+        request: &'a Request,
+    ) -> BoxFuture<'a, Result<(RepoStore, bool, tokio::sync::OwnedRwLockReadGuard<()>), RepoError>>;
 }

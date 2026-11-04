@@ -295,7 +295,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let context = NodeContext {
             pool: Some(pool),
-        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
+            rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
             iroh: IrohDialer::new(Relay::Off, key.clone()),
             key,
             node_id: copy_node,

@@ -1,14 +1,14 @@
 //! UTC schedules are discovered on the default branch; enqueue serializes each minute across nodes.
-use codeyard_repos_core::workflow_schedule::parse;
-use codeyard_repos_core::receive_ci::CiRunRequest;
 use crate::runs::CiRuns;
-use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::Context;
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Timelike;
 use chrono::Utc;
 use codeyard_db_core::ci_admission::AdmissionError;
+use codeyard_repos_core::receive_ci::CiRunRequest;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::workflow_schedule::parse;
 use codeyard_webhooks::payloads;
 use serde_json::json;
 
@@ -89,7 +89,8 @@ impl CiRuns {
         if !self.actor_may_discover_workflows(repo.id, actor).await? {
             return Ok(());
         }
-        let definitions = codeyard_repos_core::workflows::list_workflows_for_ref(&store, &commit.sha).await?;
+        let definitions =
+            codeyard_repos_core::workflows::list_workflows_for_ref(&store, &commit.sha).await?;
         let owner = codeyard_db_actions::ci::ci_repository_owner(&self.pool, repo.id)
             .await?
             .ok_or(AdmissionError::Unavailable)?;
@@ -115,9 +116,10 @@ impl CiRuns {
                             head_sha: Some(commit.sha.clone()),
                             event: "schedule".into(),
                             pull_request_id: None,
-                            pipeline: codeyard_repos_core::workflows::infer_pipeline_from_workflow_path(
-                                &definition.path,
-                            ),
+                            pipeline:
+                                codeyard_repos_core::workflows::infer_pipeline_from_workflow_path(
+                                    &definition.path,
+                                ),
                             workflow_paths: vec![definition.path.clone()],
                             environment: None,
                             inputs: None,
@@ -155,4 +157,3 @@ pub async fn run(ci: std::sync::Arc<CiRuns>, mut stop: tokio::sync::watch::Recei
         }
     }
 }
-

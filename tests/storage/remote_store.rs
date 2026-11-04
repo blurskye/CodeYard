@@ -19,7 +19,6 @@ use codeyard_git::MAX_WORKFLOW_DIRECTORY_ENTRIES;
 use codeyard_repos::editor::FileWrite;
 use codeyard_repos::editor::PreparedFile;
 use codeyard_repos::editor::MAX_EDITOR_BYTES;
-use codeyard_repos_core::workflows::list_workflows_for_ref;
 use codeyard_repos_core::cluster;
 use codeyard_repos_core::context::NodeContext;
 use codeyard_repos_core::repositories::store::repo_store;
@@ -35,6 +34,7 @@ use codeyard_repos_core::wire::Failure;
 use codeyard_repos_core::wire::Operation;
 use codeyard_repos_core::wire::Reply;
 use codeyard_repos_core::wire::Request;
+use codeyard_repos_core::workflows::list_workflows_for_ref;
 use codeyard_storage::range::ByteRange as BlobRange;
 use codeyard_storage::ObjectStore;
 use rand::RngCore;
@@ -183,9 +183,7 @@ async fn remote_first_reader_persists_languages() {
     )
     .await
     .unwrap();
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path).unwrap();
     let path = storage.context.repos_path.join(format!("{uuid}.git"));
     {
         let bare = git2::Repository::open_bare(&path).unwrap();
@@ -1394,9 +1392,7 @@ fn repository_rpc_operation_role_table() {
             } else {
                 allowed
             };
-            let result = codeyard_repos_rpc::repository::authorize_operation(
-                &roles, &operation,
-            );
+            let result = codeyard_repos_rpc::repository::authorize_operation(&roles, &operation);
             assert_eq!(result.is_ok(), allowed, "{roles:?}: {operation:?}");
             if let Err(error) = result {
                 assert_eq!(error.kind, ErrorKind::Invalid);
@@ -1561,9 +1557,7 @@ async fn remote_web_contract() {
             .unwrap(),
         Some(storage.context.node_id)
     );
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path).unwrap();
     let storage_path = storage_disk.path().join(format!("{uuid}.git"));
     assert!(!Path::new(&repository.disk_path).exists());
     assert!(storage_path.exists());
@@ -3067,10 +3061,7 @@ async fn remote_web_contract() {
         .is_err());
     // The node answers as for a repository it cannot serve, so a reader tries the next copy.
     let request = Request {
-        repository: codeyard_repos_core::wire::repository_uuid(
-            &elsewhere.disk_path,
-        )
-        .unwrap(),
+        repository: codeyard_repos_core::wire::repository_uuid(&elsewhere.disk_path).unwrap(),
         operation: Operation::Refs,
         actor: None,
         ci_run: None,
@@ -3081,12 +3072,10 @@ async fn remote_web_contract() {
     for (repository, source) in [
         (
             uuid,
-            codeyard_repos_core::wire::repository_uuid(&elsewhere.disk_path)
-                .unwrap(),
+            codeyard_repos_core::wire::repository_uuid(&elsewhere.disk_path).unwrap(),
         ),
         (
-            codeyard_repos_core::wire::repository_uuid(&elsewhere.disk_path)
-                .unwrap(),
+            codeyard_repos_core::wire::repository_uuid(&elsewhere.disk_path).unwrap(),
             uuid,
         ),
     ] {

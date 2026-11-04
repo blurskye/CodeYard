@@ -294,9 +294,7 @@ pub async fn start(
     let rpc = storage_path
         .is_some()
         .then(|| codeyard_repos_rpc::RpcHandler::new(context.clone()));
-    let sessions = rpc
-        .as_ref()
-        .map(codeyard_repos_rpc::RpcHandler::sessions);
+    let sessions = rpc.as_ref().map(codeyard_repos_rpc::RpcHandler::sessions);
     let ci_config = std::sync::Arc::new(codeyard_ci::config::CiConfig::from_env()?);
     let queue = codeyard_ci_engine::queue::RunQueue::Database {
         pool: pool.clone(),
@@ -546,12 +544,10 @@ pub async fn adopt_repositories(pool: &DbPool, node_id: i64, repos_path: &Path) 
             .await?
             .into_iter()
             .filter(|(_, disk_path)| {
-                codeyard_repos_core::wire::repository_uuid(disk_path).is_ok_and(
-                    |uuid| {
-                        codeyard_repos_core::repositories::store::primary_path(repos_path, uuid)
-                            .exists()
-                    },
-                )
+                codeyard_repos_core::wire::repository_uuid(disk_path).is_ok_and(|uuid| {
+                    codeyard_repos_core::repositories::store::primary_path(repos_path, uuid)
+                        .exists()
+                })
             })
             .map(|(id, _)| id)
             .collect();

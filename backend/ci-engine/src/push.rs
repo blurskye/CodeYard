@@ -1,10 +1,10 @@
 use crate::runs::CiRuns;
-use codeyard_repos_core::receive_ci::CiRunRequest;
-use codeyard_repos_core::push_workflows::{RefUpdate, matching_push_workflows, push_document};
-use codeyard_repos_core::workflows::{infer_pipeline_from_workflow_path, list_workflows_for_ref};
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::Repository;
 use codeyard_model::workflow_glob::WorkflowMatchBudget;
+use codeyard_repos_core::push_workflows::{matching_push_workflows, push_document, RefUpdate};
+use codeyard_repos_core::receive_ci::CiRunRequest;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::workflows::{infer_pipeline_from_workflow_path, list_workflows_for_ref};
 
 impl CiRuns {
     /// Queues the workflows at `update.new` that listen to `push` for this ref, as
@@ -112,4 +112,3 @@ impl CiRuns {
         }
     }
 }
-

@@ -1,6 +1,6 @@
 use super::*;
-use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_ci_engine::runs::CiRuns;
+use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos_core::repositories::store::repo_store;
 
 const WORKFLOW: &str = "on: [pull_request, push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n";

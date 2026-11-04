@@ -8,6 +8,7 @@ use crate::repositories::pull_requests::mutations::create_pull_request;
 use crate::repositories::pull_requests::mutations::CreatePullRequestRequest;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_db_repos::repositories::dependencies as records;
 use codeyard_db_repos::repositories::dependencies::AlertState;
 use codeyard_db_repos::repositories::dependencies::Feature;
@@ -18,7 +19,6 @@ use codeyard_db_repos::repositories::dependencies::Update;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos::editor::UploadFile;
 use codeyard_repos::editor::UploadWrite;
-use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::repositories::store::repo_store;
 use sha2::Sha256;
 

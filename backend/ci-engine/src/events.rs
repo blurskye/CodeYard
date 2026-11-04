@@ -1,11 +1,11 @@
 //! Repository events use the default branch's workflow and the webhook's unchanged document.
-use codeyard_repos_core::receive_ci::CiRunRequest;
 use crate::runs::CiRuns;
-use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::ci_admission::AdmissionError;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
 use codeyard_model::workflow_glob::WorkflowMatchBudget;
+use codeyard_repos_core::receive_ci::CiRunRequest;
+use codeyard_repos_core::repositories::store::repo_store;
 use serde_json::Value;
 
 pub(crate) fn is_repository_event(event: &str) -> bool {
@@ -344,7 +344,8 @@ impl CiRuns {
             Err(error) if error.kind == codeyard_git::error::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error.into()),
         };
-        let definitions = codeyard_repos_core::workflows::list_workflows_for_ref(&store, &commit.sha).await?;
+        let definitions =
+            codeyard_repos_core::workflows::list_workflows_for_ref(&store, &commit.sha).await?;
         let mut budget = WorkflowMatchBudget::new();
         let mut matched = Vec::new();
         let branch = if event == "workflow_run" {

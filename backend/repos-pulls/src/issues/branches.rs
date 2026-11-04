@@ -117,9 +117,7 @@ pub async fn create(
             }
             ErrorKind::Unavailable => return Err(unconfirmed()),
         },
-        Err(codeyard_repos_core::ref_errors::RefError::Unavailable) => {
-            return Err(unconfirmed())
-        }
+        Err(codeyard_repos_core::ref_errors::RefError::Unavailable) => return Err(unconfirmed()),
     }
     codeyard_db_repos::issues::management::link_branch(
         state.pool(),

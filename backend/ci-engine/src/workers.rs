@@ -60,11 +60,11 @@ impl CiWorkers {
         queued: Arc<Notify>,
         state_dir: &Path,
     ) -> Self {
-        let (work_root, configuration_error) =
-            match crate::runner_credentials::work_root(state_dir) {
-                Ok(root) => (root, None),
-                Err(error) => (state_dir.to_owned(), Some(error.to_string())),
-            };
+        let (work_root, configuration_error) = match crate::runner_credentials::work_root(state_dir)
+        {
+            Ok(root) => (root, None),
+            Err(error) => (state_dir.to_owned(), Some(error.to_string())),
+        };
         Self {
             queue,
             config,

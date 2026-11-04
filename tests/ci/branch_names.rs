@@ -8,8 +8,8 @@ use crate::support::native_database as native;
 use crate::support::production_ci as production;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiPipelineKind;
-use codeyard_repos_core::receive_ci::CiRunRequest;
 use codeyard_ci_engine::runs::CiRuns;
+use codeyard_repos_core::receive_ci::CiRunRequest;
 
 use std::collections::BTreeSet;
 

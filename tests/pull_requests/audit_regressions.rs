@@ -342,7 +342,7 @@ async fn ready_and_deleted_sources(pg: bool) {
             .unwrap()
         );
     }
-    let owners = codeyard_repos_core::repositories::code_owners::resolve_owners(
+    let owners = codeyard_ci_engine::code_owners::resolve_owners(
         w.database.pool(),
         &w.repository,
         ["@alice", "@bob", "@bob"],
@@ -497,30 +497,25 @@ async fn bounded_codeowners_fallback(pg: bool) {
     let small = commit(64);
     let oversized = commit(33 * 1024 * 1024);
     // No .github directory: MissingPath must fall through to the root file.
-    let rules =
-        codeyard_repos_core::repositories::code_owners::load_rules(&w.repository, None, &small)
-            .await
-            .unwrap();
+    let rules = codeyard_ci_engine::code_owners::load_rules(&w.repository, None, &small)
+        .await
+        .unwrap();
     assert_eq!(
         rules.owned_paths(&["topic.txt".to_owned()]).unwrap()[0].1,
         ["@bob"]
     );
     // An oversized file is refused whole, so merges fail closed instead of enforcing a part.
-    assert!(codeyard_repos_core::repositories::code_owners::load_rules(
-        &w.repository,
-        None,
-        &oversized
-    )
-    .await
-    .is_err());
+    assert!(
+        codeyard_ci_engine::code_owners::load_rules(&w.repository, None, &oversized)
+            .await
+            .is_err()
+    );
     // A bad revision is not a missing file, and must not turn into empty ownership rules.
-    assert!(codeyard_repos_core::repositories::code_owners::load_rules(
-        &w.repository,
-        None,
-        &"f".repeat(40)
-    )
-    .await
-    .is_err());
+    assert!(
+        codeyard_ci_engine::code_owners::load_rules(&w.repository, None, &"f".repeat(40))
+            .await
+            .is_err()
+    );
     w.database.finish().await;
 }
 
@@ -1122,7 +1117,7 @@ async fn batched_codeowners_and_reviewer_authority(pg: bool) {
         "@alice".to_owned(),
         "bob@example.com".to_owned(),
     ]);
-    let resolved = codeyard_repos_core::repositories::code_owners::resolve_owners(
+    let resolved = codeyard_ci_engine::code_owners::resolve_owners(
         w.database.pool(),
         &repo,
         owners.iter().map(String::as_str),
@@ -1176,7 +1171,7 @@ async fn batched_codeowners_and_reviewer_authority(pg: bool) {
         .is_empty()
     );
     let oversized: Vec<String> = (0..1001).map(|n| format!("@missing-{n}")).collect();
-    let error = codeyard_repos_core::repositories::code_owners::resolve_owners(
+    let error = codeyard_ci_engine::code_owners::resolve_owners(
         w.database.pool(),
         &repo,
         oversized.iter().map(String::as_str),

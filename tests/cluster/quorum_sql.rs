@@ -1428,9 +1428,7 @@ async fn term_directory_admission(pool: &DbPool) {
         .await
         .unwrap()
         .unwrap();
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&repository.disk_path)
-            .unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path).unwrap();
     assert!(context
         .repository_path(f.repo, uuid, true, None)
         .await
@@ -1599,8 +1597,7 @@ async fn quorum_directory_recovery(pool: &DbPool) {
         .await
         .unwrap()
         .unwrap();
-    let uuid =
-        codeyard_repos_core::wire::repository_uuid(&row.disk_path).unwrap();
+    let uuid = codeyard_repos_core::wire::repository_uuid(&row.disk_path).unwrap();
     let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
     for root in &roots {
         let path = term_path(root.path(), uuid, 1);

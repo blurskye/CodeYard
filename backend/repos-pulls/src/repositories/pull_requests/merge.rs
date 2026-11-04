@@ -1,3 +1,4 @@
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::validate_merge_revision;
@@ -10,7 +11,6 @@ use codeyard_repos::protection::History;
 use codeyard_repos::protection::Refusal;
 use codeyard_repos::protection::WriteVia;
 use codeyard_repos_core::push_workflows::RefUpdate;
-use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::repositories::pull_requests::database_error;
 use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_repos_core::repositories::store::repo_store;
@@ -1558,16 +1558,15 @@ async fn publish_prepared_merge_owned(
         user.id,
     )
     .await;
-    if let Err(error) =
-        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
-            pool,
-            &repository,
-            Some(&[&merge.base_branch]),
-            ci,
-            user.id,
-            codeyard_db_core::models::AccessLevel::Owner,
-        )
-        .await
+    if let Err(error) = codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
+        pool,
+        &repository,
+        Some(&[&merge.base_branch]),
+        ci,
+        user.id,
+        codeyard_db_core::models::AccessLevel::Owner,
+    )
+    .await
     {
         tracing::warn!(repo_id = repository.id, %error, "could not refresh pull requests after merge");
     }

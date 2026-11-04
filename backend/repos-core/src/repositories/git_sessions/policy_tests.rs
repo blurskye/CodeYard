@@ -3,8 +3,8 @@
 #[cfg(test)]
 mod fixture {
     use super::super::*;
-    use codeyard_ci_engine::runs::CiRuns;
     use base64::Engine;
+    use codeyard_ci_engine::runs::CiRuns;
     use codeyard_repos::validation::ZERO_SHA;
 
     use crate::repositories::git_sessions::hook_barrier::hold_next_hook;
@@ -1551,7 +1551,7 @@ mod fixture {
             Arc::new(tokio::sync::Notify::new()),
             Some(crate::context::NodeContext {
                 pool: Some(fixture.pool.clone()),
-        rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
+                rpc: std::sync::Arc::new(codeyard_repos_rpc::RpcFactory),
                 iroh: codeyard_cluster_core::transport::IrohDialer::with_endpoint(
                     codeyard_cluster_core::transport::Relay::Off,
                     key.clone(),

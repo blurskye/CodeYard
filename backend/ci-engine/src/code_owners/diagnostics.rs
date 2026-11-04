@@ -1,14 +1,14 @@
 //! Diagnostics use the same tokenizer, pattern rules and live owner resolution as review gates.
 use super::*;
-use crate::context::NodeContext;
-use crate::repositories::code_owners::parse;
-use crate::repositories::code_owners::pattern_error;
-use crate::repositories::code_owners::resolve_owners;
-use crate::repositories::code_owners::split_line;
-use crate::repositories::code_owners::LOCATIONS;
-use crate::repositories::code_owners::MAX_BYTES;
-use crate::repositories::code_owners::MAX_LINES;
-use crate::repositories::store::repo_store;
+use crate::code_owners::parse;
+use crate::code_owners::pattern_error;
+use crate::code_owners::resolve_owners;
+use crate::code_owners::split_line;
+use crate::code_owners::LOCATIONS;
+use crate::code_owners::MAX_BYTES;
+use crate::code_owners::MAX_LINES;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_storage::range::ByteRange as BlobRange;
 
 #[derive(Clone, Debug, serde::Serialize)]

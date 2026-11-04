@@ -3,12 +3,12 @@
 use codeyard_repos_core::receive_ci::RefreshError;
 
 use crate::runs::CiRuns;
-use codeyard_repos_core::repositories::store::repo_store;
-use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_webhooks::payloads::Scope;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -58,7 +58,10 @@ pub async fn owner_head_repository(
         Ok((owner, _)) => {
             codeyard_db_repos::repositories::discovery::get_owner_fork(pool, owner, base.id).await
         }
-        Err(error) if error.kind == codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Invalid => {
+        Err(error)
+            if error.kind
+                == codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Invalid =>
+        {
             Ok(None)
         }
         Err(error) => Err(error.into()),

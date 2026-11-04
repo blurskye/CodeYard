@@ -1,5 +1,4 @@
 //! Admission, enqueue and cancellation of durable CI runs.
-use codeyard_repos_core::receive_ci::CiRunRequest;
 use anyhow::Result;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiPipelineKind;
@@ -7,6 +6,7 @@ use codeyard_db_core::ci_admission::AdmissionError;
 use codeyard_db_core::ci_messages::branch_name;
 use codeyard_db_core::DbPool;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
+use codeyard_repos_core::receive_ci::CiRunRequest;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -87,11 +87,12 @@ impl CiRuns {
         credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
         use crate::admission::is_safe_owner;
+        use codeyard_git::is_full_commit_id;
         use codeyard_repos_core::workflows::is_safe_ref;
         use codeyard_repos_core::workflows::is_safe_workflow_path;
-        use codeyard_git::is_full_commit_id;
         if !is_safe_owner(&request.repo_owner)
-            || codeyard_repos_core::repositories::lifecycle::validate_name(&request.repo_name).is_err()
+            || codeyard_repos_core::repositories::lifecycle::validate_name(&request.repo_name)
+                .is_err()
         {
             return Err(AdmissionError::InvalidRequest(
                 "repo_owner and repo_name must use safe repository characters",
@@ -487,11 +488,7 @@ impl CiRuns {
             }
             // A workflow with calls is stored as its rewritten snapshot; replay reads that text.
             let path = &request.workflow_paths[0];
-            attempt.definition = match revision
-                .blobs
-                .get(path)
-                .and_then(crate::reusable::content)
-            {
+            attempt.definition = match revision.blobs.get(path).and_then(crate::reusable::content) {
                 Some(content) => Some(content.to_owned()),
                 None => revision.definitions.get(path).cloned(),
             };

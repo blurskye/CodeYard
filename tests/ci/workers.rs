@@ -4962,13 +4962,8 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         )
         .await
         .unwrap();
-    codeyard_ci_engine::pull_requests::branches::branches_moved(
-        pool,
-        &repo,
-        &ci,
-        fixture.owner,
-    )
-    .await;
+    codeyard_ci_engine::pull_requests::branches::branches_moved(pool, &repo, &ci, fixture.owner)
+        .await;
     let current = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
         .unwrap()

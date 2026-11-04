@@ -402,10 +402,7 @@ pub fn parse_workflow_definition(path: &str, content: &str) -> Result<WorkflowDe
     workflow_definition_from_yaml(path, &yaml)
 }
 
-pub fn workflow_definition_from_yaml(
-    path: &str,
-    yaml: &Value,
-) -> Result<WorkflowDefinition> {
+pub fn workflow_definition_from_yaml(path: &str, yaml: &Value) -> Result<WorkflowDefinition> {
     let name = workflow_name(yaml, path)?;
     let triggers = codeyard_actions::workflow::events::parse(yaml.get("on"))?;
     for cron in &triggers.schedules {
@@ -1587,4 +1584,3 @@ pub fn is_safe_workflow_path(value: &str) -> bool {
         .strip_prefix(".github/workflows/")
         .is_some_and(codeyard_git::ci::is_ci_workflow_filename)
 }
-

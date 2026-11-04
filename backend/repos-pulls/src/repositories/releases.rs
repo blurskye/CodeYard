@@ -3,6 +3,7 @@
 //! A tag that does not exist yet is created when the release is published, so a draft never
 //! publishes its tag.
 use anyhow::Error;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_db_core::models::Release;
 use codeyard_db_core::models::ReleaseAsset;
 use codeyard_db_core::models::ReleaseRow;
@@ -18,7 +19,6 @@ use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::watchers::notify_watchers;
 use codeyard_notifications::watchers::WatchEvent;
 use codeyard_notifications::watchers::WatchedItem;
-use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::context::NodeContext;
 use codeyard_repos_core::ref_errors::RefError;
 use codeyard_repos_core::repositories::store::repo_store;

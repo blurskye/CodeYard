@@ -330,9 +330,7 @@ impl RemoteStore {
                         ))
                     }
                 }
-                Some(crate::wire::repository_uuid(
-                    store.location(),
-                )?)
+                Some(crate::wire::repository_uuid(store.location())?)
             }
             None => None,
         };

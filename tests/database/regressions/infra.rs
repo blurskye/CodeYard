@@ -37,13 +37,8 @@ async fn codeowners_does_not_expand_secret_teams_even_for_repository_writers() {
             &[r.id],
         )
         .await;
-        let resolve = || {
-            codeyard_repos_core::repositories::code_owners::resolve_owners(
-                f.pool(),
-                &r,
-                ["@org1001/owners"],
-            )
-        };
+        let resolve =
+            || codeyard_ci_engine::code_owners::resolve_owners(f.pool(), &r, ["@org1001/owners"]);
         assert!(resolve().await.unwrap()["@org1001/owners"].is_empty());
         f.execute("UPDATE teams SET privacy='visible' WHERE id=10001", &[])
             .await;

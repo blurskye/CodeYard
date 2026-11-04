@@ -1,9 +1,9 @@
 //! `push` runs for refs the server moves itself: web editor and file API saves,
 //! merges, and new branches and tags. Receive hooks share the same filtering policy.
-use crate::workflows::should_skip_run_from_message;
-use crate::workflows::WorkflowDefinition;
 use crate::repositories::store::RepoStore;
 use crate::store_types::MAX_COMMIT_PAGE_SIZE;
+use crate::workflows::should_skip_run_from_message;
+use crate::workflows::WorkflowDefinition;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;

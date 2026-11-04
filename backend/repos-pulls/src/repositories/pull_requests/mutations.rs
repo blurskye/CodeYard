@@ -1,3 +1,5 @@
+use codeyard_ci_engine::pull_requests::workflows::queue_pull_request_ci;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
@@ -8,9 +10,7 @@ use codeyard_notifications::mentions::MentionSource;
 use codeyard_notifications::watchers::notify_watchers;
 use codeyard_notifications::watchers::WatchEvent;
 use codeyard_notifications::watchers::WatchedItem;
-use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_ci_engine::pull_requests::workflows::queue_pull_request_ci;
 use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_repos_core::repositories::store::repo_store;
 use serde::Deserialize;
@@ -1407,16 +1407,15 @@ pub async fn set_pull_request_draft(
     // a new pull request does. The pull request is ready already, so a retry would be refused:
     // the event and its workflows go out even when the catch-up fails, and the failure is
     // reported after them.
-    let refreshed =
-        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
-            pool,
-            &repository,
-            ci,
-            user.id,
-            pull_request.id,
-            Some(codeyard_db_core::models::AccessLevel::Owner),
-        )
-        .await;
+    let refreshed = codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
+        pool,
+        &repository,
+        ci,
+        user.id,
+        pull_request.id,
+        Some(codeyard_db_core::models::AccessLevel::Owner),
+    )
+    .await;
     if let Err(error) = &refreshed {
         tracing::warn!(pull_request_id = pull_request.id, %error, "ready pull request revisions were not refreshed");
     }

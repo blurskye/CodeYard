@@ -26,4 +26,3 @@ pub fn publication_error(error: RepoError) -> RefError {
         RefError::Git(error)
     }
 }
-

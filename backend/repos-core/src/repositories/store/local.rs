@@ -68,7 +68,7 @@ const REMOVE_RETRY_DELAY: Duration = Duration::from_millis(100);
 const MAX_GIT_OUTPUT: usize = 1024 * 1024;
 
 #[derive(Clone, Debug)]
-pub(super) struct LocalStore {
+pub struct LocalStore {
     disk_path: String,
     /// The storage node this store was opened for. A write is refused once the repository
     /// row names another node, so a store opened before a promotion cannot publish on the
@@ -617,7 +617,7 @@ fn ensure_room(
 
 /// Refuses `created` when a repository that holds `held` would pass the limit on branches
 /// and tags, or on the bytes of their names. `created` names the full refs.
-pub(crate) fn ensure_ref_room(held: git::RefsInUse, created: &[&str]) -> Result<(), RepoError> {
+pub fn ensure_ref_room(held: git::RefsInUse, created: &[&str]) -> Result<(), RepoError> {
     ensure_room(
         held,
         created,
@@ -1995,7 +1995,7 @@ impl LocalStore {
     }
 
     /// Materialize a remote upload-pack response on the calling CI node.
-    pub(super) async fn checkout_pack(
+    pub async fn checkout_pack(
         destination: &Path,
         sha: &str,
         source: &str,
