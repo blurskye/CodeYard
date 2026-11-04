@@ -145,7 +145,7 @@ async fn snapshot_values(
 
 /// Every dependency file in the tree at `reference`. Any unreadable or unsupported file fails the
 /// inventory, unless a submitted snapshot of the commit covers that manifest.
-pub(crate) async fn native_inventory(
+pub async fn native_inventory(
     state: &dyn RepositoryServices,
     reader: &Reader,
     repo: &Repository,
