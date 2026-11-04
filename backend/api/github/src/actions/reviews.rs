@@ -1,4 +1,5 @@
 //! Deployment reviews retain the native revision and reviewer checks.
+use axum::extract::FromRequest;
 
 use axum::extract::Path;
 use axum::extract::Request;

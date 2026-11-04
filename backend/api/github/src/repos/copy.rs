@@ -26,7 +26,7 @@ async fn organization_owner(
     actor: i64,
     slug: &str,
 ) -> Result<RepositoryCreationOwner> {
-    let org = super::get_public_organization(&state.pool, slug)
+    let org = codeyard_db_orgs::organizations::profiles::get_public_organization(&state.pool, slug)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -139,7 +139,7 @@ async fn generate(
     ))
 }
 
-pub(super) fn handlers() -> [(&'static str, MethodRouter<Arc<AppState>>); 2] {
+pub(crate) fn handlers() -> [(&'static str, MethodRouter<Arc<AppState>>); 2] {
     [
         ("repos/create-fork", post(fork)),
         ("repos/create-using-template", post(generate)),

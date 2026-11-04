@@ -71,6 +71,6 @@ async fn list(
     )
         .into_response())
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![("repos/list-activities", get(list))]
 }

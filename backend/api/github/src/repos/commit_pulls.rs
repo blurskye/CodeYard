@@ -230,6 +230,6 @@ async fn list(
     page.response(&uri, values, result.has_more)
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![("repos/list-pull-requests-associated-with-commit", get(list))]
 }

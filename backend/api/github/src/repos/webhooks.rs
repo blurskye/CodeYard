@@ -43,7 +43,7 @@ fn hook_error(error: HookError) -> Error {
     owner_error(error, "Repository administration required")
 }
 
-pub(super) fn owner_error(error: HookError, denied: &'static str) -> Error {
+pub(crate) fn owner_error(error: HookError, denied: &'static str) -> Error {
     match error {
         HookError::Denied => Error::new(StatusCode::FORBIDDEN, denied),
         HookError::NotFound => Error::missing(),
@@ -373,7 +373,7 @@ async fn remove(
 }
 
 #[derive(Deserialize)]
-pub(super) struct Deliveries {
+pub(crate) struct Deliveries {
     per_page: Option<usize>,
     cursor: Option<String>,
     status: Option<String>,
@@ -411,7 +411,7 @@ impl Deliveries {
 }
 
 /// The page and its next link from the rows `Deliveries::window` selected.
-pub(super) fn delivery_page(
+pub(crate) fn delivery_page(
     mut rows: Vec<WebhookDelivery>,
     query: Deliveries,
     uri: &Uri,
@@ -534,7 +534,7 @@ async fn trigger(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/list-webhooks", get(list)),
         ("repos/get-webhook", get(read)),

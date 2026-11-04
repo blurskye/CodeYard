@@ -1,4 +1,5 @@
 //! Projects v2 adapters share the owner-scoped native project operations.
+use crate::auth;
 use crate::pagination::Cursor;
 use axum::extract::OriginalUri;
 use axum::extract::Path;
@@ -13,6 +14,7 @@ use axum::routing::post;
 use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_app::app::AppState;
+use codeyard_db_repos::projects;
 use codeyard_db_repos::projects::Owner;
 use codeyard_db_repos::projects::Project;
 use codeyard_model::github_error::Error;

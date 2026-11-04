@@ -48,7 +48,7 @@ pub(super) fn write_error(error: anyhow::Error) -> Error {
 
 /// `viewer` is the user reading the environment. A secret reviewer team is shown only when that
 /// user can see the team, as team reads decide.
-pub(super) async fn document(
+pub(crate) async fn document(
     state: &AppState,
     viewer: Option<i64>,
     env: &Environment,
@@ -337,7 +337,7 @@ async fn policies(
     Ok(Json(branch_document(&branch)).into_response())
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/get-all-environments", get(list)),
         ("repos/get-environment", get(environment)),

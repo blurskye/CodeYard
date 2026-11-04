@@ -1,3 +1,4 @@
+use super::*;
 use codeyard_api_http::shared::github::code_scanning::Filters;
 
 #[test]

@@ -43,7 +43,7 @@ fn write_error(error: anyhow::Error) -> Error {
     }
 }
 
-pub(super) async fn document(
+pub(crate) async fn document(
     pool: &codeyard_db_core::DbPool,
     summary: &MilestoneSummary,
     owner: &str,
@@ -343,7 +343,7 @@ async fn labels(
     )
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("issues/create-milestone", post(create)),
         ("issues/update-milestone", patch(update)),

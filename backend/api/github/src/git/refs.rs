@@ -108,7 +108,7 @@ struct Create {
     sha: String,
 }
 
-pub(super) fn ref_error(error: codeyard_app::repositories::refs::RefError) -> Error {
+pub(crate) fn ref_error(error: codeyard_app::repositories::refs::RefError) -> Error {
     use codeyard_app::repositories::refs::RefError;
     match error {
         RefError::Git(error)
@@ -273,7 +273,7 @@ async fn update(
     )))
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("git/update-ref", patch(update)),
         ("git/delete-ref", delete(remove)),
@@ -284,7 +284,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 }
 
 /// Reads GitHub serves without documenting them.
-pub(super) fn aliases() -> Router<Arc<AppState>> {
+pub(crate) fn aliases() -> Router<Arc<AppState>> {
     Router::new()
         .route("/repos/:owner/:repo/git/refs", get(list))
         .route("/repos/:owner/:repo/git/refs/*ref", get(read))

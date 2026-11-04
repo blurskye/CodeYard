@@ -94,9 +94,9 @@ async fn list(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let fields = codeyard_db_repos::issue_attributes::organization_catalog(
         &state.pool,
@@ -119,9 +119,9 @@ async fn create(
     Path(name): Path<String>,
     input: std::result::Result<Json<Create>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let Json(input) =
@@ -165,9 +165,9 @@ async fn update(
     Path(params): Path<Params>,
     input: std::result::Result<Json<Update>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &params["org"]).await?;
     let id = params["issue_field_id"]
@@ -198,9 +198,9 @@ async fn remove(
     headers: HeaderMap,
     Path((name, id)): Path<(String, i64)>,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
     codeyard_db_repos::issue_attributes::delete_organization_definition(

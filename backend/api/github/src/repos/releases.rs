@@ -26,7 +26,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub(super) fn release_error(error: ReleaseError) -> Error {
+pub(crate) fn release_error(error: ReleaseError) -> Error {
     use codeyard_identity::repository_access::AccessError;
     match error {
         ReleaseError::Access(AccessError::Unavailable) | ReleaseError::Unavailable => {
@@ -51,7 +51,7 @@ pub(super) fn release_error(error: ReleaseError) -> Error {
     }
 }
 
-pub(super) async fn asset_document(
+pub(crate) async fn asset_document(
     state: &AppState,
     owner: &str,
     name: &str,
@@ -64,7 +64,7 @@ pub(super) async fn asset_document(
         .ok_or_else(Error::missing)
 }
 
-pub(super) async fn document(
+pub(crate) async fn document(
     state: &AppState,
     owner: &str,
     name: &str,
@@ -718,7 +718,7 @@ async fn remove_asset(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/list-releases", get(list)),
         ("repos/get-release", get(get_one)),

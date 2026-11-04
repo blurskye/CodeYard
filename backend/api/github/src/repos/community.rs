@@ -29,6 +29,6 @@ async fn get_profile(
         &profile,
     )))
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![("repos/get-community-profile-metrics", get(get_profile))]
 }

@@ -285,7 +285,7 @@ async fn list(
     )
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("orgs/create-artifact-deployment-record", post(deployment)),
         ("orgs/set-cluster-deployment-records", post(cluster)),

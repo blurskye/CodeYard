@@ -24,7 +24,7 @@ use std::sync::Arc;
 mod async_merge;
 mod comments;
 mod merge;
-mod mutations;
+pub(crate) mod mutations;
 
 mod reviews;
 mod stacks;

@@ -11,13 +11,14 @@ use axum::routing::get;
 use axum::routing::MethodRouter;
 use axum::Json;
 use base64::engine::general_purpose::STANDARD;
+use base64::Engine;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::contents::store_error;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::store::repo_store;
 use codeyard_app::repositories::store::RepoStore;
-use codeyard_app::webhooks::payloads::git_commit;
+use codeyard_app::webhooks::payloads::git_commit as commit_json;
 use codeyard_app::webhooks::payloads::Person;
 use codeyard_git::CommitFilter;
 use codeyard_git::CommitInfo;
@@ -26,7 +27,7 @@ use codeyard_git::DiffInfo;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
-use codeyard_webui::pages::repos::ref_path::encode_path;
+use codeyard_webui::pages::repos::ref_path::encode_path as path_url;
 use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
@@ -34,7 +35,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 /// The Git commit document, with its signature checked against the signer's keys.
-pub(super) async fn git_document(
+pub(crate) async fn git_document(
     state: &AppState,
     signers: &mut codeyard_identity::signatures::Signers,
     commit: &CommitInfo,
@@ -57,7 +58,7 @@ pub(super) async fn git_document(
     Ok(value)
 }
 
-pub(super) async fn documents(
+pub(crate) async fn documents(
     state: &AppState,
     repo: i64,
     commits: &[CommitInfo],
@@ -103,7 +104,7 @@ pub(super) async fn documents(
     Ok(values)
 }
 
-pub(super) async fn read_document(
+pub(crate) async fn read_document(
     state: &AppState,
     repo: i64,
     commit: &CommitInfo,
@@ -153,7 +154,7 @@ fn file_page_of(diff: DiffInfo, offset: usize, limit: usize) -> FilePage {
 /// The page of files `base_ref...head_ref` changes. When the patches together are too large to
 /// read, only the page's patches are read, file by file, and a patch that is itself too large is
 /// left out, as GitHub leaves out patches it cannot show.
-pub(super) async fn file_page(
+pub(crate) async fn file_page(
     store: &RepoStore,
     base_ref: &str,
     head_ref: &str,
@@ -189,7 +190,7 @@ pub(super) async fn file_page(
     }
 }
 
-pub(super) fn diff_files(
+pub(crate) fn diff_files(
     files: Vec<DiffFileInfo>,
     owner: &str,
     name: &str,
@@ -394,7 +395,7 @@ async fn blob(
     ).into_response())
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/list-commits", get(list)),
         ("repos/get-commit", get(read)),

@@ -1,3 +1,4 @@
+use axum::extract::FromRequest;
 use axum::extract::OriginalUri;
 use axum::extract::Path;
 use axum::extract::Query;
@@ -271,7 +272,7 @@ async fn list(
     )
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/list-commit-comments-for-repo", get(list)),
         ("repos/list-comments-for-commit", get(list)),

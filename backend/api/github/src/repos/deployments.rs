@@ -1,4 +1,5 @@
 //! Deployment requests use immutable commits and preserve every reported status.
+use axum::extract::FromRequest;
 use axum::response::IntoResponse;
 
 use axum::extract::OriginalUri;
@@ -62,7 +63,7 @@ async fn creator(state: &AppState, id: Option<i64>) -> Result<Option<Value>> {
     }
 }
 
-pub(super) async fn document(
+pub(crate) async fn document(
     state: &AppState,
     deployment: &Deployment,
     owner: &str,
@@ -368,7 +369,7 @@ async fn statuses(
         .into_response())
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/list-deployments", get(list)),
         ("repos/create-deployment", post(create)),

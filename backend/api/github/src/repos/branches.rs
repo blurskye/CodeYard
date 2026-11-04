@@ -223,7 +223,7 @@ async fn heads(
     page.response(&uri, values, has_next)
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/list-branches", get(list)),
         ("repos/get-branch", get(read)),

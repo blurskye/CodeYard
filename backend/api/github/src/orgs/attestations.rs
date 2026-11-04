@@ -384,7 +384,7 @@ async fn remove(
     .into_response())
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("orgs/list-attestations", get(list)),
         ("orgs/list-attestations-bulk", post(bulk_list)),

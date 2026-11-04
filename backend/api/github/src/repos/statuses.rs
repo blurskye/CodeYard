@@ -216,7 +216,7 @@ async fn read(
         .into_response())
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/create-commit-status", post(create)),
         ("repos/get-combined-status-for-ref", get(read)),

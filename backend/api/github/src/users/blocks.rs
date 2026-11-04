@@ -16,7 +16,7 @@ use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("users/list-blocked-by-authenticated-user", get(list)),
         ("users/check-blocked", get(check)),

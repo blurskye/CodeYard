@@ -39,6 +39,6 @@ async fn errors(
     .ok_or_else(Error::missing)?;
     Ok(Json(json!({"errors":errors})))
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![("repos/codeowners-errors", get(errors))]
 }

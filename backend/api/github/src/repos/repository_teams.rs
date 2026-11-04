@@ -69,6 +69,6 @@ async fn list(
     )
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![("repos/list-teams", get(list))]
 }

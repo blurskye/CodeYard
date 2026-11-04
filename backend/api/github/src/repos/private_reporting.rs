@@ -76,7 +76,7 @@ async fn disable(
 ) -> Result<StatusCode> {
     set(&state, &headers, &owner, &name, false).await
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/check-private-vulnerability-reporting", get(check)),
         ("repos/enable-private-vulnerability-reporting", put(enable)),

@@ -1,4 +1,5 @@
 //! Branch renames and upstream synchronization use the owning repository store.
+use axum::extract::FromRequest;
 use axum::extract::Path;
 use axum::extract::Request;
 use axum::extract::State;
@@ -190,7 +191,7 @@ async fn complete_upstream(
     ))
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/rename-branch", post(rename)),
         ("repos/merge-upstream", post(upstream)),

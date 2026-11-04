@@ -132,7 +132,7 @@ async fn remove(
     .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/list-autolinks", get(list)),
         ("repos/get-autolink", get(get_one)),

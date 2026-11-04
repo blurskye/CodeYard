@@ -63,9 +63,9 @@ async fn list(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let roles = outcome(
         codeyard_db_orgs::organizations::roles::catalog(&state.pool, actor.user.id, org.id)
@@ -81,9 +81,9 @@ async fn get_role(
     headers: HeaderMap,
     Path((name, id)): Path<(String, i64)>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let role = required_role(&state, actor.user.id, org.id, id).await?;
     Ok(Json(codeyard_app::webhooks::payloads::organization_role(
@@ -97,9 +97,9 @@ async fn users(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let role = required_role(&state, actor.user.id, org.id, id).await?;
     let (offset, limit) = page.window()?;
@@ -139,9 +139,9 @@ async fn teams(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let role = required_role(&state, actor.user.id, org.id, id).await?;
     let (offset, limit) = page.window()?;
@@ -182,9 +182,9 @@ async fn change(
     Path(params): Path<Params>,
     method: Method,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(&state, &params["org"]).await?;
     let role = params

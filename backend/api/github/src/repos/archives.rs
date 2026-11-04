@@ -97,13 +97,13 @@ async fn tar(
 ) -> Result<Response> {
     archive(state, headers, params, query, ArchiveFormat::TarGz).await
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/download-zipball-archive", get(zip)),
         ("repos/download-tarball-archive", get(tar)),
     ]
 }
-pub(super) fn aliases() -> Router<Arc<AppState>> {
+pub(crate) fn aliases() -> Router<Arc<AppState>> {
     Router::new()
         .route("/repos/:owner/:repo/zipball", get(zip))
         .route("/repos/:owner/:repo/tarball", get(tar))

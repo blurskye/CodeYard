@@ -78,7 +78,7 @@ async fn unpin(
     change(&state, &headers, &p, false).await?;
     Ok(StatusCode::NO_CONTENT)
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("issues/pin-comment", put(pin)),
         ("issues/unpin-comment", delete(unpin)),

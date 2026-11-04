@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("users/list-social-accounts-for-user", get(public)),
         (

@@ -1,5 +1,6 @@
 //! Classic branch protection shares the rules enforced by Git pushes and merges.
 use crate::auth::read_method;
+use axum::extract::FromRequest;
 use axum::extract::Path;
 use axum::extract::Request;
 use axum::extract::State;
@@ -521,7 +522,7 @@ async fn users(
     )
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         (
             "repos/get-pull-request-review-protection",

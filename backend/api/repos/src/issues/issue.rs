@@ -168,9 +168,13 @@ pub(crate) async fn native_detail(
         // Issues and pull requests share one number sequence, and a pull request's page is under
         // `/pulls`. Links to `/issues/N` reach it through this redirect, which keeps the fragment.
         Err(response) if kind == Kind::Issue && response.status() == StatusCode::NOT_FOUND => {
-            if let Some(moved) = super::redirect(&ctx.state.pool, repo.record.id, number)
-                .await
-                .map_err(|_| unavailable(&ctx))?
+            if let Some(moved) = codeyard_db_repos::issues::management::redirect(
+                &ctx.state.pool,
+                repo.record.id,
+                number,
+            )
+            .await
+            .map_err(|_| unavailable(&ctx))?
             {
                 let target = codeyard_db_repos::repositories::records::get_repository_by_id(
                     &ctx.state.pool,

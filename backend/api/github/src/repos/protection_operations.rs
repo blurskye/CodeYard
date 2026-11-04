@@ -4,6 +4,7 @@ use crate::repos::protection::document;
 use crate::repos::protection::protected;
 use crate::repos::protection::review_document;
 use crate::repos::protection::write_error;
+use axum::extract::FromRequest;
 use axum::extract::Path;
 use axum::extract::Request;
 use axum::extract::State;
@@ -510,7 +511,7 @@ async fn rules(
     Ok(Json(json!(values)))
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/update-branch-protection", put(update)),
         (

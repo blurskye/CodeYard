@@ -45,10 +45,13 @@ async fn context(
     headers: &HeaderMap,
     name: &str,
     write: bool,
-) -> Result<(Organization, auth::Authentication)> {
-    let actor = auth::authenticate(state, headers, true)
+) -> Result<(
+    Organization,
+    codeyard_app::api_shared::github::auth::Authentication,
+)> {
+    let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     if write {
         actor.require_write()?;
     }

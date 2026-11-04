@@ -13,6 +13,7 @@ use codeyard_db_identity::relationships::Kind;
 use codeyard_db_identity::relationships::Order;
 use codeyard_db_repos::discussion_search::Search;
 use codeyard_db_repos::discussion_search::Sort;
+use codeyard_model::node_id;
 
 pub(crate) fn issue_type(
     item: &codeyard_db_repos::issue_attributes::Attribute,

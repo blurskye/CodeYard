@@ -402,7 +402,7 @@ async fn remove_from_issue(
     ))
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("issues/create-label", post(create)),
         ("issues/list-labels-for-repo", get(list)),

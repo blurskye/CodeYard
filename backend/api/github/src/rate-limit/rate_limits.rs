@@ -74,7 +74,7 @@ fn headers(budget: &Budget, limit: i64, resource: &str) -> HeaderMap {
     headers
 }
 
-pub(super) async fn enforce(
+pub(crate) async fn enforce(
     Extension(state): Extension<Arc<AppState>>,
     mut request: Request,
     next: Next,
@@ -210,6 +210,6 @@ async fn get_limits(
     ))
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![("rate-limit/get", get(get_limits))]
 }

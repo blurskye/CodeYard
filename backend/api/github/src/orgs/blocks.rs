@@ -35,9 +35,9 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let (offset, limit) = page.window()?;
     let mut users = outcome(
@@ -67,9 +67,9 @@ async fn check(
     headers: HeaderMap,
     Path((name, username)): Path<(String, String)>,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &username)
         .await
@@ -105,9 +105,9 @@ async fn change(
     username: &str,
     blocked: bool,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(state, headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(state, name).await?;
     let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)

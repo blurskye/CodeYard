@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 type Params = HashMap<String, String>;
-pub(super) fn error(error: anyhow::Error) -> Error {
+pub(crate) fn error(error: anyhow::Error) -> Error {
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => Error::new(StatusCode::FORBIDDEN, error.to_string()),
         Some(Refusal::Missing) => Error::missing(),
@@ -155,7 +155,7 @@ async fn remove(
     .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/list-issue-types", get(types)),
         ("issues/list-issue-field-values-for-issue", get(list)),

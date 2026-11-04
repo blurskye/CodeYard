@@ -44,9 +44,13 @@ async fn product(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let role = outcome(
-        super::get_organization_role(&state.pool, actor.user.id, org.id)
-            .await
-            .map_err(Error::unavailable)?,
+        codeyard_db_orgs::organizations::membership::get_organization_role(
+            &state.pool,
+            actor.user.id,
+            org.id,
+        )
+        .await
+        .map_err(Error::unavailable)?,
     )?;
     if role != codeyard_db_core::models::OrgRole::Owner {
         return Err(Error::new(

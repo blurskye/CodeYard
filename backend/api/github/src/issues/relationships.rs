@@ -282,7 +282,7 @@ async fn prioritize(
         .await?,
     ))
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("issues/list-dependencies-blocked-by", get(list)),
         ("issues/list-dependencies-blocking", get(list)),

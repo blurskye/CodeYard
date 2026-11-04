@@ -15,13 +15,13 @@ use codeyard_db_repos::packages::Refusal;
 use serde_json::json;
 use std::sync::Arc;
 mod archives;
-mod maven;
+pub(crate) mod maven;
 mod npm;
 mod nuget;
 mod oci;
 mod rubygems;
 
-mod pages;
+pub(crate) mod pages;
 
 mod tokens;
 

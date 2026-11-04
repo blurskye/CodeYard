@@ -34,7 +34,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("actions/list-org-secrets", get(list)),
         ("actions/get-org-public-key", get(public_key)),

@@ -21,7 +21,7 @@ use codeyard_db_core::models::Repository;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
-use codeyard_webui::pages::repos::ref_path::encode_path;
+use codeyard_webui::pages::repos::ref_path::encode_path as path_url;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -191,6 +191,6 @@ async fn compare(
     Ok((response_headers, Json(value)).into_response())
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![("repos/compare-commits", get(compare))]
 }

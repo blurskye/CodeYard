@@ -91,7 +91,7 @@ async fn context(
 /// nothing they return was read after the owner lost the organization.
 async fn owner(state: &AppState, actor: i64, org: i64) -> Result<()> {
     let role = outcome(
-        super::get_organization_role(&state.pool, actor, org)
+        codeyard_db_orgs::organizations::membership::get_organization_role(&state.pool, actor, org)
             .await
             .map_err(Error::unavailable)?,
     )?;

@@ -42,7 +42,7 @@ pub async fn run_gateway(
 }
 
 /// Git tasks outlive their connections, but not their server's shutdown drain.
-pub(crate) struct GitTasks(Mutex<Option<JoinSet<()>>>);
+pub struct GitTasks(Mutex<Option<JoinSet<()>>>);
 
 impl Default for GitTasks {
     fn default() -> Self {
@@ -51,7 +51,7 @@ impl Default for GitTasks {
 }
 
 impl GitTasks {
-    pub(crate) fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) -> bool {
+    pub fn spawn(&self, task: impl Future<Output = ()> + Send + 'static) -> bool {
         let mut tasks = self.0.lock().unwrap_or_else(|error| error.into_inner());
         let Some(tasks) = tasks.as_mut() else {
             return false;

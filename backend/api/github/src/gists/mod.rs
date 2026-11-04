@@ -19,6 +19,7 @@ use axum::Json;
 use axum::Router;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
+use codeyard_app::gists as domain;
 use codeyard_app::repositories::lifecycle::LifecycleFailure;
 use codeyard_app::repositories::lifecycle::StorageError;
 use codeyard_app::repositories::store::gists::GistCredential;
@@ -230,7 +231,7 @@ async fn collection(
         let loaded = codeyard_app::gists::load(&state, &entry.id, None)
             .await
             .map_err(failure)?;
-        values.push(super::base(&state, &loaded, false).await?);
+        values.push(crate::gists::documents::base(&state, &loaded, false).await?);
     }
     let etag = crate::gists::documents::validator(&values)?;
     crate::gists::documents::conditional(&headers, etag, page.response(&uri, values, more)?)
@@ -565,7 +566,7 @@ async fn forks(
         let loaded = codeyard_app::gists::load(&state, &fork.id, None)
             .await
             .map_err(failure)?;
-        values.push(super::base(&state, &loaded, false).await?);
+        values.push(crate::gists::documents::base(&state, &loaded, false).await?);
     }
     let etag = crate::gists::documents::validator(&values)?;
     crate::gists::documents::conditional(&headers, etag, page.response(&uri, values, more)?)

@@ -5,7 +5,7 @@ use axum::{
 };
 use serde_json::{json, Value};
 #[derive(Debug)]
-pub struct Error(StatusCode, String, Option<Value>);
+pub struct Error(pub StatusCode, pub String, pub Option<Value>);
 
 pub type Result<T> = std::result::Result<T, Error>;
 

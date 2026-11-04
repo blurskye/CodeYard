@@ -24,7 +24,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         (
             "interactions/get-pull-request-creation-cap-for-org",

@@ -1,5 +1,6 @@
 //! Invitations and effective collaborator permissions, including organization and team grants.
 use axum::response::IntoResponse;
+use codeyard_app::webhooks::payloads;
 
 use crate::optional_json::OptionalJson;
 use axum::extract::OriginalUri;
@@ -357,7 +358,7 @@ async fn delete_invitation(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/list-collaborators", get(list)),
         ("repos/check-collaborator", get(check)),

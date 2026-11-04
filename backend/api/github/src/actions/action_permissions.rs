@@ -79,7 +79,7 @@ async fn put_repository(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         (
             "actions/get-github-actions-permissions-repository",

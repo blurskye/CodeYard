@@ -22,6 +22,7 @@ use codeyard_db_actions::deployment_protection::Refusal;
 use codeyard_db_actions::deployment_protection::Rule;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
+use codeyard_model::node_id;
 use codeyard_model::urls::api_url;
 use serde::Deserialize;
 use serde_json::json;
@@ -202,7 +203,7 @@ async fn review_gate(
     Ok(StatusCode::NO_CONTENT)
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("actions/review-custom-gates-for-run", post(review_gate)),
         ("repos/get-all-deployment-protection-rules", get(rules)),

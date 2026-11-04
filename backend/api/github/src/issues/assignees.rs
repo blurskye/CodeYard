@@ -69,7 +69,7 @@ async fn check(
     }
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("issues/list-assignees", get(list)),
         ("issues/check-user-can-be-assigned", get(check)),

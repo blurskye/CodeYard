@@ -21,14 +21,15 @@ use serde::Deserialize;
 use serde_json::json;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::io::Write;
+use std::fmt::Write;
 use std::sync::Arc;
 
 fn origin() -> String {
     codeyard_model::http_config::link_origin()
 }
 async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Result<Response> {
-    let viewer = auth::authenticate(&state, &headers, false).await?;
+    let viewer =
+        codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let timeline = format!("{}/api/activity-feeds/public.atom", origin());
     let user = format!("{}/api/activity-feeds/users/{{user}}", origin());
     let mut value = json!({"timeline_url":timeline,"user_url":user,"_links":{"timeline":{"href":timeline,"type":"application/atom+xml"},"user":{"href":user,"type":"application/atom+xml"}}});
@@ -36,7 +37,9 @@ async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
         let token = codeyard_identity::tokens::activity_feed_token(&state.pool, viewer.token.id)
             .await
             .map_err(|e| match e {
-                codeyard_identity::tokens::TokenError::Denied => auth::required(),
+                codeyard_identity::tokens::TokenError::Denied => {
+                    codeyard_app::api_shared::github::auth::required()
+                }
                 _ => Error::unavailable(()),
             })?;
         let username = encode_component(&viewer.user.username);
@@ -236,13 +239,12 @@ async fn feed(
             format!("{}/api/activity-feeds/private/{username}/{path}", origin()),
         )
     } else {
-        let viewer =
-            auth::authenticate(&state, &headers, false)
-                .await?
-                .map(|v| EventViewer::Token {
-                    user: v.user.id,
-                    token: v.token.id,
-                });
+        let viewer = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false)
+            .await?
+            .map(|v| EventViewer::Token {
+                user: v.user.id,
+                token: v.token.id,
+            });
         if let Some(username) = params.get("username") {
             let user =
                 codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)

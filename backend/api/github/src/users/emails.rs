@@ -23,7 +23,7 @@ use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("users/list-emails-for-authenticated-user", get(list)),
         ("users/add-email-for-authenticated-user", post(add)),

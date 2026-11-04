@@ -414,7 +414,7 @@ async fn list(
     page.response(&uri, items, next)
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("issues/get-comment", get(read)),
         ("issues/create-comment", post(create)),

@@ -1,5 +1,6 @@
 //! GitHub runner administration projects Codeyard's scoped cluster workers.
 use axum::response::IntoResponse;
+use base64::Engine;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::OriginalUri;
@@ -37,7 +38,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         (
             "actions/list-self-hosted-runner-groups-for-org",
@@ -304,7 +305,7 @@ async fn selected_runner(state: &AppState, actor: i64, scope: Scope, p: &Params)
         &state.pool,
         actor,
         scope,
-        &native::RunnerQuery {
+        &codeyard_db_core::queries::runners::RunnerQuery {
             id: Some(id(p, "runner_id")?),
             ..Default::default()
         },
@@ -367,7 +368,7 @@ async fn groups(
         actor,
         org_id,
         &native::GroupQuery {
-            page: native::Window {
+            page: codeyard_db_core::queries::runners::Window {
                 offset: offset as i64,
                 limit: limit as i64,
             },
@@ -651,8 +652,8 @@ async fn list(
         &s.pool,
         actor,
         scope,
-        &native::RunnerQuery {
-            page: native::Window {
+        &codeyard_db_core::queries::runners::RunnerQuery {
+            page: codeyard_db_core::queries::runners::Window {
                 offset: offset as i64,
                 limit: limit as i64,
             },

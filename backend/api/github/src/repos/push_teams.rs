@@ -2,6 +2,7 @@
 use crate::auth::read_method;
 use crate::repos::protection::protected;
 use crate::repos::protection::write_error;
+use axum::extract::FromRequest;
 use axum::extract::Path;
 use axum::extract::Request;
 use axum::extract::State;
@@ -108,7 +109,7 @@ async fn teams(
     Ok(Json(documents(&state, &rule, actor.user_id).await?).into_response())
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         (
             "repos/get-teams-with-access-to-protected-branch",

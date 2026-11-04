@@ -301,7 +301,7 @@ async fn contributors(
     )
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/get-code-frequency-stats", get(statistics)),
         ("repos/get-commit-activity-stats", get(statistics)),

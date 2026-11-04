@@ -140,7 +140,7 @@ async fn content(
     }
     Ok((page.headers(&uri,offset+limit<total.min(1000))?,Json(json!({"total_count":total,"incomplete_results":results.incomplete,"items":items,"search_type":"lexical","indexing":"live"}))).into_response())
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("search/code", get(content)),
         ("search/commits", get(content)),

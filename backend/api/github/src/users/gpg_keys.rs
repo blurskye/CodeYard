@@ -22,7 +22,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("users/list-gpg-keys-for-authenticated-user", get(list)),
         ("users/list-gpg-keys-for-user", get(public)),

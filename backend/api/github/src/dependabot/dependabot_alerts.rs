@@ -15,6 +15,7 @@ use axum::routing::patch;
 use axum::routing::MethodRouter;
 use axum::Json;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
 use codeyard_db_core::queries::dependabot_alerts::Alert;
@@ -30,7 +31,7 @@ use std::sync::Arc;
 
 type Params = HashMap<String, String>;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("security-advisories/list-global-advisories", get(global)),
         (
@@ -43,7 +44,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
         ("dependabot/update-alert", patch(update)),
     ]
 }
-pub(super) async fn import(
+pub(crate) async fn import(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Json(value): Json<Value>,

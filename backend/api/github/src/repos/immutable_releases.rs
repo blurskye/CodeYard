@@ -86,7 +86,7 @@ async fn disable(
 ) -> Result<StatusCode> {
     change(&state, &headers, &owner, &name, false).await
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/check-immutable-releases", get(check)),
         ("repos/enable-immutable-releases", put(enable)),

@@ -1,5 +1,7 @@
 //! Repository advisories and confidential reports share the native disclosure workflow.
 use axum::response::IntoResponse;
+use base64::Engine;
+use codeyard_model::advisories;
 
 use axum::extract::OriginalUri;
 use axum::extract::Path;
@@ -38,7 +40,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 type Params = HashMap<String, String>;
-pub(super) fn failure(error: anyhow::Error) -> Error {
+pub(crate) fn failure(error: anyhow::Error) -> Error {
     if let Some(
         graph @ (codeyard_model::dependency_graph::GraphError::Limit
         | codeyard_model::dependency_graph::GraphError::Disabled),
@@ -489,7 +491,7 @@ async fn fork(
     )
         .into_response())
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         (
             "security-advisories/list-org-repository-advisories",

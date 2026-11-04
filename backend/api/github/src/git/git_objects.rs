@@ -1,5 +1,6 @@
 //! The Git database API does not move refs when it creates objects.
 use axum::extract::DefaultBodyLimit;
+use axum::extract::FromRequest;
 use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::Request;
@@ -361,7 +362,7 @@ async fn create_tag(
         .into_response())
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("git/get-tree", get(tree)),
         ("git/get-tag", get(tag)),

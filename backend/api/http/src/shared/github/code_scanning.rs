@@ -78,16 +78,16 @@ pub struct Filters {
     page: Option<usize>,
     per_page: Option<usize>,
     #[serde(rename = "ref")]
-    ref_name: Option<String>,
+    pub ref_name: Option<String>,
     tool_name: Option<String>,
     tool_guid: Option<String>,
-    sarif_id: Option<String>,
-    pr: Option<i32>,
+    pub sarif_id: Option<String>,
+    pub pr: Option<i32>,
     state: Option<String>,
     severity: Option<String>,
     sort: Option<String>,
     direction: Option<String>,
-    confirm_delete: Option<String>,
+    pub confirm_delete: Option<String>,
 }
 
 pub fn normalize_ref(reference: &str) -> String {

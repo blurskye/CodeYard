@@ -129,7 +129,7 @@ async fn disable_updates(
 ) -> Result<StatusCode> {
     change(&state, &headers, &owner, &name, Feature::Updates, false).await
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/check-vulnerability-alerts", get(check_alerts)),
         ("repos/enable-vulnerability-alerts", put(enable_alerts)),

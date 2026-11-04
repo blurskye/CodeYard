@@ -146,7 +146,7 @@ async fn resolve(
         codeyard_app::webhooks::payloads::issue_suggestion(&row).map_err(Error::unavailable)?,
     ))
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("issues/list-suggestions", get(list)),
         ("issues/approve-suggestion", post(resolve)),

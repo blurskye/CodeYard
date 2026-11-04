@@ -7,6 +7,7 @@
 use crate::routes::Operation;
 use crate::routes::Support;
 use crate::routes::OPERATIONS;
+use axum::body::HttpBody;
 use axum::extract::Request;
 use axum::http::header;
 use axum::http::StatusCode;
@@ -80,7 +81,7 @@ pub async fn pull_diff_text(
         .unwrap_or_else(IntoResponse::into_response)
 }
 
-pub(super) fn empty(status: StatusCode) -> Response {
+pub(crate) fn empty(status: StatusCode) -> Response {
     (status, [(header::CONTENT_LENGTH, "0")]).into_response()
 }
 

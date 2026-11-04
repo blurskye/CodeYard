@@ -108,7 +108,7 @@ async fn referrers(
             .collect(),
     )))
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/get-views", get(views)),
         ("repos/get-clones", get(clones)),

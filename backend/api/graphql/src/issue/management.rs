@@ -11,6 +11,7 @@ use crate::unavailable;
 use crate::url;
 use crate::RequestContext;
 use crate::Result;
+use codeyard_model::node_id;
 
 pub(super) fn error(error: anyhow::Error) -> Error {
     match error.downcast_ref::<codeyard_db_repos::issues::management::Refusal>() {
@@ -100,11 +101,14 @@ pub(super) async fn resolve(
     id: i64,
 ) -> Result<Value> {
     match field {
-        "isPinned" => Ok(json!(super::pinned(&request.state.pool, repo.id)
-            .await
-            .map_err(unavailable)?
-            .iter()
-            .any(|issue| issue.id == id))),
+        "isPinned" => Ok(json!(codeyard_db_repos::issues::management::pinned(
+            &request.state.pool,
+            repo.id
+        )
+        .await
+        .map_err(unavailable)?
+        .iter()
+        .any(|issue| issue.id == id))),
         "closedByPullRequestsReferences" => {
             connection::validate(ctx)?;
             let issue = codeyard_db_repos::issues::get_issue_by_id(&request.state.pool, id)
@@ -146,9 +150,10 @@ pub(super) async fn resolve(
             connection::validate(ctx)?;
             let mut branches = Vec::new();
             let mut snapshots = LinkedSnapshots::new();
-            for branch in super::linked_branches(&request.state.pool, id)
-                .await
-                .map_err(unavailable)?
+            for branch in
+                codeyard_db_repos::issues::management::linked_branches(&request.state.pool, id)
+                    .await
+                    .map_err(unavailable)?
             {
                 request.charge(branch.name.len() + 104)?;
                 if linked_target(&branch, request, &mut snapshots)
@@ -189,9 +194,15 @@ pub(super) async fn mutation(
     let mut payload = json!({"clientMutationId":input["clientMutationId"]});
     match field {
         "pinIssue" | "unpinIssue" => {
-            super::pin(pool, actor, repo.id, id, field == "pinIssue")
-                .await
-                .map_err(error)?;
+            codeyard_db_repos::issues::management::pin(
+                pool,
+                actor,
+                repo.id,
+                id,
+                field == "pinIssue",
+            )
+            .await
+            .map_err(error)?;
             payload["issue"] = object(
                 &codeyard_db_repos::issues::get_issue_by_id(pool, id)
                     .await
@@ -200,7 +211,7 @@ pub(super) async fn mutation(
             );
         }
         "deleteIssue" => {
-            super::delete(pool, actor, repo.id, id)
+            codeyard_db_repos::issues::management::delete(pool, actor, repo.id, id)
                 .await
                 .map_err(error)?;
             payload["repository"] = repository::object(repo);
@@ -215,9 +226,15 @@ pub(super) async fn mutation(
             let target = repository::by_id(destination, request).await?;
             request.authorize(target.id, "issues", true).await?;
             payload["issue"] = object(
-                &super::transfer(pool, actor, repo.id, id, destination)
-                    .await
-                    .map_err(error)?,
+                &codeyard_db_repos::issues::management::transfer(
+                    pool,
+                    actor,
+                    repo.id,
+                    id,
+                    destination,
+                )
+                .await
+                .map_err(error)?,
             );
         }
         "createLinkedBranch" => {

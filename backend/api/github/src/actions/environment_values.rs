@@ -31,7 +31,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("actions/list-environment-secrets", get(list)),
         ("actions/get-environment-public-key", get(public_key)),
@@ -52,7 +52,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 
-pub(super) fn aliases() -> Router<Arc<AppState>> {
+pub(crate) fn aliases() -> Router<Arc<AppState>> {
     Router::new()
         .route(
             "/repositories/:repository_id/environments/:environment_name/variables",

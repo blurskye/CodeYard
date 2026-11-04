@@ -9,7 +9,7 @@ use std::sync::Arc;
 mod approval;
 mod cache_policy;
 mod concurrency;
-mod jobs;
+pub(crate) mod jobs;
 mod logs;
 mod objects;
 mod oidc;
@@ -21,7 +21,7 @@ mod run_mutations;
 mod runs;
 mod settings;
 mod usage;
-mod workflows;
+pub(crate) mod workflows;
 
 fn id(params: &HashMap<String, String>, key: &str) -> Result<i64> {
     params

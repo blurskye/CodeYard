@@ -35,7 +35,7 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/get-org-rulesets", get(list)),
         ("repos/create-org-ruleset", post(create)),
@@ -53,7 +53,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
         ("repos/get-repo-ruleset-version", get(version)),
     ]
 }
-pub(super) fn error(error: anyhow::Error) -> Error {
+pub(crate) fn error(error: anyhow::Error) -> Error {
     if let Some(Invalid { field, message }) = error.downcast_ref::<Invalid>() {
         Error(
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -66,7 +66,7 @@ pub(super) fn error(error: anyhow::Error) -> Error {
         Error::unavailable(error)
     }
 }
-pub(super) fn page(input: &Pagination) -> Result<Page> {
+pub(crate) fn page(input: &Pagination) -> Result<Page> {
     let (offset, limit) = input.window()?;
     Page::new(offset as i64, (limit + 1) as i64).map_err(|e| error(e.into()))
 }

@@ -1,4 +1,5 @@
 //! Branch merges are direct native writes, never synthetic pull-request merges.
+use axum::extract::FromRequest;
 use axum::response::IntoResponse;
 
 use axum::extract::Path;
@@ -84,6 +85,6 @@ async fn merge(
     }
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![("repos/merge", post(merge))]
 }

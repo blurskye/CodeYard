@@ -17,6 +17,7 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use axum::Router;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use codeyard_app::app::AppState;
 use codeyard_db_core::queries::attestation_validation::AttestationError;
 use codeyard_db_security::attestation_validation as store;
@@ -28,13 +29,13 @@ use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/create-attestation", post(create)),
         ("repos/list-attestations", get(list)),
     ]
 }
-pub(super) fn aliases() -> Router<Arc<AppState>> {
+pub(crate) fn aliases() -> Router<Arc<AppState>> {
     Router::new().route(
         "/repos/:owner/:repo/attestations/bundles/:attestation_id",
         get(bundle),
@@ -137,7 +138,7 @@ async fn list(
     let Query(query) = query.map_err(|_| Error::invalid("Invalid attestation pagination"))?;
     let after = decode_cursor(query.after.as_deref(), "after")?;
     let before = decode_cursor(query.before.as_deref(), "before")?;
-    let page = store::Page {
+    let page = codeyard_db_core::queries::attestation_validation::Page {
         after,
         before,
         limit: codeyard_api_http::shared::github::pagination::page_size(query.per_page) as i64,

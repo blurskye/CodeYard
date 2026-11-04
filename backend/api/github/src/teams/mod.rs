@@ -90,7 +90,10 @@ async fn selected(
     state: &AppState,
     auth: &codeyard_app::api_shared::github::auth::Authentication,
     params: &Params,
-) -> Result<(Organization, super::PublicTeam)> {
+) -> Result<(
+    Organization,
+    codeyard_db_orgs::organizations::teams::PublicTeam,
+)> {
     let actor = auth.user.id;
     if let Some(id) = params.get("team_id") {
         let id = id
@@ -130,7 +133,7 @@ async fn selected(
 }
 
 fn team_error(error: anyhow::Error) -> Error {
-    if error.is::<super::InvalidTeamParent>() {
+    if error.is::<codeyard_db_orgs::organizations::teams::InvalidTeamParent>() {
         Error::validation("Team", "parent_team_id", "invalid")
     } else {
         Error::unavailable(error)
@@ -196,7 +199,7 @@ async fn parent(
 async fn document(
     state: &AppState,
     org: &Organization,
-    public: &super::PublicTeam,
+    public: &codeyard_db_orgs::organizations::teams::PublicTeam,
 ) -> Result<Value> {
     let team = &public.team;
     let mut value = team_value(
@@ -255,7 +258,9 @@ fn string<'a>(input: &'a Map<String, Value>, field: &str) -> Result<Option<&'a s
         .transpose()
 }
 
-fn permission(value: &str) -> Result<super::TeamRepositoryPermission> {
+fn permission(
+    value: &str,
+) -> Result<codeyard_db_orgs::organizations::teams::TeamRepositoryPermission> {
     codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(match value {
         "pull" => 1,
         "triage" => 2,
@@ -298,7 +303,7 @@ fn profile(
     input: &Map<String, Value>,
     creating: bool,
     parent: Option<Option<i64>>,
-) -> Result<super::TeamProfile> {
+) -> Result<codeyard_db_orgs::organizations::teams::TeamProfile> {
     let refused = |error: codeyard_db_orgs::organizations::OrganizationInputError| {
         Error::validation(
             "Team",
@@ -953,7 +958,7 @@ async fn repository_document(
     state: &AppState,
     auth: &codeyard_app::api_shared::github::auth::Authentication,
     org: i64,
-    grant: &super::TeamRepositoryGrant,
+    grant: &codeyard_db_orgs::organizations::teams::TeamRepositoryGrant,
 ) -> Result<Option<Value>> {
     let Some(repo) =
         codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, grant.repo_id)

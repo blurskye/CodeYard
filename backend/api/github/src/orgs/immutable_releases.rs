@@ -1,5 +1,4 @@
 //! Immutable release enforcement settings are owned by organization owners.
-use super::immutable_releases as data;
 use crate::auth;
 use crate::orgs::outcome;
 use crate::orgs::target;
@@ -18,6 +17,7 @@ use axum::routing::MethodRouter;
 use axum::Json;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
+use codeyard_db_orgs::organizations::immutable_releases as data;
 use codeyard_db_orgs::organizations::immutable_releases::Change;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
@@ -55,9 +55,9 @@ async fn get_settings(
     headers: HeaderMap,
     Path(name): Path<String>,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let settings = outcome(
         data::get(&state.pool, actor.user.id, org.id)
@@ -86,9 +86,9 @@ async fn change(
     name: &str,
     change: Change,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(state, headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(state, name).await?;
     outcome(
@@ -147,9 +147,9 @@ async fn repositories(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     let org = target(&state, &name).await?;
     let (offset, limit) = page.window()?;
     let (count, rows) = outcome(

@@ -1,12 +1,6 @@
 use super::*;
-use crate::gists::create;
 use crate::gists::failure;
-use crate::gists::handlers;
 use crate::gists::hidden_failure;
-use crate::gists::list;
-use crate::gists::read;
-use crate::gists::remove;
-use crate::gists::update;
 use axum::response::IntoResponse;
 use codeyard_api_http::shared::github::gists::writer;
 use codeyard_api_http::shared::github::pagination::Pagination;
@@ -39,7 +33,7 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
+    codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
     let (offset, limit) = page.window()?;
     let mut comments = codeyard_db_repos::gists::comments(
@@ -64,7 +58,7 @@ async fn read(
     headers: HeaderMap,
     Path((id, comment)): Path<(String, String)>,
 ) -> Result<Response> {
-    auth::authenticate(&state, &headers, false).await?;
+    codeyard_app::api_shared::github::auth::authenticate(&state, &headers, false).await?;
     let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
     let comment =
         codeyard_db_repos::gists::comment(&state.pool, gist.repo_id, comment_id(&comment)?)

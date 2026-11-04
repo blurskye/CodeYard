@@ -123,7 +123,7 @@ pub fn runner_node_name(public_key: &str) -> String {
 
 /// Keep JIT names out of the operator's ordinary node-name namespace. Only a hash
 /// prefix is exposed; the pairing secret remains inside the credential.
-pub(crate) fn jit_node_name(id: i64, hash: &str) -> String {
+pub fn jit_node_name(id: i64, hash: &str) -> String {
     format!("jit-{id}-{}", hash.chars().take(32).collect::<String>())
 }
 pub fn valid_group_name(name: &str) -> bool {

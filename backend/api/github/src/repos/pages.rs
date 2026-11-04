@@ -1,5 +1,6 @@
 //! Pages control plane. Build and deployment attempts fail explicitly without a publisher.
 use axum::response::IntoResponse;
+use codeyard_db_repos::pages;
 
 use axum::extract::OriginalUri;
 use axum::extract::Path;
@@ -424,7 +425,7 @@ async fn health(
         json!({"domain":{"host":host,"uri":format!("https://{host}/"),"dns_resolves":resolves,"is_valid_domain":true,"is_valid":false,"is_served_by_pages":false,"is_pages_domain":false,"reason":pages::NO_PUBLISHER},"alt_domain":null}),
     ))
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/get-pages", get(settings)),
         ("repos/create-pages-site", post(mutate)),

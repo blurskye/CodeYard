@@ -1,5 +1,6 @@
 //! Sealed-box input is opened once, then stored with the site's encryption key.
 use axum::response::IntoResponse;
+use base64::Engine;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::OriginalUri;
@@ -26,7 +27,7 @@ use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     let actions = vec![
         ("actions/list-repo-secrets", get(list)),
         ("actions/get-repo-public-key", get(public_key)),
@@ -52,7 +53,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
         .collect()
 }
 
-pub(super) fn error(error: codeyard_db_core::queries::secrets::SecretsError) -> Error {
+pub(crate) fn error(error: codeyard_db_core::queries::secrets::SecretsError) -> Error {
     use codeyard_db_core::queries::secrets::SecretsError;
     match error {
         SecretsError::Denied => {
@@ -215,7 +216,7 @@ async fn save(
     })
 }
 
-pub(super) fn open_value(
+pub(crate) fn open_value(
     key: &crypto_box::SecretKey,
     expected_key_id: &str,
     key_id: &str,

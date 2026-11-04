@@ -1,5 +1,6 @@
 //! Contents API preconditions use blob IDs; publication still leases the entire branch tip.
 use axum::response::IntoResponse;
+use base64::Engine;
 
 use axum::extract::Path;
 use axum::extract::Query;
@@ -93,7 +94,7 @@ fn submodule_url(modules: &str, path: &str) -> Option<String> {
     clippy::too_many_arguments,
     reason = "Each argument is one field of GitHub's contents entry."
 )]
-pub(super) fn entry(
+pub(crate) fn entry(
     owner: &str,
     repo: &str,
     reference: &str,
@@ -144,7 +145,7 @@ pub(super) fn entry(
     })
 }
 
-pub(super) async fn blob_response(
+pub(crate) async fn blob_response(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
@@ -506,7 +507,7 @@ async fn delete(
     save(state, headers, params, input, true).await
 }
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("repos/get-content", get(read)),
         ("repos/get-readme", get(readme)),
@@ -520,7 +521,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 }
 
 /// The repository root, which GitHub serves as `contents` with no path.
-pub(super) fn aliases() -> Router<Arc<AppState>> {
+pub(crate) fn aliases() -> Router<Arc<AppState>> {
     Router::new().route("/repos/:owner/:repo/contents", get(read))
 }
 

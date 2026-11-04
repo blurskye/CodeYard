@@ -45,9 +45,9 @@ fn polling(mut response: Response) -> Response {
     response
 }
 async fn act(state: &AppState, headers: &HeaderMap, action: ThreadAction) -> Result<ThreadInbox> {
-    let actor = auth::authenticate(state, headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     if action.requires_write() {
         actor.require_write()?;
     }
@@ -60,7 +60,7 @@ async fn act(state: &AppState, headers: &HeaderMap, action: ThreadAction) -> Res
     )
     .await
     .map_err(|error| match error {
-        InboxError::Denied => auth::required(),
+        InboxError::Denied => codeyard_app::api_shared::github::auth::required(),
         InboxError::Unavailable => Error::unavailable(()),
     })?
     .threads

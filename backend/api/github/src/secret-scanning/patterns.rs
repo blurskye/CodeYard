@@ -73,11 +73,14 @@ async fn scope(
     headers: &HeaderMap,
     params: &HashMap<String, String>,
     write: bool,
-) -> Result<(Owner, auth::Authentication)> {
+) -> Result<(
+    Owner,
+    codeyard_app::api_shared::github::auth::Authentication,
+)> {
     if let Some(org) = params.get("org") {
-        let actor = auth::authenticate(state, headers, true)
+        let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
             .await?
-            .ok_or_else(auth::required)?;
+            .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
         if write {
             actor.require_write()?;
         }
@@ -88,7 +91,7 @@ async fn scope(
             repository(state, headers, &params["owner"], &params["repo"], write).await?;
         Ok((
             Owner::Repository(repo.id),
-            actor.ok_or_else(auth::required)?,
+            actor.ok_or_else(codeyard_app::api_shared::github::auth::required)?,
         ))
     }
 }

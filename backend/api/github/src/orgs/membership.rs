@@ -34,9 +34,9 @@ async fn set(
     Path((name, username)): Path<(String, String)>,
     body: axum::body::Bytes,
 ) -> Result<Json<Value>> {
-    let actor = auth::authenticate(&state, &headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(&state, &headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     actor.require_write()?;
     let input: Value = if body.is_empty() {
         json!({})
@@ -115,9 +115,9 @@ async fn remove(
     username: &str,
     missing_ok: bool,
 ) -> Result<StatusCode> {
-    let actor = auth::authenticate(state, headers, true)
+    let actor = codeyard_app::api_shared::github::auth::authenticate(state, headers, true)
         .await?
-        .ok_or_else(auth::required)?;
+        .ok_or_else(codeyard_app::api_shared::github::auth::required)?;
     actor.require_write()?;
     let org = target(state, name).await?;
     let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, username)

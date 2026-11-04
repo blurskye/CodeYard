@@ -200,7 +200,7 @@ async fn organization(
 ) -> Result<Response> {
     run(state, headers, q, page, uri, Some(p["org"].clone())).await
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("issues/list", get(global)),
         ("issues/list-for-authenticated-user", get(global)),

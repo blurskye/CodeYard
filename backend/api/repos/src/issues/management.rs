@@ -62,7 +62,7 @@ pub(crate) async fn native_change(
     let operation = field(&form, "operation");
     let result = match operation.as_str() {
         "pin" | "unpin" => {
-            super::pin(
+            codeyard_db_repos::issues::management::pin(
                 &ctx.state.pool,
                 authority(),
                 repo.record.id,
@@ -78,9 +78,14 @@ pub(crate) async fn native_change(
                     "Type the issue number to confirm deletion.",
                 ));
             }
-            super::delete(&ctx.state.pool, authority(), repo.record.id, issue.id)
-                .await
-                .map_err(|error| failure(&ctx, error))?;
+            codeyard_db_repos::issues::management::delete(
+                &ctx.state.pool,
+                authority(),
+                repo.record.id,
+                issue.id,
+            )
+            .await
+            .map_err(|error| failure(&ctx, error))?;
             return Ok(ctx.redirect(&base));
         }
         "transfer" => {
@@ -92,7 +97,7 @@ pub(crate) async fn native_change(
             .await
             .map_err(|_| unavailable(&ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
-            let moved = super::transfer(
+            let moved = codeyard_db_repos::issues::management::transfer(
                 &ctx.state.pool,
                 authority(),
                 repo.record.id,
@@ -174,22 +179,24 @@ pub(crate) async fn pinned(
     ctx: &PageContext,
     repo: &RepositoryData,
 ) -> ResultPage<Vec<RelatedIssue>> {
-    Ok(super::pinned(&ctx.state.pool, repo.record.id)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .into_iter()
-        .map(|issue| RelatedIssue {
-            id: issue.id,
-            kind: "pinned".into(),
-            title: issue.title,
-            state: issue.state,
-            reference: format!("#{}", issue.number),
-            href: format!(
-                "/{}/{}/issues/{}",
-                repo.view.owner, repo.record.name, issue.number
-            ),
-        })
-        .collect())
+    Ok(
+        codeyard_db_repos::issues::management::pinned(&ctx.state.pool, repo.record.id)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(|issue| RelatedIssue {
+                id: issue.id,
+                kind: "pinned".into(),
+                title: issue.title,
+                state: issue.state,
+                reference: format!("#{}", issue.number),
+                href: format!(
+                    "/{}/{}/issues/{}",
+                    repo.view.owner, repo.record.name, issue.number
+                ),
+            })
+            .collect(),
+    )
 }
 
 pub(crate) async fn load(
@@ -199,14 +206,14 @@ pub(crate) async fn load(
 ) -> ResultPage<Box<IssueManagement>> {
     let pool = &ctx.state.pool;
     let mut controls = IssueManagement {
-        pinned: super::pinned(pool, repo.record.id)
+        pinned: codeyard_db_repos::issues::management::pinned(pool, repo.record.id)
             .await
             .map_err(|_| unavailable(ctx))?
             .iter()
             .any(|p| p.id == issue.id),
         ..Default::default()
     };
-    let linked = super::linked_branches(pool, issue.id)
+    let linked = codeyard_db_repos::issues::management::linked_branches(pool, issue.id)
         .await
         .map_err(|_| unavailable(ctx))?;
     let mut wanted: HashMap<i64, HashSet<String>> = HashMap::new();
@@ -279,7 +286,7 @@ pub(crate) async fn load(
             ),
         ));
     }
-    if let Some(duplicate) = super::duplicate(pool, issue.id)
+    if let Some(duplicate) = codeyard_db_repos::issues::management::duplicate(pool, issue.id)
         .await
         .map_err(|_| unavailable(ctx))?
     {

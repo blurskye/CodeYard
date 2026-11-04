@@ -22,7 +22,7 @@ use serde_json::json;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("actions/list-repo-variables", get(list)),
         ("actions/create-repo-variable", post(create)),

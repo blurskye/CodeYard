@@ -70,7 +70,7 @@ async fn unlock(
 ) -> Result<StatusCode> {
     change(state, headers, p, false, None).await
 }
-pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
+pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![
         ("issues/lock", put(lock)),
         ("issues/unlock", delete(unlock)),
