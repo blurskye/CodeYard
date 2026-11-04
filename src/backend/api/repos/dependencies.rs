@@ -10,7 +10,6 @@ use crate::backend::{
         self,
         repositories::dependencies::{self as records, AlertState, Feature, Refusal},
     },
-    git::error::ErrorKind,
     repositories::{
         access::AccessError,
         dependencies::{self, DependencyError},
@@ -23,6 +22,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use codeyard_git::error::ErrorKind;
 use codeyard_webui::{
     app::Page,
     pages::repos::{

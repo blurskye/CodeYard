@@ -2,7 +2,7 @@
 //! bypass for that exact secret. Receive hooks and file saves both run it on the commits they add.
 
 use crate::backend::db;
-use crate::backend::git::error::{ErrorKind, RepoError};
+use codeyard_git::error::{ErrorKind, RepoError};
 use std::path::Path;
 
 #[derive(Clone, Debug)]
@@ -33,7 +33,7 @@ pub async fn refuse_blocked_secrets(
         .remove(&repo.id)
         .ok_or_else(|| anyhow::anyhow!("Repository owner unavailable"))?;
     let (patterns, disabled) = db::secret_scanning::effective_patterns(pool, repo.id).await?;
-    let findings = crate::backend::git::secret_scanning::added_secrets(
+    let findings = codeyard_git::secret_scanning::added_secrets(
         path.to_owned(),
         quarantine.map(Path::to_owned),
         heads.to_vec(),

@@ -1409,9 +1409,7 @@ impl ContainerOwnership {
             Ok(mut entries) => {
                 while let Some(entry) = entries.next_entry().await? {
                     if entry.file_type().await?.is_dir() {
-                        locks.push(
-                            crate::backend::git::locks::lock(&entry.path().join("repo")).await,
-                        );
+                        locks.push(codeyard_git::locks::lock(&entry.path().join("repo")).await);
                     }
                 }
             }
@@ -1853,7 +1851,7 @@ impl Drop for Workspace {
         while cleanups.try_join_next().is_some() {}
         cleanups.spawn(async move {
             // A cancelled checkout may still be importing its pack on a blocking thread.
-            let _lock = crate::backend::git::locks::lock(&checkout).await;
+            let _lock = codeyard_git::locks::lock(&checkout).await;
             let _ = tokio::task::spawn_blocking(move || {
                 if let Err(error) = temp.close() {
                     warn!(%error, "could not remove CI workspace");
@@ -2602,7 +2600,7 @@ mod tests {
     async fn workspace_cleanup_waits_for_an_in_progress_pack_import() {
         let mut workspace = secret_workspace();
         let root = workspace.root().to_owned();
-        let lock = crate::backend::git::locks::lock(&workspace.checkout()).await;
+        let lock = codeyard_git::locks::lock(&workspace.checkout()).await;
         let (cleaned, mut cleanup) = oneshot::channel();
         workspace.cleaned = Some(cleaned);
         let cleanups = workspace.cleanups.clone();

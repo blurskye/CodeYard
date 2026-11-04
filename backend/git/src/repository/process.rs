@@ -9,9 +9,9 @@ use tokio::process::Command;
 use tokio::sync::{watch, OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
 
-pub(crate) const SESSION_TIMEOUT: Duration = Duration::from_secs(3600);
-pub(crate) const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
-pub(crate) const CHUNK: usize = 32 * 1024;
+pub const SESSION_TIMEOUT: Duration = Duration::from_secs(3600);
+pub const IDLE_TIMEOUT: Duration = Duration::from_secs(300);
+pub const CHUNK: usize = 32 * 1024;
 /// How long a Git session waits for a free slot before the request fails as busy:
 /// `GIT_SESSION_WAIT_SECONDS`, default 30.
 static SESSION_WAIT: LazyLock<Duration> = LazyLock::new(|| {
@@ -37,37 +37,34 @@ fn session_limit() -> usize {
         .unwrap_or((cores * 4).max(16))
 }
 
-pub(crate) fn session_capacity() -> usize {
+pub fn session_capacity() -> usize {
     *SESSION_CAPACITY
 }
 
-pub(crate) fn session_wait() -> Duration {
+pub fn session_wait() -> Duration {
     *SESSION_WAIT
 }
 
-pub(crate) fn session_slots() -> Arc<Semaphore> {
+pub fn session_slots() -> Arc<Semaphore> {
     RPC_SESSIONS.clone()
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("Git sessions busy")]
-pub(crate) struct SessionsBusy;
+pub struct SessionsBusy;
 
 /// A Git session slot. A busy node makes the request wait for a short time, as a queue would,
 /// instead of failing every push or clone above the limit.
-pub(crate) async fn session_permit() -> Result<OwnedSemaphorePermit> {
+pub async fn session_permit() -> Result<OwnedSemaphorePermit> {
     wait_for_slot(RPC_SESSIONS.clone(), *SESSION_WAIT).await
 }
 
 /// Forwarding must not reserve a slot needed to execute an incoming peer's Git process.
-pub(crate) async fn forwarding_permit() -> Result<OwnedSemaphorePermit> {
+pub async fn forwarding_permit() -> Result<OwnedSemaphorePermit> {
     wait_for_slot(FORWARDED_SESSIONS.clone(), *SESSION_WAIT).await
 }
 
-pub(crate) async fn wait_for_slot(
-    slots: Arc<Semaphore>,
-    wait: Duration,
-) -> Result<OwnedSemaphorePermit> {
+pub async fn wait_for_slot(slots: Arc<Semaphore>, wait: Duration) -> Result<OwnedSemaphorePermit> {
     match tokio::time::timeout(wait, slots.acquire_owned()).await {
         Ok(Ok(permit)) => Ok(permit),
         _ => Err(SessionsBusy.into()),
@@ -75,12 +72,12 @@ pub(crate) async fn wait_for_slot(
 }
 
 pub(crate) const RPC_LIMIT: usize = 128 * 1024 * 1024;
-pub(crate) const RPC_TIMEOUT: Duration = Duration::from_secs(300);
+pub const RPC_TIMEOUT: Duration = Duration::from_secs(300);
 const STDERR_LIMIT: usize = 1024 * 1024;
 
 /// Absolute path of `git` from the server's PATH, resolved once. Children get a
 /// cleared environment, so they can't look it up themselves.
-pub(crate) fn executable() -> Result<PathBuf> {
+pub fn executable() -> Result<PathBuf> {
     static GIT: OnceLock<Option<PathBuf>> = OnceLock::new();
     GIT.get_or_init(|| {
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
@@ -93,7 +90,7 @@ pub(crate) fn executable() -> Result<PathBuf> {
 }
 
 /// A `git` command that ignores user/system config and repository hooks.
-pub(crate) fn std_command(executable: &Path) -> std::process::Command {
+pub fn std_command(executable: &Path) -> std::process::Command {
     let mut command = memory_limited(executable);
     command
         .env_clear()
@@ -134,14 +131,14 @@ pub(crate) fn std_command(executable: &Path) -> std::process::Command {
     command
 }
 
-pub(crate) fn command(executable: &Path) -> Result<Command> {
+pub fn command(executable: &Path) -> Result<Command> {
     let mut command = Command::from(std_command(executable));
     // Own process group so a timeout can kill git and anything it started.
     command.process_group(0).kill_on_drop(true);
     Ok(command)
 }
 
-pub(crate) fn git_command() -> Result<Command> {
+pub fn git_command() -> Result<Command> {
     command(&executable()?)
 }
 
@@ -201,14 +198,15 @@ pub(crate) async fn read_bounded(reader: impl AsyncRead + Unpin, limit: usize) -
     Ok(bytes)
 }
 
-pub(crate) use codeyard_actions::process::{kill_group, ProcessGroup};
+pub(crate) use codeyard_actions::process::kill_group;
+pub use codeyard_actions::process::ProcessGroup;
 
 /// Keep only the last diagnostics when a transport reports stderr at exit.
 #[derive(Default)]
-pub(crate) struct StderrTail(Vec<u8>);
+pub struct StderrTail(Vec<u8>);
 
 impl StderrTail {
-    pub(crate) fn text(&self) -> String {
+    pub fn text(&self) -> String {
         String::from_utf8_lossy(&self.0).into_owned()
     }
 }
@@ -241,7 +239,7 @@ impl AsyncWrite for StderrTail {
 }
 
 /// Copies with fixed memory, reporting traffic in either direction to the idle timer.
-pub(crate) async fn copy(
+pub async fn copy(
     mut reader: impl AsyncRead + Unpin,
     mut writer: impl AsyncWrite + Unpin,
     activity: watch::Sender<Instant>,
@@ -301,7 +299,7 @@ pub(crate) async fn session_timeout<T>(
 /// Runs a live Git process. Closing stdin delivers EOF; Git, not the transport,
 /// decides whether a complete pack arrived. Receive output is drained after a
 /// disconnect so already accepted writes can finish their hooks.
-pub(crate) async fn stream(
+pub async fn stream(
     command: Command,
     input: impl AsyncRead + Unpin,
     output: impl AsyncWrite + Unpin,
@@ -359,7 +357,7 @@ async fn stream_with_idle(
     result
 }
 
-pub(crate) async fn operation_slot(timeout: Duration) -> Result<OwnedSemaphorePermit> {
+pub async fn operation_slot(timeout: Duration) -> Result<OwnedSemaphorePermit> {
     tokio::time::timeout(timeout, GIT_OPERATIONS.clone().acquire_owned())
         .await
         .context("git timed out")?
@@ -367,7 +365,7 @@ pub(crate) async fn operation_slot(timeout: Duration) -> Result<OwnedSemaphorePe
 }
 
 /// Blocking Git work keeps its admission permit even if its caller is cancelled.
-pub(crate) async fn blocking_until<T: Send + 'static>(
+pub async fn blocking_until<T: Send + 'static>(
     deadline: std::time::Instant,
     work: impl FnOnce() -> Result<T> + Send + 'static,
 ) -> Result<T> {
@@ -386,13 +384,13 @@ pub(crate) async fn blocking_until<T: Send + 'static>(
 }
 
 /// A parser may stop a read-only child once its requested prefix is complete.
-pub(crate) enum ReadEnd<T> {
+pub enum ReadEnd<T> {
     Complete(T),
     Prefix(T),
 }
 
 #[derive(Clone)]
-pub(crate) struct ReadAdmission {
+pub struct ReadAdmission {
     permit: Arc<OwnedSemaphorePermit>,
     deadline: Instant,
 }
@@ -429,7 +427,7 @@ where
 }
 
 /// Hook children remain in receive-pack's group; they must never signal that entire group.
-pub(crate) async fn read_stream_inherited<T, F, Fut>(
+pub async fn read_stream_inherited<T, F, Fut>(
     command: Command,
     timeout: Duration,
     read: F,
@@ -519,7 +517,7 @@ where
 }
 
 /// Runs a command to completion, feeding `input` and collecting bounded output.
-pub(crate) async fn run(
+pub async fn run(
     command: Command,
     input: &[u8],
     output_limit: usize,
@@ -621,7 +619,7 @@ async fn run_admitted(
     result
 }
 
-pub(crate) async fn buffered(
+pub async fn buffered(
     command: Command,
     input: &[u8],
     output_limit: usize,

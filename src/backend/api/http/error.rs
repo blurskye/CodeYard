@@ -256,7 +256,7 @@ mod discussion_errors {
 
     #[test]
     fn repository_store_errors_do_not_expose_paths_or_credentials() {
-        use crate::backend::git::error::{ErrorKind, RepoError};
+        use codeyard_git::error::{ErrorKind, RepoError};
         let (status, Json(body)) = repo_store_error(
             RepoError::new(
                 ErrorKind::Unavailable,

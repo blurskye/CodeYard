@@ -1,14 +1,14 @@
 //! Stored default-branch languages, including successfully computed empty results.
 use crate::backend::{
     db::{self, repository_stats::LanguageSource, DbPool},
-    git::{
-        self,
-        error::{ErrorKind, RepoError},
-        LanguageStat,
-    },
     repositories::store::RepoStore,
 };
 use anyhow::Result;
+use codeyard_git::{
+    self as git,
+    error::{ErrorKind, RepoError},
+    LanguageStat,
+};
 use std::{
     collections::{HashMap, HashSet},
     path::{Path, PathBuf},

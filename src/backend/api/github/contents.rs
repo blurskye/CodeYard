@@ -2,7 +2,6 @@
 use super::{auth, repo_url, repository, Error, Result};
 use crate::backend::{
     app::AppState,
-    git::error::{ErrorKind, RepoError, RepoErrorReason},
     repositories::{
         files,
         store::{repo_store, FileWrite, MAX_EDITOR_BYTES},
@@ -16,6 +15,7 @@ use axum::{
     Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_git::error::{ErrorKind, RepoError, RepoErrorReason};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};

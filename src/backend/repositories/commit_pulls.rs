@@ -3,15 +3,15 @@ use super::{
     access,
     store::{repo_store, CommitInfo, RepoStore},
 };
-use crate::backend::git::error::{ErrorKind, RepoError};
 use crate::backend::{
     cluster::NodeContext,
     db::{
         self,
         models::{PullRequest, Repository},
     },
-    git,
 };
+use codeyard_git as git;
+use codeyard_git::error::{ErrorKind, RepoError};
 use std::{collections::HashMap, time::Duration};
 
 #[derive(Debug)]

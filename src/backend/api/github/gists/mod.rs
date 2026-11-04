@@ -6,10 +6,6 @@ use crate::backend::{
         gists::{GistList, GistRefusal, ListScope},
     },
     gists as domain,
-    git::{
-        error::{ErrorKind, RepoError},
-        gist_types::{GistEdit, GistFileChange, MAX_GIST_REQUEST_BYTES},
-    },
     repositories::{
         lifecycle::{LifecycleFailure, StorageError},
         store::{repo_store, GistCredential},
@@ -21,6 +17,10 @@ use axum::{
     response::{IntoResponse, Response},
     routing::{delete, get, patch, post, put, MethodRouter},
     Json, Router,
+};
+use codeyard_git::{
+    error::{ErrorKind, RepoError},
+    gist_types::{GistEdit, GistFileChange, MAX_GIST_REQUEST_BYTES},
 };
 use serde::Deserialize;
 use serde_json::Value;

@@ -4,12 +4,10 @@ use crate::backend::api::repos::responses::rfc3339;
 use crate::backend::db;
 use crate::backend::repositories::access;
 use crate::backend::repositories::lifecycle;
-use crate::backend::{
-    git::error::{ErrorKind, RepoError},
-    repositories::store::{repo_store, CommitInfo},
-};
+use crate::backend::repositories::store::{repo_store, CommitInfo};
 use axum::http::StatusCode;
 use axum::response::Response;
+use codeyard_git::error::{ErrorKind, RepoError};
 use codeyard_webui::pages::repos as view;
 use codeyard_webui::pages::repos::chrome::RepoChrome;
 use codeyard_webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
@@ -404,7 +402,7 @@ pub(crate) fn resolve(
             )
         })?;
     if loaded.refs.is_empty() {
-        if crate::backend::git::ref_names::branch_ref(&resolved.reference).is_none()
+        if codeyard_git::ref_names::branch_ref(&resolved.reference).is_none()
             || (resolved.reference != loaded.default_branch
                 && resolved.reference != format!("refs/heads/{}", loaded.default_branch))
         {

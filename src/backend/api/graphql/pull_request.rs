@@ -20,10 +20,8 @@ async fn mergeable(
     pull: &db::models::PullRequest,
     request: &RequestContext,
 ) -> Result<Option<(bool, String)>> {
-    use crate::backend::{
-        git::error::ErrorKind,
-        repositories::store::{MergeMethod, MergeRequest},
-    };
+    use crate::backend::repositories::store::{MergeMethod, MergeRequest};
+    use codeyard_git::error::ErrorKind;
     let store = repo_store(repo, request.state.cluster.as_ref());
     let base = match store
         .commit_from_primary(&format!("refs/heads/{}", pull.base_branch))

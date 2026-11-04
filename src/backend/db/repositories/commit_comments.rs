@@ -61,7 +61,7 @@ pub fn validate_body(body: &str) -> Result<(), CommentRefusal> {
 
 pub(crate) fn validate_create(input: &CommentCreate<'_>) -> Result<(), CommentRefusal> {
     validate_body(input.body)?;
-    if !crate::backend::git::is_full_commit_id(input.sha)
+    if !codeyard_git::is_full_commit_id(input.sha)
         || input
             .path
             .is_some_and(|path| path.is_empty() || path.len() > 4096 || path.contains('\0'))
@@ -93,11 +93,7 @@ native_operation!(crate::backend::db::postgres::repositories::commit_comments::c
     crate::backend::db::sqlite::repositories::commit_comments::count_comments,
     fn count_comments(pool: &DbPool, repo: i64, sha: &str, through: Option<i64>) -> Result<i64>);
 pub(crate) fn validate_counts(shas: &[String]) -> Result<(), CommentRefusal> {
-    if shas.len() > 512
-        || shas
-            .iter()
-            .any(|sha| !crate::backend::git::is_full_commit_id(sha))
-    {
+    if shas.len() > 512 || shas.iter().any(|sha| !codeyard_git::is_full_commit_id(sha)) {
         return Err(CommentRefusal::Invalid);
     }
     Ok(())

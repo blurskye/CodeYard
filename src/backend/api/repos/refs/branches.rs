@@ -116,7 +116,7 @@ pub async fn delete_branch(
     Ok(StatusCode::NO_CONTENT)
 }
 
-use crate::backend::git::MAX_BRANCH_STATUSES;
+use codeyard_git::MAX_BRANCH_STATUSES;
 
 /// A branch whose tip is older than this is stale.
 const STALE_AFTER: chrono::Duration = chrono::Duration::days(90);

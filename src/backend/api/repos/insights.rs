@@ -169,7 +169,7 @@ async fn dependencies(
         .cloned()
         .unwrap_or_else(|| format!("refs/heads/{}", loaded.default_branch));
     if !reference.starts_with("refs/heads/")
-        || !crate::backend::git::ref_names::is_canonical_ref(&reference)
+        || !codeyard_git::ref_names::is_canonical_ref(&reference)
     {
         return ctx.error(
             axum::http::StatusCode::BAD_REQUEST,
@@ -179,7 +179,7 @@ async fn dependencies(
     let revision = ctx.query.get("sha").cloned();
     if revision
         .as_deref()
-        .is_some_and(|sha| !crate::backend::git::ref_names::is_full_commit_id(sha))
+        .is_some_and(|sha| !codeyard_git::ref_names::is_full_commit_id(sha))
     {
         return ctx.error(
             axum::http::StatusCode::BAD_REQUEST,

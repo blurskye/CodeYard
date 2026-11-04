@@ -1,12 +1,10 @@
-use crate::backend::{
-    git::error::{ErrorKind, RepoError},
-    repositories::store::{
-        AsyncMergePublication, BlobRange, CommitFilter, FileWrite, GitService, GitSession,
-        MergeFailure, MergeMethod, MergeRequest, PreparedFile, PullBranchUpdate, RestackMove,
-        UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_TOTAL_BYTES,
-    },
+use crate::backend::repositories::store::{
+    AsyncMergePublication, BlobRange, CommitFilter, FileWrite, GitService, GitSession,
+    MergeFailure, MergeMethod, MergeRequest, PreparedFile, PullBranchUpdate, RestackMove,
+    UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
 use anyhow::{ensure, Result};
+use codeyard_git::error::{ErrorKind, RepoError};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::time::Duration;
@@ -194,7 +192,7 @@ pub enum Operation {
         force: bool,
     },
     WriteGitObject {
-        input: crate::backend::git::objects::ObjectWrite,
+        input: codeyard_git::objects::ObjectWrite,
         token: Option<i64>,
     },
     ImportGit {
@@ -355,7 +353,7 @@ pub enum Operation {
     Archive {
         git_ref: String,
         prefix: String,
-        format: crate::backend::git::ArchiveFormat,
+        format: codeyard_git::ArchiveFormat,
     },
     Languages {
         git_ref: String,
@@ -379,7 +377,7 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         raw_json: bool,
         #[serde(default)]
-        mode: crate::backend::git::StatisticsMode,
+        mode: codeyard_git::StatisticsMode,
     },
     CodeFrequency {
         branch: String,
@@ -734,11 +732,11 @@ pub(super) fn operation_body_limit(operation: &Operation) -> usize {
     match operation {
         Operation::PrepareFile { .. } | Operation::SaveFile { .. } => MAX_EDITOR_BYTES,
         Operation::WriteGitObject {
-            input: crate::backend::git::objects::ObjectWrite::Blob,
+            input: codeyard_git::objects::ObjectWrite::Blob,
             ..
-        } => crate::backend::git::objects::MAX_BLOB_WRITE_BYTES,
+        } => codeyard_git::objects::MAX_BLOB_WRITE_BYTES,
         Operation::PrepareUpload { .. } => MAX_UPLOAD_TOTAL_BYTES,
-        Operation::GistWrite { .. } => crate::backend::git::gist_types::MAX_GIST_REQUEST_BYTES,
+        Operation::GistWrite { .. } => codeyard_git::gist_types::MAX_GIST_REQUEST_BYTES,
         Operation::ImportGit { .. } => crate::backend::repositories::imports::MAX_IMPORT_PACK_BYTES,
         _ => 0,
     }
@@ -1002,7 +1000,7 @@ mod tests {
         let (mut input, forwarded) = tokio::io::duplex(256 * 1024);
         let (_, writer) = tokio::io::split(client);
         let (activity, _receiver) = tokio::sync::watch::channel(tokio::time::Instant::now());
-        let copying = tokio::spawn(crate::backend::git::repository::process::copy(
+        let copying = tokio::spawn(codeyard_git::repository::process::copy(
             forwarded, writer, activity, false,
         ));
         let payload = vec![9_u8; 64 * 1024];

@@ -72,7 +72,7 @@ async fn upstream(
     let Json(input) = Json::<Upstream>::from_request(request, &state)
         .await
         .map_err(|_| Error::invalid("A branch name is required"))?;
-    if crate::backend::git::branch_ref(&input.branch).is_none() {
+    if codeyard_git::branch_ref(&input.branch).is_none() {
         return Err(Error::invalid("Invalid branch name"));
     }
     let parent = repo

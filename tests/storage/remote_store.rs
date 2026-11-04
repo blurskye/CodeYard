@@ -16,7 +16,6 @@ use codeyard::backend::{
         NodeContext,
     },
     db,
-    git::{self, error::ErrorKind},
     repositories::store::{
         repo_store, BlobRange, FileWrite, GitService, GitSession, GitStreams, MergeMethod,
         MergeRequest, PreparedFile, RepoStore, MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES,
@@ -25,6 +24,7 @@ use codeyard::backend::{
     },
     storage::ObjectStore,
 };
+use codeyard_git::{self as git, error::ErrorKind};
 use rand::RngCore;
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -405,19 +405,11 @@ async fn compare_reads(remote: &RepoStore, local: &RepoStore, sha: &str) {
     equal(remote.tags().await.unwrap(), local.tags().await.unwrap());
     equal(
         remote
-            .archive(
-                "main",
-                "project",
-                codeyard::backend::git::ArchiveFormat::Zip,
-            )
+            .archive("main", "project", codeyard_git::ArchiveFormat::Zip)
             .await
             .unwrap(),
         local
-            .archive(
-                "main",
-                "project",
-                codeyard::backend::git::ArchiveFormat::Zip,
-            )
+            .archive("main", "project", codeyard_git::ArchiveFormat::Zip)
             .await
             .unwrap(),
     );
@@ -560,7 +552,7 @@ async fn rpc_reply(recv: &mut iroh::endpoint::RecvStream) -> Reply {
     reply
 }
 
-fn repository_error(reply: Reply) -> codeyard::backend::git::error::RepoError {
+fn repository_error(reply: Reply) -> codeyard_git::error::RepoError {
     match reply.result {
         Err(Failure::Repository(error)) => error,
         result => panic!("expected repository refusal, got {result:?}"),
@@ -571,7 +563,7 @@ async fn body_refusal_without_payload(
     caller: &cluster::Cluster,
     storage: &cluster::Cluster,
     request: &Request,
-) -> codeyard::backend::git::error::RepoError {
+) -> codeyard_git::error::RepoError {
     let connection = caller
         .endpoint()
         .unwrap()
@@ -1905,7 +1897,7 @@ async fn remote_web_contract() {
                 Some("refs/heads/large-commit"),
                 &signature,
                 &signature,
-                &"x".repeat(codeyard::backend::git::MAX_COMMIT_OBJECT_BYTES),
+                &"x".repeat(codeyard_git::MAX_COMMIT_OBJECT_BYTES),
                 &parent_tree,
                 &[&parent],
             )
@@ -1966,19 +1958,11 @@ async fn remote_web_contract() {
     assert!(local_error.is_range_not_satisfiable());
     equal(&remote_error, &local_error);
     let local_error = local
-        .archive(
-            "oversized",
-            "project",
-            codeyard::backend::git::ArchiveFormat::Zip,
-        )
+        .archive("oversized", "project", codeyard_git::ArchiveFormat::Zip)
         .await
         .unwrap_err();
     let remote_error = remote
-        .archive(
-            "oversized",
-            "project",
-            codeyard::backend::git::ArchiveFormat::Zip,
-        )
+        .archive("oversized", "project", codeyard_git::ArchiveFormat::Zip)
         .await
         .unwrap_err();
     assert!(local_error.is_response_too_large());

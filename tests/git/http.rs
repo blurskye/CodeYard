@@ -7,11 +7,11 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::{Duration, Utc};
 use codeyard::backend::{
     db::{self, repositories, users::tokens, DbPool},
-    git::{
-        MAX_MIRROR_REFS, MAX_PULL_HEAD_REFS, MAX_PULL_HEAD_REF_BYTES, MAX_REPOSITORY_REFS,
-        MAX_REPOSITORY_REF_BYTES,
-    },
     repositories::lifecycle,
+};
+use codeyard_git::{
+    MAX_MIRROR_REFS, MAX_PULL_HEAD_REFS, MAX_PULL_HEAD_REF_BYTES, MAX_REPOSITORY_REFS,
+    MAX_REPOSITORY_REF_BYTES,
 };
 use git_server::{git, success, Server};
 use rand::RngCore;

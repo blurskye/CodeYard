@@ -363,7 +363,7 @@ pub(super) mod tests {
             })
             .await
             .unwrap();
-            let _cleanup = crate::backend::git::repository::process::ProcessGroup::new(
+            let _cleanup = codeyard_git::repository::process::ProcessGroup::new(
                 Some(numbers[0] as u32),
                 Duration::ZERO,
             );

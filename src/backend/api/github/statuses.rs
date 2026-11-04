@@ -67,7 +67,7 @@ async fn create(
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(super::auth::required)?;
     let actor = auth.user.id;
-    if !crate::backend::git::is_full_commit_id(&sha) {
+    if !codeyard_git::is_full_commit_id(&sha) {
         return Err(Error::invalid("sha must be a full commit ID"));
     }
     let context = input.context.as_deref().unwrap_or("default");

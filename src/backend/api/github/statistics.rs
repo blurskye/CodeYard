@@ -1,12 +1,8 @@
 //! Statistics share one bounded, ref-cached history scan on local and remote storage.
 use super::{contents::store_error, pagination::Pagination, repository, Error, Result};
 use crate::backend::{
-    api::repos::code::contributors::contributor_accounts,
-    app::AppState,
-    db::models::User,
-    git::{AuthorWeek, CommitStatistics, ContributorInfo},
-    repositories::store::repo_store,
-    webhooks::payloads,
+    api::repos::code::contributors::contributor_accounts, app::AppState, db::models::User,
+    repositories::store::repo_store, webhooks::payloads,
 };
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -16,6 +12,7 @@ use axum::{
     Json,
 };
 use chrono::Datelike;
+use codeyard_git::{AuthorWeek, CommitStatistics, ContributorInfo};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -97,9 +94,9 @@ async fn statistics(
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let kind = uri.path().rsplit('/').next().unwrap_or("");
     let mode = if matches!(kind, "contributors" | "code_frequency") {
-        crate::backend::git::StatisticsMode::Full
+        codeyard_git::StatisticsMode::Full
     } else {
-        crate::backend::git::StatisticsMode::Counts
+        codeyard_git::StatisticsMode::Counts
     };
     let stats = repo_store(&repo, state.cluster.as_ref())
         .commit_statistics(&repo.default_branch, mode)

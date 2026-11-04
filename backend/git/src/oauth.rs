@@ -78,7 +78,7 @@ fn on_branches(repo: &Repository, wanted: &BTreeSet<Entry>) -> Result<bool> {
 
 /// Refuses `updates` (old and new commit of each ref) that add, change or delete a workflow
 /// file, unless an existing branch already has that exact file, as GitHub allows.
-pub(crate) fn check_workflows(
+pub fn check_workflows(
     path: &Path,
     quarantine: Option<&Path>,
     updates: &[(String, String)],

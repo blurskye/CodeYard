@@ -180,7 +180,7 @@ pub(crate) fn trusted_executable(path: &Path, uid: u32) -> Result<PathBuf> {
 /// Git as found on PATH, followed through symbolic links (`/bin` is one on many systems)
 /// so that the file and directories that are checked are the ones that run.
 pub(crate) fn git_executable(uid: u32) -> Result<PathBuf> {
-    let found = crate::backend::git::repository::process::executable()?;
+    let found = codeyard_git::repository::process::executable()?;
     trusted_executable(&std::fs::canonicalize(found)?, uid)
 }
 

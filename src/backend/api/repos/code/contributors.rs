@@ -5,13 +5,13 @@ use crate::backend::app::AppState;
 use crate::backend::db::models::User;
 use crate::backend::db::DbPool;
 use crate::backend::repositories::access::AccessError;
-use crate::backend::{
-    git::error::RepoError,
-    repositories::store::{repo_store, ContributorInfo, MAX_CONTRIBUTOR_RESPONSE_BYTES},
+use crate::backend::repositories::store::{
+    repo_store, ContributorInfo, MAX_CONTRIBUTOR_RESPONSE_BYTES,
 };
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
+use codeyard_git::error::RepoError;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;

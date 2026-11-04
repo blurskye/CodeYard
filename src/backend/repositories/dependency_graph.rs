@@ -1,10 +1,10 @@
 //! Dependency inventories pin Git before reading either file and never execute package managers.
 use super::{dependencies::npm::Lockfile, store::repo_store};
-use crate::backend::git::error::{ErrorKind, RepoError};
 use crate::backend::{
     app::AppState,
     db::{self, dependency_graph::Reader, models::Repository},
 };
+use codeyard_git::error::{ErrorKind, RepoError};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
@@ -157,7 +157,7 @@ pub(crate) async fn native_inventory(
         .await
         .map_err(graph_error)?;
     let store = repo_store(repo, state.cluster.as_ref());
-    let sha = if crate::backend::git::is_full_commit_id(reference) {
+    let sha = if codeyard_git::is_full_commit_id(reference) {
         store.commit(reference).await?
     } else {
         store.commit_from_primary(reference).await?

@@ -3,13 +3,13 @@ use crate::backend::webhooks::{self, events, payloads};
 use crate::backend::{
     cluster::{placement, NodeContext},
     db::{self, models::Repository, repositories::creation as repo_lifecycle},
-    git::error::{ErrorKind, RepoError},
     repositories::{
         store::{repo_store, UploadFile, UploadWrite},
         templates::{self, Template},
     },
 };
 use chrono::{Datelike, Utc};
+use codeyard_git::error::{ErrorKind, RepoError};
 use std::path::Path;
 use tracing::instrument::{Instrument, WithSubscriber};
 use uuid::Uuid;

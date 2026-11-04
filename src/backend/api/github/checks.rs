@@ -281,7 +281,7 @@ struct CreateRun {
     patch: RunPatch,
 }
 async fn head(state: &AppState, repo: &Repository, sha: &str) -> Result<(String, Option<String>)> {
-    if !crate::backend::git::is_full_commit_id(sha) {
+    if !codeyard_git::is_full_commit_id(sha) {
         return Err(Error::invalid("head_sha must be a full commit ID"));
     }
     let store = repo_store(repo, state.cluster.as_ref());

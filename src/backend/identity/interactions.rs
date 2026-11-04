@@ -44,7 +44,7 @@ pub async fn prepare(
     }
     let _permit = PROOF_WORK.try_acquire()?;
     let store = repo_store(repository, state.cluster.as_ref());
-    let deadline = Instant::now() + crate::backend::git::COMMIT_WALK_TIMEOUT;
+    let deadline = Instant::now() + codeyard_git::COMMIT_WALK_TIMEOUT;
     // The tip comes from the primary, so a stale replica cannot record a proof for an old head.
     let head = store
         .refs_from_primary()

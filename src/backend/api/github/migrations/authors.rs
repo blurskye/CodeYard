@@ -93,7 +93,7 @@ async fn list(
         .await
         .map_err(super::store_error)?;
     let mut authors = BTreeSet::new();
-    let deadline = Instant::now() + crate::backend::git::COMMIT_WALK_TIMEOUT;
+    let deadline = Instant::now() + codeyard_git::COMMIT_WALK_TIMEOUT;
     // Walk branch and tag tips; tag-only and older merge-parent authors belong to the import.
     let tips: BTreeSet<&str> = refs
         .iter()

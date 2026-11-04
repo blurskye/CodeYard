@@ -762,7 +762,7 @@ async fn bounded_ancestors_contract(pg: bool) {
         &repo,
         None,
         1_800_000_000,
-        &"x".repeat(codeyard::backend::git::MAX_COMMIT_OBJECT_BYTES + 1),
+        &"x".repeat(codeyard_git::MAX_COMMIT_OBJECT_BYTES + 1),
         &files,
     );
     let tip = browse_commit(&repo, Some(oversized), 1_700_000_000, "small tip", &files);

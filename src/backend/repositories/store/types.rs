@@ -1,7 +1,7 @@
 //! The values that cross the store boundary: Git sessions, blob reads, merge requests and
 //! the size limits that apply to them.
 use crate::backend::db::{self, models::Repository};
-use crate::backend::git::{MAX_CI_WORKFLOW_BYTES, MAX_WORKFLOW_DIRECTORY_ENTRIES};
+use codeyard_git::{MAX_CI_WORKFLOW_BYTES, MAX_WORKFLOW_DIRECTORY_ENTRIES};
 use serde::{Deserialize, Serialize};
 
 /// The initiating reader of a pull head; remote publication retains token bounds.
@@ -98,7 +98,7 @@ pub(crate) struct BlobMetadata {
     pub preview: Option<BlobPreviewMetadata>,
 }
 
-pub const MAX_BLOB_RESPONSE_BYTES: usize = crate::backend::git::MAX_BLOB_MATERIALIZE_BYTES;
+pub const MAX_BLOB_RESPONSE_BYTES: usize = codeyard_git::MAX_BLOB_MATERIALIZE_BYTES;
 pub const MAX_ARCHIVE_RESPONSE_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_COMMIT_PAGE_SIZE: usize = 100;
 pub const MAX_COMMIT_OFFSET: usize = 100_000;

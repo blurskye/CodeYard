@@ -226,10 +226,7 @@ pub(super) async fn contract(
         .publish_file_as(f.pool(), second.id, owner, &prepared)
         .await
         .unwrap_err();
-    assert_eq!(
-        error.kind,
-        codeyard::backend::git::error::ErrorKind::Invalid
-    );
+    assert_eq!(error.kind, codeyard_git::error::ErrorKind::Invalid);
     assert!(error.message.contains("Signed-off-by"));
     assert_eq!(store.commit("refs/heads/main").await.unwrap().sha, head.sha);
     prepared.branch = "prepared-policy".into();

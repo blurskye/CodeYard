@@ -44,7 +44,7 @@ pub async fn get_combined_commit_status(
     Query(query): Query<PageQuery>,
 ) -> Result<Json<CombinedCommitStatusResponse>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
-    if !crate::backend::git::is_full_commit_id(&sha) {
+    if !codeyard_git::is_full_commit_id(&sha) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(

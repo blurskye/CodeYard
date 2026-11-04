@@ -152,7 +152,7 @@ fn git_object_path(path: &str) -> bool {
         .strip_prefix("objects/pack/pack-")
         .and_then(|name| name.strip_suffix(".pack"))
     {
-        return crate::backend::git::is_full_commit_id(name);
+        return codeyard_git::is_full_commit_id(name);
     }
     if let Some((directory, file)) = path
         .strip_prefix("objects/")
@@ -363,7 +363,7 @@ pub fn refs(source: &ArchiveSource) -> Result<(HashMap<String, String>, Option<S
             }
             let (sha, name) = line.split_once(' ').context("Invalid migration ref")?;
             ensure!(
-                crate::backend::git::is_full_commit_id(sha)
+                codeyard_git::is_full_commit_id(sha)
                     && name.starts_with("refs/")
                     && git2::Reference::is_valid_name(name),
                 "Invalid migration ref"
@@ -378,7 +378,7 @@ pub fn refs(source: &ArchiveSource) -> Result<(HashMap<String, String>, Option<S
         if path.starts_with("refs/") {
             let sha = std::str::from_utf8(bytes)?.trim();
             ensure!(
-                git2::Reference::is_valid_name(path) && crate::backend::git::is_full_commit_id(sha),
+                git2::Reference::is_valid_name(path) && codeyard_git::is_full_commit_id(sha),
                 "Invalid migration ref"
             );
             refs.insert(path.clone(), sha.to_owned());
@@ -388,7 +388,7 @@ pub fn refs(source: &ArchiveSource) -> Result<(HashMap<String, String>, Option<S
     // Discard server evidence before charging the user-history quota.
     refs.retain(|name, _| name != "refs/codeyard" && !name.starts_with("refs/codeyard/"));
     ensure!(
-        refs.len() <= crate::backend::git::MAX_REPOSITORY_REFS,
+        refs.len() <= codeyard_git::MAX_REPOSITORY_REFS,
         "Too many migration refs"
     );
     let head = source
@@ -399,7 +399,7 @@ pub fn refs(source: &ArchiveSource) -> Result<(HashMap<String, String>, Option<S
         .map(str::to_owned);
     if let Some(head) = &head {
         ensure!(
-            crate::backend::git::branch_ref(head).is_some(),
+            codeyard_git::branch_ref(head).is_some(),
             "Invalid migration HEAD"
         );
     }

@@ -1,8 +1,5 @@
 use super::config::CiPipelineKind;
-use crate::backend::{
-    git::error::{ErrorKind, RepoError},
-    repositories::store::{RepoStore, MAX_CI_WORKFLOW_BYTES},
-};
+use crate::backend::repositories::store::{RepoStore, MAX_CI_WORKFLOW_BYTES};
 use anyhow::{ensure, Context, Result};
 pub use codeyard_actions::workflow::events::{WorkflowEventFilter, WorkflowTriggers};
 #[cfg(test)]
@@ -10,6 +7,7 @@ use codeyard_actions::workflow::{
     dispatch_inputs::InputKind,
     events::{MAX_WORKFLOW_FILTER_PATTERNS, MAX_WORKFLOW_PATTERN_BYTES},
 };
+use codeyard_git::error::{ErrorKind, RepoError};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::{
@@ -1690,7 +1688,7 @@ on: [push, pull_request]
 
     #[tokio::test]
     async fn workflow_followup_tree_header_bound_precedes_traversal() {
-        use crate::backend::git::{
+        use codeyard_git::{
             MAX_CI_WORKFLOW_TREE_BYTES, MAX_WORKFLOW_DIRECTORY_ENTRIES,
             MAX_WORKFLOW_FILE_NAME_BYTES,
         };

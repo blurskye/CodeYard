@@ -60,7 +60,7 @@ fn invalid() -> RepoError {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GistSnapshot {
     pub sha: String,
-    pub files: Vec<crate::backend::git::objects::TreeObjectEntry>,
+    pub files: Vec<crate::objects::TreeObjectEntry>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GistRevision {
@@ -71,7 +71,7 @@ pub struct GistRevision {
     pub deletions: i32,
 }
 #[derive(Clone, Debug)]
-pub(crate) struct PreparedGist {
+pub struct PreparedGist {
     pub base: Option<String>,
     pub sha: String,
 }

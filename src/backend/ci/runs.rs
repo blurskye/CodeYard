@@ -109,7 +109,7 @@ impl CiRuns {
         credential: Option<db::ci::CiCredential>,
     ) -> Result<db::models::CiRun, AdmissionError> {
         use super::admission::{is_safe_owner, is_safe_ref, is_safe_workflow_path};
-        use crate::backend::git::is_full_commit_id;
+        use codeyard_git::is_full_commit_id;
         if !is_safe_owner(&request.repo_owner)
             || crate::backend::repositories::lifecycle::validate_name(&request.repo_name).is_err()
         {

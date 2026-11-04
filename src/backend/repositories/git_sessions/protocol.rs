@@ -13,9 +13,8 @@ pub(crate) const STDOUT: u8 = 2;
 pub(crate) const STDERR: u8 = 3;
 pub(crate) const EXIT: u8 = 4;
 pub(crate) const CONTROL_TIMEOUT: Duration = Duration::from_secs(120);
-pub(crate) const SESSION_TIMEOUT: Duration =
-    crate::backend::git::repository::process::SESSION_TIMEOUT;
-const IO_TIMEOUT: Duration = crate::backend::git::repository::process::IDLE_TIMEOUT;
+pub(crate) const SESSION_TIMEOUT: Duration = codeyard_git::repository::process::SESSION_TIMEOUT;
+const IO_TIMEOUT: Duration = codeyard_git::repository::process::IDLE_TIMEOUT;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

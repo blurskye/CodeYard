@@ -75,10 +75,8 @@ pub async fn list_ci_workflows(
         Ok(workflows) => workflows,
         Err(error)
             if error
-                .downcast_ref::<crate::backend::git::error::RepoError>()
-                .is_some_and(|error| {
-                    error.kind == crate::backend::git::error::ErrorKind::NotFound
-                }) =>
+                .downcast_ref::<codeyard_git::error::RepoError>()
+                .is_some_and(|error| error.kind == codeyard_git::error::ErrorKind::NotFound) =>
         {
             if query.git_ref.is_none() {
                 Vec::new()

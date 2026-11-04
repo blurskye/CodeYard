@@ -1367,6 +1367,7 @@ dependencies = [
  "chrono",
  "clap",
  "codeyard-actions",
+ "codeyard-git",
  "codeyard-github-graphql",
  "codeyard-support",
  "codeyard-webui",
@@ -1446,6 +1447,34 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "url",
+]
+
+[[package]]
+name = "codeyard-git"
+version = "0.1.5"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "chrono",
+ "codeyard-actions",
+ "codeyard-support",
+ "encoding_rs",
+ "flate2",
+ "git2",
+ "libc",
+ "libgit2-sys",
+ "regex",
+ "serde",
+ "serde_json",
+ "sha1 0.10.6",
+ "sha2 0.10.9",
+ "sqlx",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "toml",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

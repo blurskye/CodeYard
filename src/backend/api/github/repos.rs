@@ -473,7 +473,7 @@ async fn update(
         .is_some_and(|branch| branch != &repo.default_branch);
     if branch_changed {
         let branch = input.default_branch.as_deref().unwrap();
-        let reference = crate::backend::git::branch_ref(branch)
+        let reference = codeyard_git::branch_ref(branch)
             .ok_or_else(|| Error::invalid("Invalid default branch"))?;
         let refs = repo_store(&repo, state.cluster.as_ref())
             .refs_from_primary()

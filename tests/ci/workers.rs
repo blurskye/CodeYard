@@ -13,10 +13,10 @@ use codeyard::backend::{
     cluster::{self, rpc, NodeContext},
     crypto::SecretEncryptor,
     db,
-    git::error::ErrorKind,
     notifications::{current_event, NotificationBroadcaster, NotificationEvent},
     repositories::store::{GitService, GitSession, RepoStore},
 };
+use codeyard_git::error::ErrorKind;
 use iroh::protocol::ProtocolHandler;
 use serde_json::json;
 use std::{

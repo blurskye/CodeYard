@@ -1,7 +1,6 @@
 //! Repository read selection shared by browser and JSON adapters.
-use crate::backend::{
-    cluster::NodeContext, db, git::error::RepoError, repositories::store::repo_store,
-};
+use crate::backend::{cluster::NodeContext, db, repositories::store::repo_store};
+use codeyard_git::error::RepoError;
 use std::collections::HashMap;
 
 /// Accounts associated with Git email metadata, including Codeyard's generated noreply addresses.

@@ -1,6 +1,6 @@
 //! Credential detection shared by history scans and push protection.
 pub mod patterns;
-pub(crate) mod scanner;
+pub mod scanner;
 
 pub use scanner::{scan, secret_types, Detection, MAX_BLOB_BYTES};
 

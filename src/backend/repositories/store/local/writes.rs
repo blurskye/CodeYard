@@ -198,8 +198,7 @@ impl LocalStore {
     ) -> Result<(), RepoError> {
         let base_ref = base_branch
             .map(|branch| {
-                git::branch_ref(branch)
-                    .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))
+                git::branch_ref(branch).ok_or_else(|| codeyard_git::error::invalid_ref("branch"))
             })
             .transpose()?;
         let heads = heads
@@ -207,7 +206,7 @@ impl LocalStore {
             .map(|(name, target)| {
                 let name = git::merge_head_ref(name, target).map_err(RepoError::from)?;
                 if base_ref.as_deref() == Some(name.as_str()) {
-                    return Err(crate::backend::git::error::invalid_ref("merge head"));
+                    return Err(codeyard_git::error::invalid_ref("merge head"));
                 }
                 Ok((name, (*target).to_owned()))
             })

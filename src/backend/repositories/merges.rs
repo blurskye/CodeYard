@@ -4,12 +4,13 @@ use super::{
     refs::{publication_error, RefError},
     store::{repo_store, BranchMergePublication, CommitInfo, MergeMethod, MergeRequest},
 };
-use crate::backend::git::error::{ErrorKind, RepoError};
 use crate::backend::{
     ci::{CiRuns, RefUpdate},
     cluster::NodeContext,
-    db, git,
+    db,
 };
+use codeyard_git as git;
+use codeyard_git::error::{ErrorKind, RepoError};
 
 /// Native forms pin both commit identities. REST callers without a preview use the identities
 /// resolved by this operation, and publication still compares both mutable refs atomically.

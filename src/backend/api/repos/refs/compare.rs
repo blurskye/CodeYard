@@ -7,7 +7,6 @@ use crate::backend::{
     },
     app::AppState,
     db,
-    git::error::ErrorKind,
     repositories::{reads::same_fork_network, store::repo_store},
 };
 use axum::{
@@ -15,6 +14,7 @@ use axum::{
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_git::error::ErrorKind;
 use codeyard_webui::pages::repos::ref_path::compare_url;
 use codeyard_webui::pages::repos::{
     issues::{self as view, NewDraft},

@@ -4,9 +4,9 @@ use anyhow::{ensure, Context, Result};
 use std::path::Path;
 use tokio::io::AsyncReadExt;
 
-pub(crate) const PREVIEW_BYTES: u64 = 256 * 1024;
-pub(crate) const PREVIEW_LINES: usize = 2000;
-pub(crate) struct PreviewRead {
+pub const PREVIEW_BYTES: u64 = 256 * 1024;
+pub const PREVIEW_LINES: usize = 2000;
+pub struct PreviewRead {
     pub bytes: Vec<u8>,
     pub is_binary: bool,
     pub offset: u64,
@@ -109,7 +109,7 @@ impl Buffer {
     }
 }
 
-pub(crate) async fn read_blob_preview(
+pub async fn read_blob_preview(
     path: &Path,
     id: &str,
     size: u64,

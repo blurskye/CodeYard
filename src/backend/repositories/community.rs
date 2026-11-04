@@ -4,13 +4,13 @@ use super::{
     store::{repo_store, BlobRange, RepoStore},
     templates,
 };
-use crate::backend::git::error::{ErrorKind, RepoError};
 use crate::backend::{
     cluster::NodeContext,
     db::{self, models::Repository},
-    git::TreeEntry,
 };
 use chrono::{DateTime, Utc};
+use codeyard_git::error::{ErrorKind, RepoError};
+use codeyard_git::TreeEntry;
 
 #[derive(Clone)]
 pub struct File {

@@ -174,7 +174,7 @@ async fn heads(
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
-    if !crate::backend::git::is_full_commit_id(&sha) {
+    if !codeyard_git::is_full_commit_id(&sha) {
         return Err(Error::invalid("sha must be a full commit ID"));
     }
     let store = repo_store(&repo, state.cluster.as_ref());

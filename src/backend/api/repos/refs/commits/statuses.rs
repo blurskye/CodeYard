@@ -46,7 +46,7 @@ pub async fn list_commit_statuses(
     Query(query): Query<PageQuery>,
 ) -> Result<Json<Vec<CommitStatusResponse>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
-    if !crate::backend::git::is_full_commit_id(&sha) {
+    if !codeyard_git::is_full_commit_id(&sha) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
@@ -116,7 +116,7 @@ pub async fn create_commit_status(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
 
     check_repo_write_access(&state.pool, &repository, &user).await?;
-    if !crate::backend::git::is_full_commit_id(&sha) {
+    if !codeyard_git::is_full_commit_id(&sha) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(

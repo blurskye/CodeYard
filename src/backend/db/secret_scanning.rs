@@ -1,9 +1,9 @@
 //! Stored alerts and durable scan work. Alert reads require live repository administration.
 use super::{users::accounts::AccountCredential, DbPool};
-use crate::backend::git::secret_detection::patterns::{Create, Delete, Owner, Pattern, Update};
-use crate::backend::git::secret_scanning::Location;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
+use codeyard_git::secret_detection::patterns::{Create, Delete, Owner, Pattern, Update};
+use codeyard_git::secret_scanning::Location;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 

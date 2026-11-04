@@ -215,7 +215,7 @@ impl CommitResponse {
 }
 
 pub(crate) fn repo_store_error(
-    error: crate::backend::git::error::RepoError,
+    error: codeyard_git::error::RepoError,
     fallback: StatusCode,
 ) -> (StatusCode, Json<ApiError>) {
     let (status, code, message) = if error.is_response_too_large() {
@@ -231,7 +231,7 @@ pub(crate) fn repo_store_error(
             "storage node unavailable",
         )
     } else {
-        use crate::backend::git::error::ErrorKind;
+        use codeyard_git::error::ErrorKind;
         let missing = matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath);
         (
             if missing {
@@ -246,15 +246,11 @@ pub(crate) fn repo_store_error(
             },
             "git_error",
             match error.kind {
-                crate::backend::git::error::ErrorKind::NotFound
-                | crate::backend::git::error::ErrorKind::MissingPath => {
-                    "Requested Git resource not found"
-                }
-                crate::backend::git::error::ErrorKind::Invalid => "Invalid Git operation",
-                crate::backend::git::error::ErrorKind::Conflict => "Git reference changed",
-                crate::backend::git::error::ErrorKind::Unavailable => {
-                    "Repository storage is unavailable"
-                }
+                codeyard_git::error::ErrorKind::NotFound
+                | codeyard_git::error::ErrorKind::MissingPath => "Requested Git resource not found",
+                codeyard_git::error::ErrorKind::Invalid => "Invalid Git operation",
+                codeyard_git::error::ErrorKind::Conflict => "Git reference changed",
+                codeyard_git::error::ErrorKind::Unavailable => "Repository storage is unavailable",
             },
         )
     };
@@ -352,7 +348,7 @@ pub(crate) fn engagement_error(
 #[cfg(test)]
 mod error_tests {
     use super::*;
-    use crate::backend::git::error::{ErrorKind, RepoError};
+    use codeyard_git::error::{ErrorKind, RepoError};
     #[test]
     fn public_repository_failures_do_not_expose_internal_details() {
         for kind in [

@@ -1,11 +1,9 @@
-use crate::backend::{
-    db::secret_scanning::{ConfigUpdate, PatternConfig, Refusal},
-    git::secret_detection::{
-        patterns::{Create, Delete, Owner, Pattern, Update},
-        secret_types,
-    },
-};
+use crate::backend::db::secret_scanning::{ConfigUpdate, PatternConfig, Refusal};
 use anyhow::{ensure, Result};
+use codeyard_git::secret_detection::{
+    patterns::{Create, Delete, Owner, Pattern, Update},
+    secret_types,
+};
 use serde_json::{json, Value};
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -91,7 +89,7 @@ pub async fn create(
         Refusal::Denied
     );
     admission.commit().await?;
-    crate::backend::git::secret_detection::patterns::validate_batch(input)
+    codeyard_git::secret_detection::patterns::validate_batch(input)
         .await
         .map_err(|_| Refusal::Invalid)?;
     let mut tx = pool.begin().await?;

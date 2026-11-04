@@ -1,7 +1,7 @@
 //! Git database objects are written without publishing a reference.
 use super::repository::process;
 use super::repository::{MAX_COMMIT_EMAIL_BYTES, MAX_COMMIT_NAME_BYTES};
-use crate::backend::git::error::{ErrorKind, RepoError};
+use crate::error::{ErrorKind, RepoError};
 use anyhow::{ensure, Context, Result};
 use git2::{ObjectType, Oid, Repository};
 use serde::{Deserialize, Serialize};
@@ -179,7 +179,7 @@ fn checked_tree(repo: &Repository, id: Oid) -> Result<git2::Tree<'_>> {
 
 /// Only blobs introduced against the first parent; root commits introduce their whole tree.
 /// No patches or unchanged tree snapshots are materialized.
-pub(crate) async fn introduced_blobs(path: &Path, commit: &str) -> Result<Vec<TreeObjectEntry>> {
+pub async fn introduced_blobs(path: &Path, commit: &str) -> Result<Vec<TreeObjectEntry>> {
     oid(commit)?;
     let mut command = process::git_command()?;
     command.arg("--git-dir").arg(path).args([
@@ -239,7 +239,7 @@ pub(crate) async fn introduced_blobs(path: &Path, commit: &str) -> Result<Vec<Tr
     .await
 }
 
-pub(crate) async fn read_tree(path: &Path, revision: &str, recursive: bool) -> Result<TreeObject> {
+pub async fn read_tree(path: &Path, revision: &str, recursive: bool) -> Result<TreeObject> {
     use super::repository::process;
     let deadline = std::time::Instant::now() + process::RPC_TIMEOUT;
     let (owned_path, revision) = (path.to_owned(), revision.to_owned());
@@ -333,11 +333,7 @@ pub(crate) async fn read_tree(path: &Path, revision: &str, recursive: bool) -> R
     Ok(result)
 }
 
-pub(crate) fn ref_target(
-    path: &Path,
-    reference: &str,
-    sha: &str,
-) -> Result<(String, String, bool)> {
+pub fn ref_target(path: &Path, reference: &str, sha: &str) -> Result<(String, String, bool)> {
     if !super::is_canonical_ref(reference) {
         return Err(invalid("Invalid reference name").into());
     }
@@ -359,13 +355,13 @@ pub(crate) fn ref_target(
     ))
 }
 
-pub(crate) fn object_kind(path: &Path, sha: &str) -> Result<String> {
+pub fn object_kind(path: &Path, sha: &str) -> Result<String> {
     let repo = Repository::open_bare(path)?;
     let odb = repo.odb()?;
     Ok(odb.read_header(oid(sha)?)?.1.str().into())
 }
 
-pub(crate) fn read_tag(path: &Path, sha: &str) -> Result<TagObject> {
+pub fn read_tag(path: &Path, sha: &str) -> Result<TagObject> {
     let repo = Repository::open_bare(path)?;
     let id = oid(sha)?;
     let (size, _) = repo.odb()?.read_header(id)?;
@@ -575,7 +571,7 @@ fn change_trees(
     write_tree(&mut root)
 }
 
-pub(crate) fn write(path: &Path, input: ObjectWrite, bytes: &[u8]) -> Result<String> {
+pub fn write(path: &Path, input: ObjectWrite, bytes: &[u8]) -> Result<String> {
     let repo = Repository::open_bare(path)?;
     let id = match input {
         ObjectWrite::Blob => {

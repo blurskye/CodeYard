@@ -3,7 +3,6 @@ use super::{auth, repository, Error, Result};
 use crate::backend::{
     app::AppState,
     db::repositories::dependencies::Feature,
-    git::error::ErrorKind,
     repositories::{
         access::AccessError,
         dependencies::{self, DependencyError, Status},
@@ -15,6 +14,7 @@ use axum::{
     routing::{delete, get, put, MethodRouter},
     Json,
 };
+use codeyard_git::error::ErrorKind;
 use std::sync::Arc;
 fn failure(error: DependencyError) -> Error {
     match error {

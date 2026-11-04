@@ -149,7 +149,7 @@ impl GroupInput {
                                 && !parts[1].is_empty()
                                 && parts[2] == ".github"
                                 && parts[3] == "workflows"
-                                && crate::backend::git::ci::is_ci_workflow_filename(parts[4])
+                                && codeyard_git::ci::is_ci_workflow_filename(parts[4])
                                 && !reference.is_empty()
                                 && !reference.contains("${{")
                                 && git2::Reference::is_valid_name(
@@ -395,7 +395,7 @@ pub(crate) fn workflow_allowed(
         let Some(selected) = rule.strip_prefix(&prefix) else {
             return false;
         };
-        if crate::backend::git::is_full_commit_id(selected) {
+        if codeyard_git::is_full_commit_id(selected) {
             sha.is_some_and(|sha| sha.eq_ignore_ascii_case(selected))
         } else {
             selected == reference

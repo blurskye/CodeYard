@@ -6,12 +6,12 @@ use super::{owner_name, search::RESULTS_PER_PAGE, DiscoveryReadError};
 use crate::backend::{
     app::AppState,
     db,
-    git::{error::RepoError, CommitFilter},
     repositories::{
         access::{self, AccessError},
         store::{repo_store, RepoStore, MAX_COMMIT_OFFSET},
     },
 };
+use codeyard_git::{error::RepoError, CommitFilter};
 use codeyard_webui::pages::discovery::{CodeHit, CommitHit, SearchScan};
 use futures_util::{stream, StreamExt};
 use std::collections::{HashMap, HashSet};

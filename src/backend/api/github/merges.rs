@@ -2,7 +2,6 @@
 use super::{commits, repository, Error, Result};
 use crate::backend::{
     app::AppState,
-    git::error::ErrorKind,
     repositories::{
         access::AccessError,
         merges::{self, BranchMerge},
@@ -16,6 +15,7 @@ use axum::{
     routing::{post, MethodRouter},
     Json,
 };
+use codeyard_git::error::ErrorKind;
 use serde::Deserialize;
 use std::sync::Arc;
 

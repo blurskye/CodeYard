@@ -4,7 +4,7 @@ use anyhow::{ensure, Context, Result};
 use std::{collections::HashMap, path::Path, time::Duration};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-pub(crate) fn exists(path: &Path, name: &str) -> Result<bool> {
+pub fn exists(path: &Path, name: &str) -> Result<bool> {
     ensure!(
         name.starts_with("refs/codeyard/objects/"),
         "Invalid retention ref"
@@ -19,7 +19,7 @@ pub(crate) fn exists(path: &Path, name: &str) -> Result<bool> {
 }
 
 /// One bounded batch also permits cleanup of repositories already above the admission limit.
-pub(crate) fn candidates(path: &Path) -> Result<HashMap<String, String>> {
+pub fn candidates(path: &Path) -> Result<HashMap<String, String>> {
     let repo = Repository::open_bare(path)?;
     let mut refs = HashMap::new();
     for reference in repo
@@ -38,7 +38,7 @@ pub(crate) fn candidates(path: &Path) -> Result<HashMap<String, String>> {
 
 /// The caller holds the publication lease until the resulting CAS deletions finish.
 /// Keep only proven matches if the bounded reachability walk does not finish.
-pub(crate) async fn reachable(
+pub async fn reachable(
     path: &Path,
     mut candidates: HashMap<String, String>,
 ) -> Result<Vec<(String, String)>> {
@@ -101,7 +101,7 @@ pub(crate) async fn reachable(
     Ok(found)
 }
 
-pub(crate) async fn delete(path: &Path, refs: &[(String, String)]) -> Result<()> {
+pub async fn delete(path: &Path, refs: &[(String, String)]) -> Result<()> {
     if refs.is_empty() {
         return Ok(());
     }

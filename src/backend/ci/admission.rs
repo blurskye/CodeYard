@@ -3,11 +3,9 @@ use super::dispatch_inputs;
 use super::runs::CiRunRequest;
 use super::workflows::{infer_pipeline_from_workflow_path, workflow_definition_from_yaml};
 use crate::backend::db;
-use crate::backend::{
-    git::error::{ErrorKind, RepoError},
-    repositories::store::repo_store,
-};
+use crate::backend::repositories::store::repo_store;
 use anyhow::Result;
+use codeyard_git::error::{ErrorKind, RepoError};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, thiserror::Error)]
@@ -564,7 +562,7 @@ pub(super) async fn resolve(
     }
     if !pr_revision && !pr_target {
         // Tags retain their full names; storage accommodates every admitted public ref.
-        if commit.full_ref.len() > crate::backend::git::ref_names::MAX_REF_BYTES {
+        if commit.full_ref.len() > codeyard_git::ref_names::MAX_REF_BYTES {
             return Err(AdmissionError::Invalid("CI ref name is too long"));
         }
         request.branch = commit.full_ref;
@@ -693,13 +691,13 @@ pub fn is_safe_ref(value: &str) -> bool {
     } else {
         format!("refs/heads/{value}")
     };
-    !value.starts_with('-') && crate::backend::git::ref_names::is_canonical_ref(&reference)
+    !value.starts_with('-') && codeyard_git::ref_names::is_canonical_ref(&reference)
 }
 
 pub fn is_safe_workflow_path(value: &str) -> bool {
     value
         .strip_prefix(".github/workflows/")
-        .is_some_and(crate::backend::git::ci::is_ci_workflow_filename)
+        .is_some_and(codeyard_git::ci::is_ci_workflow_filename)
 }
 
 #[cfg(test)]

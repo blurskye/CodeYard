@@ -392,7 +392,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     .unwrap();
     assert_eq!(
         provenance.publication.actor,
-        codeyard::backend::git::PublicationActor::DeployKey(writer_id)
+        codeyard_git::PublicationActor::DeployKey(writer_id)
     );
     assert_eq!(provenance.publication.actor.user_id(), None);
     db::repositories::protection::upsert_branch_protection_rule(

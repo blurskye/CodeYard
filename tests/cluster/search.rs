@@ -7,12 +7,12 @@ use crate::support::native_database as native;
 use codeyard::backend::{
     cluster,
     db::{self, repositories::creation::RepositoryCreationOwner},
-    git::error::ErrorKind,
     repositories::{
         lifecycle::provision,
         store::{repo_store, FileWrite},
     },
 };
+use codeyard_git::error::ErrorKind;
 use std::path::Path;
 
 async fn start_node(

@@ -348,7 +348,7 @@ pub(crate) fn subject(
     // Comments on different commits are different conversations.
     if let Some(sha) = input.metadata["commit_sha"]
         .as_str()
-        .filter(|sha| crate::backend::git::is_full_commit_id(sha))
+        .filter(|sha| codeyard_git::is_full_commit_id(sha))
     {
         return Some(("Commit", sha.to_ascii_lowercase()));
     }

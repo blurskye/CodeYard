@@ -11,7 +11,6 @@ use crate::backend::{
         models::{Repository, User},
         repositories::immutable_releases::{self as records, Refusal},
     },
-    git::error::{ErrorKind, RepoError},
     repositories::{
         access,
         git_sessions::validation::{RefUpdate, ZERO_SHA},
@@ -19,6 +18,7 @@ use crate::backend::{
     },
 };
 use anyhow::{ensure, Result};
+use codeyard_git::error::{ErrorKind, RepoError};
 use serde::{Deserialize, Serialize};
 
 pub const TAG_PROTECTED: &str = "This tag name is protected by an immutable release";
@@ -254,7 +254,7 @@ pub(crate) async fn candidate(
     }
     let store = repo_store(repository, cluster);
     let reference =
-        crate::backend::git::tag_ref(tag).ok_or(ReleaseError::Invalid("Invalid release tag"))?;
+        codeyard_git::tag_ref(tag).ok_or(ReleaseError::Invalid("Invalid release tag"))?;
     let tag_oid = store
         .refs_from_primary()
         .await

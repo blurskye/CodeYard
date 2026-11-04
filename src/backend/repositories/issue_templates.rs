@@ -7,7 +7,7 @@
 //! pull request template is the first of a few fixed paths that exists.
 
 use super::store::RepoStore;
-use crate::backend::git::error::{ErrorKind, RepoError};
+use codeyard_git::error::{ErrorKind, RepoError};
 use codeyard_support::git_limits::{MAX_TEMPLATES, MAX_TEMPLATE_BYTES};
 
 const ISSUE_TEMPLATE_DIRECTORY: &str = ".github/ISSUE_TEMPLATE";

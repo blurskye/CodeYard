@@ -17,10 +17,10 @@ use crate::backend::db::{
     models::{HeldReplica, ReplicaSetting},
     DbPool,
 };
-use crate::backend::git::error::RepoError;
-use crate::backend::git::{locks, maintenance, mirror};
 use crate::backend::storage::local::{remove_stale_temporaries, STALE_AFTER};
 use anyhow::{Context, Result};
+use codeyard_git::error::RepoError;
+use codeyard_git::{locks, maintenance, mirror};
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
@@ -418,11 +418,9 @@ pub(crate) async fn reconcile(pool: &DbPool, node: i64, repos: &Path) -> Result<
 /// a copy counts as usable only when Git can open it.
 async fn opens(mirror: &Path) -> Result<bool> {
     let mirror = mirror.to_owned();
-    tokio::task::spawn_blocking(move || {
-        crate::backend::git::repository::opens_as_repository(&mirror)
-    })
-    .await
-    .context("the copy check stopped")?
+    tokio::task::spawn_blocking(move || codeyard_git::repository::opens_as_repository(&mirror))
+        .await
+        .context("the copy check stopped")?
 }
 
 async fn connected(path: &Path) -> Result<bool> {

@@ -138,7 +138,7 @@ pub(crate) fn validate_updates(updates: &[RefUpdate]) -> Result<()> {
             "invalid SHA"
         );
         ensure!(
-            crate::backend::git::is_canonical_ref(&update.reference),
+            codeyard_git::is_canonical_ref(&update.reference),
             "invalid ref"
         );
         ensure!(names.insert(&update.reference), "duplicate ref update");

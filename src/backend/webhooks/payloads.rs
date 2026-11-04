@@ -1956,8 +1956,7 @@ fn pushed_commit(
     distinct: &dyn Fn(&str) -> bool,
     files_until: std::time::Instant,
 ) -> Option<PushedCommit> {
-    let commit =
-        crate::backend::git::repository::peel_to_commit_checked(repository, revision).ok()?;
+    let commit = codeyard_git::repository::peel_to_commit_checked(repository, revision).ok()?;
     let (author, committer) = (commit.author(), commit.committer());
     let id = commit.id().to_string();
     let files = (std::time::Instant::now() < files_until)
@@ -2017,7 +2016,7 @@ async fn rev_list<'a>(
     excluded: impl Iterator<Item = &'a str>,
     reverse: bool,
 ) -> anyhow::Result<Vec<String>> {
-    use crate::backend::git::repository::process;
+    use codeyard_git::repository::process;
     let mut command = process::git_command()?;
     command
         .current_dir(path)
@@ -2057,7 +2056,7 @@ pub fn pushed_commits(
     after: &str,
     previous: Option<&[String]>,
 ) -> anyhow::Result<PushedCommits> {
-    use crate::backend::git::repository::process;
+    use codeyard_git::repository::process;
     let repository = git2::Repository::open_bare(path)?;
     let previous_tips = || previous.into_iter().flatten().map(String::as_str);
     let collect = async {
@@ -2366,7 +2365,7 @@ pub fn secret_scanning_alert(
         "resolution": alert.resolution, "resolution_comment": alert.resolution_comment,
         "resolved_at": alert.resolved_at, "resolved_by": resolved_by.map(user),
         "secret_type": alert.secret_type,
-        "provider_slug": crate::backend::git::secret_detection::provider(&alert.secret_type), "secret_type_display_name": alert.display_name,
+        "provider_slug": codeyard_git::secret_detection::provider(&alert.secret_type), "secret_type_display_name": alert.display_name,
         "secret": secret, "validity": alert.validity.as_deref().unwrap_or("unknown"), "push_protection_bypassed": bypass.is_some(),
         "push_protection_bypassed_by": bypassed_by.map(user), "push_protection_bypassed_at": bypass.and_then(|bypass|bypass.used_at),
         "publicly_leaked": null, "multi_repo": null, "is_base64_encoded": false
@@ -2374,7 +2373,7 @@ pub fn secret_scanning_alert(
 }
 
 pub fn secret_scanning_location(
-    location: &crate::backend::git::secret_scanning::Location,
+    location: &codeyard_git::secret_scanning::Location,
     owner: &str,
     repo: &str,
 ) -> Value {

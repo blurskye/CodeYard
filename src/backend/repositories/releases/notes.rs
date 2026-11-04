@@ -1,7 +1,8 @@
 //! Release notes derived from a pinned Git range and the repository's real merged pull requests.
 use super::*;
 use crate::backend::api::http::config::link_origin;
-use crate::backend::{git::error::ErrorKind, repositories::store::BlobRange};
+use crate::backend::repositories::store::BlobRange;
+use codeyard_git::error::ErrorKind;
 use serde::Deserialize;
 use std::fmt::Write;
 

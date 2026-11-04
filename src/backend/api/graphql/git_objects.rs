@@ -1,13 +1,11 @@
 //! Immutable Git node lookup and refs use RepoStore, including remote repositories.
 use super::{db, git, missing, node_id, repository, unavailable, RequestContext, Result, Value};
-use crate::backend::{
-    git::error::{ErrorKind, RepoError},
-    repositories::store::repo_store,
-};
+use crate::backend::repositories::store::repo_store;
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,
 };
+use codeyard_git::error::{ErrorKind, RepoError};
 use serde_json::json;
 fn key(value: &str) -> Option<(&str, Vec<u8>)> {
     let (kind, value) = value.split_once('_')?;
@@ -263,7 +261,7 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
             .ok()
             .filter(|id| *id > 0)
             .ok_or_else(missing)?;
-        if !crate::backend::git::is_full_commit_id(oid) {
+        if !codeyard_git::is_full_commit_id(oid) {
             return Err(missing());
         }
         repository::by_id(repo, request).await?;
@@ -337,7 +335,7 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
     } else {
         return Err(missing());
     };
-    if !crate::backend::git::is_full_commit_id(oid) {
+    if !codeyard_git::is_full_commit_id(oid) {
         return Err(missing());
     }
     let repo = repository::by_id(repo, request).await?;
@@ -380,7 +378,7 @@ pub(super) async fn resolve(
                         .and_then(|entries| entries.into_iter().find(|entry| entry.path == path))
                         .map(|entry| entry.sha)
                 }
-            } else if crate::backend::git::is_full_commit_id(expression) {
+            } else if codeyard_git::is_full_commit_id(expression) {
                 Some(expression.to_owned())
             } else {
                 let refs = loaded_refs(repo, request).await?;

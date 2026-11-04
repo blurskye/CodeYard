@@ -180,12 +180,12 @@ async fn submit(
                 None if error.is::<codeyard_support::credentials::AccountRestricted>() => {
                     StatusCode::FORBIDDEN
                 }
-                None => match error.downcast_ref::<crate::backend::git::error::RepoError>() {
+                None => match error.downcast_ref::<codeyard_git::error::RepoError>() {
                     Some(error)
                         if matches!(
                             error.kind,
-                            crate::backend::git::error::ErrorKind::NotFound
-                                | crate::backend::git::error::ErrorKind::Invalid
+                            codeyard_git::error::ErrorKind::NotFound
+                                | codeyard_git::error::ErrorKind::Invalid
                         ) =>
                     {
                         StatusCode::UNPROCESSABLE_ENTITY

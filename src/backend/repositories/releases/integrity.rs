@@ -101,7 +101,7 @@ impl Statement {
         ensure!(
             predicate.repository_id > 0
                 && predicate.tag.len() <= 255
-                && crate::backend::git::tag_ref(&predicate.tag).is_some(),
+                && codeyard_git::tag_ref(&predicate.tag).is_some(),
             "Invalid release identity"
         );
         ensure!(

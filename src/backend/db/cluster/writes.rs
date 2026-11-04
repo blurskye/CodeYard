@@ -9,8 +9,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub(crate) const MAX_VOTERS: usize = 999;
 pub(crate) const MAX_FAMILY: usize = 10_000;
-pub(crate) const MAX_REFS: usize = crate::backend::git::repository::MAX_MIRROR_REFS;
-const MAX_REF_BYTES: usize = crate::backend::git::repository::MAX_MIRROR_REF_BYTES;
+pub(crate) const MAX_REFS: usize = codeyard_git::repository::MAX_MIRROR_REFS;
+const MAX_REF_BYTES: usize = codeyard_git::repository::MAX_MIRROR_REF_BYTES;
 
 native_operation!(crate::backend::db::postgres::cluster::writes::write_settings,
     crate::backend::db::sqlite::cluster::writes::write_settings,

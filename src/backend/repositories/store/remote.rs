@@ -8,7 +8,7 @@ use crate::backend::cluster::{
     rpc::{self, Failure, Operation, Request},
     NodeContext,
 };
-use crate::backend::git::error::RepoError;
+use codeyard_git::error::RepoError;
 use serde::de::DeserializeOwned;
 use std::path::Path;
 
@@ -359,7 +359,7 @@ impl RemoteStore {
         let oid =
             git2::Oid::from_str(sha).map_err(|_| rpc::wire::invalid("invalid checkout commit"))?;
         // Network admission is separate from execution on this node or its peer.
-        let permit = crate::backend::git::repository::process::forwarding_permit()
+        let permit = codeyard_git::repository::process::forwarding_permit()
             .await
             .map_err(RepoError::from)?;
         let mut request = Vec::new();
@@ -394,7 +394,7 @@ impl RemoteStore {
             .await
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
         drop(output);
-        let lock = crate::backend::git::locks::lock(destination).await;
+        let lock = codeyard_git::locks::lock(destination).await;
         LocalStore::checkout_pack(destination, sha, &self.disk_path, pack, permit, lock).await
     }
 }

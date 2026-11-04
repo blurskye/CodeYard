@@ -4,7 +4,6 @@ use crate::backend::{
     ci::{CiRuns, RefUpdate},
     cluster::NodeContext,
     db,
-    git::error::{ErrorKind, RepoError},
     repositories::{
         access,
         protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia, ANY_TIP},
@@ -15,6 +14,7 @@ use crate::backend::{
         },
     },
 };
+use codeyard_git::error::{ErrorKind, RepoError};
 use std::collections::HashMap;
 
 pub struct FileSave {
@@ -271,7 +271,7 @@ pub fn free_branch_name(username: &str, refs: &HashMap<String, String>) -> Strin
 
 /// The name of a new branch must be a valid branch name.
 fn check_new_branch_name(name: &str) -> Result<(), WriteError> {
-    if crate::backend::git::branch_ref(name).is_none() {
+    if codeyard_git::branch_ref(name).is_none() {
         return Err(WriteError {
             kind: WriteFailure::Invalid,
             message: "Choose a valid name for the new branch.".into(),

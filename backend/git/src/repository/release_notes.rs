@@ -8,7 +8,7 @@ pub struct ReleaseHistory {
     pub commits: Vec<String>,
 }
 
-pub(crate) async fn release_history(
+pub async fn release_history(
     path: &Path,
     head: &str,
     previous: Option<&str>,

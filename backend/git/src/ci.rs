@@ -51,7 +51,7 @@ fn not_found(message: &str) -> anyhow::Error {
 /// Picks the commit for a run. `reference` is a branch or tag name, or a full ref
 /// name. Without `sha` the ref's current tip is used. With `must_be_on_ref` the
 /// given `sha` has to be reachable from the ref's tip.
-pub(crate) fn resolve_ci_commit(
+pub fn resolve_ci_commit(
     path: &Path,
     reference: &str,
     sha: Option<&str>,
@@ -106,7 +106,7 @@ pub(crate) fn resolve_ci_commit(
 
 /// Reads one workflow file from a commit. It has to be a regular tracked text
 /// file of reasonable size.
-pub(crate) fn read_ci_workflow(path: &Path, sha: &str, workflow: &str) -> Result<CiWorkflowFile> {
+pub fn read_ci_workflow(path: &Path, sha: &str, workflow: &str) -> Result<CiWorkflowFile> {
     let git = Repository::open_bare(path).context("CI bare repository unavailable")?;
     let commit = find_commit_checked(&git, Oid::from_str(sha)?)?;
     let entry =
@@ -127,7 +127,7 @@ pub(crate) fn read_ci_workflow(path: &Path, sha: &str, workflow: &str) -> Result
 
 /// Lists only direct, regular workflow files at a revision. Directory and object
 /// bounds are checked before any workflow blob is materialized.
-pub(crate) fn list_ci_workflow_files(path: &Path, revision: &str) -> Result<Vec<CiWorkflowSource>> {
+pub fn list_ci_workflow_files(path: &Path, revision: &str) -> Result<Vec<CiWorkflowSource>> {
     let git = Repository::open_bare(path)?;
     let commit = peel_to_commit_checked(&git, revision)?;
     workflow_files_in_commit(&git, &commit)
@@ -209,7 +209,7 @@ fn workflow_files_in_commit(
 /// A workflow file directly in `.github/workflows/`. Spaces and non-ASCII letters are valid, as
 /// on GitHub. A separator, a comma or a control character is not, and neither is a colon,
 /// which job identities use to split the path from the job.
-pub(crate) fn is_ci_workflow_filename(name: &str) -> bool {
+pub fn is_ci_workflow_filename(name: &str) -> bool {
     name.len() + ".github/workflows/".len() <= 255
         && (name.ends_with(".yml") || name.ends_with(".yaml"))
         && !name

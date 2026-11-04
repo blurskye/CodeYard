@@ -176,9 +176,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         controls: Semaphore::new(2),
         operations: Mutex::new(HashMap::new()),
     });
-    let lease = crate::backend::git::locks::open_publication(&path)
-        .await
-        .unwrap();
+    let lease = codeyard_git::locks::open_publication(&path).await.unwrap();
     let publication = lease.acquire(&path).await.unwrap();
     let updates = vec![RefUpdate {
         old: old.clone(),

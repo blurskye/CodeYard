@@ -649,7 +649,7 @@ mod fixture {
                 .unwrap();
         }
         assert_eq!(
-            crate::backend::git::published_refs_in_use(&fixture.path)
+            codeyard_git::published_refs_in_use(&fixture.path)
                 .unwrap()
                 .count,
             10_000
@@ -663,7 +663,7 @@ mod fixture {
         let bare = git2::Repository::open_bare(&fixture.path).unwrap();
         let target = bare.find_object(fixture.oid, None).unwrap();
         let signature = git2::Signature::now("Alice", "alice@example.invalid").unwrap();
-        let message = "x".repeat(crate::backend::git::MAX_TAG_MESSAGE_BYTES);
+        let message = "x".repeat(codeyard_git::MAX_TAG_MESSAGE_BYTES);
         for index in 0..4 {
             bare.tag(
                 &format!("large-{index}"),
@@ -691,7 +691,7 @@ mod fixture {
         assert!(String::from_utf8_lossy(&result).contains("ng refs/tags/too-many"));
         assert!(bare.find_reference("refs/tags/too-many").is_err());
         assert_eq!(
-            crate::backend::git::repository::list_tags(&fixture.path)
+            codeyard_git::repository::list_tags(&fixture.path)
                 .unwrap()
                 .len(),
             4
@@ -707,7 +707,7 @@ mod fixture {
             .await
             .unwrap()
             .unwrap();
-        let guard = crate::backend::git::locks::lock(&fixture.path).await;
+        let guard = codeyard_git::locks::lock(&fixture.path).await;
         let (pool, repo_id, actor) = (fixture.pool.clone(), fixture.repo_id, fixture.owner_id);
         let setter = tokio::spawn(async move {
             repo_store(&repo, None)
@@ -1484,7 +1484,7 @@ mod fixture {
         let mut fixture = Fixture::new().await;
         let bare = git2::Repository::open_bare(&fixture.path).unwrap();
         let mut workflows = bare.treebuilder(None).unwrap();
-        for index in 0..=crate::backend::git::MAX_WORKFLOW_DIRECTORY_ENTRIES {
+        for index in 0..=codeyard_git::MAX_WORKFLOW_DIRECTORY_ENTRIES {
             let blob = bare.blob(b"malformed: [").unwrap();
             workflows
                 .insert(format!("workflow-{index}.yml"), blob, 0o100644)
@@ -1609,7 +1609,7 @@ mod fixture {
             .unwrap();
         let parent = clone.find_commit(fixture.oid).unwrap();
         let signature = git2::Signature::now("Fixture", "fixture@example.invalid").unwrap();
-        let message = "x".repeat(crate::backend::git::repository::MAX_COMMIT_OBJECT_BYTES + 1);
+        let message = "x".repeat(codeyard_git::repository::MAX_COMMIT_OBJECT_BYTES + 1);
         let commit = clone
             .commit(
                 None,
@@ -1728,7 +1728,7 @@ mod fixture {
             .blob(b"name: Nonmatching\non:\n  push:\n    paths: ['docs/**']\njobs:\n  check:\n    runs-on: ubuntu-latest\n    steps: []\n")
             .unwrap();
         let oversized = bare
-            .blob(&vec![b'#'; crate::backend::git::MAX_CI_WORKFLOW_BYTES + 1])
+            .blob(&vec![b'#'; codeyard_git::MAX_CI_WORKFLOW_BYTES + 1])
             .unwrap();
         let mut workflows = bare.treebuilder(None).unwrap();
         workflows

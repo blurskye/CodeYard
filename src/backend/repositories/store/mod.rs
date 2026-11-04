@@ -8,7 +8,7 @@
 //! host OpenSSH gateway.
 mod editor;
 mod gists;
-use crate::backend::git::gist_types::{GistEdit, GistRevision, GistSnapshot};
+use codeyard_git::gist_types::{GistEdit, GistRevision, GistSnapshot};
 pub use gists::GistCredential;
 mod local;
 mod remote;
@@ -21,15 +21,15 @@ use crate::backend::{
         NodeContext,
     },
     db::{self, models::Repository},
-    git::{self, repository::process},
     repositories::protection::WriteVia,
 };
+use codeyard_git::{self as git, repository::process};
 use std::{collections::HashMap, path::Path, time::Instant};
 
-use crate::backend::git::error::invalid_ref;
-use crate::backend::git::error::{ErrorKind, RepoError};
-pub(crate) use crate::backend::git::validate_merge_revision;
-pub use crate::backend::git::{
+use codeyard_git::error::invalid_ref;
+use codeyard_git::error::{ErrorKind, RepoError};
+pub(crate) use codeyard_git::validate_merge_revision;
+pub use codeyard_git::{
     BlameHunk, BlobContent, BranchStatus, CiCommit, CiWorkflowFile, CiWorkflowSource,
     CommitComparison, CommitFilter, CommitInfo, ContributorInfo, DiffFileInfo, DiffInfo, FileBlame,
     FileList, LanguageStat, RepoInfo, TagInfo, TreeEntry, WeekChanges, MAX_CI_CHANGED_PATHS,

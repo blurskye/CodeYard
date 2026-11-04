@@ -386,7 +386,7 @@ impl RunPatch {
 
 pub(crate) fn validate_automatic(sha: &str, branch: &str, after: i64) -> Result<()> {
     ensure!(
-        crate::backend::git::is_full_commit_id(sha)
+        codeyard_git::is_full_commit_id(sha)
             && !branch.is_empty()
             && text(branch, 1024)
             && after >= 0,

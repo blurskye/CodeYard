@@ -21,12 +21,12 @@ use codeyard::backend::{
         models::{NodeReplicaCounts, ReplicaSetting, Repository},
         DbPool,
     },
-    git::error::{ErrorKind, RepoError},
     repositories::store::{
         begin_ref_change, repo_store, FileWrite, GitService, GitSession, GitStreams, RepoStore,
     },
     storage::ObjectStore,
 };
+use codeyard_git::error::{ErrorKind, RepoError};
 use rand::RngCore;
 use std::{
     collections::HashMap,

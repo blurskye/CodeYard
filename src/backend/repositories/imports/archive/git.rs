@@ -1,7 +1,8 @@
 //! Repack only verified, reachable objects in a fresh quarantine repository.
 use super::{refs, ArchiveSource};
-use crate::backend::{git::repository::process, repositories::imports::MAX_IMPORT_PACK_BYTES};
+use crate::backend::repositories::imports::MAX_IMPORT_PACK_BYTES;
 use anyhow::{ensure, Result};
+use codeyard_git::repository::process;
 use std::collections::HashMap;
 
 pub struct ArchiveGit {

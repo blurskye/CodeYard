@@ -81,7 +81,7 @@ impl NewDeployment<'_> {
 
     pub(crate) fn validate(&self) -> Result<()> {
         anyhow::ensure!(
-            crate::backend::git::is_full_commit_id(self.sha)
+            codeyard_git::is_full_commit_id(self.sha)
                 && !self.reference.is_empty()
                 && valid_text(self.reference, 1024)
                 && !self.task.is_empty()

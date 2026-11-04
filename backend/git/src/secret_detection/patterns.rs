@@ -122,7 +122,7 @@ fn compile(
     })
 }
 
-pub(crate) async fn validate_batch(input: &[Create]) -> Result<()> {
+pub async fn validate_batch(input: &[Create]) -> Result<()> {
     static COMPILATIONS: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
         std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(2)));
     let permit = COMPILATIONS.clone().acquire_owned().await?;

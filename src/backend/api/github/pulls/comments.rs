@@ -152,7 +152,7 @@ pub(super) async fn prepare_with_diff(
     pull: &db::models::PullRequest,
     input: Create,
     pending: bool,
-    cached: Option<&crate::backend::git::DiffInfo>,
+    cached: Option<&codeyard_git::DiffInfo>,
 ) -> Result<domain::CreatePullRequestCommentRequest> {
     let mut line = input.line;
     let mut side = input.side;

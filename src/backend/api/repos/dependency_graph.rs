@@ -1,9 +1,6 @@
 use super::chrome;
 use crate::backend::{
-    api::http::context::PageContext,
-    app::AppState,
-    git::error::{ErrorKind, RepoError},
-    repositories::dependency_graph as graph,
+    api::http::context::PageContext, app::AppState, repositories::dependency_graph as graph,
 };
 use axum::{
     extract::{Path, State},
@@ -12,6 +9,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
+use codeyard_git::error::{ErrorKind, RepoError};
 use codeyard_webui::{
     app::Page,
     pages::repos::{

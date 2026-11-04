@@ -8,16 +8,16 @@ use crate::backend::{
         models::Repository,
         repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
     },
-    git::{
-        error::RepoError,
-        gist_types::{GistEdit, GistFileChange, GistSnapshot, MAX_GIST_FILES},
-    },
     repositories::{
         lifecycle,
         store::{repo_store, GistCredential},
     },
 };
 use anyhow::{ensure, Result};
+use codeyard_git::{
+    error::RepoError,
+    gist_types::{GistEdit, GistFileChange, GistSnapshot, MAX_GIST_FILES},
+};
 use std::{collections::BTreeMap, future::Future, sync::Arc};
 
 static GIST_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);

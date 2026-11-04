@@ -55,7 +55,7 @@ impl GitTasks {
             return false;
         };
         while tasks.try_join_next().is_some() {}
-        if tasks.len() >= 2 * crate::backend::git::repository::process::session_capacity() {
+        if tasks.len() >= 2 * codeyard_git::repository::process::session_capacity() {
             return false;
         }
         tasks.spawn(task);
@@ -83,7 +83,7 @@ mod task_tests {
     #[tokio::test]
     async fn detached_git_tasks_have_a_lifetime_bound() {
         let tasks = GitTasks::default();
-        for _ in 0..2 * crate::backend::git::repository::process::session_capacity() {
+        for _ in 0..2 * codeyard_git::repository::process::session_capacity() {
             assert!(tasks.spawn(std::future::pending()));
         }
         assert!(!tasks.spawn(async {}));

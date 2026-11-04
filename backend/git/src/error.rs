@@ -151,7 +151,7 @@ impl RepoError {
         Self {
             kind: ErrorKind::Invalid,
             reason: Some(RepoErrorReason::WriteDenied),
-            message: crate::backend::git::oauth::WORKFLOW_DENIED.into(),
+            message: crate::oauth::WORKFLOW_DENIED.into(),
         }
     }
 
@@ -250,7 +250,7 @@ impl fmt::Display for RepoError {
 
 impl std::error::Error for RepoError {}
 
-pub(crate) fn invalid_ref(kind: &str) -> RepoError {
+pub fn invalid_ref(kind: &str) -> RepoError {
     RepoError::new(ErrorKind::Invalid, format!("Invalid {kind} name"))
 }
 
@@ -264,47 +264,41 @@ impl From<anyhow::Error> for RepoError {
         if error.is::<codeyard_support::credentials::AccountRestricted>() {
             return Self::write_denied();
         }
-        if error.is::<crate::backend::git::repository::process::SessionsBusy>() {
+        if error.is::<crate::repository::process::SessionsBusy>() {
             return Self::sessions_busy();
         }
-        if let Some(conflict) = error.downcast_ref::<crate::backend::git::repository::RefConflict>()
-        {
+        if let Some(conflict) = error.downcast_ref::<crate::repository::RefConflict>() {
             return Self::new(ErrorKind::Conflict, conflict.to_string());
         }
-        if error.is::<crate::backend::git::repository::PullHeadConflict>() {
+        if error.is::<crate::repository::PullHeadConflict>() {
             return Self::new(ErrorKind::Conflict, "Git pull request ref changed");
         }
-        if let Some(conflict) =
-            error.downcast_ref::<crate::backend::git::repository::MergeConflict>()
-        {
+        if let Some(conflict) = error.downcast_ref::<crate::repository::MergeConflict>() {
             return Self::new(ErrorKind::Conflict, conflict.to_string());
         }
-        if let Some(unsupported) =
-            error.downcast_ref::<crate::backend::git::repository::UnsupportedMerge>()
-        {
+        if let Some(unsupported) = error.downcast_ref::<crate::repository::UnsupportedMerge>() {
             return Self::new(ErrorKind::Invalid, unsupported.to_string());
         }
-        if error.is::<crate::backend::git::repository::process::OutputLimitExceeded>()
-            || error.is::<crate::backend::git::ObjectTooLarge>()
+        if error.is::<crate::repository::process::OutputLimitExceeded>()
+            || error.is::<crate::ObjectTooLarge>()
         {
             return Self::response_too_large();
         }
-        if error.is::<crate::backend::git::repository::NotFile>() {
+        if error.is::<crate::repository::NotFile>() {
             return Self {
                 kind: ErrorKind::MissingPath,
                 reason: Some(RepoErrorReason::NotFile),
                 message: "The path is not a file".into(),
             };
         }
-        if error.is::<crate::backend::git::InvalidByteRange>() {
+        if error.is::<crate::InvalidByteRange>() {
             return Self::range_not_satisfiable();
         }
-        if let Some(refused) = error.downcast_ref::<crate::backend::git::repository::BlameRefused>()
-        {
+        if let Some(refused) = error.downcast_ref::<crate::repository::BlameRefused>() {
             return Self::new(ErrorKind::Invalid, refused.0);
         }
         let kind = match error.downcast_ref::<git2::Error>() {
-            Some(error) if crate::backend::git::is_missing_path(error) => ErrorKind::MissingPath,
+            Some(error) if crate::is_missing_path(error) => ErrorKind::MissingPath,
             Some(error) if error.code() == git2::ErrorCode::Ambiguous => ErrorKind::Invalid,
             // A repository directory that cannot be opened is an outage, not a
             // missing branch.

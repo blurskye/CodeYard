@@ -6,7 +6,6 @@ use crate::backend::{
     },
     app::AppState,
     db, gists as domain,
-    git::error::{ErrorKind, RepoError},
     repositories::{
         lifecycle::{LifecycleFailure, StorageError},
         store::{repo_store, GistCredential},
@@ -19,6 +18,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use codeyard_git::error::{ErrorKind, RepoError};
 use codeyard_webui::{app::Page as AppPage, pages::gists as view};
 use std::sync::Arc;
 mod forms;

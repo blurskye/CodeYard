@@ -145,7 +145,7 @@ impl Update {
         if let Some(source) = &self.source {
             anyhow::ensure!(
                 matches!(source.path.as_str(), "/" | "/docs")
-                    && crate::backend::git::branch_ref(&source.branch).is_some(),
+                    && codeyard_git::branch_ref(&source.branch).is_some(),
                 Refusal::Invalid
             );
         }

@@ -1,18 +1,15 @@
 //! The Git database API does not move refs when it creates objects.
 use super::{contents::store_error, repo_url, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    git::objects::{
-        ObjectWrite, Signature, TagObject, TreeChange, TreeObject, MAX_BLOB_WRITE_BYTES,
-    },
-    repositories::store::repo_store,
-};
+use crate::backend::{app::AppState, repositories::store::repo_store};
 use axum::{
     extract::{DefaultBodyLimit, FromRequest, Path, Query, Request, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post, MethodRouter},
     Json,
+};
+use codeyard_git::objects::{
+    ObjectWrite, Signature, TagObject, TreeChange, TreeObject, MAX_BLOB_WRITE_BYTES,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -162,12 +159,11 @@ async fn create_blob(
         .into_response())
 }
 
-fn write_error(error: crate::backend::git::error::RepoError) -> Error {
+fn write_error(error: codeyard_git::error::RepoError) -> Error {
     if !error.is_write_denied()
         && matches!(
             error.kind,
-            crate::backend::git::error::ErrorKind::NotFound
-                | crate::backend::git::error::ErrorKind::Invalid
+            codeyard_git::error::ErrorKind::NotFound | codeyard_git::error::ErrorKind::Invalid
         )
     {
         return Error::invalid("Invalid Git object");

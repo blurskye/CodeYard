@@ -184,7 +184,7 @@ pub fn run() -> Result<()> {
     set_private_umask();
     load_dotenv()?;
     crate::backend::identity::setup::configured_admin_secret()?;
-    crate::backend::git::objects::flush_writes_to_disk();
+    codeyard_git::objects::flush_writes_to_disk();
     let runtime = tokio::runtime::Runtime::new()?;
     let result = runtime.block_on(run_application(arguments));
     // Blocking tasks such as workspace removal cannot be cancelled; do not wait for them past the shutdown grace.

@@ -101,8 +101,7 @@ pub(super) fn ref_error(error: refs::RefError) -> Error {
         RefError::Git(error)
             if matches!(
                 error.kind,
-                crate::backend::git::error::ErrorKind::Conflict
-                    | crate::backend::git::error::ErrorKind::NotFound
+                codeyard_git::error::ErrorKind::Conflict | codeyard_git::error::ErrorKind::NotFound
             ) =>
         {
             Error::invalid("Invalid reference target or reference already exists")
@@ -127,7 +126,7 @@ async fn create(
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(super::auth::required)?;
     let actor = auth.database_actor();
-    if !crate::backend::git::is_full_commit_id(&input.sha) {
+    if !codeyard_git::is_full_commit_id(&input.sha) {
         return Err(Error::invalid("sha must be a full object ID"));
     }
     let sha = if let Some(branch) = input.reference.strip_prefix("refs/heads/") {

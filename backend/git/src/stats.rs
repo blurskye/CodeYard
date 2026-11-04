@@ -209,7 +209,7 @@ fn is_not_found(error: &anyhow::Error) -> bool {
 }
 
 /// The commit `branch` points at, or `None` while the branch is unborn.
-pub(crate) fn branch_tip(repo_path: &Path, branch: &str) -> Result<Option<String>> {
+pub fn branch_tip(repo_path: &Path, branch: &str) -> Result<Option<String>> {
     let repo = Repository::open_bare(repo_path)?;
     let tip = match peel_to_commit_checked(&repo, &format!("refs/heads/{branch}")) {
         Ok(commit) => Some(commit.id().to_string()),
@@ -219,10 +219,7 @@ pub(crate) fn branch_tip(repo_path: &Path, branch: &str) -> Result<Option<String
     Ok(tip)
 }
 
-pub(crate) async fn compute_language_stats(
-    repo_path: &Path,
-    git_ref: &str,
-) -> Result<Vec<LanguageStat>> {
+pub async fn compute_language_stats(repo_path: &Path, git_ref: &str) -> Result<Vec<LanguageStat>> {
     let repo = Repository::open_bare(repo_path)?;
     let revision = match peel_to_commit_checked(&repo, git_ref) {
         Ok(commit) => commit.id().to_string(),
@@ -400,11 +397,11 @@ where
     Ok(value)
 }
 
-pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<ContributorInfo>> {
+pub async fn get_contributors(repo_path: &Path) -> Result<Vec<ContributorInfo>> {
     contributors_for(repo_path, None).await
 }
 
-pub(crate) async fn get_branch_contributors(
+pub async fn get_branch_contributors(
     repo_path: &Path,
     branch: &str,
 ) -> Result<Vec<ContributorInfo>> {
@@ -580,7 +577,7 @@ fn parse_week_changes(output: &[u8], first: chrono::NaiveDate) -> Vec<WeekChange
 
 /// Lines added and removed on `branch` in each of the last 52 weeks, oldest first. A branch
 /// that does not exist yet has none.
-pub(crate) async fn get_code_frequency(repo_path: &Path, branch: &str) -> Result<Vec<WeekChanges>> {
+pub async fn get_code_frequency(repo_path: &Path, branch: &str) -> Result<Vec<WeekChanges>> {
     let today = chrono::Utc::now().date_naive();
     let first = week_start(today) - chrono::Days::new((CODE_FREQUENCY_WEEKS as u64 - 1) * 7);
     let reference = format!("refs/heads/{branch}");
@@ -629,7 +626,7 @@ fn unless_removed<T>(result: std::io::Result<T>) -> Result<Option<T>> {
     }
 }
 
-pub(crate) fn directory_size(path: &Path) -> Result<u64> {
+pub fn directory_size(path: &Path) -> Result<u64> {
     // The repository itself must exist; only what is inside it may vanish.
     std::fs::symlink_metadata(path)?;
     let mut size = 0u64;
@@ -717,7 +714,7 @@ pub enum StatisticsMode {
 static COMMIT_STATISTICS_CACHES: LazyLock<RefCaches<CommitStatistics>> =
     LazyLock::new(Mutex::default);
 
-pub(crate) async fn get_commit_statistics(
+pub async fn get_commit_statistics(
     repo_path: &Path,
     branch: &str,
     mode: StatisticsMode,

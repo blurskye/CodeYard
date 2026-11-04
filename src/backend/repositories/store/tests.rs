@@ -1,6 +1,6 @@
 //! The store against real bare repositories in temporary directories.
 use super::*;
-use crate::backend::git::error::RepoErrorReason;
+use codeyard_git::error::RepoErrorReason;
 use serde::{de::DeserializeOwned, Serialize};
 
 /// Sends a value through JSON and back, the way a remote store would carry it.
@@ -290,7 +290,7 @@ async fn cancelling_a_default_branch_request_does_not_cancel_head_synchronizatio
     f.repo
         .reference("refs/heads/topic", f.second, false, "topic")
         .unwrap();
-    let lock = crate::backend::git::locks::lock(f.store.local_dir().unwrap()).await;
+    let lock = codeyard_git::locks::lock(f.store.local_dir().unwrap()).await;
     let mut request = Box::pin(
         f.store
             .set_default_branch_as(&a.pool, a.repo_id, a.actor, "topic"),
@@ -317,7 +317,7 @@ async fn cancelling_a_default_branch_request_does_not_cancel_head_synchronizatio
     .expect("cancelling the request cancelled the default branch update");
     let _lock = tokio::time::timeout(
         std::time::Duration::from_secs(120),
-        crate::backend::git::locks::lock(f.store.local_dir().unwrap()),
+        codeyard_git::locks::lock(f.store.local_dir().unwrap()),
     )
     .await
     .unwrap();
@@ -547,7 +547,7 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
         let permit = slots.clone().acquire_owned().await.unwrap();
         // The lock resolves its path on a blocking thread, so take it before the blocker fills
         // the only one.
-        let lock = crate::backend::git::locks::lock(&destination).await;
+        let lock = codeyard_git::locks::lock(&destination).await;
         let (release, wait) = std::sync::mpsc::channel();
         let (started, ready) = tokio::sync::oneshot::channel();
         let blocker = tokio::task::spawn_blocking(move || {
@@ -585,7 +585,7 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
                         .block_on(async {
                             tokio::time::timeout(
                                 std::time::Duration::from_secs(1),
-                                crate::backend::git::locks::lock(&destination),
+                                codeyard_git::locks::lock(&destination),
                             )
                             .await
                         })
@@ -601,7 +601,7 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
             .await
             .unwrap()
             .unwrap();
-        let _lock = crate::backend::git::locks::lock(&destination).await;
+        let _lock = codeyard_git::locks::lock(&destination).await;
         assert!(!destination.exists());
     });
 }
@@ -690,37 +690,32 @@ async fn pull_head_publication_is_retryable_and_rejects_a_stale_expected_ref() {
     let first = f.first.to_string();
     let second = f.second.to_string();
 
-    let prepared = crate::backend::git::repository::prepare_pull_head(path, path, &first)
+    let prepared = codeyard_git::repository::prepare_pull_head(path, path, &first)
         .await
         .unwrap();
-    crate::backend::git::repository::publish_pull_head(path, 1, &first, None, &prepared)
+    codeyard_git::repository::publish_pull_head(path, 1, &first, None, &prepared)
         .await
         .unwrap();
     // If the success response is lost, retrying the initial exact-CAS publish
     // recognizes the already-published target rather than treating it as stale.
-    crate::backend::git::repository::publish_pull_head(path, 1, &first, None, &prepared)
+    codeyard_git::repository::publish_pull_head(path, 1, &first, None, &prepared)
         .await
         .unwrap();
 
-    let prepared = crate::backend::git::repository::prepare_pull_head(path, path, &second)
+    let prepared = codeyard_git::repository::prepare_pull_head(path, path, &second)
         .await
         .unwrap();
-    crate::backend::git::repository::publish_pull_head(path, 1, &second, Some(&first), &prepared)
+    codeyard_git::repository::publish_pull_head(path, 1, &second, Some(&first), &prepared)
         .await
         .unwrap();
-    let prepared = crate::backend::git::repository::prepare_pull_head(path, path, &first)
+    let prepared = codeyard_git::repository::prepare_pull_head(path, path, &first)
         .await
         .unwrap();
-    let error = crate::backend::git::repository::publish_pull_head(
-        path,
-        1,
-        &first,
-        Some(&first),
-        &prepared,
-    )
-    .await
-    .unwrap_err();
-    assert!(error.is::<crate::backend::git::repository::PullHeadConflict>());
+    let error =
+        codeyard_git::repository::publish_pull_head(path, 1, &first, Some(&first), &prepared)
+            .await
+            .unwrap_err();
+    assert!(error.is::<codeyard_git::repository::PullHeadConflict>());
     assert_eq!(f.repo.refname_to_id("refs/pull/1/head").unwrap(), f.second);
 
     f.repo
@@ -728,16 +723,11 @@ async fn pull_head_publication_is_retryable_and_rejects_a_stale_expected_ref() {
         .unwrap()
         .delete()
         .unwrap();
-    let error = crate::backend::git::repository::publish_pull_head(
-        path,
-        1,
-        &first,
-        Some(&second),
-        &prepared,
-    )
-    .await
-    .unwrap_err();
-    assert!(error.is::<crate::backend::git::repository::PullHeadConflict>());
+    let error =
+        codeyard_git::repository::publish_pull_head(path, 1, &first, Some(&second), &prepared)
+            .await
+            .unwrap_err();
+    assert!(error.is::<codeyard_git::repository::PullHeadConflict>());
     assert!(f.repo.find_reference("refs/pull/1/head").is_err());
 }
 
@@ -778,7 +768,7 @@ async fn revoked_private_fetch_never_exposes_quarantined_objects() {
     .unwrap();
 
     let head = private_head.to_string();
-    let prepared = crate::backend::git::repository::prepare_pull_head(
+    let prepared = codeyard_git::repository::prepare_pull_head(
         std::path::Path::new(base.store.location()),
         std::path::Path::new(source.store.location()),
         &head,
@@ -857,7 +847,7 @@ async fn revoked_destination_read_denies_pull_head_publication() {
         "private",
         "private",
     );
-    let prepared = crate::backend::git::repository::prepare_pull_head(
+    let prepared = codeyard_git::repository::prepare_pull_head(
         base.store.local_dir().unwrap(),
         source.store.local_dir().unwrap(),
         &head.to_string(),
@@ -892,7 +882,7 @@ async fn revoked_destination_read_denies_pull_head_publication() {
 #[tokio::test]
 async fn branch_comparison_obeys_a_total_deadline() {
     let f = fixture().await;
-    let error = crate::backend::git::branch_statuses(
+    let error = codeyard_git::branch_statuses(
         f.store.local_dir().unwrap(),
         "main",
         &[f.first.to_string()],
@@ -1286,7 +1276,7 @@ async fn reads_return_owned_values_that_survive_json() {
 
     let archive = f
         .store
-        .archive("main", "demo", crate::backend::git::ArchiveFormat::Zip)
+        .archive("main", "demo", codeyard_git::ArchiveFormat::Zip)
         .await
         .unwrap();
     assert!(archive.starts_with(b"PK"));
@@ -1376,7 +1366,7 @@ async fn archives_resolve_revisions_before_spawning_git() {
     for revision in ["--output=HEAD", "--output=unexpected.zip", "-oHEAD"] {
         assert!(f
             .store
-            .archive(revision, "demo", crate::backend::git::ArchiveFormat::Zip)
+            .archive(revision, "demo", codeyard_git::ArchiveFormat::Zip)
             .await
             .is_err());
         assert_eq!(std::fs::read(path.join("HEAD")).unwrap(), head);
@@ -1389,7 +1379,7 @@ async fn archives_resolve_revisions_before_spawning_git() {
     for revision in ["main", "v1", &f.second.to_string()] {
         assert!(f
             .store
-            .archive(revision, "demo", crate::backend::git::ArchiveFormat::Zip)
+            .archive(revision, "demo", codeyard_git::ArchiveFormat::Zip)
             .await
             .unwrap()
             .starts_with(b"PK"));
@@ -1397,7 +1387,7 @@ async fn archives_resolve_revisions_before_spawning_git() {
     // An expression is not a ref or an object ID, so it is refused even for a directory.
     assert!(f
         .store
-        .archive("main:src", "demo", crate::backend::git::ArchiveFormat::Zip)
+        .archive("main:src", "demo", codeyard_git::ArchiveFormat::Zip)
         .await
         .is_err());
     assert_eq!(std::fs::read(path.join("HEAD")).unwrap(), head);
@@ -1745,7 +1735,7 @@ async fn oversized_commit_and_tag_metadata_return_the_typed_too_large_error() {
     let parent = f.repo.find_commit(f.second).unwrap();
     let tree = parent.tree().unwrap();
     let author = signature();
-    let message = "x".repeat(crate::backend::git::MAX_COMMIT_OBJECT_BYTES);
+    let message = "x".repeat(codeyard_git::MAX_COMMIT_OBJECT_BYTES);
     let commit = f
         .repo
         .commit(
@@ -1770,7 +1760,7 @@ async fn oversized_commit_and_tag_metadata_return_the_typed_too_large_error() {
         .unwrap_err()
         .is_response_too_large());
 
-    let tag_message = "x".repeat(crate::backend::git::MAX_TAG_OBJECT_BYTES);
+    let tag_message = "x".repeat(codeyard_git::MAX_TAG_OBJECT_BYTES);
     f.repo
         .tag(
             "large-tag",
@@ -2638,7 +2628,7 @@ async fn squash_bounds_the_subjects_it_lists() {
 async fn rebase_refuses_a_commit_that_would_outgrow_the_object_limit() {
     let f = fixture().await;
     // A message just under the limit, with a short committer, is a commit that Git stores and reads.
-    let message = "m".repeat(crate::backend::git::MAX_COMMIT_OBJECT_BYTES - 300);
+    let message = "m".repeat(codeyard_git::MAX_COMMIT_OBJECT_BYTES - 300);
     let large = commit(
         &f.repo,
         "large",
@@ -2648,10 +2638,10 @@ async fn rebase_refuses_a_commit_that_would_outgrow_the_object_limit() {
         &message,
     );
     // Each replayed commit takes the merger as committer, here with the longest identity allowed.
-    let name = "n".repeat(crate::backend::git::MAX_COMMIT_NAME_BYTES);
+    let name = "n".repeat(codeyard_git::MAX_COMMIT_NAME_BYTES);
     let email = format!(
         "{}@users.noreply",
-        "e".repeat(crate::backend::git::MAX_COMMIT_NAME_BYTES)
+        "e".repeat(codeyard_git::MAX_COMMIT_NAME_BYTES)
     );
     let request = MergeRequest {
         method: MergeMethod::Rebase,
@@ -2840,7 +2830,7 @@ fn error_reasons_cross_the_wire() {
         assert_eq!(round_trip(&error), error);
     }
     let error = RepoError::from(
-        anyhow::Error::new(crate::backend::git::repository::process::SessionsBusy)
+        anyhow::Error::new(codeyard_git::repository::process::SessionsBusy)
             .context("private detail"),
     );
     assert_eq!(error.reason, Some(RepoErrorReason::SessionsBusy));
@@ -3287,7 +3277,7 @@ async fn a_refused_ref_change_is_not_counted() {
 /// is refused when the tag is created.
 #[tokio::test]
 async fn an_annotated_tag_larger_than_readers_accept_is_refused() {
-    use crate::backend::git::MAX_TAG_MESSAGE_BYTES;
+    use codeyard_git::MAX_TAG_MESSAGE_BYTES;
     let f = fixture().await;
     let authority = authority(&f).await;
     let (pool, repo_id, actor) = (&authority.pool, authority.repo_id, authority.actor);
@@ -3332,10 +3322,10 @@ async fn an_annotated_tag_larger_than_readers_accept_is_refused() {
 /// count for more than a short one.
 #[test]
 fn the_ref_limit_counts_the_bytes_of_names() {
-    use crate::backend::git::{RefsInUse, MAX_REPOSITORY_REF_BYTES};
+    use codeyard_git::{RefsInUse, MAX_REPOSITORY_REF_BYTES};
     let held = |bytes| RefsInUse { count: 3, bytes };
     let name = "refs/heads/topic";
-    let cost = crate::backend::git::ref_listing_bytes(name);
+    let cost = codeyard_git::ref_listing_bytes(name);
     assert!(ensure_ref_room(held(MAX_REPOSITORY_REF_BYTES - cost), &[name]).is_ok());
     let error = ensure_ref_room(held(MAX_REPOSITORY_REF_BYTES - cost + 1), &[name]).unwrap_err();
     assert_eq!(error.kind, ErrorKind::Invalid);
@@ -3357,7 +3347,7 @@ async fn a_repository_at_the_ref_limit_refuses_new_branches_and_tags() {
         f.repo.reference(&name, f.first, false, "fill").unwrap();
     }
     let path = std::path::Path::new(f.store.location());
-    let held = crate::backend::git::published_refs_in_use(path).unwrap();
+    let held = codeyard_git::published_refs_in_use(path).unwrap();
     assert_eq!(held.count, MAX_REPOSITORY_REFS);
 
     let error = f
@@ -3423,7 +3413,7 @@ async fn a_repository_at_the_ref_limit_refuses_new_branches_and_tags() {
 /// head is refused, while moving an existing head still works.
 #[tokio::test]
 async fn the_pull_head_limit_refuses_a_new_head_and_still_moves_one() {
-    const LIMIT: usize = crate::backend::git::MAX_PULL_HEAD_REFS;
+    const LIMIT: usize = codeyard_git::MAX_PULL_HEAD_REFS;
     let f = fixture().await;
     let authority = authority(&f).await;
     let (pool, repo_id, actor) = (&authority.pool, authority.repo_id, authority.actor);
@@ -3448,7 +3438,7 @@ async fn the_pull_head_limit_refuses_a_new_head_and_still_moves_one() {
         .status()
         .unwrap();
     assert!(packed.success());
-    let held = crate::backend::git::pull_heads_in_use(path).unwrap();
+    let held = codeyard_git::pull_heads_in_use(path).unwrap();
     assert_eq!(held.count, LIMIT);
 
     let next = i32::try_from(LIMIT + 1).unwrap();

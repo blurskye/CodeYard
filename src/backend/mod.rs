@@ -18,7 +18,6 @@ pub mod email;
 pub mod files;
 pub(crate) mod fs;
 pub mod gists;
-pub mod git;
 pub mod identity;
 pub mod issues;
 pub mod node;

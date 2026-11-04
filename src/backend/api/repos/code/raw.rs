@@ -3,14 +3,12 @@ use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
 use crate::backend::api::repos::chrome::{load, resolve};
 use crate::backend::app::AppState;
-use crate::backend::{
-    git::error::RepoError,
-    repositories::store::{repo_store, BlobBytes, BlobRange},
-};
+use crate::backend::repositories::store::{repo_store, BlobBytes, BlobRange};
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
+use codeyard_git::error::RepoError;
 use std::{collections::HashMap, sync::Arc};
 
 /// Content type for a raw blob.
@@ -29,7 +27,7 @@ use std::{collections::HashMap, sync::Arc};
 pub use codeyard_webui::raw_content_type;
 
 pub(crate) fn download_limit() -> (u64, String) {
-    let bytes = crate::backend::git::MAX_BLOB_MATERIALIZE_BYTES as u64;
+    let bytes = codeyard_git::MAX_BLOB_MATERIALIZE_BYTES as u64;
     (bytes, format!("{} MiB", bytes / (1024 * 1024)))
 }
 

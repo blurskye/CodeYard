@@ -167,7 +167,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (Operation::IntroducedBlobs { sha: sha.into() }, false),
         (
             Operation::WriteGitObject {
-                input: codeyard::backend::git::objects::ObjectWrite::Blob,
+                input: codeyard_git::objects::ObjectWrite::Blob,
                 token: None,
             },
             false,
@@ -328,7 +328,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::Archive {
                 git_ref: "main".into(),
                 prefix: "project".into(),
-                format: codeyard::backend::git::ArchiveFormat::Zip,
+                format: codeyard_git::ArchiveFormat::Zip,
             },
             false,
         ),

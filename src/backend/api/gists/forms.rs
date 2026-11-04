@@ -1,8 +1,6 @@
 use super::*;
-use crate::backend::{
-    git::gist_types::{GistEdit, GistFileChange},
-    repositories::files::native_text,
-};
+use crate::backend::repositories::files::native_text;
+use codeyard_git::gist_types::{GistEdit, GistFileChange};
 use std::collections::{btree_map::Entry, BTreeMap};
 
 async fn protected(

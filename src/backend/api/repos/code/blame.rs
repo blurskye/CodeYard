@@ -4,10 +4,11 @@ use crate::backend::api::repos::chrome::{
     date, is_branch, load, ref_names_under, resolve, store_error, Loaded,
 };
 use crate::backend::app::AppState;
-use crate::backend::{git::error::ErrorKind, repositories::store::repo_store};
+use crate::backend::repositories::store::repo_store;
 use axum::extract::{OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
+use codeyard_git::error::ErrorKind;
 use codeyard_webui::pages::repos as view;
 use std::sync::Arc;
 

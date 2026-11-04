@@ -1615,7 +1615,7 @@ async fn concurrent_first_pushes(pool: DbPool) {
         .unwrap()
         .unwrap();
     // Pre-receive now also uses this lock; hold it after both refs are published.
-    let lock = crate::backend::git::locks::lock(&path).await;
+    let lock = codeyard_git::locks::lock(&path).await;
     first_release.send(()).unwrap();
     let mut reply = Vec::new();
     assert!(
@@ -1668,12 +1668,9 @@ async fn concurrent_first_pushes(pool: DbPool) {
     .await
     .unwrap();
     assert!(
-        timeout(
-            Duration::from_millis(200),
-            crate::backend::git::locks::lock(&path)
-        )
-        .await
-        .is_err(),
+        timeout(Duration::from_millis(200), codeyard_git::locks::lock(&path))
+            .await
+            .is_err(),
         "HEAD lock was released before its database update"
     );
     second_release.send(()).unwrap();

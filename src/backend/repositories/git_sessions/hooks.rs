@@ -10,10 +10,6 @@ use crate::backend::{
         self,
         models::{AccessLevel, Repository, User},
     },
-    git::{
-        error::{ErrorKind, RepoError},
-        published_refs_in_use, ref_listing_bytes, RefsInUse,
-    },
     repositories::{
         languages,
         protection::{
@@ -24,6 +20,10 @@ use crate::backend::{
     },
 };
 use anyhow::{ensure, Context, Result};
+use codeyard_git::{
+    error::{ErrorKind, RepoError},
+    published_refs_in_use, ref_listing_bytes, RefsInUse,
+};
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
@@ -57,9 +57,7 @@ async fn quarantine_directory(repository: &Path, claimed: &str) -> Option<PathBu
 fn created_refs(updates: &[RefUpdate]) -> Vec<&str> {
     updates
         .iter()
-        .filter(|update| {
-            update.old == ZERO_SHA && crate::backend::git::is_public_ref(&update.reference)
-        })
+        .filter(|update| update.old == ZERO_SHA && codeyard_git::is_public_ref(&update.reference))
         .map(|update| update.reference.as_str())
         .collect()
 }
@@ -136,7 +134,7 @@ fn admit_updates(
         .iter()
         .any(|update| update.old == ZERO_SHA && update.reference.starts_with("refs/heads/"))
     {
-        state.previous_refs = crate::backend::git::list_mirror_refs(path)?
+        state.previous_refs = codeyard_git::list_mirror_refs(path)?
             .into_iter()
             .filter(|(name, _)| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
             .map(|(_, oid)| oid)
@@ -569,12 +567,7 @@ impl Gateway {
             let revision = updates[0].new.clone();
             let old = updates[0].old.clone();
             tokio::task::spawn_blocking(move || {
-                crate::backend::git::gists::validate_push(
-                    &path,
-                    quarantine.as_deref(),
-                    &old,
-                    &revision,
-                )
+                codeyard_git::gists::validate_push(&path, quarantine.as_deref(), &old, &revision)
             })
             .await??;
         }
@@ -591,7 +584,7 @@ impl Gateway {
             .await?;
         // The stored default can lag behind Git, so the default that Git advertises is
         // protected as well.
-        let advertised = crate::backend::git::repository::default_branch(&path).await?;
+        let advertised = codeyard_git::repository::default_branch(&path).await?;
         if updates.iter().any(|update| {
             update.new == ZERO_SHA
                 && update
@@ -632,7 +625,7 @@ impl Gateway {
         let publications = tokio::task::spawn_blocking(move || {
             let _held = held;
             if check_workflows {
-                crate::backend::git::oauth::check_workflows(
+                codeyard_git::oauth::check_workflows(
                     &admitted_path,
                     admitted_quarantine.as_deref(),
                     &admitted_updates
@@ -647,7 +640,7 @@ impl Gateway {
                 .map(|update| (update.reference.clone(), update.new.clone()))
                 .collect();
             if !tags.is_empty() {
-                crate::backend::git::check_tag_budget(
+                codeyard_git::check_tag_budget(
                     &admitted_path,
                     admitted_quarantine.as_deref(),
                     &tags,
@@ -662,22 +655,20 @@ impl Gateway {
             let publications = admitted_updates
                 .iter()
                 .filter(|update| update.reference.starts_with("refs/heads/"))
-                .map(|update| crate::backend::git::PublicationUpdate {
+                .map(|update| codeyard_git::PublicationUpdate {
                     reference: update.reference.clone(),
                     old: (update.old != ZERO_SHA).then(|| update.old.clone()),
                     new: (update.new != ZERO_SHA).then(|| update.new.clone()),
                 })
                 .collect::<Vec<_>>();
             let actor = match admitted.credential {
-                ReceiveCredential::DeployKey(id) => {
-                    crate::backend::git::PublicationActor::DeployKey(id)
-                }
+                ReceiveCredential::DeployKey(id) => codeyard_git::PublicationActor::DeployKey(id),
                 ReceiveCredential::SshKey(_) | ReceiveCredential::Token(_) => {
-                    crate::backend::git::PublicationActor::User(admitted.actor_id)
+                    codeyard_git::PublicationActor::User(admitted.actor_id)
                 }
             };
             if quorum {
-                crate::backend::git::plan_branch_publications(
+                codeyard_git::plan_branch_publications(
                     &admitted_path,
                     repo.id,
                     actor,
@@ -685,7 +676,7 @@ impl Gateway {
                     &publications,
                 )
             } else {
-                crate::backend::git::prepare_branch_publications(
+                codeyard_git::prepare_branch_publications(
                     &admitted_path,
                     repo.id,
                     actor,
@@ -834,7 +825,7 @@ impl Gateway {
             .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
             .ref_change
             .take();
-        crate::backend::git::maintenance::after_push(repo.id, path.clone());
+        codeyard_git::maintenance::after_push(repo.id, path.clone());
         let mut scan_heads = std::collections::HashSet::new();
         for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
             let commit = match store.commit(&update.new).await {
@@ -964,7 +955,7 @@ impl Gateway {
                 let count = if let Some(count) = counts.get(&range) {
                     *count
                 } else {
-                    let count = crate::backend::git::repository::count_pushed_commits_snapshot(
+                    let count = codeyard_git::repository::count_pushed_commits_snapshot(
                         &path,
                         (update.old != ZERO_SHA).then_some(update.old.as_str()),
                         &update.new,
@@ -981,11 +972,7 @@ impl Gateway {
             Ok::<_, anyhow::Error>(())
         };
         if !matches!(
-            tokio::time::timeout(
-                crate::backend::git::repository::PUSH_COUNT_TIMEOUT,
-                activity
-            )
-            .await,
+            tokio::time::timeout(codeyard_git::repository::PUSH_COUNT_TIMEOUT, activity).await,
             Ok(Ok(()))
         ) {
             tracing::warn!(
@@ -1213,14 +1200,14 @@ impl Gateway {
                 .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
                 .quorum;
             let publication = if quorum {
-                Some(crate::backend::git::locks::publication(&path).await?)
+                Some(codeyard_git::locks::publication(&path).await?)
             } else {
                 None
             };
             let _lock = if quorum {
                 None
             } else {
-                Some(crate::backend::git::locks::lock(&path).await)
+                Some(codeyard_git::locks::lock(&path).await)
             };
             let head_path = path.clone();
             let held = operation.clone();
@@ -1360,7 +1347,7 @@ mod tests {
         let commit = repo
             .commit(None, &signature, &signature, "root", &tree, &[])
             .unwrap();
-        for index in 0..crate::backend::git::MAX_REPOSITORY_REFS - 10 {
+        for index in 0..codeyard_git::MAX_REPOSITORY_REFS - 10 {
             repo.reference(&format!("refs/heads/held-{index}"), commit, false, "held")
                 .unwrap();
         }

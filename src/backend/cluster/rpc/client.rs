@@ -3,9 +3,9 @@ use super::RpcHandler;
 use crate::backend::{
     cluster::{link::Link, transport, NodeAddress, NodeContext},
     db,
-    git::error::{ErrorKind, RepoError},
 };
 use anyhow::Result;
+use codeyard_git::error::{ErrorKind, RepoError};
 use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 

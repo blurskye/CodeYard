@@ -278,7 +278,7 @@ async fn creation_catches_a_head_push_that_finished_after_the_initial_ref_read()
     let forks = forks().await;
     let fork = git2::Repository::open_bare(&forks.fork.disk_path).unwrap();
     let first = commit(&fork, "feature", Some(forks.main), "a.txt", "first\n");
-    let lock = crate::backend::git::locks::lock(std::path::Path::new(&forks.base.disk_path)).await;
+    let lock = codeyard_git::locks::lock(std::path::Path::new(&forks.base.disk_path)).await;
     let create = open(&forks, "feature");
     let push = async {
         loop {

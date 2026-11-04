@@ -9,7 +9,7 @@ use std::{
 use tokio::process::Command;
 
 /// Kept deleted repositories live here, under the repository root.
-pub(crate) const DELETED_DIR: &str = "deleted";
+pub const DELETED_DIR: &str = "deleted";
 const TIMEOUT: Duration = Duration::from_secs(3600);
 const OUTPUT_LIMIT: usize = 64 * 1024 * 1024;
 
@@ -19,7 +19,7 @@ fn unix_seconds() -> Result<u64> {
 
 /// Moves a deleted repository to `<parent>/deleted/<unix seconds>-<name>`. A repository that
 /// is already gone counts as moved.
-pub(crate) fn retire(path: &Path) -> Result<()> {
+pub fn retire(path: &Path) -> Result<()> {
     if let Err(error) = std::fs::symlink_metadata(path) {
         if error.kind() == std::io::ErrorKind::NotFound {
             return Ok(());
@@ -61,7 +61,7 @@ fn deleted_entries(root: &Path) -> Result<Vec<(u64, String, PathBuf)>> {
 }
 
 /// Index the newest retained copy of each repository in one root-directory scan.
-pub(crate) fn deleted_copies(root: &Path) -> Result<std::collections::HashMap<String, PathBuf>> {
+pub fn deleted_copies(root: &Path) -> Result<std::collections::HashMap<String, PathBuf>> {
     let mut copies = std::collections::HashMap::<String, (u64, PathBuf)>::new();
     for (seconds, name, path) in deleted_entries(root)? {
         if copies
@@ -78,7 +78,7 @@ pub(crate) fn deleted_copies(root: &Path) -> Result<std::collections::HashMap<St
 }
 
 /// Removes the kept deleted repositories under `root` older than `window`.
-pub(crate) fn remove_expired_deleted(root: &Path, window: Duration) -> Result<usize> {
+pub fn remove_expired_deleted(root: &Path, window: Duration) -> Result<usize> {
     let now = unix_seconds()?;
     let mut removed = 0;
     let mut failed = 0;
@@ -123,7 +123,7 @@ const HEAD_ATTEMPTS: usize = 3;
 /// hidden `refs/codeyard/` ones, HEAD, and every object file, so commits that no ref reaches
 /// (a CI run may still name one) stay available. Only new objects travel, so copying into the
 /// same place again is quick.
-pub(crate) async fn mirror(source: &Path, copy: &Path) -> Result<()> {
+pub async fn mirror(source: &Path, copy: &Path) -> Result<()> {
     let source = std::path::absolute(source)?;
     if !copy.join("HEAD").is_file() {
         std::fs::create_dir_all(copy)?;
@@ -280,7 +280,7 @@ fn copy_new_files(from: &Path, to: &Path) -> Result<bool> {
 
 /// What `git fsck` reports about the repository's refs and the objects they reach, or `None`
 /// when it finds nothing.
-pub(crate) async fn check(path: &Path) -> Result<Option<String>> {
+pub async fn check(path: &Path) -> Result<Option<String>> {
     let mut command = git(path)?;
     command.args([
         "fsck",
@@ -298,14 +298,14 @@ pub(crate) async fn check(path: &Path) -> Result<Option<String>> {
 }
 
 /// Resolve commit IDs in bounded batches, retaining the supplied identity for annotated tags.
-pub(crate) async fn existing_commits(
+pub async fn existing_commits(
     path: &Path,
     ids: &[String],
 ) -> Result<std::collections::HashSet<String>> {
     let mut found = std::collections::HashSet::new();
     for batch in ids.chunks(1024) {
         anyhow::ensure!(
-            batch.iter().all(crate::backend::git::is_full_commit_id),
+            batch.iter().all(crate::is_full_commit_id),
             "invalid commit ID"
         );
         let input = batch
@@ -339,7 +339,7 @@ pub(crate) async fn has_commit(path: &Path, sha: &str) -> Result<bool> {
 }
 
 /// The branch HEAD names when that branch exists, or `None` for a detached or unborn HEAD.
-pub(crate) async fn head_branch(path: &Path) -> Result<Option<String>> {
+pub async fn head_branch(path: &Path) -> Result<Option<String>> {
     let mut command = git(path)?;
     command.args(["symbolic-ref", "-q", "HEAD"]);
     let output = process::run(command, b"", OUTPUT_LIMIT, TIMEOUT).await?;
@@ -357,7 +357,7 @@ pub(crate) async fn head_branch(path: &Path) -> Result<Option<String>> {
 }
 
 /// The refs under `prefix`, as (name, object id).
-pub(crate) async fn refs(path: &Path, prefix: &str) -> Result<Vec<(String, String)>> {
+pub async fn refs(path: &Path, prefix: &str) -> Result<Vec<(String, String)>> {
     let mut command = git(path)?;
     command.args(["for-each-ref", "--format=%(refname) %(objectname)", prefix]);
     let output = run(command, b"").await?;
@@ -369,7 +369,7 @@ pub(crate) async fn refs(path: &Path, prefix: &str) -> Result<Vec<(String, Strin
 }
 
 /// Applies `git update-ref --stdin` commands in one transaction.
-pub(crate) async fn update_refs(path: &Path, commands: &str) -> Result<()> {
+pub async fn update_refs(path: &Path, commands: &str) -> Result<()> {
     let mut command = git(path)?;
     command.args(["update-ref", "--stdin"]);
     run(command, commands.as_bytes()).await?;
@@ -379,7 +379,7 @@ pub(crate) async fn update_refs(path: &Path, commands: &str) -> Result<()> {
 /// Rebuilds what Git derives from the stored objects: missing pack indexes, then one pack with
 /// its commit graph. Nothing is pruned, so unreachable commits a closed pull request
 /// or a queued run may still name stay.
-pub(crate) async fn rebuild(path: &Path) -> Result<()> {
+pub async fn rebuild(path: &Path) -> Result<()> {
     for entry in std::fs::read_dir(path.join("objects").join("pack"))? {
         let pack = entry?.path();
         if pack

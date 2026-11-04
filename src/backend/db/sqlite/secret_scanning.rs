@@ -1,7 +1,7 @@
 pub(crate) mod patterns;
 use crate::backend::db::secret_scanning::*;
-use crate::backend::git::secret_scanning::Location;
 use anyhow::{ensure, Result};
+use codeyard_git::secret_scanning::Location;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 const PROVIDER: &str = "CASE WHEN secret_type LIKE 'custom-pattern-%' THEN 'custom' WHEN instr(secret_type,'_')=0 THEN secret_type ELSE substr(secret_type,1,instr(secret_type,'_')-1) END";

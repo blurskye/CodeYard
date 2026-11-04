@@ -68,9 +68,7 @@ async fn create(
         return Err(Error::invalid_simple("A review holds at most 200 comments"));
     }
     let commit = input.commit_id.unwrap_or_else(|| pull.head_sha.clone());
-    if !crate::backend::git::is_full_commit_id(&commit)
-        || !commit.eq_ignore_ascii_case(&pull.head_sha)
-    {
+    if !codeyard_git::is_full_commit_id(&commit) || !commit.eq_ignore_ascii_case(&pull.head_sha) {
         return Err(Error::invalid_simple(
             "Review the current pull request head",
         ));

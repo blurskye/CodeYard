@@ -3,13 +3,11 @@ use super::validation::{self, RefUpdate};
 use super::{private_files, ReceiveCredential};
 use crate::backend::ci::CiRuns;
 use crate::backend::db::{self, models::Repository, DbPool};
-use crate::backend::git::repository::process as git_process;
+use crate::backend::repositories::store::{repo_store, GitService, GitSession, GitStreams};
 use crate::backend::repositories::traffic;
-use crate::backend::{
-    git::error::{ErrorKind, RepoError},
-    repositories::store::{repo_store, GitService, GitSession, GitStreams},
-};
 use anyhow::{ensure, Context, Result};
+use codeyard_git::error::{ErrorKind, RepoError};
+use codeyard_git::repository::process as git_process;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -46,7 +44,7 @@ pub(super) struct Operation {
     pub(super) repo_id: i64,
     pub(super) owner: String,
     pub(super) path: PathBuf,
-    pub(super) publication_lease: Option<Arc<crate::backend::git::locks::PublicationLease>>,
+    pub(super) publication_lease: Option<Arc<codeyard_git::locks::PublicationLease>>,
     // Only the broker holds the generated hook directory's lifetime.
     pub(super) hooks: TempDir,
     pub(super) state: Mutex<HookState>,
@@ -62,7 +60,7 @@ pub(super) struct HookState {
     pub(super) dispatch_failed: bool,
     // Acquired in pre-receive through the description already inherited by the child.
     // Released only when Git reports completed publication, before post-receive follow-up.
-    pub(super) publication: Option<Arc<crate::backend::git::locks::PublicationGuard>>,
+    pub(super) publication: Option<Arc<codeyard_git::locks::PublicationGuard>>,
     pub(super) ref_change: Option<crate::backend::repositories::store::RefChange>,
     pub(super) quorum: bool,
     pub(super) quorum_started: bool,
@@ -866,7 +864,7 @@ impl Gateway {
         // Inherit an unlocked description now; pre-receive locks that same description.
         // This keeps negotiation concurrent without leaving a crash gap before publication.
         let publication_lease = if write {
-            Some(crate::backend::git::locks::open_publication(&path).await?)
+            Some(codeyard_git::locks::open_publication(&path).await?)
         } else {
             None
         };

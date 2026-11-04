@@ -1,12 +1,10 @@
 //! The `.diff` and `.patch` media types, which `gh pr diff` and `git am` read.
-use crate::backend::{
-    git::error::{ErrorKind, RepoError},
-    repositories::store::{CommitInfo, DiffFileInfo, RepoStore},
-};
+use crate::backend::repositories::store::{CommitInfo, DiffFileInfo, RepoStore};
 use axum::{
     http::{header, HeaderMap},
     response::{IntoResponse, Response},
 };
+use codeyard_git::error::{ErrorKind, RepoError};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(super) enum Media {

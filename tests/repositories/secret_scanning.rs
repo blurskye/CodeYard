@@ -1,6 +1,4 @@
-use codeyard::backend::git::secret_detection::{
-    patterns::Create, scan, scan_with_patterns, MAX_BLOB_BYTES,
-};
+use codeyard_git::secret_detection::{patterns::Create, scan, scan_with_patterns, MAX_BLOB_BYTES};
 
 #[test]
 fn secret_scanning_rules_and_locations() {

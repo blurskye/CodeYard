@@ -120,7 +120,7 @@ fn asset_response(origin: &str, base: &str, tag: &str, asset: &ReleaseAsset) -> 
 /// same name is not downloaded. A draft whose tag does not exist yet keeps the commit it was
 /// saved for.
 pub(super) fn archive_revision(release: &db::models::Release) -> String {
-    if release.is_draft && crate::backend::git::is_full_commit_id(&release.target_commitish) {
+    if release.is_draft && codeyard_git::is_full_commit_id(&release.target_commitish) {
         release.target_commitish.clone()
     } else {
         format!("refs/tags/{}", release.tag_name)

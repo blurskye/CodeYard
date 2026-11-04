@@ -5,12 +5,9 @@
 //! backup sits in `deleted/`. Verify finds these and, with `--repair`, brings the database and
 //! the pull request refs back in line with Git. Problems it cannot repair, such as a commit the
 //! database names that Git lacks, are listed and make the command fail.
-use crate::backend::{
-    db,
-    git::{self, mirror},
-    repositories,
-};
+use crate::backend::{db, repositories};
 use anyhow::{ensure, Context, Result};
+use codeyard_git::{self as git, mirror};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;

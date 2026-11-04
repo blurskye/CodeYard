@@ -4,7 +4,7 @@ use super::*;
 
 /// The inverse of `merged`, as a commit on top of `current`. The merge runs in a Git child with
 /// the memory limit and timeout, because the blobs it compares can be huge.
-pub(crate) async fn prepare_revert(
+pub async fn prepare_revert(
     path: &Path,
     (current, merged, before): (&str, &str, &str),
     (message, name, email): (&str, &str, &str),

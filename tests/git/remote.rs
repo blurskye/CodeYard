@@ -21,12 +21,12 @@ use codeyard::backend::{
         rpc::{self, Operation, Request},
     },
     db::{self, repositories::BranchProtectionRuleUpsert, users::tokens},
-    git::error::RepoError,
     repositories::{
         git_sessions::ReceiveCredential,
         store::{GitService, GitSession, GitStreams},
     },
 };
+use codeyard_git::error::RepoError;
 use reqwest::{Client, StatusCode};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -541,10 +541,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
             &owner.username,
         )
         .await;
-        assert_eq!(
-            error.kind,
-            codeyard::backend::git::error::ErrorKind::Unavailable
-        );
+        assert_eq!(error.kind, codeyard_git::error::ErrorKind::Unavailable);
     }
     let raw = &database.raw;
     sqlx::query("UPDATE nodes SET roles=ARRAY['runner'] WHERE id=$1")

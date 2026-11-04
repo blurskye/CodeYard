@@ -7,10 +7,8 @@ use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
 use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, WatchedItem};
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::pull_requests::queue_pull_request_ci;
-use crate::backend::{
-    git::error::{ErrorKind, RepoError},
-    repositories::store::repo_store,
-};
+use crate::backend::repositories::store::repo_store;
+use codeyard_git::error::{ErrorKind, RepoError};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -86,7 +84,7 @@ fn validate_maintainer_edit(
 
 /// Branch names are stored in VARCHAR(255) columns, which count characters.
 fn check_branch_name(branch: &str) -> Result<(), OperationError> {
-    if crate::backend::git::branch_ref(branch).is_none() || branch.chars().count() > 255 {
+    if codeyard_git::branch_ref(branch).is_none() || branch.chars().count() > 255 {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: "Branch names must be valid Git branch names of at most 255 characters."

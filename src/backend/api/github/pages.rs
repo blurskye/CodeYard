@@ -110,7 +110,7 @@ async fn mutate(
             .commit(&format!("refs/heads/{}", source.branch))
             .await
             .map_err(|error| {
-                if error.kind == crate::backend::git::error::ErrorKind::NotFound {
+                if error.kind == codeyard_git::error::ErrorKind::NotFound {
                     Error::validation("Pages", "source", "invalid")
                 } else {
                     store_error(error)

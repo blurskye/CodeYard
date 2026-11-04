@@ -3,16 +3,16 @@ use crate::backend::{
     ci::{CiRuns, RefUpdate},
     cluster::NodeContext,
     db,
-    git::{
-        self,
-        error::{ErrorKind, RepoError, MERGE_COMMIT_BLOCKED},
-    },
     repositories::{
         access,
         protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia, ANY_TIP},
         pull_requests,
         store::{repo_store, TagInfo},
     },
+};
+use codeyard_git::{
+    self as git,
+    error::{ErrorKind, RepoError, MERGE_COMMIT_BLOCKED},
 };
 
 #[derive(Debug)]

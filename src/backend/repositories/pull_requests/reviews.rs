@@ -5,8 +5,9 @@ use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
 use crate::backend::notifications::NotificationBroadcaster;
+use crate::backend::repositories::store::repo_store;
 use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
-use crate::backend::{git::error::ErrorKind, repositories::store::repo_store};
+use codeyard_git::error::ErrorKind;
 use serde::Deserialize;
 use serde_json::json;
 #[derive(Deserialize)]
@@ -346,7 +347,7 @@ async fn create_review(
         .or_else(|| draft_commit.clone())
         .unwrap_or_else(|| pull_request.head_sha.clone());
 
-    if !crate::backend::git::is_full_commit_id(&commit_sha) {
+    if !codeyard_git::is_full_commit_id(&commit_sha) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: "commit_sha must be a 40-character hex SHA-1".to_owned(),

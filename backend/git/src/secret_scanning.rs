@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-pub(crate) struct Finding {
+pub struct Finding {
     pub detection: Detection,
     pub location: Location,
 }
@@ -62,7 +62,7 @@ async fn new_commits(
 }
 
 /// The secrets that the commits `heads` bring add, each compared with the file it replaces.
-pub(crate) async fn added_secrets(
+pub async fn added_secrets(
     path: PathBuf,
     quarantine: Option<PathBuf>,
     heads: Vec<String>,

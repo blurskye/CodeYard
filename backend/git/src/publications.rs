@@ -55,7 +55,7 @@ pub struct PublicationRecord {
 }
 
 #[derive(Clone)]
-pub(crate) struct PublicationUpdate {
+pub struct PublicationUpdate {
     pub reference: String,
     pub old: Option<String>,
     pub new: Option<String>,
@@ -223,7 +223,7 @@ fn remove_absent_branches(repo: &Repository, apply: bool) -> Result<Vec<Publicat
     Ok(changes)
 }
 
-pub(crate) fn read_at(
+pub fn read_at(
     path: &Path,
     repository_id: i64,
     reference: &str,
@@ -231,7 +231,7 @@ pub(crate) fn read_at(
     read_current(&Repository::open_bare(path)?, repository_id, reference)
 }
 
-pub(crate) fn prepare_at(
+pub fn prepare_at(
     path: &Path,
     repository_id: i64,
     actor: PublicationActor,
@@ -243,7 +243,7 @@ pub(crate) fn prepare_at(
 }
 
 /// Builds metadata objects without publishing refs; quorum stores journal these changes.
-pub(crate) fn plan_at(
+pub fn plan_at(
     path: &Path,
     repository_id: i64,
     actor: PublicationActor,
@@ -458,7 +458,7 @@ mod tests {
     }
 
     fn run_git(path: &Path, args: &[&str]) -> String {
-        use crate::backend::git::repository::process;
+        use crate::repository::process;
         let mut command = process::std_command(&process::executable().unwrap());
         let output = command.current_dir(path).args(args).output().unwrap();
         assert!(

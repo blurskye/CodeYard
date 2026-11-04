@@ -14,7 +14,6 @@ use crate::backend::{
         models::{Release, ReleaseAsset, ReleaseRow, Repository},
     },
     files::{self, DownloadError, UploadDeclaration, UploadError},
-    git::{self, error::RepoError},
     notifications::{
         watchers::{notify_watchers, WatchEvent, WatchedItem},
         NotificationBroadcaster,
@@ -27,6 +26,7 @@ use crate::backend::{
     storage::ObjectStore,
 };
 use anyhow::Error;
+use codeyard_git::{self as git, error::RepoError};
 pub use notes::{generate_notes, NotesInput, ReleaseNotes};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -200,15 +200,15 @@ fn mutation_error(error: RepoError) -> ReleaseError {
     if error.is_write_denied() {
         return ReleaseError::Access(AccessError::WriteDenied);
     }
-    if error.kind == crate::backend::git::error::ErrorKind::NotFound {
+    if error.kind == codeyard_git::error::ErrorKind::NotFound {
         return ReleaseError::NotFound;
     }
-    if error.kind == crate::backend::git::error::ErrorKind::Conflict
+    if error.kind == codeyard_git::error::ErrorKind::Conflict
         && error.message == ReleaseRefusal::Conflict.to_string()
     {
         return ReleaseError::Conflict;
     }
-    if error.kind == crate::backend::git::error::ErrorKind::Invalid
+    if error.kind == codeyard_git::error::ErrorKind::Invalid
         && error.message == ReleaseRefusal::TagTaken.to_string()
     {
         return ReleaseError::TagTaken;

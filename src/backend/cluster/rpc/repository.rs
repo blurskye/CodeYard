@@ -2,7 +2,6 @@ use super::{wire::*, RpcHandler};
 use crate::backend::{
     cluster::replicas::{copy_path, moving, MOVE_WAIT},
     db,
-    git::error::RepoError,
     repositories::{
         access,
         protection::{
@@ -15,6 +14,7 @@ use crate::backend::{
     },
 };
 use anyhow::Result;
+use codeyard_git::error::RepoError;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -504,7 +504,7 @@ impl RpcHandler {
                     .await
                     .map_err(|_| {
                         RepoError::new(
-                            crate::backend::git::error::ErrorKind::Unavailable,
+                            codeyard_git::error::ErrorKind::Unavailable,
                             "Git credential or repository access denied",
                         )
                     })?;
@@ -665,7 +665,7 @@ impl RpcHandler {
             return Err(invalid("read admission requires a read-only operation"));
         }
         let (store, _) = self.authorize_request(request, caller).await?;
-        let guard = crate::backend::git::locks::read(Path::new(store.location())).await;
+        let guard = codeyard_git::locks::read(Path::new(store.location())).await;
         let (current, repo_id) = self.authorize_request(request, caller).await?;
         if current.location() != store.location() {
             return Err(RepoError::storage_node_unavailable());
@@ -979,8 +979,8 @@ impl RpcHandler {
             } => {
                 let budget = walk_millis
                     .map(std::time::Duration::from_millis)
-                    .unwrap_or(crate::backend::git::COMMIT_WALK_TIMEOUT)
-                    .min(crate::backend::git::COMMIT_WALK_TIMEOUT);
+                    .unwrap_or(codeyard_git::COMMIT_WALK_TIMEOUT)
+                    .min(codeyard_git::COMMIT_WALK_TIMEOUT);
                 let commits = store
                     .commits_until(&git_ref, 0, limit, &filter, received + budget)
                     .await?;
@@ -996,8 +996,8 @@ impl RpcHandler {
             } => {
                 let budget = walk_millis
                     .map(std::time::Duration::from_millis)
-                    .unwrap_or(crate::backend::git::COMMIT_WALK_TIMEOUT)
-                    .min(crate::backend::git::COMMIT_WALK_TIMEOUT);
+                    .unwrap_or(codeyard_git::COMMIT_WALK_TIMEOUT)
+                    .min(codeyard_git::COMMIT_WALK_TIMEOUT);
                 let commits = store
                     .commits_until(&git_ref, offset, limit, &filter, received + budget)
                     .await?;

@@ -8,10 +8,10 @@ use crate::backend::{
         discussion_search::{self, Expr},
         models::Repository,
     },
-    git,
 };
 use anyhow::{Context, Result};
 use chrono::{DateTime, NaiveDate, Utc};
+use codeyard_git as git;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     future::Future,

@@ -5,10 +5,10 @@ use crate::backend::{
         repositories::activity::{Kind, RefActivity},
         DbPool,
     },
-    git,
     webhooks::ref_changes::RefMove,
 };
 use anyhow::{Context, Result};
+use codeyard_git as git;
 use std::path::Path;
 use uuid::Uuid;
 

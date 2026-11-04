@@ -1,5 +1,5 @@
 //! Flat, bounded gist trees and immutable revision reads, shared by API saves and receive hooks.
-use crate::backend::git::{
+use crate::{
     error::{ErrorKind, RepoError},
     gist_types::{
         valid_gist_filename, GistEdit, GistRevision, GistSnapshot, PreparedGist, MAX_GIST_BYTES,
@@ -77,7 +77,7 @@ fn entries(repo: &Repository, commit: &Commit<'_>) -> Result<Vec<TreeObjectEntry
     }
     Ok(files)
 }
-pub(crate) fn revision_time(
+pub fn revision_time(
     timestamp: i64,
 ) -> std::result::Result<chrono::DateTime<chrono::Utc>, RepoError> {
     chrono::DateTime::from_timestamp(timestamp, 0)
@@ -162,7 +162,7 @@ fn selected_commit<'a>(repo: &'a Repository, revision: Option<&str>) -> Result<C
     };
     Ok(commit)
 }
-pub(crate) fn snapshot(path: &Path, revision: Option<&str>) -> Result<GistSnapshot> {
+pub fn snapshot(path: &Path, revision: Option<&str>) -> Result<GistSnapshot> {
     let repo = Repository::open_bare(path)?;
     let commit = selected_commit(&repo, revision)?;
     Ok(GistSnapshot {
@@ -170,12 +170,7 @@ pub(crate) fn snapshot(path: &Path, revision: Option<&str>) -> Result<GistSnapsh
         files: entries(&repo, &commit)?,
     })
 }
-pub(crate) fn prepare(
-    path: &Path,
-    input: &GistEdit,
-    name: &str,
-    email: &str,
-) -> Result<PreparedGist> {
+pub fn prepare(path: &Path, input: &GistEdit, name: &str, email: &str) -> Result<PreparedGist> {
     input.validate()?;
     let repo = Repository::open_bare(path)?;
     let parent = head(&repo)?;
@@ -358,7 +353,7 @@ fn history_metadata(
 }
 /// `lock` stays held until the walk and the change counts finish, and until the blocking walk
 /// ends even when the request is cancelled.
-pub(crate) async fn history(
+pub async fn history(
     path: &Path,
     revision: Option<&str>,
     offset: usize,
@@ -431,7 +426,7 @@ pub(crate) async fn history(
     Ok(result)
 }
 
-pub(crate) fn validate_push(
+pub fn validate_push(
     path: &Path,
     quarantine: Option<&Path>,
     old: &str,

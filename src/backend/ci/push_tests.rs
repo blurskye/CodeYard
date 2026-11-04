@@ -61,7 +61,7 @@ async fn new_refs_match_paths_against_the_same_root_tree_for_every_publisher() {
 
 #[tokio::test]
 async fn unavailable_large_path_lists_run_ref_matched_workflows() {
-    let (_root, store, sha) = revision(crate::backend::git::MAX_CI_CHANGED_PATHS + 1);
+    let (_root, store, sha) = revision(codeyard_git::MAX_CI_CHANGED_PATHS + 1);
     let update = RefUpdate {
         reference: "refs/heads/main".into(),
         old: None,

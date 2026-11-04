@@ -1,8 +1,8 @@
 //! Single-file commits for the web editor and the file API: write the blob and
 //! trees, create the commit, then move the branch only if it still points where the
 //! editor started.
-use crate::backend::git::error::{ErrorKind, RepoError};
-use crate::backend::git::{
+use codeyard_git::error::{ErrorKind, RepoError};
+use codeyard_git::{
     objects::Signature,
     repository::{process, CommitInfo},
 };
@@ -200,7 +200,7 @@ fn validate_path(path: &str) -> Result<(), RepoError> {
 }
 
 fn validate_target(branch: &str, expected_revision: &str) -> Result<(), RepoError> {
-    if branch.is_empty() || crate::backend::git::branch_ref(branch).is_none() {
+    if branch.is_empty() || codeyard_git::branch_ref(branch).is_none() {
         return Err(invalid("Invalid branch name."));
     }
     if expected_revision != "unborn"
@@ -489,7 +489,7 @@ async fn prepare_commit(
     identity.0.validate()?;
     identity.1.validate()?;
     let reference =
-        crate::backend::git::branch_ref(branch).ok_or_else(|| invalid("Invalid branch name."))?;
+        codeyard_git::branch_ref(branch).ok_or_else(|| invalid("Invalid branch name."))?;
     let current = Repo(path).direct_ref(&reference).await?;
     let expected = if expected_revision == "unborn" {
         None
@@ -508,7 +508,7 @@ async fn prepare_commit(
         .try_acquire_owned()
         .map_err(|_| unavailable())?;
     let temporary = tempfile::tempdir().map_err(|_| unavailable())?;
-    crate::backend::git::repository::initialize_repository(temporary.path(), None, branch)
+    codeyard_git::repository::initialize_repository(temporary.path(), None, branch)
         .await
         .map_err(RepoError::from)?;
     let objects = std::fs::canonicalize(path.join("objects")).map_err(|_| unavailable())?;
@@ -684,13 +684,12 @@ pub(super) async fn validate_staged(
 ) -> Result<(), RepoError> {
     let repo = Repo(path);
     let objects = Repo(staged.map_or(path, StagedFile::path));
-    if crate::backend::git::branch_ref(&prepared.branch).as_deref()
-        != Some(prepared.reference.as_str())
-        || !crate::backend::git::is_full_commit_id(&prepared.commit.sha)
+    if codeyard_git::branch_ref(&prepared.branch).as_deref() != Some(prepared.reference.as_str())
+        || !codeyard_git::is_full_commit_id(&prepared.commit.sha)
         || prepared
             .expected
             .as_ref()
-            .is_some_and(|expected| !crate::backend::git::is_full_commit_id(expected))
+            .is_some_and(|expected| !codeyard_git::is_full_commit_id(expected))
     {
         return Err(invalid("Invalid prepared file publication."));
     }
@@ -793,7 +792,7 @@ fn oid(bytes: &[u8]) -> Result<String, RepoError> {
     let text = std::str::from_utf8(bytes)
         .map_err(|_| unavailable())?
         .trim();
-    if !crate::backend::git::is_full_commit_id(text) {
+    if !codeyard_git::is_full_commit_id(text) {
         return Err(unavailable());
     }
     Ok(text.to_ascii_lowercase())
@@ -818,7 +817,7 @@ fn split_entry(record: &[u8]) -> Result<TreeEntry<'_>, RepoError> {
         || mode.len() != 6
         || !mode.bytes().all(|b| (b'0'..=b'7').contains(&b))
         || !matches!(kind, "tree" | "blob" | "commit")
-        || !crate::backend::git::is_full_commit_id(object)
+        || !codeyard_git::is_full_commit_id(object)
         || record.len() == tab + 1
     {
         return Err(unavailable());

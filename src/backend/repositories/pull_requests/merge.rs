@@ -2,8 +2,6 @@ use super::{database_error, OperationError};
 use crate::backend::ci::CiRuns;
 use crate::backend::ci::RefUpdate;
 use crate::backend::db;
-use crate::backend::git::error::ErrorKind;
-use crate::backend::git::error::RepoError;
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::NotificationBroadcaster;
@@ -18,6 +16,8 @@ use crate::backend::repositories::store::validate_merge_revision;
 use crate::backend::repositories::store::MergeMethod;
 use crate::backend::repositories::store::MergeRequest as StoreMerge;
 use crate::backend::webhooks::{self, events, payloads::Scope};
+use codeyard_git::error::ErrorKind;
+use codeyard_git::error::RepoError;
 use codeyard_webui::pages::repos::issues::MERGE_COMMIT_REFUSED;
 use serde::Deserialize;
 use serde::Serialize;
@@ -1262,7 +1262,7 @@ pub(super) fn merge_message(
             0
         };
     if method != MergeMethod::Rebase
-        && (message.is_empty() || length > crate::backend::git::MAX_MERGE_MESSAGE_BYTES)
+        && (message.is_empty() || length > codeyard_git::MAX_MERGE_MESSAGE_BYTES)
     {
         return Err(OperationError::Invalid {
             code: "validation_error",

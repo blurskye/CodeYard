@@ -26,7 +26,7 @@ fn ref_kind(reference: &str) -> Option<(&'static str, &str)> {
 /// The tips the refs had before the push: the refs now, with each moved ref put back. `None`
 /// when the refs cannot be listed within their limits.
 fn previous_tips(path: &Path, moves: &[RefMove]) -> Option<Vec<String>> {
-    let mut refs = match crate::backend::git::list_mirror_refs(path) {
+    let mut refs = match codeyard_git::list_mirror_refs(path) {
         Ok(refs) => refs,
         Err(error) => {
             tracing::warn!(%error, "could not list refs for push webhook history");

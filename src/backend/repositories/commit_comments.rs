@@ -8,7 +8,6 @@ use crate::backend::{
             self as records, CommentCreate, CommentEdit, CommentRefusal,
         },
     },
-    git::error::{ErrorKind, RepoError},
     notifications::{
         create::{create_and_broadcast_notification, NotificationRequest},
         mentions::{notify_mentions, MentionComment, MentionSource},
@@ -20,6 +19,7 @@ use crate::backend::{
         payloads::{self, Person, Scope},
     },
 };
+use codeyard_git::error::{ErrorKind, RepoError};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::{HashMap, HashSet};

@@ -158,7 +158,7 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
 /// back. Git keeps the objects of a push in a quarantine until pre-receive accepts it, so
 /// the quarantine holds exactly the new objects and listing their sizes reads no content.
 async fn refuse_unreadable_objects() -> Result<()> {
-    use crate::backend::git::repository::{process, MAX_COMMIT_OBJECT_BYTES};
+    use codeyard_git::repository::{process, MAX_COMMIT_OBJECT_BYTES};
     use tokio::io::{AsyncBufReadExt, BufReader};
 
     let Some(quarantine) = std::env::var_os("GIT_QUARANTINE_PATH") else {

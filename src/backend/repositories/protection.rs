@@ -8,10 +8,10 @@
 use crate::backend::ci::workflows::WorkflowMatchBudget;
 use crate::backend::db;
 use crate::backend::db::models::{BranchProtectionRule, Repository, User};
-use crate::backend::git;
-use crate::backend::git::error::MERGE_COMMIT_BLOCKED;
 use crate::backend::repositories::access;
 use anyhow::Result;
+use codeyard_git as git;
+use codeyard_git::error::MERGE_COMMIT_BLOCKED;
 use std::path::Path;
 
 pub const PULL_REQUEST_REQUIRED: &str =

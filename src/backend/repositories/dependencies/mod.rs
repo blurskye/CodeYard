@@ -7,9 +7,9 @@ pub mod worker;
 use crate::backend::{
     cluster::NodeContext,
     db,
-    git::error::{ErrorKind, RepoError},
     repositories::{access, store::repo_store},
 };
+use codeyard_git::error::{ErrorKind, RepoError};
 use db::repositories::dependencies::{self as records, Feature};
 #[derive(Debug)]
 pub enum DependencyError {
@@ -176,9 +176,9 @@ pub(crate) fn check_publication(
     }
     Ok(())
 }
-pub(crate) fn store_error(error: anyhow::Error) -> crate::backend::git::error::RepoError {
+pub(crate) fn store_error(error: anyhow::Error) -> codeyard_git::error::RepoError {
     use crate::backend::db::repositories::dependencies::Refusal;
-    use crate::backend::git::error::{ErrorKind, RepoError};
+    use codeyard_git::error::{ErrorKind, RepoError};
     if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return RepoError::write_denied();
     }

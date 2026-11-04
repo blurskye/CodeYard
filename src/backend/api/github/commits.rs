@@ -361,7 +361,7 @@ async fn blob(
     Path((owner, name, sha)): Path<(String, String, String)>,
 ) -> Result<Response> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    if !crate::backend::git::is_full_commit_id(&sha) {
+    if !codeyard_git::is_full_commit_id(&sha) {
         return Err(Error::missing());
     }
     let bytes = repo_store(&repo, state.cluster.as_ref())

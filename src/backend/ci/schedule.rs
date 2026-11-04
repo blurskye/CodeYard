@@ -132,9 +132,7 @@ impl CiRuns {
         let reference = format!("refs/heads/{}", repo.default_branch);
         let commit = match store.commit_from_primary(&reference).await {
             Ok(commit) => commit,
-            Err(error) if error.kind == crate::backend::git::error::ErrorKind::NotFound => {
-                return Ok(())
-            }
+            Err(error) if error.kind == codeyard_git::error::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error.into()),
         };
         // Schedules run only for a branch tip whose publication is recorded.
@@ -145,10 +143,8 @@ impl CiRuns {
             return Ok(());
         }
         let (actor, access_cap) = match proof.publication.actor {
-            crate::backend::git::PublicationActor::User(actor) => {
-                (actor, db::models::AccessLevel::Owner)
-            }
-            crate::backend::git::PublicationActor::DeployKey(key) => {
+            codeyard_git::PublicationActor::User(actor) => (actor, db::models::AccessLevel::Owner),
+            codeyard_git::PublicationActor::DeployKey(key) => {
                 let (actor, cap) = crate::backend::repositories::deploy_keys::authorize(
                     &self.pool, key, &repo, true,
                 )

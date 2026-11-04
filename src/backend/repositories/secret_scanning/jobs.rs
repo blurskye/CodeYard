@@ -1,5 +1,4 @@
 //! Durable scan work survives process restarts; Git reads go through the repository store.
-use crate::backend::git::secret_detection::{scan_with_patterns, MAX_BLOB_BYTES};
 use crate::backend::{
     app::AppState,
     db::{self, secret_scanning as records},
@@ -7,6 +6,7 @@ use crate::backend::{
     webhooks::{self, payloads},
 };
 use anyhow::{ensure, Context, Result};
+use codeyard_git::secret_detection::{scan_with_patterns, MAX_BLOB_BYTES};
 use serde_json::{json, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -177,10 +177,10 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
         .map(|sha| (sha, false))
         .collect::<Vec<_>>();
     let mut visited = HashSet::new();
-    let cacheable = crate::backend::git::secret_detection::scanner::cache_across_commits()?;
+    let cacheable = codeyard_git::secret_detection::scanner::cache_across_commits()?;
     let mut cache = std::collections::HashMap::<
         (String, String),
-        Arc<Vec<crate::backend::git::secret_detection::Detection>>,
+        Arc<Vec<codeyard_git::secret_detection::Detection>>,
     >::new();
     let mut cache_bytes = 0usize;
     // The claim lapses after five minutes without a heartbeat, so a long commit or a long run of
@@ -262,7 +262,7 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
                 detections
             };
             for detection in detections.iter() {
-                let location = crate::backend::git::secret_scanning::Location {
+                let location = codeyard_git::secret_scanning::Location {
                     commit_sha: sha.clone(),
                     blob_sha: entry.sha.clone(),
                     path: entry.path.clone(),
@@ -330,7 +330,7 @@ pub async fn run_next(state: &AppState) -> Result<bool> {
                 result = &mut scan => break result,
                 _ = beats.tick() => {
                     let renewed = tokio::time::timeout(Duration::from_secs(5), records::heartbeat(&state.pool, job.repo_id, job.id, job.attempt, None)).await
-                        .map_err(|_| crate::backend::git::error::RepoError::new(crate::backend::git::error::ErrorKind::Unavailable, "Secret scan lease renewal unavailable"))??;
+                        .map_err(|_| codeyard_git::error::RepoError::new(codeyard_git::error::ErrorKind::Unavailable, "Secret scan lease renewal unavailable"))??;
                     ensure!(renewed, "Another worker took over this secret scan");
                 }
             }
@@ -340,10 +340,8 @@ pub async fn run_next(state: &AppState) -> Result<bool> {
         Ok(()) => records::ScanCompletion::Completed,
         Err(error)
             if error
-                .downcast_ref::<crate::backend::git::error::RepoError>()
-                .is_some_and(|error| {
-                    error.kind == crate::backend::git::error::ErrorKind::Unavailable
-                })
+                .downcast_ref::<codeyard_git::error::RepoError>()
+                .is_some_and(|error| error.kind == codeyard_git::error::ErrorKind::Unavailable)
                 || error.is::<sqlx::Error>() =>
         {
             records::ScanCompletion::Retry

@@ -306,7 +306,7 @@ pub(super) async fn submit(
         .map(|id| id.to_string())
         .unwrap_or_default();
     let mut commit_sha = field(&form, "commit_sha");
-    if !crate::backend::git::is_full_commit_id(&commit_sha) {
+    if !codeyard_git::is_full_commit_id(&commit_sha) {
         commit_sha.clear();
     }
     let mut revision = field(&form, "expected_revision");
@@ -323,7 +323,7 @@ pub(super) async fn submit(
     };
     let sha = &params["sha"];
     let operation = async {
-        if !crate::backend::git::is_full_commit_id(sha) {
+        if !codeyard_git::is_full_commit_id(sha) {
             return Err(CommentError::Invalid("Use an immutable full commit SHA"));
         }
         if field(&form, "repository_id").parse::<i64>().ok() != Some(loaded.repository.id)
@@ -442,7 +442,7 @@ pub(super) async fn submit(
         Err(error) => (failure(&error), Some(error.to_string())),
     };
     // The form's own address takes only POST, so appearance changes return to the commit page.
-    if crate::backend::git::is_full_commit_id(sha) {
+    if codeyard_git::is_full_commit_id(sha) {
         ctx.return_to = Some(format!("{}/commit/{sha}", loaded.chrome.base()));
     }
     match commit_page(&ctx, &loaded, sha, Some(draft.clone()), message.clone()).await {

@@ -61,13 +61,13 @@ pub async fn exclusive(path: &Path) -> OwnedRwLockWriteGuard<()> {
 }
 
 #[derive(Debug)]
-pub(crate) struct PublicationGuard {
+pub struct PublicationGuard {
     _process: OwnedMutexGuard<()>,
     lease: Arc<PublicationLease>,
 }
 
 #[derive(Debug)]
-pub(crate) struct PublicationLease {
+pub struct PublicationLease {
     file: File,
 }
 
@@ -134,7 +134,7 @@ impl PublicationLease {
 
 /// Open before spawning receive-pack, but acquire only in pre-receive. Concurrent clients can
 /// negotiate while the eventual lock is shared with the child through the same file description.
-pub(crate) async fn open_publication(path: &Path) -> anyhow::Result<Arc<PublicationLease>> {
+pub async fn open_publication(path: &Path) -> anyhow::Result<Arc<PublicationLease>> {
     let canonical = tokio::fs::canonicalize(path).await?;
     let file = tokio::fs::OpenOptions::new()
         .read(true)
@@ -152,7 +152,7 @@ pub(crate) async fn open_publication(path: &Path) -> anyhow::Result<Arc<Publicat
 
 /// All native branch publishers and provenance readers acquire this lease. Retain it in blocking
 /// workers and scope publication subprocesses with it; never explicitly unlock on cancellation.
-pub(crate) async fn publication(path: &Path) -> anyhow::Result<Arc<PublicationGuard>> {
+pub async fn publication(path: &Path) -> anyhow::Result<Arc<PublicationGuard>> {
     open_publication(path).await?.acquire(path).await
 }
 

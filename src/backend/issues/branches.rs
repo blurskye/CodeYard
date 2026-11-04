@@ -2,9 +2,9 @@
 use super::{db, OperationError};
 use crate::backend::{
     app::AppState,
-    git::error::ErrorKind,
     repositories::{access, refs, store::repo_store},
 };
+use codeyard_git::error::ErrorKind;
 
 pub fn default_name(issue: &db::models::Issue) -> String {
     let title = issue
@@ -97,7 +97,7 @@ pub async fn create(
             // A retry after the branch was published but its link was not saved finds the
             // branch at the requested commit; it then only saves the link.
             ErrorKind::Conflict => {
-                let reference = crate::backend::git::branch_ref(name).ok_or_else(unconfirmed)?;
+                let reference = codeyard_git::branch_ref(name).ok_or_else(unconfirmed)?;
                 let tip = repo_store(target, state.cluster.as_ref())
                     .commit_from_primary(&reference)
                     .await

@@ -269,7 +269,7 @@ impl Update {
         ensure!(
             self.branch.starts_with("codeyard/security/")
                 && self.branch.len() <= 255
-                && crate::backend::git::branch_ref(&self.branch).is_some()
+                && codeyard_git::branch_ref(&self.branch).is_some()
                 && sha(&self.base_sha)
                 && sha(&self.commit_sha)
                 && bounded(&self.old_version, 256)

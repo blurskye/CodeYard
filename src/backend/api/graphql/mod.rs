@@ -60,7 +60,7 @@ struct RequestContext {
     /// Bytes of text the request has loaded or returned, bounded by `MAX_RESPONSE_BYTES`.
     bytes: AtomicUsize,
     diffs: tokio::sync::Mutex<
-        std::collections::HashMap<(i64, String, String), Arc<crate::backend::git::DiffInfo>>,
+        std::collections::HashMap<(i64, String, String), Arc<codeyard_git::DiffInfo>>,
     >,
     mergeability: tokio::sync::Mutex<std::collections::HashMap<(i64, String, String), bool>>,
     rate: db::graphql::RateLimit,

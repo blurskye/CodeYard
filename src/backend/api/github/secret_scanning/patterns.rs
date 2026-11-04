@@ -1,9 +1,5 @@
 use super::{auth, error as alert_error, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db::secret_scanning as records,
-    git::secret_detection::patterns::{Create, Delete, Owner, Update},
-};
+use crate::backend::{app::AppState, db::secret_scanning as records};
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -11,6 +7,7 @@ use axum::{
     routing::{delete, get, patch, post, MethodRouter},
     Json,
 };
+use codeyard_git::secret_detection::patterns::{Create, Delete, Owner, Update};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};

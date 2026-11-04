@@ -12,19 +12,19 @@ use std::{
 const MAX_OUTPUT: usize = 1024 * 1024;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(300);
-pub(crate) use codeyard_support::git_limits::MAX_MERGE_MESSAGE_BYTES;
+pub use codeyard_support::git_limits::MAX_MERGE_MESSAGE_BYTES;
 /// Conflicting paths that a refusal names. The rest are counted.
 const LISTED_CONFLICTS: usize = 20;
 
 /// Shown when a merge would add nothing to the base branch.
-pub(crate) const NO_CHANGES: &str = "The pull request adds no changes to the base branch.";
+pub const NO_CHANGES: &str = "The pull request adds no changes to the base branch.";
 
 /// Someone who writes or commits a commit. An author date keeps the date of the commit the
 /// author came from, in Git's `<seconds> <offset>` form.
-pub(crate) struct Person<'a> {
-    pub(crate) name: &'a str,
-    pub(crate) email: &'a str,
-    pub(crate) date: Option<&'a str>,
+pub struct Person<'a> {
+    pub name: &'a str,
+    pub email: &'a str,
+    pub date: Option<&'a str>,
 }
 
 /// The branches conflict. The message names the conflicting files.
@@ -35,12 +35,10 @@ pub(crate) struct MergeConflict(pub(crate) String);
 /// The commits cannot be merged this way, for example because they contain merge commits.
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
-pub(crate) struct UnsupportedMerge(pub(crate) String);
+pub struct UnsupportedMerge(pub String);
 
-pub(crate) fn validate_merge_revision(branch: &str, sha: &str) -> Result<()> {
-    if crate::backend::git::branch_ref(branch).is_none()
-        || !crate::backend::git::is_full_commit_id(sha)
-    {
+pub fn validate_merge_revision(branch: &str, sha: &str) -> Result<()> {
+    if crate::branch_ref(branch).is_none() || !crate::is_full_commit_id(sha) {
         bail!("A valid branch and complete expected revision are required");
     }
     Ok(())
@@ -71,13 +69,13 @@ pub(super) async fn command(
 
 fn oid_output(bytes: &[u8]) -> Result<String> {
     let text = std::str::from_utf8(bytes)?.trim();
-    if !crate::backend::git::is_full_commit_id(text) {
+    if !crate::is_full_commit_id(text) {
         bail!("Git returned an invalid object ID");
     }
     Ok(text.to_ascii_lowercase())
 }
 
-pub(crate) async fn commit_is_ancestor(path: &Path, base: &str, head: &str) -> Result<bool> {
+pub async fn commit_is_ancestor(path: &Path, base: &str, head: &str) -> Result<bool> {
     validate_merge_revision("main", base)?;
     validate_merge_revision("main", head)?;
     let (status, _) = command(
@@ -146,7 +144,7 @@ async fn quarantined(
 
 /// Whether moving a branch from `old` to `new` only adds commits, for a push still in
 /// quarantine.
-pub(crate) async fn quarantined_is_fast_forward(
+pub async fn quarantined_is_fast_forward(
     path: &Path,
     quarantine: &Path,
     old: &str,
@@ -162,7 +160,7 @@ pub(crate) async fn quarantined_is_fast_forward(
 /// Whether `new` brings a merge commit that `old` does not have. A new branch checks
 /// its whole history, even when another ref already holds it. A push still in
 /// `quarantine` is read through it; a prepared merge is already in the repository.
-pub(crate) async fn adds_merge_commit(
+pub async fn adds_merge_commit(
     path: &Path,
     quarantine: Option<&Path>,
     old: Option<&str>,
@@ -184,7 +182,7 @@ pub(crate) async fn adds_merge_commit(
 
 /// One introduced commit's signature, the bytes it covers and the committer address. The
 /// payload stays raw: a signature covers exact bytes, which lossy UTF-8 decoding can change.
-pub(crate) struct CommitSignature {
+pub struct CommitSignature {
     pub signature: Option<String>,
     pub payload: Option<Vec<u8>>,
     pub committer_email: String,
@@ -194,7 +192,7 @@ pub(crate) struct CommitSignature {
 const MAX_SIGNATURE_CHECKS: usize = 10_000;
 
 /// The signatures of the commits `new` adds over `old`, for the signed-commit rule.
-pub(crate) async fn introduced_signatures(
+pub async fn introduced_signatures(
     path: &Path,
     quarantine: Option<&Path>,
     old: Option<&str>,
@@ -274,7 +272,7 @@ pub(crate) async fn walk_commits(
     if !hidden.is_empty() || hide_published {
         command.arg("--not").args(hidden);
         if hide_published {
-            for namespace in crate::backend::git::ref_names::PUBLIC_REF_NAMESPACES {
+            for namespace in crate::ref_names::PUBLIC_REF_NAMESPACES {
                 command.arg(format!("--glob={namespace}*"));
             }
         }
@@ -292,7 +290,7 @@ pub(crate) async fn walk_commits(
 
 /// Builds a two-parent merge commit of `base` and `head` without touching refs, even when `head`
 /// already contains `base`. Conflicts are a [`MergeConflict`].
-pub(crate) async fn prepare_merge(
+pub async fn prepare_merge(
     path: &Path,
     head: &str,
     base: &str,
@@ -321,7 +319,7 @@ pub(crate) async fn prepare_merge(
 /// Builds one commit on top of `base` that holds the whole change of `head`. `author` wrote it
 /// and `committer` commits it. Without a supplied body, the title is followed by the subjects of
 /// the squashed commits, cut to the size limit. An unchanged base tree is refused.
-pub(crate) async fn prepare_squash(
+pub async fn prepare_squash(
     path: &Path,
     head: &str,
     base: &str,
@@ -395,11 +393,11 @@ async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Res
 /// and the replay checks that.
 fn check_commit_text(message: &str, people: &[&Person<'_>]) -> Result<()> {
     for person in people {
-        crate::backend::git::objects::validate_identity(person.name, person.email)?;
+        crate::objects::validate_identity(person.name, person.email)?;
     }
     if message.is_empty() || message.contains('\0') || message.len() > MAX_MERGE_MESSAGE_BYTES {
-        return Err(crate::backend::git::error::RepoError::new(
-            crate::backend::git::error::ErrorKind::Invalid,
+        return Err(crate::error::RepoError::new(
+            crate::error::ErrorKind::Invalid,
             "Invalid merge commit identity or message",
         )
         .into());
@@ -548,7 +546,7 @@ pub(super) async fn commit_tree_bytes(
 
 /// Creates a bare repository. Forks fetch refs into a fresh repository instead
 /// of copying the source's config, hooks or alternates.
-pub(crate) async fn initialize_repository(
+pub async fn initialize_repository(
     path: &Path,
     source: Option<&Path>,
     default_branch: &str,
@@ -556,7 +554,7 @@ pub(crate) async fn initialize_repository(
     initialize_repository_copy(path, source, default_branch, false, false).await
 }
 
-pub(crate) async fn initialize_repository_copy(
+pub async fn initialize_repository_copy(
     path: &Path,
     source: Option<&Path>,
     default_branch: &str,
@@ -610,7 +608,7 @@ pub(crate) async fn initialize_repository_copy(
 
 /// A template copies trees, not history. Prune before publication so old private commits cannot
 /// be recovered through object-ID reads on the generated repository.
-pub(crate) async fn rewrite_template_history(
+pub async fn rewrite_template_history(
     path: &Path,
     default_branch: &str,
     author: (&str, &str),
@@ -765,31 +763,27 @@ const TEMPORARY_PULL_HEAD: &str = "refs/heads/pull-head";
 
 /// A fork head fetched into an isolated repository. Dropping it removes every
 /// fetched object without exposing it through the base repository.
-pub(crate) struct PreparedPullHead {
+pub struct PreparedPullHead {
     temporary: tempfile::TempDir,
     head: String,
 }
 
 impl PreparedPullHead {
-    pub(crate) fn path(&self) -> &Path {
+    pub fn path(&self) -> &Path {
         self.temporary.path()
     }
-    pub(crate) fn head(&self) -> &str {
+    pub fn head(&self) -> &str {
         &self.head
     }
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("Git pull request ref changed")]
-pub(crate) struct PullHeadConflict;
+pub struct PullHeadConflict;
 
 /// Fetches a local fork commit into temporary storage. The base repository is
 /// not touched until [`publish_pull_head`] runs after the live authority check.
-pub(crate) async fn prepare_pull_head(
-    base: &Path,
-    source: &Path,
-    head: &str,
-) -> Result<PreparedPullHead> {
+pub async fn prepare_pull_head(base: &Path, source: &Path, head: &str) -> Result<PreparedPullHead> {
     validate_merge_revision("main", head)?;
     let (base, source) = (base.to_owned(), source.to_owned());
     let (source, temporary, mut alternates, refs) = process::blocking_until(
@@ -862,7 +856,7 @@ pub(crate) async fn prepare_pull_head(
     })
 }
 
-pub(crate) async fn prepare_pull_branch_update(
+pub async fn prepare_pull_branch_update(
     path: &Path,
     source: &Path,
     head: &str,
@@ -901,7 +895,7 @@ pub(crate) async fn prepare_pull_branch_update(
 }
 
 /// Imports the upstream tip without publishing it, preserving a fork's own commits.
-pub(crate) async fn prepare_upstream_merge(
+pub async fn prepare_upstream_merge(
     path: &Path,
     source: &Path,
     head: &str,
@@ -958,7 +952,7 @@ fn is_retained_object_ref(reference: &str) -> bool {
         })
 }
 
-pub(crate) async fn current_pull_head(path: &Path, number: i32) -> Result<Option<String>> {
+pub async fn current_pull_head(path: &Path, number: i32) -> Result<Option<String>> {
     ensure!(number > 0, "Invalid pull request number");
     let reference = format!("refs/pull/{number}/head");
     ensure!(
@@ -968,15 +962,14 @@ pub(crate) async fn current_pull_head(path: &Path, number: i32) -> Result<Option
     current_reference(path, &reference).await
 }
 
-pub(crate) async fn current_branch_head(path: &Path, branch: &str) -> Result<Option<String>> {
-    let reference =
-        crate::backend::git::branch_ref(branch).ok_or_else(|| anyhow!("Invalid branch"))?;
+pub async fn current_branch_head(path: &Path, branch: &str) -> Result<Option<String>> {
+    let reference = crate::branch_ref(branch).ok_or_else(|| anyhow!("Invalid branch"))?;
     current_reference(path, &reference).await
 }
 
 async fn current_reference(path: &Path, reference: &str) -> Result<Option<String>> {
     ensure!(
-        crate::backend::git::is_canonical_ref(reference)
+        crate::is_canonical_ref(reference)
             || is_pull_head_ref(reference)
             || is_retained_object_ref(reference),
         "Invalid reference"
@@ -998,7 +991,7 @@ async fn current_reference(path: &Path, reference: &str) -> Result<Option<String
 /// Publishes an isolated fork head through `receive-pack`: incoming objects stay
 /// quarantined until the exact expected pull ref is accepted. Retrying an
 /// already-published head is idempotent.
-pub(crate) async fn publish_pull_head(
+pub async fn publish_pull_head(
     path: &Path,
     number: i32,
     head: &str,
@@ -1018,14 +1011,13 @@ pub(crate) async fn publish_pull_head(
     publish_prepared_ref(path, &reference, head, expected_head, prepared).await
 }
 
-pub(crate) async fn publish_pull_branch_update(
+pub async fn publish_pull_branch_update(
     path: &Path,
     branch: &str,
     expected: &str,
     prepared: &PreparedPullHead,
 ) -> Result<()> {
-    let reference =
-        crate::backend::git::branch_ref(branch).ok_or_else(|| anyhow!("Invalid branch"))?;
+    let reference = crate::branch_ref(branch).ok_or_else(|| anyhow!("Invalid branch"))?;
     publish_prepared_ref(path, &reference, prepared.head(), Some(expected), prepared).await
 }
 
@@ -1091,7 +1083,7 @@ async fn publish_prepared_ref(
     bail!("Git pull request publication failed")
 }
 
-pub(crate) async fn publish_ref(
+pub async fn publish_ref(
     path: &Path,
     verb: &str,
     reference: &str,
@@ -1099,7 +1091,7 @@ pub(crate) async fn publish_ref(
     old: &str,
 ) -> Result<()> {
     ensure!(
-        crate::backend::git::is_canonical_ref(reference)
+        crate::is_canonical_ref(reference)
             || is_pull_head_ref(reference)
             || is_retained_object_ref(reference),
         "Invalid reference"
@@ -1117,14 +1109,9 @@ pub(crate) async fn publish_ref(
     run_ref_transaction(path, &input, verb, "Reference changed while publishing").await
 }
 
-pub(crate) async fn publish_branch_rename(
-    path: &Path,
-    old: &str,
-    new: &str,
-    target: &str,
-) -> Result<()> {
-    let old_ref = crate::backend::git::branch_ref(old).ok_or_else(|| anyhow!("Invalid branch"))?;
-    let new_ref = crate::backend::git::branch_ref(new).ok_or_else(|| anyhow!("Invalid branch"))?;
+pub async fn publish_branch_rename(path: &Path, old: &str, new: &str, target: &str) -> Result<()> {
+    let old_ref = crate::branch_ref(old).ok_or_else(|| anyhow!("Invalid branch"))?;
+    let new_ref = crate::branch_ref(new).ok_or_else(|| anyhow!("Invalid branch"))?;
     validate_merge_revision("main", target)?;
     // The caller holds the publication lease. Native rename handles file/directory ref
     // transitions (feature <-> feature/topic), which update-ref cannot lock together.
@@ -1156,7 +1143,7 @@ pub(crate) async fn publish_branch_rename(
     outcome
 }
 
-pub(crate) async fn publish_ref_create(path: &Path, reference: &str, target: &str) -> Result<()> {
+pub async fn publish_ref_create(path: &Path, reference: &str, target: &str) -> Result<()> {
     publish_ref(
         path,
         "create reference",
@@ -1167,11 +1154,11 @@ pub(crate) async fn publish_ref_create(path: &Path, reference: &str, target: &st
     .await
 }
 
-pub(crate) async fn publish_ref_delete(path: &Path, reference: &str, old: &str) -> Result<()> {
+pub async fn publish_ref_delete(path: &Path, reference: &str, old: &str) -> Result<()> {
     publish_ref(path, "delete reference", reference, None, old).await
 }
 
-pub(crate) fn merge_head_ref(head_branch: &str, head: &str) -> Result<String> {
+pub fn merge_head_ref(head_branch: &str, head: &str) -> Result<String> {
     if head_branch.starts_with("refs/heads/") || is_pull_head_ref(head_branch) {
         ensure!(
             git2::Reference::is_valid_name(head_branch),
@@ -1181,13 +1168,13 @@ pub(crate) fn merge_head_ref(head_branch: &str, head: &str) -> Result<String> {
         Ok(head_branch.to_owned())
     } else {
         validate_merge_revision(head_branch, head)?;
-        crate::backend::git::branch_ref(head_branch).ok_or_else(|| anyhow!("Invalid head branch"))
+        crate::branch_ref(head_branch).ok_or_else(|| anyhow!("Invalid head branch"))
     }
 }
 
 /// Moves the base branch to `result` in one transaction, failing if the base or any head moved
 /// since the merge was prepared. Each head is `(head branch or pull ref, commit)`.
-pub(crate) async fn publish_merge(
+pub async fn publish_merge(
     path: &Path,
     heads: &[(&str, &str)],
     base_branch: &str,
@@ -1196,8 +1183,7 @@ pub(crate) async fn publish_merge(
 ) -> Result<()> {
     validate_merge_revision(base_branch, base)?;
     validate_merge_revision(base_branch, result)?;
-    let base_ref = crate::backend::git::branch_ref(base_branch)
-        .ok_or_else(|| anyhow!("Invalid base branch"))?;
+    let base_ref = crate::branch_ref(base_branch).ok_or_else(|| anyhow!("Invalid base branch"))?;
     let mut input = String::from("start\n");
     for (head_branch, head) in heads {
         let head_ref = merge_head_ref(head_branch, head)?;
@@ -1222,15 +1208,14 @@ pub(crate) async fn publish_merge(
 /// at `base`. Each move is `(branch, old, new)` and fails on its own when the branch is not at `old`.
 /// A move with `old` equal to `new` only verifies that branch.
 /// All of them land in one ref transaction, so either every branch moves or none does.
-pub(crate) async fn publish_restack(
+pub async fn publish_restack(
     path: &Path,
     base_branch: &str,
     base: &str,
     moves: &[(&str, &str, &str)],
 ) -> Result<()> {
     validate_merge_revision(base_branch, base)?;
-    let base_ref = crate::backend::git::branch_ref(base_branch)
-        .ok_or_else(|| anyhow!("Invalid base branch"))?;
+    let base_ref = crate::branch_ref(base_branch).ok_or_else(|| anyhow!("Invalid base branch"))?;
     ensure!(!moves.is_empty(), "Nothing to restack");
     let mut input = format!("start\nverify {base_ref} {base}\n");
     for (branch, old, new) in moves {
@@ -1240,8 +1225,7 @@ pub(crate) async fn publish_restack(
         );
         validate_merge_revision(branch, old)?;
         validate_merge_revision(branch, new)?;
-        let reference = crate::backend::git::branch_ref(branch)
-            .ok_or_else(|| anyhow!("Invalid head branch"))?;
+        let reference = crate::branch_ref(branch).ok_or_else(|| anyhow!("Invalid head branch"))?;
         // A branch the rebase built on but did not rewrite must still be where it was read.
         if old == new {
             input.push_str(&format!("verify {reference} {old}\n"));
@@ -1261,7 +1245,7 @@ pub(crate) async fn publish_restack(
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
-pub(crate) struct RefConflict(pub(crate) String);
+pub struct RefConflict(pub String);
 
 /// Runs one `update-ref --stdin` transaction. A failed check of any line refuses all of them.
 pub(crate) async fn run_ref_transaction(
@@ -1333,7 +1317,7 @@ async fn run_ref_command(
 
 /// Fetches only `sha` and its reachable objects into a new, isolated `destination`
 /// and checks it out with a detached HEAD.
-pub(crate) async fn checkout(path: &Path, destination: &Path, sha: &str) -> Result<()> {
+pub async fn checkout(path: &Path, destination: &Path, sha: &str) -> Result<()> {
     validate_merge_revision("main", sha)?;
     let source = std::path::absolute(path)?;
     let source = source
@@ -1342,7 +1326,7 @@ pub(crate) async fn checkout(path: &Path, destination: &Path, sha: &str) -> Resu
     materialize_checkout(destination, sha, source, None).await
 }
 
-pub(crate) async fn materialize_checkout(
+pub async fn materialize_checkout(
     destination: &Path,
     sha: &str,
     source: &str,

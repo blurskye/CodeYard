@@ -148,10 +148,7 @@ async fn divergent_merge_retains_both_contents_and_both_parents() {
         )
         .await
         .unwrap_err();
-    assert_eq!(
-        error.kind,
-        codeyard::backend::git::error::ErrorKind::Conflict
-    );
+    assert_eq!(error.kind, codeyard_git::error::ErrorKind::Conflict);
     assert_eq!(tip(temp.path(), "main"), base);
     repositories::protection::delete_branch_protection_rule(&database.pool, actor, repo_id, "main")
         .await

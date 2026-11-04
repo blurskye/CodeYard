@@ -7,7 +7,6 @@ use codeyard::backend::{
     ci::CiConfig,
     db::{self, users::accounts::AccountCredential},
     gists::{self, CreateGist},
-    git::gist_types::{GistEdit, GistFileChange, MAX_GIST_BYTES},
     identity::tokens::{self, TokenInput},
     repositories::{
         access, lifecycle,
@@ -15,6 +14,7 @@ use codeyard::backend::{
     },
     storage::ObjectStore,
 };
+use codeyard_git::gist_types::{GistEdit, GistFileChange, MAX_GIST_BYTES};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, path::Path, sync::Arc};
 

@@ -73,7 +73,7 @@ pub(super) async fn merge_json(
 
 fn merge_error(error: RefError) -> (StatusCode, Json<ApiError>) {
     match error {
-        RefError::Git(error) if error.kind == crate::backend::git::error::ErrorKind::Conflict => {
+        RefError::Git(error) if error.kind == codeyard_git::error::ErrorKind::Conflict => {
             responses::repo_store_error(error, StatusCode::CONFLICT)
         }
         error => responses::ref_error(error),
@@ -180,7 +180,7 @@ fn selected(value: &str) -> Result<(&str, &str), RefError> {
     let (sha, branch) = value
         .split_once(' ')
         .ok_or(RefError::Invalid("Choose a branch and its revision"))?;
-    if !crate::backend::git::is_full_commit_id(sha) || branch.is_empty() {
+    if !codeyard_git::is_full_commit_id(sha) || branch.is_empty() {
         return Err(RefError::Invalid("Choose a branch and its revision"));
     }
     Ok((branch, sha))
@@ -206,8 +206,8 @@ async fn submit(
     };
     let outcome = async {
         if field(&values, "repository_id").parse::<i64>().ok() != Some(loaded.repository.id) {
-            return Err(RefError::Git(crate::backend::git::error::RepoError::new(
-                crate::backend::git::error::ErrorKind::Conflict,
+            return Err(RefError::Git(codeyard_git::error::RepoError::new(
+                codeyard_git::error::ErrorKind::Conflict,
                 "Repository identity changed",
             )));
         }

@@ -16,9 +16,9 @@ const MAX_REPLAYED_COMMITS: usize = 100;
 /// What a replay produced: the new tip, and how many commits were written. A commit whose
 /// change the tip already has is skipped, so the rest are the ones it did not write.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct Replayed {
-    pub(crate) tip: String,
-    pub(crate) replayed: usize,
+pub struct Replayed {
+    pub tip: String,
+    pub replayed: usize,
 }
 
 struct PendingCommit {
@@ -38,7 +38,7 @@ struct OriginalCommit {
 /// message of the original, and `committer` commits it. A commit whose tree equals the tip's tree
 /// is skipped. Merge commits, parentless commits and more than 100 commits are refused. A
 /// conflict is a `MergeConflict` that names the conflicting paths.
-pub(crate) async fn replay_commits(
+pub async fn replay_commits(
     path: &Path,
     from: &str,
     to: &str,

@@ -17,7 +17,7 @@ pub struct CommitComparison {
     pub commits: Vec<CommitInfo>,
 }
 
-pub(crate) async fn compare_commits(
+pub async fn compare_commits(
     base_path: &Path,
     head_path: &Path,
     base_ref: &str,

@@ -7,10 +7,10 @@ use crate::backend::db::{self, cluster::writes as journal, models::WriteRecord};
 use crate::backend::{
     ci::{CiConfig, CiRuns},
     cluster::{link::Link, transport, NodeContext},
-    git::{error::RepoError, repository::process as git_process},
     repositories::store::{GitService, GitStreams, RepoStore},
 };
 use anyhow::{ensure, Context, Result};
+use codeyard_git::{error::RepoError, repository::process as git_process};
 use serde_json::Value;
 use std::sync::Arc;
 use std::{
@@ -429,10 +429,7 @@ async fn retain_write(path: &Path, write: &WriteRecord, limits: WriteLimits) -> 
         .split_whitespace()
         .last()
         .context("missing pack hash")?;
-    ensure!(
-        crate::backend::git::is_full_commit_id(hash),
-        "invalid pack hash"
-    );
+    ensure!(codeyard_git::is_full_commit_id(hash), "invalid pack hash");
     for suffix in ["pack", "idx"] {
         tokio::fs::File::open(
             path.join("objects/pack")
@@ -751,7 +748,7 @@ impl RpcHandler {
         limits: WriteLimits,
     ) -> Result<()> {
         let path = store.local_path_for_spawning_git()?;
-        let held = crate::backend::git::locks::publication(path).await?;
+        let held = codeyard_git::locks::publication(path).await?;
         held.scope(async {
             let write = self.context.current_write(id).await?;
             ensure!(
@@ -806,7 +803,7 @@ impl RpcHandler {
         limits: WriteLimits,
     ) -> Result<()> {
         let path = store.local_path_for_spawning_git()?;
-        let held = crate::backend::git::locks::publication(path).await?;
+        let held = codeyard_git::locks::publication(path).await?;
         held.scope(async {
             let write = self.context.current_write(id).await?;
             if write.decision == "abort" {
@@ -908,7 +905,7 @@ pub(super) async fn apply_refs(path: &Path, write: &WriteRecord, limit: Duration
 async fn readable(store: &RepoStore) -> Result<(), RepoError> {
     let path = store.local_path_for_spawning_git()?.to_owned();
     let opens = git_process::blocking_until(std::time::Instant::now() + TIMEOUT, move || {
-        crate::backend::git::repository::opens_as_repository(&path)
+        codeyard_git::repository::opens_as_repository(&path)
     })
     .await
     .map_err(|_| unavailable())?;

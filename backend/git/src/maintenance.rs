@@ -54,7 +54,7 @@ impl Drop for RunLock {
 /// Packs the repository at `path` in the background after an accepted push. Only the node
 /// holding the primary copy gets here. The push does not wait for the run, and a failure is
 /// only logged.
-pub(crate) fn after_push(repo_id: i64, path: PathBuf) {
+pub fn after_push(repo_id: i64, path: PathBuf) {
     tokio::spawn(async move {
         if let Err(error) = pack_if_needed(&path, LOOSE_OBJECT_LIMIT).await {
             tracing::warn!(repo_id, %error, "repository packing after a push failed");
@@ -66,7 +66,7 @@ pub(crate) fn after_push(repo_id: i64, path: PathBuf) {
 /// The copier calls this inside the copy's own job, so no other transfer into the copy runs
 /// meanwhile. It never waits for a run slot: a copy that finds them all busy is checked again
 /// at its next transfer. Failures are logged.
-pub(crate) async fn after_copy(repo_id: i64, mirror: &Path) {
+pub async fn after_copy(repo_id: i64, mirror: &Path) {
     if let Err(error) = pack_mirror_if_needed(mirror).await {
         tracing::warn!(repo_id, %error, "replica copy packing failed");
     }

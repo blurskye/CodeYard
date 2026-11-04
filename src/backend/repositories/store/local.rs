@@ -8,19 +8,19 @@ use super::{
     BlobRange, FileWrite, GitService, MergeMethod, MergeRequest, RestackMove,
     MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES,
 };
-use crate::backend::git::error::{ErrorKind, RepoError};
 use crate::backend::{
     db,
-    git::{
-        self, error::MERGE_COMMIT_BLOCKED, repository::process, BlobContent, BranchStatus,
-        CiCommit, CiWorkflowFile, CiWorkflowSource, CommitComparison, CommitFilter, CommitInfo,
-        ContributorInfo, DiffInfo, FileBlame, FileList, LanguageStat, RepoInfo, TagInfo, TreeEntry,
-        WeekChanges,
-    },
     repositories::{
         access, languages,
         protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia},
     },
+};
+use codeyard_git::error::{ErrorKind, RepoError};
+use codeyard_git::{
+    self as git, error::MERGE_COMMIT_BLOCKED, repository::process, BlobContent, BranchStatus,
+    CiCommit, CiWorkflowFile, CiWorkflowSource, CommitComparison, CommitFilter, CommitInfo,
+    ContributorInfo, DiffInfo, FileBlame, FileList, LanguageStat, RepoInfo, TagInfo, TreeEntry,
+    WeekChanges,
 };
 use std::{
     collections::HashMap,
@@ -903,7 +903,7 @@ impl LocalStore {
             .map(|write| {
                 Ok(git::PublicationUpdate {
                     reference: git::branch_ref(write.branch)
-                        .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?,
+                        .ok_or_else(|| codeyard_git::error::invalid_ref("branch"))?,
                     old: write.old.map(str::to_owned),
                     new: write.new.map(str::to_owned),
                 })
@@ -1400,8 +1400,7 @@ impl LocalStore {
     }
 
     pub(super) async fn size_bytes(&self) -> Result<u64, RepoError> {
-        self.blocking(crate::backend::git::stats::directory_size)
-            .await
+        self.blocking(codeyard_git::stats::directory_size).await
     }
 
     // ----- Reads -----
@@ -2126,8 +2125,8 @@ impl LocalStore {
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
-        let reference = git::branch_ref(name)
-            .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?;
+        let reference =
+            git::branch_ref(name).ok_or_else(|| codeyard_git::error::invalid_ref("branch"))?;
         self.ensure_room_for_ref(&reference).await?;
         let (owned_name, owned_sha) = (name.to_owned(), sha.to_owned());
         let target = self
@@ -2403,8 +2402,8 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        let reference = git::branch_ref(name)
-            .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?;
+        let reference =
+            git::branch_ref(name).ok_or_else(|| codeyard_git::error::invalid_ref("branch"))?;
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
@@ -2462,7 +2461,7 @@ impl LocalStore {
             .await
             .map_err(RepoError::from)?;
         let reference =
-            git::tag_ref(name).ok_or_else(|| crate::backend::git::error::invalid_ref("tag"))?;
+            git::tag_ref(name).ok_or_else(|| codeyard_git::error::invalid_ref("tag"))?;
         self.ensure_room_for_ref(&reference).await?;
         let (owned_name, owned_sha, owned_message) =
             (name.to_owned(), sha.to_owned(), message.map(str::to_owned));
@@ -2582,7 +2581,7 @@ impl LocalStore {
         )
         .await?;
         let reference =
-            git::tag_ref(name).ok_or_else(|| crate::backend::git::error::invalid_ref("tag"))?;
+            git::tag_ref(name).ok_or_else(|| codeyard_git::error::invalid_ref("tag"))?;
         crate::backend::repositories::releases::immutable::check_current_tag_updates(
             pool,
             &repository,
@@ -3147,7 +3146,7 @@ impl LocalStore {
         let _change = Arc::new(self.begin_publisher_change(pool, repo_id).await?);
         let updates = vec![git::PublicationUpdate {
             reference: git::branch_ref(&request.branch)
-                .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?,
+                .ok_or_else(|| codeyard_git::error::invalid_ref("branch"))?,
             old: Some(request.head.clone()),
             new: Some(prepared.head().to_owned()),
         }];
@@ -3887,7 +3886,7 @@ impl LocalStore {
         &self,
         ids: &[String],
     ) -> Result<std::collections::HashSet<String>, RepoError> {
-        crate::backend::git::mirror::existing_commits(&self.admitted_path(true).await?, ids)
+        codeyard_git::mirror::existing_commits(&self.admitted_path(true).await?, ids)
             .await
             .map_err(RepoError::from)
     }
@@ -3904,7 +3903,7 @@ impl LocalStore {
         let mut revs = String::new();
         for target in targets {
             anyhow::ensure!(
-                crate::backend::git::is_full_commit_id(target),
+                codeyard_git::is_full_commit_id(target),
                 "invalid replica ref target"
             );
             revs.push_str(target);
@@ -3912,10 +3911,7 @@ impl LocalStore {
         }
         let present = self.existing_commits(have).await?;
         for tip in have.iter().filter(|tip| present.contains(*tip)) {
-            anyhow::ensure!(
-                crate::backend::git::is_full_commit_id(tip),
-                "invalid replica tip"
-            );
+            anyhow::ensure!(codeyard_git::is_full_commit_id(tip), "invalid replica tip");
             revs.push('^');
             revs.push_str(tip);
             revs.push('\n');
@@ -3999,7 +3995,7 @@ impl LocalStore {
                     "invalid replica ref name",
                 ));
             }
-            if !crate::backend::git::is_full_commit_id(sha) {
+            if !codeyard_git::is_full_commit_id(sha) {
                 return Err(RepoError::new(
                     ErrorKind::Invalid,
                     "invalid replica ref value",
@@ -4204,8 +4200,8 @@ impl LocalStore {
             let mut target = String::new();
             let mut tag_oid = String::new();
             if reads_tag {
-                let reference = git::tag_ref(&tag)
-                    .ok_or_else(|| crate::backend::git::error::invalid_ref("tag"))?;
+                let reference =
+                    git::tag_ref(&tag).ok_or_else(|| codeyard_git::error::invalid_ref("tag"))?;
                 let draft_target = match &mutation {
                     Mutation::Create {
                         fields,
@@ -4377,8 +4373,8 @@ impl LocalStore {
         } else {
             None
         };
-        let reference = git::branch_ref(name)
-            .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?;
+        let reference =
+            git::branch_ref(name).ok_or_else(|| codeyard_git::error::invalid_ref("branch"))?;
         let (status, _) = self
             .git(&["show-ref", "--verify", "--quiet", &reference])
             .await?;

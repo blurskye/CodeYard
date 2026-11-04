@@ -576,7 +576,7 @@ pub(super) async fn run(
                     .unwrap();
                 assert_eq!(
                     proof.publication.actor,
-                    codeyard::backend::git::PublicationActor::User(alice)
+                    codeyard_git::PublicationActor::User(alice)
                 );
                 assert_eq!(proof.publication.repository_id, restored.id);
                 assert_eq!(proof.publication.reference, *reference);

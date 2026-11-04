@@ -101,7 +101,7 @@ fn advertisement(mut input: &[u8]) -> Result<(HashMap<String, String>, Option<St
             continue;
         }
         ensure!(
-            crate::backend::git::is_full_commit_id(sha)
+            codeyard_git::is_full_commit_id(sha)
                 && name.starts_with("refs/")
                 && git2::Reference::is_valid_name(name),
             "Invalid Git ref"
@@ -116,7 +116,7 @@ fn advertisement(mut input: &[u8]) -> Result<(HashMap<String, String>, Option<St
             "Duplicate Git ref"
         );
         ensure!(
-            refs.len() <= crate::backend::git::MAX_REPOSITORY_REFS,
+            refs.len() <= codeyard_git::MAX_REPOSITORY_REFS,
             "Too many Git refs"
         );
     }

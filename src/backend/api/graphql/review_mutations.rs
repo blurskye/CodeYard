@@ -166,7 +166,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                         .flatten()
                 })
                 .unwrap_or(&pull.head_sha);
-            if !crate::backend::git::is_full_commit_id(commit)
+            if !codeyard_git::is_full_commit_id(commit)
                 || (field != "submitPullRequestReview"
                     && !commit.eq_ignore_ascii_case(&pull.head_sha))
             {

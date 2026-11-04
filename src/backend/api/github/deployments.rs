@@ -146,8 +146,7 @@ async fn create(
         .map_err(|error| {
             if matches!(
                 error.kind,
-                crate::backend::git::error::ErrorKind::NotFound
-                    | crate::backend::git::error::ErrorKind::Invalid
+                codeyard_git::error::ErrorKind::NotFound | codeyard_git::error::ErrorKind::Invalid
             ) {
                 Error::validation("Deployment", "ref", "invalid")
             } else {

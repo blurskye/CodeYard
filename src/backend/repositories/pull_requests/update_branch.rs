@@ -3,9 +3,9 @@ use super::{database_error, OperationError};
 use crate::backend::{
     ci::{CiRuns, RefUpdate},
     db::{self, DbPool},
-    git::error::{ErrorKind, RepoError},
     repositories::store::{repo_store, PullBranchUpdate},
 };
+use codeyard_git::error::{ErrorKind, RepoError};
 
 fn invalid(message: &str) -> OperationError {
     OperationError::Invalid {

@@ -460,7 +460,7 @@ async fn git_objects(
 
 async fn large_blobs(router: &Router, base: &str, writer: &str) {
     use base64::{engine::general_purpose::STANDARD, Engine};
-    use codeyard::backend::git::objects::MAX_BLOB_WRITE_BYTES;
+    use codeyard_git::objects::MAX_BLOB_WRITE_BYTES;
     for (size, base64) in [
         (5 * 1024 * 1024, false),
         (MAX_BLOB_WRITE_BYTES, true),

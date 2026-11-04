@@ -168,7 +168,7 @@ async fn forwarded_sessions_do_not_consume_git_execution_capacity() {
     const CHILD: &str = "CODEYARD_FORWARD_ADMISSION_TEST";
     if std::env::var_os(CHILD).is_none() {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "backend::git::repository::process::tests::forwarded_sessions_do_not_consume_git_execution_capacity", "--nocapture"])
+            .args(["--exact", "repository::process::tests::forwarded_sessions_do_not_consume_git_execution_capacity", "--nocapture"])
             .env(CHILD, "1").env("GIT_SESSION_LIMIT", "1").output().unwrap();
         assert!(
             output.status.success(),

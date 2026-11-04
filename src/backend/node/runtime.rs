@@ -163,7 +163,7 @@ async fn remove_expired_rows(
                 let quarantines = mirrors.join(crate::backend::cluster::replicas::QUARANTINES);
                 let mut removed = 0;
                 for root in [root, mirrors, quarantines] {
-                    removed += crate::backend::git::mirror::remove_expired_deleted(&root, window)?;
+                    removed += codeyard_git::mirror::remove_expired_deleted(&root, window)?;
                 }
                 anyhow::Ok(removed)
             });

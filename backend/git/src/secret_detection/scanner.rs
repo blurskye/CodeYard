@@ -475,7 +475,7 @@ pub fn secret_types() -> Result<Vec<(String, String)>> {
     Ok(types)
 }
 
-pub(crate) fn cache_across_commits() -> Result<bool> {
+pub fn cache_across_commits() -> Result<bool> {
     let scanner = configured()?;
     Ok(scanner.global.commits.is_empty()
         && scanner.rules.iter().all(|rule| {

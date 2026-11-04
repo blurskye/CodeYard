@@ -12,8 +12,9 @@ mod repair;
 
 pub use repair::{rebuild, verify};
 
-use crate::backend::{db, fs::private_dir, git::mirror};
+use crate::backend::{db, fs::private_dir};
 use anyhow::{bail, ensure, Context, Result};
+use codeyard_git::mirror;
 use std::collections::{BTreeSet, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};

@@ -3,10 +3,10 @@ pub(crate) mod versions;
 use crate::backend::{
     app::AppState,
     db,
-    git::error::ErrorKind,
     repositories::dependency_graph::{self, Package},
 };
 use anyhow::{ensure, Result};
+use codeyard_git::error::ErrorKind;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{cmp::Ordering, io::Read, sync::Arc, time::Duration};

@@ -11,33 +11,35 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::ChildStdout;
 
 mod blob_preview;
-pub(crate) use blob_preview::{read_blob_preview, PREVIEW_BYTES, PREVIEW_LINES};
+pub use blob_preview::{read_blob_preview, PREVIEW_BYTES, PREVIEW_LINES};
 mod checked;
 #[cfg(test)]
 mod history_tests;
-pub(crate) mod locks;
-pub(crate) mod process;
+pub mod locks;
+pub mod process;
 mod release_notes;
 mod replay;
-pub(crate) mod retained;
+pub mod retained;
 mod revert;
-pub(crate) use checked::{
+pub use checked::{
     adds_merge_commit, checkout, commit_is_ancestor, current_branch_head, current_pull_head,
     initialize_repository, initialize_repository_copy, introduced_signatures, materialize_checkout,
     merge_head_ref, prepare_merge, prepare_pull_branch_update, prepare_pull_head, prepare_squash,
     prepare_upstream_merge, publish_branch_rename, publish_merge, publish_pull_branch_update,
     publish_pull_head, publish_ref, publish_ref_create, publish_ref_delete, publish_restack,
-    quarantined_command, quarantined_is_fast_forward, rewrite_template_history,
-    validate_merge_revision, walk_commits, MergeConflict, Person, PreparedPullHead,
-    PullHeadConflict, RefConflict, UnsupportedMerge, MAX_MERGE_MESSAGE_BYTES, NO_CHANGES,
+    quarantined_is_fast_forward, rewrite_template_history, validate_merge_revision, Person,
+    PreparedPullHead, PullHeadConflict, RefConflict, UnsupportedMerge, MAX_MERGE_MESSAGE_BYTES,
+    NO_CHANGES,
 };
-pub(crate) use release_notes::release_history;
+
+pub(crate) use checked::{quarantined_command, walk_commits, MergeConflict};
+pub use release_notes::release_history;
 pub use release_notes::ReleaseHistory;
-pub(crate) use replay::replay_commits;
-pub(crate) use revert::prepare_revert;
+pub use replay::replay_commits;
+pub use revert::prepare_revert;
 
 /// Check if a path is a valid git repository
-pub(crate) fn is_git_repo(path: &Path) -> bool {
+pub fn is_git_repo(path: &Path) -> bool {
     path.join("HEAD").exists() && path.join("objects").exists() && path.join("refs").exists()
 }
 
@@ -45,7 +47,7 @@ pub(crate) fn is_git_repo(path: &Path) -> bool {
 /// file where the directory belongs, is `false`, so the caller can rebuild it. A failure to
 /// read the path, such as permission denied or a disk error, is an error instead: it says
 /// nothing about the repository.
-pub(crate) fn opens_as_repository(path: &Path) -> Result<bool> {
+pub fn opens_as_repository(path: &Path) -> Result<bool> {
     if let Err(error) = std::fs::metadata(path.join("HEAD")) {
         return if matches!(
             error.kind(),
@@ -110,7 +112,7 @@ pub const MAX_COMMIT_PAGE_BYTES: usize = 1024 * 1024;
 pub(crate) const MAX_COMMIT_WALK_OBJECTS: usize = 200_000;
 pub(crate) const MAX_COMMIT_WALK_BYTES: usize = 64 * 1024 * 1024;
 /// How long a commit walk may run when its caller sets no shorter deadline.
-pub(crate) const COMMIT_WALK_TIMEOUT: Duration = Duration::from_secs(30);
+pub const COMMIT_WALK_TIMEOUT: Duration = Duration::from_secs(30);
 pub const MAX_TAG_OBJECT_BYTES: usize = 256 * 1024;
 const MAX_TAG_DEPTH: usize = 32;
 const MAX_TAG_CHAIN_BYTES: usize = 1024 * 1024;
@@ -144,7 +146,7 @@ fn parse_branches(output: &[u8]) -> Result<Vec<String>> {
 
 /// The advertised default, without materializing the branch list. Deletion must still
 /// work when a repository has more refs than a read response can hold.
-pub(crate) async fn default_branch(path: &Path) -> Result<Option<String>> {
+pub async fn default_branch(path: &Path) -> Result<Option<String>> {
     {
         let repo = Repository::open_bare(path)?;
         match repo.head() {
@@ -185,7 +187,7 @@ pub(crate) async fn default_branch(path: &Path) -> Result<Option<String>> {
     Ok((!branch.is_empty()).then_some(branch))
 }
 
-pub(crate) async fn get_repo_info(path: &Path) -> Result<RepoInfo> {
+pub async fn get_repo_info(path: &Path) -> Result<RepoInfo> {
     if !is_git_repo(path) {
         return Err(anyhow!("Not a valid git repository: {:?}", path));
     }
@@ -209,7 +211,7 @@ pub(crate) async fn get_repo_info(path: &Path) -> Result<RepoInfo> {
     })
 }
 
-pub(crate) async fn count_commits(path: &Path) -> Result<u64> {
+pub async fn count_commits(path: &Path) -> Result<u64> {
     let mut command = process::git_command()?;
     command
         .args(["rev-list", "--count", "--all"])
@@ -220,12 +222,12 @@ pub(crate) async fn count_commits(path: &Path) -> Result<u64> {
 }
 
 /// Optional profile activity never holds publication for a full object-read timeout.
-pub(crate) const PUSH_COUNT_TIMEOUT: Duration = Duration::from_secs(2);
+pub const PUSH_COUNT_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Commits a branch update brought in. A new branch (`old` is None) counts the commits no
 /// other branch or tag already had; internal retention and pull refs do not vouch for commits.
 /// `reference` is the branch's full ref name.
-pub(crate) async fn count_pushed_commits(
+pub async fn count_pushed_commits(
     path: &Path,
     old: Option<&str>,
     new: &str,
@@ -256,7 +258,7 @@ pub(crate) async fn count_pushed_commits(
 
 /// Counts new-branch commits against the refs held before the whole receive, not its
 /// already-published sibling branches. Existing branches use their own old/new range.
-pub(crate) async fn count_pushed_commits_snapshot(
+pub async fn count_pushed_commits_snapshot(
     path: &Path,
     old: Option<&str>,
     new: &str,
@@ -280,7 +282,7 @@ pub(crate) async fn count_pushed_commits_snapshot(
     Ok(std::str::from_utf8(&output)?.trim().parse()?)
 }
 
-pub(crate) fn resolve_archive_revision(repo_path: &Path, git_ref: &str) -> Result<git2::Oid> {
+pub fn resolve_archive_revision(repo_path: &Path, git_ref: &str) -> Result<git2::Oid> {
     let repo = Repository::open_bare(repo_path)?;
     let (oid, _) = peel_revision(&repo, git_ref)?;
     Ok(oid)
@@ -294,7 +296,7 @@ pub enum ArchiveFormat {
 }
 
 /// The tree at `revision` as an archive under `prefix/`, bounded after compression.
-pub(crate) async fn archive(
+pub async fn archive(
     repo_path: &Path,
     revision: git2::Oid,
     prefix: &str,
@@ -405,7 +407,7 @@ fn template_metadata(
         .collect()
 }
 
-pub(crate) async fn template_texts(
+pub async fn template_texts(
     repo_path: &Path,
     revision: &str,
     paths: &[String],
@@ -433,11 +435,7 @@ pub(crate) async fn template_texts(
 }
 
 /// Resolves a path without materializing its blob and returns its object ID, size and file mode.
-pub(crate) fn blob_metadata(
-    repo_path: &Path,
-    git_ref: &str,
-    path: &str,
-) -> Result<(String, u64, u32)> {
+pub fn blob_metadata(repo_path: &Path, git_ref: &str, path: &str) -> Result<(String, u64, u32)> {
     let repo = Repository::open_bare(repo_path)?;
     let commit = peel_to_commit_checked(&repo, git_ref)?;
     let entry = tree_entry(&repo, &commit, path)?;
@@ -449,7 +447,7 @@ pub(crate) fn blob_metadata(
 
 /// Reads only the requested part of a known blob. Git is stopped once the range and
 /// binary probe are complete, so a small range never buffers the rest of the object.
-pub(crate) async fn read_blob_range(
+pub async fn read_blob_range(
     repo_path: &Path,
     id: &str,
     size: u64,
@@ -887,7 +885,7 @@ pub struct FileList {
 
 /// Every file path at `git_ref`. `ls-tree` without `-l` reads tree objects and names only,
 /// never blob contents or sizes.
-pub(crate) async fn list_file_paths(
+pub async fn list_file_paths(
     repo_path: &Path,
     git_ref: &str,
     limit: usize,
@@ -977,11 +975,7 @@ pub(crate) async fn list_file_paths(
     Ok(files)
 }
 
-pub(crate) async fn list_tree(
-    repo_path: &Path,
-    git_ref: &str,
-    path: &str,
-) -> Result<Vec<TreeEntry>> {
+pub async fn list_tree(repo_path: &Path, git_ref: &str, path: &str) -> Result<Vec<TreeEntry>> {
     list_tree_with_history(repo_path, git_ref, path, true, true).await
 }
 
@@ -1036,7 +1030,7 @@ fn tree_entries(
 }
 
 /// Sidebar folders need names and kinds only, with one budget for the whole panel.
-pub(crate) async fn list_sidebar_trees(
+pub async fn list_sidebar_trees(
     repo_path: &Path,
     git_ref: &str,
     paths: &[String],
@@ -1121,7 +1115,7 @@ pub(crate) async fn list_sidebar_trees(
     .await
 }
 
-pub(crate) async fn list_tree_with_history(
+pub async fn list_tree_with_history(
     repo_path: &Path,
     git_ref: &str,
     path: &str,
@@ -1281,7 +1275,7 @@ pub(crate) async fn list_tree_with_history(
 }
 
 /// A blob by object ID, wherever it appears in the repository.
-pub(crate) async fn get_blob_by_id(repo_path: &Path, id: &str) -> Result<Vec<u8>> {
+pub async fn get_blob_by_id(repo_path: &Path, id: &str) -> Result<Vec<u8>> {
     let (owned_path, owned_id) = (repo_path.to_owned(), id.to_owned());
     let size = process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || {
         let repo = Repository::open_bare(owned_path)?;
@@ -1334,7 +1328,7 @@ pub struct FileBlame {
 
 /// Blames a text file as of `git_ref`. The content and the hunks come from the same commit,
 /// so the lines always match the hunks.
-pub(crate) async fn blame_file(repo_path: &Path, git_ref: &str, path: &str) -> Result<FileBlame> {
+pub async fn blame_file(repo_path: &Path, git_ref: &str, path: &str) -> Result<FileBlame> {
     let (revision, size, blob_id) = {
         let (repo_path, git_ref, path) =
             (repo_path.to_owned(), git_ref.to_owned(), path.to_owned());
@@ -1452,7 +1446,7 @@ fn parse_blame(output: &[u8]) -> Result<Vec<BlameHunk>> {
 }
 
 /// Branches and tags, which is what pages and the API show.
-pub(crate) fn list_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
+pub fn list_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
     collect_refs(
         repo_path,
         |name| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"),
@@ -1462,10 +1456,7 @@ pub(crate) fn list_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
 }
 
 /// REST matching refs also includes public pull refs, never retained-object or recovery refs.
-pub(crate) fn list_matching_refs(
-    repo_path: &Path,
-    prefix: &str,
-) -> Result<HashMap<String, String>> {
+pub fn list_matching_refs(repo_path: &Path, prefix: &str) -> Result<HashMap<String, String>> {
     collect_refs(
         repo_path,
         |name| {
@@ -1480,18 +1471,18 @@ pub(crate) fn list_matching_refs(
 }
 
 /// What a ref adds to the listings that pages and replicas read: its name and an object ID.
-pub(crate) fn ref_listing_bytes(name: &str) -> usize {
+pub fn ref_listing_bytes(name: &str) -> usize {
     name.len() + 40
 }
 
 /// How many branches and tags a repository holds and what they take in those listings.
-pub(crate) struct RefsInUse {
+pub struct RefsInUse {
     pub count: usize,
     pub bytes: usize,
 }
 
 /// Counts every public branch, tag and notes ref for admission.
-pub(crate) fn published_refs_in_use(repo_path: &Path) -> Result<RefsInUse> {
+pub fn published_refs_in_use(repo_path: &Path) -> Result<RefsInUse> {
     let patterns = super::ref_names::PUBLIC_REF_NAMESPACES.map(|namespace| format!("{namespace}*"));
     refs_in_use(
         repo_path,
@@ -1500,12 +1491,12 @@ pub(crate) fn published_refs_in_use(repo_path: &Path) -> Result<RefsInUse> {
 }
 
 /// Counts every pull request head for the admission check. Replicas copy them too.
-pub(crate) fn pull_heads_in_use(repo_path: &Path) -> Result<RefsInUse> {
+pub fn pull_heads_in_use(repo_path: &Path) -> Result<RefsInUse> {
     refs_in_use(repo_path, &["refs/pull/*"])
 }
 
 /// Counts the hidden refs that keep Git-data objects for replicas.
-pub(crate) fn retained_objects_in_use(repo_path: &Path) -> Result<RefsInUse> {
+pub fn retained_objects_in_use(repo_path: &Path) -> Result<RefsInUse> {
     refs_in_use(repo_path, &["refs/codeyard/objects/*"])
 }
 
@@ -1524,7 +1515,7 @@ fn refs_in_use(repo_path: &Path, patterns: &[&str]) -> Result<RefsInUse> {
 }
 
 /// Every ref the repository stores, including pull request heads. A replica copies these.
-pub(crate) fn list_mirror_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
+pub fn list_mirror_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
     collect_refs(
         repo_path,
         |name| name.starts_with("refs/"),
@@ -1568,7 +1559,7 @@ fn collect_refs(
     Ok(refs)
 }
 
-pub(crate) async fn advertise_service_refs(repo_path: &Path, service: &str) -> Result<Vec<u8>> {
+pub async fn advertise_service_refs(repo_path: &Path, service: &str) -> Result<Vec<u8>> {
     let args = match service {
         "upload-pack" => vec!["upload-pack", "--stateless-rpc", "--advertise-refs"],
         "receive-pack" => vec!["receive-pack", "--stateless-rpc", "--advertise-refs"],
@@ -1731,7 +1722,7 @@ fn peel(repo: &Repository, revision: &str, bound_commit: bool) -> Result<(git2::
 }
 
 /// Peels a revision to a commit. An oversized commit or tag is refused before it is read.
-pub(crate) fn peel_to_commit_checked<'repo>(
+pub fn peel_to_commit_checked<'repo>(
     repo: &'repo Repository,
     revision: &str,
 ) -> Result<git2::Commit<'repo>> {
@@ -1764,7 +1755,7 @@ fn not_a_commit() -> anyhow::Error {
 }
 
 /// Up to `limit` commits after `offset` that pass `filter`, newest first.
-pub(crate) fn list_commits(
+pub fn list_commits(
     repo_path: &Path,
     git_ref: &str,
     offset: usize,
@@ -1824,7 +1815,7 @@ pub(crate) fn list_commits(
 }
 
 /// Count without materializing commit bodies, then read the requested oldest window (up to 250).
-pub(crate) async fn pull_request_commits(
+pub async fn pull_request_commits(
     repo_path: &Path,
     base: &str,
     head: &str,
@@ -1861,7 +1852,7 @@ pub(crate) async fn pull_request_commits(
 /// The commits reachable from `head` but not from `base`, newest first: at most `limit` of them
 /// after the first `offset`. These are the commits of a pull request. Both revisions are peeled
 /// to commit IDs first, so a ref name is never read as an option.
-pub(crate) async fn range_commits(
+pub async fn range_commits(
     repo_path: &Path,
     base: &str,
     head: &str,
@@ -1921,7 +1912,7 @@ pub(crate) async fn range_commits(
     .await
 }
 
-pub(crate) fn get_commit(repo_path: &Path, sha: &str) -> Result<CommitInfo> {
+pub fn get_commit(repo_path: &Path, sha: &str) -> Result<CommitInfo> {
     let repo = Repository::open_bare(repo_path)?;
     let commit = peel_to_commit_checked(&repo, sha)?;
     commit_info(&repo, &commit)
@@ -1945,7 +1936,7 @@ const MAX_GREP_RECORD_BYTES: usize = 16 * 1024;
 /// `offset` of them. Binary files are skipped. The text is a literal given
 /// after `-e`. Git's output is read as it is printed, and git is stopped once the page is full, so
 /// many or very long matching lines cannot fail the search.
-pub(crate) async fn search_code(
+pub async fn search_code(
     repo_path: &Path,
     git_ref: &str,
     text: &str,
@@ -2095,7 +2086,7 @@ fn parse_code_match(record: &[u8], prefix: &str, needle: &str) -> Option<CodeMat
 /// The commits after `offset` that changed `path`, newest first, as `git log -- <path>` lists
 /// them. The ref is peeled to a commit ID first, so `git log` never reads the ref name as an
 /// option, and the path comes after `--` as a literal pathspec.
-pub(crate) async fn list_path_commits(
+pub async fn list_path_commits(
     repo_path: &Path,
     git_ref: &str,
     path: &str,
@@ -2219,7 +2210,7 @@ pub const MAX_BRANCH_STATUSES: usize = 200;
 
 /// Each head's tip date and, for the first heads, divergence from `base`.
 /// Identical tips share one deadline- and memory-bounded Git comparison.
-pub(crate) async fn branch_statuses(
+pub async fn branch_statuses(
     repo_path: &Path,
     base: &str,
     heads: &[String],
@@ -2343,7 +2334,7 @@ pub(crate) fn commit_info(repo: &Repository, commit: &git2::Commit<'_>) -> Resul
     })
 }
 
-pub(crate) async fn get_commit_diff(repo_path: &Path, sha: &str) -> Result<DiffInfo> {
+pub async fn get_commit_diff(repo_path: &Path, sha: &str) -> Result<DiffInfo> {
     let (revision, root) = {
         let repo = Repository::open_bare(repo_path)?;
         let commit = peel_to_commit_checked(&repo, sha)?;
@@ -2375,7 +2366,7 @@ pub struct TagInfo {
 
 /// Check the same aggregate metadata budget as the tag reader before publishing replacements.
 /// A receive may read its new objects from quarantine without exposing them to other readers.
-pub(crate) fn check_tag_budget(
+pub fn check_tag_budget(
     repo_path: &Path,
     quarantine: Option<&Path>,
     replacements: &[(String, String)],
@@ -2434,7 +2425,7 @@ pub(crate) fn check_tag_budget(
     Ok(())
 }
 
-pub(crate) fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
+pub fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
     let repo = Repository::open_bare(repo_path)?;
     let odb = repo.odb()?;
     let mut tags = Vec::new();
@@ -2498,7 +2489,7 @@ pub(crate) fn list_tags(repo_path: &Path) -> Result<Vec<TagInfo>> {
 
 /// Resolve a tag target and, for an annotated tag, write only the tag object.
 /// The caller publishes the ref after its live authority check.
-pub(crate) fn prepare_create_tag(
+pub fn prepare_create_tag(
     repo_path: &Path,
     tag_name: &str,
     target_sha: &str,
@@ -2507,8 +2498,7 @@ pub(crate) fn prepare_create_tag(
     tagger_email: &str,
 ) -> Result<TagInfo> {
     let repo = Repository::open_bare(repo_path)?;
-    let reference =
-        crate::backend::git::tag_ref(tag_name).ok_or_else(|| anyhow!("Invalid tag name"))?;
+    let reference = crate::tag_ref(tag_name).ok_or_else(|| anyhow!("Invalid tag name"))?;
     match repo.find_reference(&reference) {
         Ok(_) => return Err(RefConflict(format!("Tag '{tag_name}' already exists")).into()),
         Err(error) if error.code() == git2::ErrorCode::NotFound => {}
@@ -2542,10 +2532,9 @@ pub(crate) fn prepare_create_tag(
     })
 }
 
-pub(crate) fn prepare_delete_tag(repo_path: &Path, tag_name: &str) -> Result<String> {
+pub fn prepare_delete_tag(repo_path: &Path, tag_name: &str) -> Result<String> {
     let repo = Repository::open_bare(repo_path)?;
-    let reference =
-        crate::backend::git::tag_ref(tag_name).ok_or_else(|| anyhow!("Invalid tag name"))?;
+    let reference = crate::tag_ref(tag_name).ok_or_else(|| anyhow!("Invalid tag name"))?;
     let old = repo
         .find_reference(&reference)?
         .target()
@@ -2592,14 +2581,13 @@ pub struct DiffFileInfo {
     pub previous_filename: Option<String>,
 }
 
-pub(crate) fn prepare_create_branch(
+pub fn prepare_create_branch(
     repo_path: &Path,
     branch_name: &str,
     source_sha: &str,
 ) -> Result<String> {
     let repo = Repository::open_bare(repo_path)?;
-    let reference = crate::backend::git::branch_ref(branch_name)
-        .ok_or_else(|| anyhow!("Invalid branch name"))?;
+    let reference = crate::branch_ref(branch_name).ok_or_else(|| anyhow!("Invalid branch name"))?;
     if repo.find_reference(&reference).is_ok() {
         return Err(RefConflict(format!("Branch '{branch_name}' already exists")).into());
     }
@@ -2621,10 +2609,9 @@ fn commit_oid(sha: &str) -> Result<git2::Oid> {
     })
 }
 
-pub(crate) fn prepare_delete_branch(repo_path: &Path, branch_name: &str) -> Result<String> {
+pub fn prepare_delete_branch(repo_path: &Path, branch_name: &str) -> Result<String> {
     let repo = Repository::open_bare(repo_path)?;
-    let reference = crate::backend::git::branch_ref(branch_name)
-        .ok_or_else(|| anyhow!("Invalid branch name"))?;
+    let reference = crate::branch_ref(branch_name).ok_or_else(|| anyhow!("Invalid branch name"))?;
     let branch = repo.find_branch(branch_name, git2::BranchType::Local)?;
     if branch.is_head() {
         return Err(anyhow!("Cannot delete the default branch '{branch_name}'"));
@@ -2671,7 +2658,7 @@ pub(crate) fn comparison_repository(
 }
 
 /// Compares repositories without importing either one's objects into the other.
-pub(crate) async fn compare_repositories(
+pub async fn compare_repositories(
     base_path: &Path,
     head_path: &Path,
     base_ref: &str,
@@ -2681,7 +2668,7 @@ pub(crate) async fn compare_repositories(
     diff_in_repository(temporary.path(), &format!("{base}...{head}"), false, &[]).await
 }
 
-pub(crate) async fn get_diff(repo_path: &Path, base_ref: &str, head_ref: &str) -> Result<DiffInfo> {
+pub async fn get_diff(repo_path: &Path, base_ref: &str, head_ref: &str) -> Result<DiffInfo> {
     let repo = Repository::open_bare(repo_path)?;
     let base = peel_to_commit_checked(&repo, base_ref)?.id();
     let head = peel_to_commit_checked(&repo, head_ref)?.id();
@@ -2691,11 +2678,7 @@ pub(crate) async fn get_diff(repo_path: &Path, base_ref: &str, head_ref: &str) -
 
 /// The counts and file list of a three-dot comparison, with empty patches, so an oversized patch
 /// does not stop them.
-pub(crate) async fn get_diff_stats(
-    repo_path: &Path,
-    base_ref: &str,
-    head_ref: &str,
-) -> Result<DiffInfo> {
+pub async fn get_diff_stats(repo_path: &Path, base_ref: &str, head_ref: &str) -> Result<DiffInfo> {
     let repo = Repository::open_bare(repo_path)?;
     let base = peel_to_commit_checked(&repo, base_ref)?.id();
     let head = peel_to_commit_checked(&repo, head_ref)?.id();
@@ -2709,7 +2692,7 @@ pub(crate) async fn get_diff_stats(
 /// found in the comparison's metadata first. Its patch is then read with both of its paths, so Git
 /// still pairs a rename's two sides and the patch matches the displayed one. An oversized patch in
 /// another file does not stop it, and a file the comparison does not show gives an empty diff.
-pub(crate) async fn get_file_diff(
+pub async fn get_file_diff(
     repo_path: &Path,
     base_ref: &str,
     head_ref: &str,
@@ -2778,7 +2761,7 @@ pub const MAX_CI_CHANGED_PATH_TOTAL_BYTES: usize = 1024 * 1024;
 /// all-zero unborn revision. With `renames`, a rename is one path, as the diff view shows it;
 /// otherwise both its old and new path are returned. Output is bounded while Git is running;
 /// patch bodies are never requested or materialized.
-pub(crate) async fn changed_paths(
+pub async fn changed_paths(
     repo_path: &Path,
     base_ref: &str,
     head_ref: &str,
@@ -3137,7 +3120,7 @@ mod regression_tests;
 #[cfg(test)]
 mod read_limit_tests {
     use super::*;
-    use crate::backend::git::ci::{list_ci_workflow_files, read_ci_workflow, resolve_ci_commit};
+    use crate::ci::{list_ci_workflow_files, read_ci_workflow, resolve_ci_commit};
 
     fn metadata_for_files(count: usize) -> Vec<u8> {
         let mut output = Vec::new();

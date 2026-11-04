@@ -4,15 +4,13 @@ use crate::backend::api::repos::chrome::repository_default_branch;
 use crate::backend::api::repos::responses::repo_store_error;
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::backend::git::ArchiveFormat;
-use crate::backend::{
-    git::error::{ErrorKind, RepoError},
-    repositories::store::repo_store,
-};
+use crate::backend::repositories::store::repo_store;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
+use codeyard_git::error::{ErrorKind, RepoError};
+use codeyard_git::ArchiveFormat;
 use serde::Deserialize;
 use std::sync::Arc;
 

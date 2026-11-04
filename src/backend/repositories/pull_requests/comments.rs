@@ -31,10 +31,8 @@ pub struct CreatePullRequestCommentRequest {
     pub review_id: Option<i64>,
 }
 
-pub(super) type DiffCache = std::collections::HashMap<
-    (String, String, String),
-    std::sync::Arc<crate::backend::git::DiffInfo>,
->;
+pub(super) type DiffCache =
+    std::collections::HashMap<(String, String, String), std::sync::Arc<codeyard_git::DiffInfo>>;
 
 pub(super) struct PreparedComment {
     pub request: CreatePullRequestCommentRequest,
@@ -193,8 +191,8 @@ async fn is_pull_request_commit(
     commit: &str,
 ) -> Result<bool, OperationError> {
     let store = repo_store(repository, cluster);
-    let unavailable = |error: crate::backend::git::error::RepoError| {
-        if error.kind == crate::backend::git::error::ErrorKind::Unavailable {
+    let unavailable = |error: codeyard_git::error::RepoError| {
+        if error.kind == codeyard_git::error::ErrorKind::Unavailable {
             Err(OperationError::Unavailable {
                 code: "git_unavailable",
                 message: "The pull request commits are temporarily unavailable".to_owned(),
@@ -337,7 +335,7 @@ async fn check_diff_anchor(
                     }
                 }
             })?;
-        let bytes = |diff: &crate::backend::git::DiffInfo| {
+        let bytes = |diff: &codeyard_git::DiffInfo| {
             diff.files
                 .iter()
                 .map(|file| {
@@ -625,7 +623,7 @@ pub(super) async fn prepare_comment(
     }
 
     if let Some(ref sha) = commit_sha {
-        if !crate::backend::git::is_full_commit_id(sha) {
+        if !codeyard_git::is_full_commit_id(sha) {
             return Err(OperationError::Invalid {
                 code: "validation_error",
                 message: "commit_sha must be a 40-character hex SHA-1".to_owned(),

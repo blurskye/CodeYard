@@ -868,7 +868,7 @@ async fn releases_do_not_read_every_tag_annotation_to_find_one_tag() {
             &format!("large-{index}"),
             target.as_object(),
             &signature,
-            &"x".repeat(codeyard::backend::git::MAX_TAG_MESSAGE_BYTES),
+            &"x".repeat(codeyard_git::MAX_TAG_MESSAGE_BYTES),
             false,
         )
         .unwrap();

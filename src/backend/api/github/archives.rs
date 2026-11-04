@@ -3,7 +3,6 @@ use super::{contents::store_error, repo_url, repository, Error, Result};
 use crate::backend::{
     api::{http::middleware::wait_for_slot, repos::code::archive::archive_response},
     app::AppState,
-    git::ArchiveFormat,
     repositories::store::repo_store,
 };
 use axum::{
@@ -13,6 +12,7 @@ use axum::{
     routing::{get, MethodRouter},
     Router,
 };
+use codeyard_git::ArchiveFormat;
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
 

@@ -3,7 +3,6 @@ use crate::backend::db::models::{AccessLevel, Repository, User};
 use crate::backend::db::repositories::records::get_git_repository;
 use crate::backend::db::users::ssh_keys::get_user_by_key_fingerprint;
 use crate::backend::db::DbPool;
-use crate::backend::git::repository::process as git_process;
 use crate::backend::repositories::deploy_keys;
 use crate::backend::repositories::git_sessions::{validation, GitTasks, ReceiveCredential};
 use crate::backend::repositories::store::{
@@ -13,6 +12,7 @@ use crate::backend::repositories::traffic;
 use crate::backend::ssh::rate_limit::RateLimiter;
 use anyhow::Result;
 use bytes::Bytes;
+use codeyard_git::repository::process as git_process;
 use russh::keys::PublicKey;
 use russh::server::{Auth, ChannelOpenHandle, Msg, Session};
 use russh::{Channel, ChannelId, ChannelMsg, ChannelWriteHalf};
@@ -657,7 +657,7 @@ impl russh::server::Handler for GitSshHandler {
                         warn!(%error, "Git channel failed or was denied");
                         let message = if error.is::<git_process::SessionsBusy>()
                             || error
-                                .downcast_ref::<crate::backend::git::error::RepoError>()
+                                .downcast_ref::<codeyard_git::error::RepoError>()
                                 .is_some_and(|error| error.is_sessions_busy())
                         {
                             "Git sessions busy\n"
@@ -666,7 +666,7 @@ impl russh::server::Handler for GitSshHandler {
                         ) {
                             "ERR Git writes were accepted; post-push bookkeeping or CI dispatch failed.\n"
                         } else if error
-                            .downcast_ref::<crate::backend::git::error::RepoError>()
+                            .downcast_ref::<codeyard_git::error::RepoError>()
                             .is_some_and(|error| error.is_storage_node_unavailable())
                         {
                             "ERR storage node unavailable\n"

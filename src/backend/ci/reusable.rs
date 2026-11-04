@@ -1,6 +1,7 @@
 //! Admission snapshots called workflows so workers never fetch a moving ref or another repository.
 use super::admission::{is_safe_ref, is_safe_workflow_path, AdmissionError};
-use crate::backend::{db, git::error::ErrorKind, repositories::store::repo_store};
+use crate::backend::{db, repositories::store::repo_store};
+use codeyard_git::error::ErrorKind;
 use serde_yaml::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -220,8 +221,7 @@ impl<'a> Resolver<'a> {
                     if !super::admission::is_safe_owner(owner)
                         || crate::backend::repositories::lifecycle::validate_name(name).is_err()
                         || !is_safe_workflow_path(path)
-                        || !(is_safe_ref(reference)
-                            || crate::backend::git::is_full_commit_id(reference))
+                        || !(is_safe_ref(reference) || codeyard_git::is_full_commit_id(reference))
                     {
                         return Err(AdmissionError::Invalid("Invalid called workflow reference"));
                     }
@@ -239,7 +239,7 @@ impl<'a> Resolver<'a> {
                         found.clone()
                     } else {
                         let store = repo_store(&target, self.context);
-                        let full_sha = crate::backend::git::is_full_commit_id(reference);
+                        let full_sha = codeyard_git::is_full_commit_id(reference);
                         // GitHub resolves a called workflow's tag before a branch of the same name.
                         let tagged = if full_sha || reference.starts_with("refs/") {
                             None

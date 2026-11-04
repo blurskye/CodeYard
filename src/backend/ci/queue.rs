@@ -372,7 +372,7 @@ impl RunQueue {
             } else {
                 return Err(error.into());
             }
-            let _lock = crate::backend::git::locks::lock(destination).await;
+            let _lock = codeyard_git::locks::lock(destination).await;
             if destination.exists() {
                 tokio::fs::remove_dir_all(destination).await?;
             }
