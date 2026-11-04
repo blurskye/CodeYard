@@ -1,6 +1,5 @@
 //! Contents API preconditions use blob IDs; publication still leases the entire branch tip.
 
-use crate::api_shared::github::repository;
 use axum::http::StatusCode;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;

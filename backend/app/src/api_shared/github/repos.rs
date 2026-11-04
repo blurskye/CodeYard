@@ -4,14 +4,11 @@ use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
-use axum::routing::delete;
-use axum::routing::get;
 use codeyard_db_core::models::Repository;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use serde_json::json;
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 pub fn lifecycle_error(error: crate::repositories::lifecycle::StorageError) -> Error {
     use crate::repositories::lifecycle::LifecycleFailure::*;

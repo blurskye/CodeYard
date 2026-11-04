@@ -209,7 +209,7 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        access::check_publication_actor(pool, authority, &repository).await?;
+        crate::repositories::access::check_publication_actor(pool, authority, &repository).await?;
         if reference.starts_with("refs/tags/") {
             crate::repositories::releases::immutable::check_current_tag_updates(
                 pool,

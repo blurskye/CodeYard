@@ -14,7 +14,6 @@ use crate::repositories::store::types::RestackMove;
 use crate::storage::range::ByteRange as BlobRange;
 use anyhow::ensure;
 use anyhow::Result;
-use codeyard_db_core::limits::MAX_JSON;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitFilter;

@@ -2,13 +2,11 @@ use super::*;
 use crate::repositories::protection::BranchWrite;
 use crate::repositories::protection::History;
 use crate::repositories::protection::WriteVia;
-use crate::repositories::store::local::ensure_ref_room;
 use crate::repositories::store::local::live_read;
 use crate::repositories::store::local::live_write;
 use crate::repositories::store::local::record_branch_update;
 use crate::repositories::store::local::record_secret_bypasses;
 use crate::repositories::store::local::LocalStore;
-use crate::repositories::store::local::RefChange;
 
 impl LocalStore {
     /// Boxed with an explicit `Send` bound. This rename and `publish_file` each spawn a future
@@ -242,7 +240,7 @@ impl LocalStore {
         {
             return Err(RepoError::write_denied());
         }
-        access::check_publication_actor(pool, authority, &repository)
+        crate::repositories::access::check_publication_actor(pool, authority, &repository)
             .await
             .map_err(RepoError::from)?;
         Ok(user)

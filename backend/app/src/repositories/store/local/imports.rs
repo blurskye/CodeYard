@@ -5,7 +5,6 @@ use crate::repositories::imports::ImportCredential;
 use crate::repositories::imports::MAX_IMPORT_PACK_BYTES;
 use crate::repositories::protection::BranchWrite;
 use crate::repositories::protection::History;
-use crate::repositories::protection::Refusal;
 use crate::repositories::protection::WriteVia;
 use crate::repositories::store::local::ensure_ref_room;
 use crate::repositories::store::local::live_read;
@@ -13,7 +12,6 @@ use crate::repositories::store::local::live_write;
 use crate::repositories::store::local::refresh_storage_size;
 use crate::repositories::store::local::unavailable;
 use crate::repositories::store::local::LocalStore;
-use crate::repositories::store::local::RefChange;
 
 impl LocalStore {
     pub(crate) async fn import_git(

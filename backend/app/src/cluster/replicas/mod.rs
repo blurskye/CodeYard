@@ -4,7 +4,6 @@
 //! when it holds a copy with every write of each member. A node acts only on its own
 //! primaries and its own copies, so the nodes coordinate through the database alone.
 use crate::cluster::context::NodeContext;
-use crate::cluster::replicas::promote::promote;
 use crate::cluster::replicas::promote::take_over;
 use crate::cluster::replicas::promote::Silent;
 use crate::cluster::replicas::promote::TAKE_OVER_AFTER;

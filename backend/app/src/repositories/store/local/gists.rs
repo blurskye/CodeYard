@@ -1,7 +1,6 @@
 use super::*;
 use crate::repositories::store::gists::GistCredential;
 use crate::repositories::store::local::refresh_storage_size;
-use crate::repositories::store::local::repository_matches_path;
 use crate::repositories::store::local::LocalStore;
 use codeyard_db_repos::gists::Admission;
 use codeyard_db_repos::gists::GistRefusal;

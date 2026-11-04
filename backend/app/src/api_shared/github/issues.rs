@@ -3,7 +3,6 @@ use crate::app::AppState;
 use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::routing::get;
 use axum::Json;
 use codeyard_db_repos::assignees::AssignedItem;
 use codeyard_model::github_error::Error;

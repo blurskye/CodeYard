@@ -6,13 +6,10 @@ use codeyard_git::error::ErrorKind;
 use codeyard_model::repositories::Package;
 use codeyard_model::versions;
 use codeyard_model::vulnerabilities::ecosystem;
-use codeyard_model::vulnerabilities::in_range;
 use codeyard_model::vulnerabilities::name;
 use codeyard_model::vulnerabilities::Advisory;
-use codeyard_model::vulnerabilities::OsvPackage;
 use codeyard_model::vulnerabilities::PreparedAdvisory;
 use codeyard_model::vulnerabilities::ECOSYSTEMS;
-use serde_json::json;
 use std::io::Read;
 use std::sync::Arc;
 use std::time::Duration;
@@ -229,6 +226,9 @@ pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_model::vulnerabilities::in_range;
+    use codeyard_model::vulnerabilities::OsvPackage;
+    use serde_json::json;
     #[test]
     fn ranges_are_checked_one_entry_at_a_time() {
         assert!(in_range("crates.io", "1.1.0", ">= 1.0.0, < 1.2.0"));

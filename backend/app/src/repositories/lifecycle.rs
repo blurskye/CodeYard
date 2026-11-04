@@ -1,5 +1,6 @@
 //! Creating repositories: the authorized database row, then its Git storage.
 use chrono::Datelike;
+use tracing::instrument::WithSubscriber;
 use tracing::Instrument;
 
 use crate::cluster::context::NodeContext;

@@ -1,6 +1,3 @@
-use codeyard_model::issue_input::validate_body;
-use codeyard_model::issue_input::validate_label;
-use codeyard_model::issue_input::validate_title;
 pub mod assignments;
 pub mod branches;
 pub mod closing;

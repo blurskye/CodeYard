@@ -107,7 +107,6 @@ native_operation!(crate::postgres::attestations::delete, crate::sqlite::attestat
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use codeyard_db_core::queries::attestations::valid_digest;
 
     #[test]

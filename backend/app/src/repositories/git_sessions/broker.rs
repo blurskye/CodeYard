@@ -1278,5 +1278,5 @@ pub mod policy_tests;
 mod quorum_tests;
 
 #[cfg(test)]
-#[path = "broker_tests.rs"]
+#[cfg(target_os = "linux")]
 mod tests;

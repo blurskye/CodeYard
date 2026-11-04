@@ -1,5 +1,4 @@
 //! CI/Actions: workflow triggers queue runs; worker nodes run them with `act`.
-use codeyard_db_core::ci_messages::visible_run_error;
 pub mod admission;
 
 pub mod config;
@@ -26,6 +25,7 @@ pub mod workflows;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_db_core::ci_messages::visible_run_error;
 
     #[test]
     fn a_runners_error_text_is_replaced_and_the_servers_own_messages_pass() {

@@ -17,8 +17,6 @@ use crate::repositories::protection::WriteVia;
 use crate::repositories::protection::ANY_TIP;
 use crate::repositories::store::types::BlobMetadata;
 use crate::repositories::store::types::GitService;
-use crate::repositories::store::types::GitSession;
-use crate::repositories::store::types::MergeFailure;
 use crate::repositories::store::types::WorkflowPayloadEntry;
 use crate::repositories::store::types::MAX_WORKFLOW_PAYLOAD_BYTES;
 use crate::repositories::store::RepoStore;

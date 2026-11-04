@@ -3,7 +3,6 @@
 //! starts only when cluster settings are present in the environment.
 use crate::cluster::context::NodeContext;
 use crate::cluster::pairing::apply_declared_nodes;
-use crate::cluster::pairing::approve;
 use crate::cluster::pairing::join;
 use crate::cluster::pairing::normalize_name;
 use crate::cluster::pairing::parse_declared_nodes;
@@ -12,7 +11,6 @@ use crate::cluster::pairing::JoinTicket;
 use crate::cluster::pairing::PairingHandler;
 use crate::cluster::transport::bind;
 use crate::cluster::transport::resolve_advertised;
-use crate::cluster::transport::router;
 use crate::cluster::transport::IrohDialer;
 use crate::cluster::transport::Listen;
 use crate::cluster::transport::NodeAddress;

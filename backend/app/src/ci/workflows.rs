@@ -14,8 +14,6 @@ use codeyard_actions::workflow::events::MAX_WORKFLOW_PATTERN_BYTES;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::MAX_CI_WORKFLOW_BYTES;
-use codeyard_model::workflow_glob::code_owner_glob_matches_bounded;
-use codeyard_model::workflow_glob::github_glob_matches;
 use codeyard_model::workflow_glob::workflow_glob_matches_bounded;
 use codeyard_model::workflow_glob::WorkflowMatchBudget;
 use codeyard_model::workflow_glob::WorkflowMatchLimit;
@@ -680,6 +678,8 @@ fn is_missing_workflow_tree_error(error: &RepoError) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_model::workflow_glob::code_owner_glob_matches_bounded;
+    use codeyard_model::workflow_glob::github_glob_matches;
 
     impl WorkflowDefinition {
         pub(crate) fn supports_event(&self, event: &str) -> bool {
