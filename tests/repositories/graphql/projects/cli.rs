@@ -5,12 +5,7 @@ use async_graphql_parser::{
     types::{ExecutableDocument, Selection, SelectionSet},
 };
 use codeyard_identity::tokens;
-pub(super) mod node_id {
-    use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-    pub fn encode(kind: &str, id: i64) -> String {
-        format!("{kind}_{}", URL_SAFE_NO_PAD.encode(id.to_be_bytes()))
-    }
-}
+use codeyard_model::node_id;
 
 macro_rules! document {
     ($name:literal) => {
@@ -294,13 +289,13 @@ async fn cli_contract(pg: bool) {
         (
             "issues",
             issue.number,
-            node_id::encode("I", issue.id),
+            node_id::scoped("I", repo.id, issue.id).unwrap(),
             "Issue",
         ),
         (
             "pull",
             pull.number,
-            node_id::encode("PR", pull.id),
+            node_id::scoped("PR", repo.id, pull.id).unwrap(),
             "PullRequest",
         ),
     ] {
@@ -595,7 +590,7 @@ async fn cli_contract(pg: bool) {
     .await;
     assert_eq!(team_info["organization"]["team"]["slug"], "planning");
     let tid = team_info["organization"]["team"]["id"].clone();
-    assert_eq!(tid, node_id::encode("T", team.id));
+    assert_eq!(tid, node_id::scoped("T", org.id, team.id).unwrap());
     for text in [
         document!("LinkProjectV2ToTeam"),
         document!("UnlinkProjectV2FromTeam"),

@@ -175,7 +175,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     variable regression are unchecked. Cluster reports 230 passed/one failed; database
     reports 176 passed/five failed, with no ignores. Name routing and stub search filters
     are fixed in source; web-bundle, unreserved-prefix and orphan-table fixtures are updated.
-    Git, identity, repositories and e2e are still running.
+    Git passes all 42 tests and identity all 166, with no ignores. Repositories and
+    e2e are still running; Pages, releases and GraphQL failures await diagnostics.
+    Project CLI assertions now require rooted issue/pull/team IDs instead of the obsolete
+    prefix-only output. The exhaustive GraphQL contracts run past their former stack overflow.
     Native signup/key claim publication, remote membership pointers, remaining node families
     and the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
     Check suites/runs, artifacts and pull-request stacks now issue rooted IDs, with HTTP resolution/forged-root and projection assertions on both engines.
