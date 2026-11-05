@@ -4,12 +4,12 @@ use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::Star;
 use codeyard_db_core::models::User;
 use codeyard_db_core::models::Watch;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::sqlite::repositories::access::lock_readable_repository_in_transaction;
 use codeyard_db_core::queries::sqlite::repositories::access::readable_condition;
 use codeyard_db_core::queries::sqlite::search::contains;
 use codeyard_db_identity::users::blocks::InteractionBlocked;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 /// Checks that the user can still read the repository. The caller's earlier check may be stale

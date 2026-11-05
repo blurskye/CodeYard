@@ -122,9 +122,12 @@ async fn collect(state: &AppState) -> anyhow::Result<String> {
         "codeyard_quorum_failures_total {}",
         codeyard_cluster_core::writes::quorum_failures()
     )?;
-    // SQLx exposes size and idle connections, but not its acquisition queue.
     gauge(&mut body, "database_pool_waiters");
-    writeln!(body, "codeyard_database_pool_waiters NaN")?;
+    writeln!(
+        body,
+        "codeyard_database_pool_waiters {}",
+        state.pool.waiters()
+    )?;
     gauge(&mut body, "nodes");
     for status in ["pending", "active", "revoked"] {
         let count = counts

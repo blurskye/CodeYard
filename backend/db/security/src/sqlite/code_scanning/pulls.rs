@@ -2,7 +2,7 @@ use crate::code_scanning::Analysis;
 use crate::code_scanning::NewFinding;
 use crate::code_scanning::ANALYSIS_COLUMNS;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn pull_analyses(
     pool: &SqlitePool,

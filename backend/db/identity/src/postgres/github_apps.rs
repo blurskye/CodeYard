@@ -5,9 +5,9 @@ use crate::github_apps::RepositoryChange;
 use anyhow::Result;
 use codeyard_db_core::models::PersonalAccessToken;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::github_apps::Token;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 async fn lock_app_accounts(
     connection: &mut PgConnection,

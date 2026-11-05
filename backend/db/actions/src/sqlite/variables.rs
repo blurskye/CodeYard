@@ -2,7 +2,7 @@ use crate::variables::ensure_room;
 use crate::variables::validate;
 use crate::variables::Variable;
 use crate::variables::VariableError;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 /// Collaborator access, leaving out the read access a public repository gives everyone: as on
 /// GitHub, only collaborators read Actions variables.

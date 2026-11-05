@@ -4,9 +4,9 @@ use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::RepoAccess;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

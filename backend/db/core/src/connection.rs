@@ -11,18 +11,29 @@ use tracing::info;
 /// Connection pool for whichever database `DATABASE_URL` selects.
 #[derive(Clone)]
 pub enum DbPool {
-    Postgres(sqlx::PgPool),
-    Sqlite(sqlx::SqlitePool),
+    Postgres(crate::pool::PgPool),
+    Sqlite(crate::pool::SqlitePool),
 }
 
 impl From<sqlx::PgPool> for DbPool {
     fn from(pool: sqlx::PgPool) -> Self {
-        Self::Postgres(pool)
+        Self::Postgres(pool.into())
     }
 }
 
 impl From<sqlx::SqlitePool> for DbPool {
     fn from(pool: sqlx::SqlitePool) -> Self {
+        Self::Sqlite(pool.into())
+    }
+}
+
+impl From<crate::pool::PgPool> for DbPool {
+    fn from(pool: crate::pool::PgPool) -> Self {
+        Self::Postgres(pool)
+    }
+}
+impl From<crate::pool::SqlitePool> for DbPool {
+    fn from(pool: crate::pool::SqlitePool) -> Self {
         Self::Sqlite(pool)
     }
 }
@@ -150,6 +161,14 @@ impl DbPool {
         match self {
             Self::Postgres(pool) => pool.size(),
             Self::Sqlite(pool) => pool.size(),
+        }
+    }
+
+    /// Requests waiting to obtain a connection from this process's application pool.
+    pub fn waiters(&self) -> usize {
+        match self {
+            Self::Postgres(pool) => pool.waiters(),
+            Self::Sqlite(pool) => pool.waiters(),
         }
     }
 

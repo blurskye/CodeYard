@@ -2,10 +2,10 @@ use crate::repositories::security::Reply;
 use crate::repositories::security::Report;
 use crate::repositories::security::Thread;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock;
 use codeyard_model::security_reports::NewReport;
 use codeyard_model::security_reports::Refusal;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

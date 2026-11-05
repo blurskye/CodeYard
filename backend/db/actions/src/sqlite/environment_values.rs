@@ -2,11 +2,11 @@ use crate::environment_values::EnvironmentValue;
 use crate::environment_values::Save;
 use crate::environment_values::StoredValue;
 use crate::environment_values::ValueError;
+use codeyard_db_core::pool::SqlitePool as Pool;
 use codeyard_db_orgs::organization_values::Kind;
 use codeyard_support::secrets::SecretEncryptor;
 use codeyard_support::secrets::SecretError;
 use sqlx::SqliteConnection as Connection;
-use sqlx::SqlitePool as Pool;
 
 async fn authorize(
     connection: &mut sqlx::Transaction<'_, sqlx::Sqlite>,

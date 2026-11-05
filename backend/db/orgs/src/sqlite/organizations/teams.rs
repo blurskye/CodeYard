@@ -18,6 +18,7 @@ use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Team;
 use codeyard_db_core::models::TeamMembership;
 use codeyard_db_core::models::TeamRepoAccess;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::organizations::administers;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::active;
@@ -26,7 +27,6 @@ use codeyard_db_core::queries::sqlite::organizations::authority::membership_role
 use codeyard_db_core::queries::sqlite::organizations::authority::read_authority;
 use codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
 use codeyard_db_core::require_read_org_sqlite;
-use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
 use OrganizationOutcome::Denied;

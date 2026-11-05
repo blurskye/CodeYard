@@ -32,7 +32,7 @@ impl Database {
         }
     }
     /// The PostgreSQL connection pool, for tests that only make sense on PostgreSQL.
-    pub fn pg(&self) -> &sqlx::PgPool {
+    pub fn pg(&self) -> &codeyard_db_core::pool::PgPool {
         match self {
             Self::Postgres(f) => &f.raw,
             Self::Sqlite(_) => panic!("this test needs PostgreSQL"),
@@ -152,7 +152,7 @@ pub async fn router(pool: &codeyard_db_core::DbPool, root: &Path) -> Router {
 
 /// How many backends are stuck behind the transaction of backend `blocker`, directly or through
 /// each other, read from the server's lock graph.
-pub async fn blocked_count(raw: &sqlx::PgPool, blocker: i32) -> i64 {
+pub async fn blocked_count(raw: &codeyard_db_core::pool::PgPool, blocker: i32) -> i64 {
     sqlx::query_scalar(
         "WITH RECURSIVE waiting(pid) AS (
              SELECT pid FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid))
@@ -169,7 +169,7 @@ pub async fn blocked_count(raw: &sqlx::PgPool, blocker: i32) -> i64 {
 /// Waits until at least `waiters` backends are stuck behind the transaction of backend
 /// `blocker`, directly or through each other. It reads the server's lock graph, so a sleep
 /// never stands in for "the request is waiting".
-pub async fn wait_until_blocked(raw: &sqlx::PgPool, blocker: i32, waiters: i64) {
+pub async fn wait_until_blocked(raw: &codeyard_db_core::pool::PgPool, blocker: i32, waiters: i64) {
     // A generous cap for a loaded runner; the loop returns as soon as the waiters show up.
     let deadline = Instant::now() + Duration::from_secs(120);
     loop {

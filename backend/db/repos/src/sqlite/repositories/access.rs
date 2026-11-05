@@ -4,8 +4,8 @@ use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::RepoAccess;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 pub async fn git_access(

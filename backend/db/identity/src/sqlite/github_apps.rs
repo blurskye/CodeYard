@@ -5,8 +5,8 @@ use crate::github_apps::RepositoryChange;
 use anyhow::Result;
 use codeyard_db_core::models::PersonalAccessToken;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::github_apps::Token;
-use sqlx::SqlitePool;
 
 pub async fn delete_registration(
     pool: &SqlitePool,

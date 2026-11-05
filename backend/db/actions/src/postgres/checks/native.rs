@@ -5,9 +5,9 @@ use crate::checks::Run;
 use crate::checks::Suite;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
 use sqlx::types::Json;
-use sqlx::PgPool;
 
 pub async fn page_snapshot(
     pool: &PgPool,

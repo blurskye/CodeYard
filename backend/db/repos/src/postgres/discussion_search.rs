@@ -2,7 +2,7 @@ use crate::discussion_search::Results;
 use crate::discussion_search::Search;
 use crate::discussion_search::Sort;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn search(
     pool: &PgPool,

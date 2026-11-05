@@ -5,7 +5,7 @@ use crate::attestations::Owner;
 use crate::attestations::Refusal;
 use crate::attestations::Summary;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn collect(pool: &SqlitePool) -> Result<u64> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;

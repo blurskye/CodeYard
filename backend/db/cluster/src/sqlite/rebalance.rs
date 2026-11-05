@@ -1,7 +1,7 @@
 use crate::{drain::Repository, rebalance::Move};
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::ClusterNode;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn plan(pool: &SqlitePool, node: i64) -> Result<Option<Move>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;

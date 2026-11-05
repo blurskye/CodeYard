@@ -3,8 +3,8 @@ use crate::users::profiles::ProfilePatch;
 use crate::users::profiles::ProfileSettings;
 use anyhow::Result;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
-use sqlx::SqlitePool;
 
 pub async fn account_statistics(
     pool: &SqlitePool,

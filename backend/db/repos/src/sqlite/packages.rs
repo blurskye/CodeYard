@@ -12,8 +12,8 @@ use crate::packages::Upload;
 use crate::packages::Version;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 type Tx<'a> = Transaction<'a, Sqlite>;

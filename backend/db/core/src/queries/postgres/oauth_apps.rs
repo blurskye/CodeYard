@@ -1,7 +1,7 @@
+use crate::pool::PgPool;
 use crate::queries::oauth_apps::Token;
 use anyhow::Result;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 /// Credentials discover their issuer after resource locks. Do not wait in the
 /// reverse account order: a concurrent issuer restriction makes this effect retry.
 pub(crate) async fn lock_token_issuer(connection: &mut PgConnection, token: i64) -> Result<()> {

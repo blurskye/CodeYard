@@ -301,7 +301,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
 /// its backend id.
 async fn claimed_run_behind_repository_lock(
     pool: &codeyard_db_core::DbPool,
-    raw: &sqlx::PgPool,
+    raw: &codeyard_db_core::pool::PgPool,
     name: &str,
 ) -> (i64, sqlx::Transaction<'static, sqlx::Postgres>, i32) {
     let (owner, writer, repo) = repository_with_writer(pool, name).await;
@@ -651,7 +651,7 @@ async fn postgres_starter_can_cancel_after_access_loss() {
 /// grant. Returns the owner, the member, the organization, the team and the repository.
 async fn team_writer_repository(
     pool: &codeyard_db_core::DbPool,
-    raw: &sqlx::PgPool,
+    raw: &codeyard_db_core::pool::PgPool,
     name: &str,
 ) -> (i64, i64, i64, i64, i64) {
     let owner =

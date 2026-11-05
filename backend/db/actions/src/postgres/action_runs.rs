@@ -4,9 +4,9 @@ use crate::action_runs::RunQuery;
 use anyhow::Result;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::PgPool;
 use sqlx::types::Json;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 /// Called after admission's repository lock, before its transaction commits.
 pub async fn record(

@@ -3,9 +3,9 @@ use crate::repository_exports::ExportRefusal;
 use crate::repository_exports::RepositoryExport;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 
 async fn authority(
     connection: &mut SqliteConnection,

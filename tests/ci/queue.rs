@@ -2681,7 +2681,8 @@ on_both_engines!(
 mod interleaved {
     use super::*;
     use crate::support::database::wait_until_blocked;
-    use sqlx::{PgPool, Postgres, Transaction};
+    use codeyard_db_core::pool::PgPool;
+    use sqlx::{Postgres, Transaction};
 
     /// A transaction that has locked the run row, and its backend process id.
     async fn lock_run(raw: &PgPool, id: i64) -> (Transaction<'static, Postgres>, i32) {

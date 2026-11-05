@@ -4,7 +4,7 @@ use codeyard_db_core::models::AdminAccountSummary;
 use codeyard_db_core::models::AdminActivityPoint;
 use codeyard_db_core::models::AdminUser;
 use codeyard_db_core::models::User;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn create_user(pool: &SqlitePool, username: &str, email: Option<&str>) -> Result<User> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;

@@ -1,8 +1,8 @@
 use crate::users::social_accounts::SocialAccount;
 use crate::users::social_accounts::TooManyAccounts;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
-use sqlx::PgPool;
 
 pub async fn list_social_accounts(pool: &PgPool, user: i64) -> Result<Vec<SocialAccount>> {
     Ok(sqlx::query_as(

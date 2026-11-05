@@ -17,6 +17,7 @@ macro_rules! native_operation {
 pub mod connection;
 mod migrations;
 pub mod models;
+pub mod pool;
 pub mod postgres;
 pub mod sqlite;
 

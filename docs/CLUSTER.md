@@ -85,7 +85,9 @@ browser sessions and repository-scoped tokens do not grant access. Scrapes have 
 - `codeyard_ci_queued_runs`, `codeyard_ci_oldest_queued_seconds`: queue depth and oldest
   age (zero for an empty queue). Alert when age exceeds 120 seconds.
 - `codeyard_database_pool_size`: open connections in this process, including idle ones.
-  `codeyard_database_pool_waiters` is `NaN`: SQLx does not expose its acquisition queue.
+  `codeyard_database_pool_waiters` counts acquisitions that have yielded while waiting
+  for a connection, including connection creation and health checks. Cancellation and
+  timeouts release the count. It is local to the scraping process.
 - `codeyard_quorum_failures_total`: refused or aborted quorum attempts in this process.
   Alert on any increase.
 - `codeyard_drain_total{node_id,state}` and

@@ -3,8 +3,8 @@ use chrono::DateTime;
 use chrono::Utc;
 use codeyard_db_core::models::PersonalAccessToken;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::postgres::users::tokens::permits_write;
-use sqlx::PgPool;
 
 /// The initiating credential is checked inside the same transaction as its repository write.
 /// This only narrows authority; the caller must also hold native repository write authority.

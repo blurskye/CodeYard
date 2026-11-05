@@ -6,10 +6,10 @@ use crate::interactions::NewRestriction;
 use crate::interactions::Restriction;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 const FIELDS: &str = "restriction AS \"limit\",CASE WHEN user_id IS NOT NULL THEN 'user' WHEN org_id IS NOT NULL THEN 'organization' ELSE 'repository' END AS origin,expires_at";
 async fn effective(connection: &mut PgConnection, repo: i64) -> Result<Option<Restriction>> {

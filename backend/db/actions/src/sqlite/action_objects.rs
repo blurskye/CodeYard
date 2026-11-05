@@ -3,7 +3,7 @@ use crate::action_objects::BlobPart;
 use crate::action_objects::NewObject;
 use crate::action_objects::RuntimeRun;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn issue_token(
     pool: &SqlitePool,

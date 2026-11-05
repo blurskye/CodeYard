@@ -1,6 +1,6 @@
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 pub async fn last_discussion_numbers(
@@ -93,7 +93,7 @@ pub(crate) async fn require_contribution_authority(
 }
 
 pub async fn set_lock(
-    pool: &sqlx::SqlitePool,
+    pool: &codeyard_db_core::pool::SqlitePool,
     actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
     item: crate::assignees::AssignedItem,

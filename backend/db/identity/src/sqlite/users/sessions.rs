@@ -6,8 +6,8 @@ use codeyard_db_core::models::BrowserSession;
 use codeyard_db_core::models::OAuthState;
 use codeyard_db_core::models::Session;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_support::crypto::is_hex_token;
-use sqlx::SqlitePool;
 use subtle::ConstantTimeEq;
 
 pub async fn create_session(

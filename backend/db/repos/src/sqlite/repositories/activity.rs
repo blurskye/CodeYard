@@ -3,7 +3,7 @@ use crate::repositories::activity::Filter;
 use crate::repositories::activity::Kind;
 use crate::repositories::activity::RefActivity;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 use uuid::Uuid;
 
 pub async fn record(

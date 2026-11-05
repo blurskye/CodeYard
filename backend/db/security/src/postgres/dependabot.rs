@@ -2,10 +2,10 @@ use crate::dependabot::OrganizationSecret;
 use crate::dependabot::OrganizationSecretInput;
 use crate::dependabot::RepositorySelection;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_db_core::queries::secrets::SecretsError;
 use codeyard_support::secrets::SecretEncryptor;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

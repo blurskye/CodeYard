@@ -85,6 +85,7 @@ async fn rpc_and_git_admission_deadlines_include_database_waits() {
             directory.path().join("test.db").display()
         ))
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap();
     context.pool = Some(raw.clone().into());
     let held = raw.acquire().await.unwrap();
@@ -136,6 +137,7 @@ async fn editor_and_streamed_admission_release_their_slots_at_the_deadline() {
             directory.path().join("test.db").display()
         ))
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap();
     context.pool = Some(raw.clone().into());
     let handler = RpcHandler::new(context.clone());

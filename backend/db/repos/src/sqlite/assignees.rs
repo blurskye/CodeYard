@@ -3,8 +3,8 @@ use crate::assignees::AssignmentRefusal;
 use crate::assignees::MAX_ASSIGNEES;
 use anyhow::Result;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 // Public visibility alone does not make a user an assignment candidate.

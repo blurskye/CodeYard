@@ -3,8 +3,8 @@ use crate::pull_requests::async_merge::NewAsyncMerge;
 use crate::pull_requests::async_merge::PENDING_TIMEOUT_SECONDS;
 use crate::pull_requests::async_merge::TIMEOUT_MESSAGE;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use serde_json::Value;
-use sqlx::SqlitePool;
 
 pub async fn insert(pool: &SqlitePool, input: NewAsyncMerge<'_>) -> Result<bool> {
     Ok(sqlx::query_scalar::<_,String>("INSERT INTO pull_request_async_merges(uuid,repo_id,pull_request_id,token_id,worker_node_id,owner,name,number,request,details) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(pull_request_id) WHERE status='pending' DO NOTHING RETURNING uuid").bind(input.uuid).bind(input.repo_id).bind(input.pull_request_id).bind(input.token_id).bind(input.worker_node_id).bind(input.owner).bind(input.name).bind(input.number).bind(input.request).bind(input.details).fetch_optional(pool).await?.is_some())

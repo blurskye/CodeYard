@@ -10,7 +10,7 @@ use crate::repositories::credentials::repository_condition;
 use crate::repositories::credentials::Access;
 use crate::repositories::credentials::Reader;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 async fn begin_read<'a>(
     pool: &'a SqlitePool,

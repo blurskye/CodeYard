@@ -7,13 +7,13 @@ use crate::organization_values::SettingsValue;
 use crate::organization_values::StoredValue;
 use crate::organization_values::ValueError;
 use crate::organization_values::SETTINGS_PAGE_SIZE;
+use codeyard_db_core::pool::PgPool as Pool;
 use codeyard_db_core::queries::organizations::administers;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_support::secrets::SecretEncryptor;
 use codeyard_support::secrets::SecretError;
 use sqlx::PgConnection as Connection;
-use sqlx::PgPool as Pool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

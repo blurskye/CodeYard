@@ -16,8 +16,8 @@ use crate::pull_requests::records::StackRefusal;
 use crate::pull_requests::records::ViewerPullRequestEntry;
 use anyhow::Result;
 use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::discussions::contains_pattern;
-use sqlx::PgPool;
 
 pub async fn commit_association_candidates(
     pool: &PgPool,

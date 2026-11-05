@@ -9,10 +9,10 @@ use crate::notifications::records::NotificationScopes;
 use crate::notifications::threads::ThreadAction;
 use anyhow::Result;
 use codeyard_db_core::models::Notification;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::notifications::records::NewNotification;
 use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
 use codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared;
-use sqlx::PgPool;
 pub(crate) mod threads;
 
 pub async fn create_notification(

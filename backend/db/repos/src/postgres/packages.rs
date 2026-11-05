@@ -12,7 +12,7 @@ use crate::packages::Upload;
 use crate::packages::Version;
 use anyhow::ensure;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

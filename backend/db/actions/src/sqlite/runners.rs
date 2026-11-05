@@ -11,6 +11,7 @@ use crate::runners::Selection;
 use anyhow::Result;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::pool::SqlitePool as Pool;
 use codeyard_db_core::queries::organizations::administers;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::runners::Group;
@@ -20,7 +21,6 @@ use codeyard_db_core::queries::runners::RunnerQuery;
 use codeyard_db_core::queries::runners::Scope;
 use sqlx::Sqlite;
 use sqlx::SqliteConnection as Connection;
-use sqlx::SqlitePool as Pool;
 use sqlx::Transaction;
 
 async fn authorize(c: &mut Transaction<'_, Sqlite>, actor: i64, scope: Scope) -> Result<()> {

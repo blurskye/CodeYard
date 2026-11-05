@@ -1,8 +1,8 @@
 use crate::ci_tokens::NewJobToken;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::ci_tokens::BOT;
-use sqlx::SqlitePool;
 
 pub async fn issue(
     pool: &SqlitePool,

@@ -6,10 +6,10 @@ use crate::deployment_protection::Review;
 use crate::deployment_protection::Rule;
 use anyhow::Result;
 use codeyard_db_core::models::CiRun;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_identity::github_apps::App;
 use codeyard_model::workflow_glob::github_glob_matches;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 
 pub async fn rules(pool: &SqlitePool, environment: i64) -> Result<Vec<Rule>> {
     Ok(sqlx::query_as(

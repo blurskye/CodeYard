@@ -4,8 +4,8 @@ use crate::codeql::NewDatabase;
 use crate::codeql::UPLOAD_QUOTA;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::credentials::Actor;
-use sqlx::SqlitePool;
 
 async fn authorized(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,

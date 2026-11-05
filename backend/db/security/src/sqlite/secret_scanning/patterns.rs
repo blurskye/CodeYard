@@ -2,6 +2,7 @@ use crate::secret_scanning::ConfigUpdate;
 use crate::secret_scanning::PatternConfig;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::secret_scanning::Refusal;
 use codeyard_support::secret_detection::patterns::Create;
 use codeyard_support::secret_detection::patterns::Delete;
@@ -12,7 +13,6 @@ use codeyard_support::secret_detection::secret_types;
 use serde_json::json;
 use serde_json::Value;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 async fn authority(

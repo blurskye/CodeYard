@@ -16,10 +16,10 @@ use codeyard_db_core::models::JoinInvite;
 use codeyard_db_core::models::JoinOutcome;
 use codeyard_db_core::models::NodeReplicaCounts;
 use codeyard_db_core::models::NodeStatusChange;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::postgres::users::transitions::live_session;
 use codeyard_db_identity::postgres::users::transitions::active_admin;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 pub(crate) mod writes;
 
 /// Turns the name-uniqueness failure into a message an operator can act on.

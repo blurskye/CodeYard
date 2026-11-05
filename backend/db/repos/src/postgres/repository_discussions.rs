@@ -7,7 +7,7 @@ use crate::repository_discussions::Refusal;
 use crate::repository_discussions::Write;
 use crate::repository_discussions::DEFAULT_CATEGORIES;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=$1),false)").bind(repo).fetch_one(pool).await?)

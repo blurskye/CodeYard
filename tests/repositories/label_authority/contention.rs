@@ -114,6 +114,7 @@ async fn sqlite_every_label_write_contends_for_reserved_writer_then_rechecks() {
         .max_connections(1)
         .connect_with(options)
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap();
     let second: codeyard_db_core::DbPool = raw.clone().into();
     let before = snapshot(&second, &[repo]).await;

@@ -2,13 +2,13 @@ use crate::dependabot_alerts::Update;
 use anyhow::ensure;
 use anyhow::Result;
 use chrono::Utc;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_db_core::queries::dependabot_alerts::Alert;
 use codeyard_model::advisories::Advisory;
 use codeyard_model::advisories::Refusal;
 use serde_json::Value;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 pub async fn global_page(

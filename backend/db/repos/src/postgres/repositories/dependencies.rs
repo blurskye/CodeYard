@@ -10,7 +10,7 @@ use crate::repositories::dependencies::LEASE_SECONDS;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

@@ -4,8 +4,8 @@ use crate::reactions::ReactionRefusal;
 use crate::reactions::Subject;
 use crate::reactions::Target;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 /// Adds the reaction, or removes it when the user already gave it. Returns whether it is now set.

@@ -67,7 +67,7 @@ const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 struct Database {
     pool: codeyard_db_core::DbPool,
-    raw: sqlx::PgPool,
+    raw: codeyard_db_core::pool::PgPool,
     user: i64,
     _schema: native::PostgresDatabase,
 }

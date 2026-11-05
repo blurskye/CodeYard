@@ -7,6 +7,7 @@ use crate::organization_values::SettingsValue;
 use crate::organization_values::StoredValue;
 use crate::organization_values::ValueError;
 use crate::organization_values::SETTINGS_PAGE_SIZE;
+use codeyard_db_core::pool::SqlitePool as Pool;
 use codeyard_db_core::queries::organizations::administers;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
@@ -14,7 +15,6 @@ use codeyard_support::secrets::SecretEncryptor;
 use codeyard_support::secrets::SecretError;
 use sqlx::Sqlite;
 use sqlx::SqliteConnection as Connection;
-use sqlx::SqlitePool as Pool;
 use sqlx::Transaction;
 
 async fn authorize(connection: &mut Connection, actor: i64, org: i64) -> Result<(), ValueError> {

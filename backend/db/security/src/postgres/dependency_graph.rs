@@ -2,9 +2,9 @@ use crate::dependency_graph::Reader;
 use crate::dependency_graph::Submission;
 use crate::dependency_graph::SBOM_REPORTS_PER_REPOSITORY;
 use crate::dependency_graph::SBOM_REPORT_LIFETIME_SECONDS;
+use codeyard_db_core::pool::PgPool;
 use codeyard_model::dependency_graph::GraphError;
 use codeyard_model::dependency_graph::Snapshot;
-use sqlx::PgPool;
 
 async fn authorize_in(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,

@@ -1,7 +1,7 @@
 use crate::source_imports::SourceImport;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::source_imports::ImportRefusal;
-use sqlx::PgPool;
 
 pub async fn get(pool: &PgPool, repo: i64) -> Result<Option<SourceImport>> {
     Ok(

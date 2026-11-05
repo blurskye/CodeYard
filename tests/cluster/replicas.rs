@@ -416,7 +416,7 @@ async fn retirement_waits_for_single_and_family_promotions() {
         .await
         .unwrap();
     let pool = &database.pool;
-    let raw = sqlx::PgPool::connect(&database.connection_url())
+    let raw = codeyard_db_core::pool::PgPool::connect(&database.connection_url())
         .await
         .unwrap();
     let a = storage_node(pool, "retire-a").await;

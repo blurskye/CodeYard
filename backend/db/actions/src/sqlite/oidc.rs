@@ -1,6 +1,6 @@
 use crate::oidc::Job;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn key(pool: &SqlitePool) -> Result<Option<String>> {
     Ok(

@@ -4,6 +4,7 @@ use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::models::WebhookDelivery;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::discussions::lock_policy_authority;
 use codeyard_db_core::queries::sqlite::organizations::authority::authority;
@@ -12,7 +13,6 @@ use codeyard_db_core::queries::webhooks::SealedSecret;
 use codeyard_db_core::queries::webhooks::WebhookFields;
 use codeyard_db_core::queries::webhooks::WebhookPatch;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 const COLUMNS: &str = "id, repo_id, org_id, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, created_at, updated_at, username, encrypted_password, password_nonce";

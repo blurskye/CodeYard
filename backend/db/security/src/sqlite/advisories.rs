@@ -2,12 +2,12 @@ use crate::advisories::Listing;
 use crate::advisories::Scope;
 use anyhow::Result;
 use chrono::Utc;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_model::advisories::identifier;
 use codeyard_model::advisories::Advisory;
 use codeyard_model::advisories::Data;
 use codeyard_model::advisories::Refusal;
 use serde_json::Value;
-use sqlx::SqlitePool;
 
 fn visibility() -> String {
     let level = codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;

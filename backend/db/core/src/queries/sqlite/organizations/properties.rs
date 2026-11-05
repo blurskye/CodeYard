@@ -1,3 +1,4 @@
+use crate::pool::SqlitePool;
 use crate::queries::organizations::properties::Definition;
 use crate::queries::organizations::properties::DefinitionRow;
 use crate::queries::organizations::properties::ValueInput;
@@ -6,7 +7,6 @@ use crate::queries::sqlite::organizations::authority::begin_read;
 use crate::require_read_org_sqlite;
 use anyhow::Result;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
 pub async fn definition(
     pool: &SqlitePool,

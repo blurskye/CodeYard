@@ -290,6 +290,7 @@ mod tests {
         let pool = codeyard_db_core::DbPool::Sqlite(
             sqlx::sqlite::SqlitePoolOptions::new()
                 .connect_lazy("sqlite::memory:")
+                .map(codeyard_db_core::pool::Pool::from)
                 .unwrap(),
         );
         let broadcaster = NotificationBroadcaster::new(&pool);

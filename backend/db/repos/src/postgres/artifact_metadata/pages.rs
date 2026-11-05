@@ -1,6 +1,6 @@
 use crate::artifact_metadata::pages::PageRecord;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn list(
     pool: &PgPool,

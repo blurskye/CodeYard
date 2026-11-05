@@ -8,9 +8,9 @@ use codeyard_db_core::models::Issue;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::discussions::contains_pattern;
 use codeyard_db_core::queries::postgres::repositories::access::readable_condition;
-use sqlx::PgPool;
 
 pub async fn create_forked_repository(
     pool: &PgPool,

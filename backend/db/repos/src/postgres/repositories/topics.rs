@@ -1,6 +1,6 @@
 use crate::repositories::records::RepositorySettingsRefusal as Refusal;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 use std::collections::BTreeMap;

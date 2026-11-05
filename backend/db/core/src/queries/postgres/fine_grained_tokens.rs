@@ -1,7 +1,7 @@
+use crate::pool::PgPool;
 use crate::queries::fine_grained_tokens::Bounds;
 use crate::queries::fine_grained_tokens::Policy;
 use anyhow::Result;
-use sqlx::PgPool;
 /// A token's bounds with its live membership and policy; package transactions read it too.
 pub const BOUNDS: &str = "SELECT f.token_id,t.user_id,f.owner_org_id,f.repository_access,f.permissions,f.status,t.expires_at,f.requested_at,(f.owner_org_id IS NULL OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=f.owner_org_id AND m.user_id=t.user_id)) AS member,COALESCE(p.fine_grained_allowed,TRUE) AS fine_grained_allowed,CASE WHEN p.org_id IS NULL THEN 366 ELSE p.max_lifetime_days END AS max_lifetime_days FROM fine_grained_tokens f JOIN personal_access_tokens t ON t.id=f.token_id LEFT JOIN organization_token_policies p ON p.org_id=f.owner_org_id WHERE f.token_id=$1";
 

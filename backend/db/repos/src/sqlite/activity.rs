@@ -2,7 +2,7 @@ use crate::activity::ActivityBatch;
 use crate::activity::ActivityViewer;
 use crate::activity::ScannedActivity;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn record_repository_push(
     pool: &SqlitePool,

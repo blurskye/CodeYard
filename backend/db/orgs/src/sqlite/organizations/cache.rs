@@ -1,4 +1,5 @@
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::action_objects::OrganizationCacheUsage;
 use codeyard_db_core::queries::actions::CacheLimit;
 use codeyard_db_core::queries::actions::CachePolicyError;
@@ -6,7 +7,6 @@ use codeyard_db_core::queries::actions::OrgCacheSettings;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
 use codeyard_db_core::require_read_org_sqlite;
-use sqlx::SqlitePool;
 
 pub async fn get_cache_settings(
     pool: &SqlitePool,

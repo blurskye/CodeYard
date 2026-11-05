@@ -1,3 +1,4 @@
+use crate::pool::PgPool;
 use crate::queries::action_settings::Refusal;
 use crate::queries::action_settings::Scope;
 use crate::queries::action_settings::Setting;
@@ -7,7 +8,6 @@ use anyhow::ensure;
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 pub async fn authority(

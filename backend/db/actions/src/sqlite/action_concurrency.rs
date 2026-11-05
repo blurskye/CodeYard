@@ -3,8 +3,8 @@ use crate::action_concurrency::Member;
 use anyhow::Result;
 use codeyard_db_core::ci_concurrency::Configuration;
 use codeyard_db_core::models::CiRun;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 
 pub async fn record(
     connection: &mut SqliteConnection,

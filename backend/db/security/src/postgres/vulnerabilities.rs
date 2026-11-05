@@ -2,9 +2,9 @@ use crate::vulnerabilities::Refusal;
 use crate::vulnerabilities::Settings;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use codeyard_model::dependency_graph::Snapshot;
 use codeyard_model::vulnerabilities::PreparedAdvisory;
-use sqlx::PgPool;
 
 pub async fn settings(pool: &PgPool) -> Result<Settings> {
     Ok(

@@ -7,9 +7,9 @@ use crate::action_logs::Snapshot;
 use crate::action_logs::Target;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::types::Json;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 
 pub async fn issue(
     pool: &SqlitePool,

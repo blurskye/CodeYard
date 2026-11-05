@@ -28,7 +28,7 @@ const ZERO_SHA: &str = "0000000000000000000000000000000000000000";
 
 struct Database {
     pool: DbPool,
-    native: sqlx::PgPool,
+    native: codeyard_db_core::pool::PgPool,
     schema: String,
     url: String,
 }
@@ -47,7 +47,7 @@ impl Drop for Database {
                 let admin = sqlx::postgres::PgPoolOptions::new()
                     .max_connections(1)
                     .connect(&url)
-                    .await?;
+                    .await.map(codeyard_db_core::pool::Pool::from)?;
                 sqlx::raw_sql("SET lock_timeout = '5s'; SET statement_timeout = '10s'")
                     .execute(&admin)
                     .await?;
@@ -92,6 +92,7 @@ async fn database() -> Database {
         .max_connections(1)
         .connect(&url)
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .expect("required disposable PostgreSQL is unavailable");
     sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
         .execute(&admin)
@@ -111,6 +112,7 @@ async fn database() -> Database {
             fixture.url, fixture.schema, fixture.schema
         ))
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap();
     fixture.pool = DbPool::from(fixture.native.clone());
     codeyard_db_core::run_migrations(&fixture.pool)

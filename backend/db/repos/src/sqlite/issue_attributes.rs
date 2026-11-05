@@ -7,13 +7,13 @@ use crate::issue_attributes::Refusal;
 use crate::issue_attributes::SelectOption;
 use crate::issue_attributes::ValueInput;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_support::credentials::AccountRestricted;
 use serde_json::json;
 use serde_json::Value;
 use sqlx::Sqlite;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 pub(crate) async fn catalog_connection(

@@ -1,3 +1,4 @@
+use crate::pool::PgPool;
 use crate::queries::organizations::properties::Definition;
 use crate::queries::organizations::properties::DefinitionRow;
 use crate::queries::organizations::properties::ValueInput;
@@ -6,7 +7,6 @@ use crate::queries::postgres::organizations::authority::begin_read;
 use crate::require_read_org_postgres;
 use anyhow::Result;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 use OrganizationOutcome::Applied;
 pub async fn definition(
     pool: &PgPool,

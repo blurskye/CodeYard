@@ -5,12 +5,12 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_db_core::queries::fine_grained_tokens::Policy;
 use codeyard_db_core::queries::fine_grained_tokens::Token;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 const TOKEN: &str = "SELECT f.token_id,t.user_id,t.name,f.description,f.owner_org_id,f.repository_access,f.permissions,f.status,f.reason,f.reviewed_at,f.requested_at,t.expires_at,t.created_at,t.last_used_at,t.last_used_ip FROM fine_grained_tokens f JOIN personal_access_tokens t ON t.id=f.token_id";
 

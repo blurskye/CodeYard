@@ -4,7 +4,7 @@ use crate::support::native_database::PostgresDatabase;
 
 pub struct Fixture {
     pub pool: codeyard_db_core::DbPool,
-    pub raw: sqlx::PgPool,
+    pub raw: codeyard_db_core::pool::PgPool,
     pub temp: tempfile::TempDir,
     pub owner: codeyard_db_core::models::User,
     pub repo: codeyard_db_core::models::Repository,

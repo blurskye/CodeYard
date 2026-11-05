@@ -5,7 +5,7 @@ use crate::attestations::Owner;
 use crate::attestations::Refusal;
 use crate::attestations::Summary;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

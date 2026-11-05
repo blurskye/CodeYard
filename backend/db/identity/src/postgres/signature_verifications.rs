@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn verified_at(pool: &PgPool, input_hash: &str) -> Result<Option<DateTime<Utc>>> {
     Ok(

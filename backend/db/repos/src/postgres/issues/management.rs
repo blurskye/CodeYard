@@ -4,9 +4,9 @@ use crate::issues::management::Refusal;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::Issue;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_support::credentials::AccountRestricted;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

@@ -1,8 +1,8 @@
 use crate::models::OrgRole;
+use crate::pool::PgPool;
 use crate::queries::organizations::OrganizationOutcome;
 use anyhow::Result;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 use OrganizationOutcome::Applied;

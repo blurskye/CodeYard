@@ -5,7 +5,7 @@ use crate::repositories::protection::ProtectionWriteRefusal;
 use anyhow::Result;
 use codeyard_db_core::models::BranchProtectionRule;
 use codeyard_db_core::models::CommitStatus;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn read_protection_snapshot(
     pool: &SqlitePool,

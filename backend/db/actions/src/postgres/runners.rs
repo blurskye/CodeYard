@@ -11,6 +11,7 @@ use crate::runners::Selection;
 use anyhow::Result;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::pool::PgPool as Pool;
 use codeyard_db_core::queries::organizations::administers;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::runners::Group;
@@ -19,7 +20,6 @@ use codeyard_db_core::queries::runners::Runner;
 use codeyard_db_core::queries::runners::RunnerQuery;
 use codeyard_db_core::queries::runners::Scope;
 use sqlx::PgConnection as Connection;
-use sqlx::PgPool as Pool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

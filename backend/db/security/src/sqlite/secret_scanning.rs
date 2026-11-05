@@ -8,11 +8,11 @@ use crate::secret_scanning::ScanCompletion;
 use crate::secret_scanning::ScanJob;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::secret_scanning::Refusal;
 use codeyard_db_core::queries::secret_scanning::Settings;
 use codeyard_git::secret_scanning::Location;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 pub(crate) mod patterns;
 

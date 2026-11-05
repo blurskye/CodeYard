@@ -5,7 +5,7 @@ use crate::repositories::records::RepositorySort;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::SharedRepository;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

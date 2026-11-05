@@ -1,6 +1,6 @@
+use crate::pool::PgPool;
 use crate::queries::ci_tokens::JobToken;
 use anyhow::Result;
-use sqlx::PgPool;
 pub async fn get(pool: &PgPool, token_id: i64) -> Result<Option<JobToken>> {
     let mut connection = pool.acquire().await?;
     get_in_connection(&mut connection, token_id).await

@@ -2,9 +2,9 @@ use crate::users::signing_keys::SigningKey;
 use crate::users::signing_keys::SigningKeyOwner;
 use crate::users::ssh_keys::parse_public_key;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_model::identity::SshKeyWriteRefusal;
-use sqlx::PgPool;
 
 pub async fn list_signing_key_summaries(
     pool: &PgPool,

@@ -14,9 +14,9 @@ use crate::checks::Suite;
 use crate::checks::SuiteDetails;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::types::Json;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 pub(crate) mod native;

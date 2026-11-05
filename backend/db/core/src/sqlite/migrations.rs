@@ -1,7 +1,8 @@
 //! SQLite schema migrations.
+use crate::pool::SqlitePool;
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
-use sqlx::{pool::PoolConnection, Connection, Sqlite, SqliteConnection, SqlitePool};
+use sqlx::{pool::PoolConnection, Connection, Sqlite, SqliteConnection};
 
 const MIGRATIONS: &[(i64, &str, &str)] = &[(
     1,

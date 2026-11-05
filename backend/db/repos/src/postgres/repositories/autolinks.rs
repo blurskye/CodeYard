@@ -2,7 +2,7 @@ use crate::repositories::autolinks::Autolink;
 use crate::repositories::autolinks::NewAutolink;
 use crate::repositories::autolinks::Refusal;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

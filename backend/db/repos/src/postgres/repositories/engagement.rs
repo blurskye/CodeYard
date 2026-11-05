@@ -4,12 +4,12 @@ use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::Star;
 use codeyard_db_core::models::User;
 use codeyard_db_core::models::Watch;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::discussions::contains_pattern;
 use codeyard_db_core::queries::postgres::repositories::access::lock_readable_repository_in_transaction;
 use codeyard_db_core::queries::postgres::repositories::access::readable_condition;
 use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock;
 use codeyard_db_identity::users::blocks::InteractionBlocked;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

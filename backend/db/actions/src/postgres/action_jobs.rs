@@ -11,9 +11,9 @@ use codeyard_actions::progress::State;
 use codeyard_actions::progress::Update;
 use codeyard_db_core::ci_concurrency::Configuration;
 use codeyard_db_core::models::CiRun;
+use codeyard_db_core::pool::PgPool;
 use sqlx::types::Json;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 async fn concurrency_repository(connection: &mut PgConnection, run: i64) -> Result<()> {
     // Workflow admission owns this repository before its group and runs. Job requests may

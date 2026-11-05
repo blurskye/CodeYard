@@ -3,7 +3,7 @@ use crate::assignees::AssignmentRefusal;
 use crate::assignees::MAX_ASSIGNEES;
 use anyhow::Result;
 use codeyard_db_core::models::User;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

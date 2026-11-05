@@ -1,7 +1,7 @@
+use crate::pool::SqlitePool as Pool;
 use crate::queries::attestation_validation::Attestation;
 use crate::queries::attestation_validation::AttestationError;
 use crate::queries::attestation_validation::Page;
-use sqlx::SqlitePool as Pool;
 pub async fn list(
     pool: &Pool,
     actor: Option<i64>,

@@ -3,10 +3,10 @@ use crate::users::blocks::InteractionBlocked;
 use crate::users::blocks::InvalidBlock;
 use anyhow::Result;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::postgres::users::blocks::repository_interaction_blocked;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 pub async fn list_blocks(pool: &PgPool, user: i64, limit: i64, offset: i64) -> Result<Vec<User>> {
     Ok(sqlx::query_as("SELECT u.* FROM users u JOIN user_blocks b ON b.blocked_id=u.id WHERE b.user_id=$1 ORDER BY u.id LIMIT $2 OFFSET $3").bind(user).bind(limit).bind(offset).fetch_all(pool).await?)

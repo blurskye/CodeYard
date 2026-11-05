@@ -13,10 +13,10 @@ use crate::artifact_metadata::Record;
 use crate::artifact_metadata::Refusal;
 use crate::artifact_metadata::StorageInput;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use serde_json::json;
 use serde_json::Value;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 pub(crate) mod pages;
 

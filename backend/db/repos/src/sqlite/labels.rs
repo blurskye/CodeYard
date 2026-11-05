@@ -5,8 +5,8 @@ use crate::labels::LabelWriteRefusal;
 use crate::labels::PAGE_DESCRIPTION_CHARS;
 use anyhow::Result;
 use codeyard_db_core::models::Label;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 async fn begin_label_write<'a>(

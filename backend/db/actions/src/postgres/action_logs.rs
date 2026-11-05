@@ -7,9 +7,9 @@ use crate::action_logs::Snapshot;
 use crate::action_logs::Target;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use sqlx::types::Json;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 pub async fn issue(
     pool: &PgPool,

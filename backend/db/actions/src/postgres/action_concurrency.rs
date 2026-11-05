@@ -3,8 +3,8 @@ use crate::action_concurrency::Member;
 use anyhow::Result;
 use codeyard_db_core::ci_concurrency::Configuration;
 use codeyard_db_core::models::CiRun;
+use codeyard_db_core::pool::PgPool;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 pub async fn lock(connection: &mut PgConnection, run: &CiRun) -> Result<()> {
     sqlx::query("SELECT g.repo_id FROM actions_concurrency_groups g JOIN actions_run_concurrency r ON r.repo_id=g.repo_id AND r.name_key=g.name_key WHERE r.run_id=$1 FOR UPDATE OF g").bind(run.id).fetch_optional(connection).await?;

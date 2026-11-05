@@ -1,7 +1,7 @@
 use crate::source_imports::SourceImport;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::source_imports::ImportRefusal;
-use sqlx::SqlitePool;
 
 pub async fn get(pool: &SqlitePool, repo: i64) -> Result<Option<SourceImport>> {
     Ok(

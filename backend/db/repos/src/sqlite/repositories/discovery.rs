@@ -9,9 +9,9 @@ use codeyard_db_core::models::Issue;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::sqlite::repositories::access::readable_condition;
 use codeyard_db_core::queries::sqlite::search::contains;
-use sqlx::SqlitePool;
 
 pub async fn create_forked_repository(
     pool: &SqlitePool,
@@ -414,6 +414,7 @@ mod tests {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         let mut connection = search_connection(&pool).await.unwrap();
         let error = sqlx::query_scalar::<_,i64>("WITH RECURSIVE n(x) AS (VALUES(0) UNION ALL SELECT x+1 FROM n WHERE x<1000000000) SELECT sum(x) FROM n")

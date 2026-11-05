@@ -6,10 +6,10 @@ use crate::repositories::creation::RepositoryTarget;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::organizations::properties::invalid as invalid_property;
 use codeyard_db_core::queries::organizations::properties::ValueInput;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use sqlx::PgPool;
 
 /// Whether the actor may create a repository for this owner; `Ok(true)` for site admins.
 pub(crate) async fn creation_authority(

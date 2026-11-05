@@ -16,7 +16,7 @@ use std::{str::FromStr, time::Duration};
 // fixture's unrelated PostgreSQL/reopen API. Keep its ownership local.
 struct NativeDatabase {
     pool: codeyard_db_core::DbPool,
-    raw: sqlx::SqlitePool,
+    raw: codeyard_db_core::pool::SqlitePool,
     _directory: tempfile::TempDir,
 }
 impl NativeDatabase {
@@ -43,6 +43,7 @@ impl NativeDatabase {
                     .busy_timeout(Duration::from_secs(3)),
             )
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .expect("owned raw fixture handle");
         Self {
             pool,

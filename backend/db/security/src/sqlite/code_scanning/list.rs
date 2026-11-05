@@ -8,7 +8,7 @@ use crate::code_scanning::ANALYSIS_COLUMNS;
 use crate::code_scanning::ANALYSIS_DELETABLE;
 use anyhow::ensure;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn analyses(
     pool: &SqlitePool,

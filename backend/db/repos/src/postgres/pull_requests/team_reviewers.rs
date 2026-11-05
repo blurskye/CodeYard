@@ -4,7 +4,7 @@ use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Team;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 const SCOPED: &str = "SELECT t.*,o.name AS org_slug,COALESCE(a.permission,0)::SMALLINT AS permission FROM teams t JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL JOIN organizations o ON o.id=t.org_id LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id WHERE r.id=$1 AND (t.privacy='visible' OR EXISTS(SELECT 1 FROM org_memberships om WHERE om.org_id=t.org_id AND om.user_id=$2 AND om.role IN ('owner','admin')) OR EXISTS(SELECT 1 FROM effective_team_memberships tm JOIN org_memberships om ON om.org_id=t.org_id AND om.user_id=tm.user_id WHERE tm.team_id=t.id AND tm.user_id=$2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member')))";
 

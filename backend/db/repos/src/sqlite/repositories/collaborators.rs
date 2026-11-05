@@ -7,8 +7,8 @@ use crate::repositories::collaborators::Refusal;
 use anyhow::Result;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 async fn admin(tx: &mut Transaction<'_, Sqlite>, actor: i64, repo: i64) -> Result<()> {

@@ -1,7 +1,8 @@
 use crate::objects::Object;
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::ClusterNode;
-use sqlx::{SqliteConnection, SqlitePool};
+use codeyard_db_core::pool::SqlitePool;
+use sqlx::SqliteConnection;
 
 async fn owner(conn: &mut SqliteConnection, id: i64, key: &str) -> Result<()> {
     let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM nodes WHERE id=$1 AND public_key=$2 AND status='active' AND state='active' AND EXISTS(SELECT 1 FROM json_each(nodes.roles) WHERE value IN ('web','ssh')))")

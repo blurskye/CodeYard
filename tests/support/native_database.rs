@@ -10,7 +10,7 @@ use uuid::Uuid;
 
 pub struct NativeDatabase {
     pub pool: codeyard_db_core::DbPool,
-    pub raw: sqlx::SqlitePool,
+    pub raw: codeyard_db_core::pool::SqlitePool,
     pub url: String,
     _directory: tempfile::TempDir,
 }
@@ -47,6 +47,7 @@ impl NativeDatabase {
             .max_connections(4)
             .connect_with(options)
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         Self {
             pool,
@@ -81,6 +82,7 @@ impl NativeDatabase {
                     .busy_timeout(Duration::from_secs(3)),
             )
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
     }
 
@@ -92,7 +94,7 @@ impl NativeDatabase {
 
 pub struct PostgresDatabase {
     pub pool: codeyard_db_core::DbPool,
-    pub raw: sqlx::PgPool,
+    pub raw: codeyard_db_core::pool::PgPool,
     pub url: String,
     pub schema: String,
     removed: bool,
@@ -132,6 +134,7 @@ impl PostgresDatabase {
             .max_connections(1)
             .connect(&url)
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .expect("required PostgreSQL fixture");
         let schema = format!("test_{}", Uuid::new_v4().simple());
         sqlx::query(&format!("CREATE SCHEMA \"{schema}\""))
@@ -152,7 +155,11 @@ impl PostgresDatabase {
                 ("search_path", fixture.schema.as_str()),
                 ("application_name", fixture.schema.as_str()),
             ]);
-        fixture.raw = PgPoolOptions::new().connect_with(options).await.unwrap();
+        fixture.raw = PgPoolOptions::new()
+            .connect_with(options)
+            .await
+            .map(codeyard_db_core::pool::Pool::from)
+            .unwrap();
         fixture.pool = fixture.raw.clone().into();
         fixture
     }
@@ -172,14 +179,19 @@ impl PostgresDatabase {
 
 /// Ends the sessions the test left open (a killed server's last queries, a pool held by a
 /// spawned task), which would block the DROP, and then drops the schema.
-async fn drop_schema(raw: &sqlx::PgPool, url: &str, schema: &str) -> Result<(), sqlx::Error> {
+async fn drop_schema(
+    raw: &codeyard_db_core::pool::PgPool,
+    url: &str,
+    schema: &str,
+) -> Result<(), sqlx::Error> {
     let _ = tokio::time::timeout(Duration::from_secs(2), raw.close()).await;
     let options = sqlx::postgres::PgConnectOptions::from_str(url)?
         .options([("lock_timeout", "5s"), ("statement_timeout", "10s")]);
     let admin = PgPoolOptions::new()
         .max_connections(1)
         .connect_with(options)
-        .await?;
+        .await
+        .map(codeyard_db_core::pool::Pool::from)?;
     sqlx::query(
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity \
          WHERE application_name = $1 AND pid <> pg_backend_pid()",

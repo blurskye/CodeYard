@@ -4,7 +4,7 @@ use crate::users::transitions::AdministratorActor;
 use anyhow::Result;
 use codeyard_db_core::models::SignupRequest;
 use codeyard_db_core::models::User;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn create_signup_request(
     pool: &PgPool,

@@ -254,6 +254,7 @@ mod tests {
     async fn refresh_requests_coalesce_per_repository() {
         let raw = sqlx::sqlite::SqlitePoolOptions::new()
             .connect_lazy("sqlite::memory:")
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         let pool = DbPool::Sqlite(raw);
         let path = PathBuf::from(format!("/unused/{}.git", uuid::Uuid::new_v4()));

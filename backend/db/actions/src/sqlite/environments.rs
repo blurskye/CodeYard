@@ -4,9 +4,9 @@ use crate::environments::Environment;
 use crate::environments::Refusal;
 use crate::environments::Update;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::credentials::Actor;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 async fn write(

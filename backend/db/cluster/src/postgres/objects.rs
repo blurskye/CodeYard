@@ -1,7 +1,8 @@
 use crate::objects::Object;
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::ClusterNode;
-use sqlx::{PgConnection, PgPool};
+use codeyard_db_core::pool::PgPool;
+use sqlx::PgConnection;
 
 async fn owner(conn: &mut PgConnection, id: i64, key: &str) -> Result<()> {
     let live: Option<bool> = sqlx::query_scalar("SELECT true FROM nodes WHERE id=$1 AND public_key=$2 AND status='active' AND state='active' AND roles && ARRAY['web','ssh']::text[] FOR SHARE")

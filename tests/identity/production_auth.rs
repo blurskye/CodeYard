@@ -130,6 +130,7 @@ impl Database {
             .max_connections(8)
             .connect(&self.connection_url())
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .expect("reconnect owned schema")
             .into()
     }

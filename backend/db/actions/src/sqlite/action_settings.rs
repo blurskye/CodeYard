@@ -4,13 +4,13 @@ use crate::action_settings::Policy;
 use crate::action_settings::PolicySelector;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::action_settings::Refusal;
 use codeyard_db_core::queries::action_settings::Scope;
 use codeyard_db_core::queries::action_settings::Setting;
 use codeyard_db_core::queries::credentials::Actor;
 use serde_json::json;
 use serde_json::Value;
-use sqlx::SqlitePool;
 
 pub async fn effective(pool: &SqlitePool, repo: i64) -> Result<(Value, Value)> {
     snapshot(&mut *pool.acquire().await?, repo).await

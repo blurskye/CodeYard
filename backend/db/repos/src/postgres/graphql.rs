@@ -1,6 +1,6 @@
 use crate::graphql::RateLimit;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn linked_branch(
     pool: &PgPool,

@@ -16,10 +16,10 @@ use codeyard_db_core::models::JoinInvite;
 use codeyard_db_core::models::JoinOutcome;
 use codeyard_db_core::models::NodeReplicaCounts;
 use codeyard_db_core::models::NodeStatusChange;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::sqlite::users::transitions::live_session;
 use codeyard_db_identity::sqlite::users::transitions::active_admin;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 pub(crate) mod writes;
 
 const NOW: &str = "strftime('%Y-%m-%dT%H:%M:%f000Z','now')";

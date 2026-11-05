@@ -57,7 +57,7 @@ mod fixture {
         _directory: TempDir,
         path: PathBuf,
         pool: DbPool,
-        native: sqlx::SqlitePool,
+        native: codeyard_db_core::pool::SqlitePool,
         ci: Arc<CiRuns>,
         repo_id: i64,
         owner_id: i64,
@@ -86,6 +86,7 @@ mod fixture {
                         .foreign_keys(true),
                 )
                 .await
+                .map(codeyard_db_core::pool::Pool::from)
                 .unwrap();
             let pool = DbPool::from(native.clone());
             codeyard_db_core::run_migrations(&pool).await.unwrap();

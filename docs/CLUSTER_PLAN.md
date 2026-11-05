@@ -6,11 +6,12 @@ to check in the cluster code that exists, what is still missing, and the decisio
 every open question. [Architecture](ARCHITECTURE.md#3-scaling-out-cells-behind-a-router-plan-not-built)
 keeps the longer plan for cells; this file comes first and does not repeat it.
 
-Items 1–9 have source implementations and acceptance tests. Workspace, Clippy and WASM
-checks pass for that batch; the runtime job passed 1,013 library tests and Helm render checks. One CI fixture failed;
-it is corrected and awaits a rerun. Cluster and storage integration targets still need
-their run. Pool waiters, rolling
-upgrades, organization SSO and the full acceptance round are not complete. Backup and restore pass source checks and await runtime verification.
+Items 1–9 have source implementations and acceptance tests. The earlier source batch,
+backup/restore and organization OIDC pass workspace, Clippy and WASM checks. Acquisition
+waiter tracking is now written and awaits checks. One runtime job passed 1,013 library
+tests and Helm render checks; its single CI fixture failure is corrected. The cluster,
+storage, identity, backup/restore and end-to-end runs are in progress. Rolling upgrades
+and measured load limits are not complete.
 Cluster mode stays hidden behind
 `CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.
 
@@ -27,7 +28,7 @@ journal. Cluster files use two storage-node copies or optional shared S3. Reposi
 and copy now use the same quorum path; source checks pass and runtime tests are pending.
 
 Not complete: drain and failover acceptance, backup and restore verification,
-rolling upgrades, organization SSO and measured load limits.
+rolling upgrades and measured load limits.
 
 Current acceptance status (runtime checks are still pending):
 
@@ -35,14 +36,14 @@ Current acceptance status (runtime checks are still pending):
 - 2: two-copy storage-node backend, shared drain reservations and HTTP acceptance written; source checks pass, runtime pending.
 - 3: quorum initialization and copy source checks pass; voter replacement source checks pass; runtime pending.
 - 4: drain source checks pass; runtime acceptance pending.
-- 5: quorum and drain metrics source checks pass; pool waiters remain unavailable (`NaN`).
+- 5: quorum and drain metrics source checks pass; acquisition waiter tracking is written and awaits checks.
 - 6: bounded invitations and environment-only provisioning source checks pass; runtime pending.
 - 7: lease leader, policy settings, pause and dry run source checks pass; runtime pending.
 - 8: mover and bandwidth limit source checks pass; runtime pending.
 - 9: pool configuration source checks and Helm render checks pass; PostgreSQL failover, PgBouncer and load runs pending.
 - 10: previous-release target needs confirmation before compatibility work.
 - 11: primary snapshots, object copies, fenced import and per-node restore pass source checks; runtime pending.
-- 12: cross-node REST account/IP and audit acceptance written; organization OIDC login and commit-time membership checks are written, awaiting source checks.
+- 12: cross-node REST account/IP and audit acceptance written; organization OIDC login and commit-time membership checks pass source checks, runtime pending.
 
 ## A. Checks on what exists
 

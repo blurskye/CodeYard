@@ -2,11 +2,11 @@ use crate::dependabot::OrganizationSecret;
 use crate::dependabot::OrganizationSecretInput;
 use crate::dependabot::RepositorySelection;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_db_core::queries::secrets::SecretsError;
 use codeyard_support::secrets::SecretEncryptor;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 pub async fn organization_key(

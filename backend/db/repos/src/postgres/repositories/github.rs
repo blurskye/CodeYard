@@ -3,7 +3,7 @@ use crate::repositories::github::list_sql;
 use crate::repositories::github::RepositoryListQuery;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn repository_teams(
     pool: &PgPool,

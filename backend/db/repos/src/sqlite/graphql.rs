@@ -1,6 +1,6 @@
 use crate::graphql::RateLimit;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn linked_branch(
     pool: &SqlitePool,

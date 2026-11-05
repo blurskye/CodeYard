@@ -4,7 +4,7 @@ use crate::metrics::StorageNode;
 use crate::metrics::MAX_STORAGE_NODES;
 use anyhow::ensure;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn storage_nodes(pool: &PgPool) -> Result<Vec<StorageNode>> {
     let nodes: Vec<StorageNode> = sqlx::query_as(

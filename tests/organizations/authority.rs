@@ -56,8 +56,8 @@ use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 
 // Raw driver SQL is fixture-only corruption/observation, never product authority.
 enum Raw {
-    Postgres(sqlx::PgPool),
-    Sqlite(sqlx::SqlitePool),
+    Postgres(codeyard_db_core::pool::PgPool),
+    Sqlite(codeyard_db_core::pool::SqlitePool),
 }
 struct Database {
     pool: codeyard_db_core::DbPool,
@@ -92,6 +92,7 @@ impl Database {
                     .busy_timeout(Duration::from_secs(3)),
             )
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .expect("owned SQLite connections");
         let pool: codeyard_db_core::DbPool = raw.clone().into();
         codeyard_db_core::run_migrations(&pool)

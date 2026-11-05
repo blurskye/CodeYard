@@ -16,7 +16,7 @@ use crate::pull_requests::records::StackRefusal;
 use crate::pull_requests::records::ViewerPullRequestEntry;
 use anyhow::Result;
 use codeyard_db_core::models::PullRequest;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn commit_association_candidates(
     pool: &SqlitePool,

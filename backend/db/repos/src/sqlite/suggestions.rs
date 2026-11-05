@@ -9,10 +9,10 @@ use crate::suggestions::Resolution;
 use crate::suggestions::Suggestion;
 use anyhow::Result;
 use codeyard_db_core::models::Issue;
+use codeyard_db_core::pool::SqlitePool;
 use serde_json::Value;
 use sqlx::Sqlite;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 async fn permission(c: &mut SqliteConnection, repo: i64, actor: i64, triage: bool) -> Result<bool> {

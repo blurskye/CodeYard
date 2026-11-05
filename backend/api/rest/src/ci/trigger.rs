@@ -89,6 +89,7 @@ mod tests {
                     .with_regexp(),
             )
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         let pool = codeyard_db_core::DbPool::from(native.clone());
         codeyard_db_core::run_migrations(&pool).await.unwrap();

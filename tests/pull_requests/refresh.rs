@@ -836,7 +836,7 @@ async fn concurrent_refresh_converges(pg: bool) {
 }
 
 /// How many backends wait behind the blocker on PostgreSQL; SQLite cannot tell.
-async fn refreshes_waiting(lock_graph: &Option<(sqlx::PgPool, i32)>) -> i64 {
+async fn refreshes_waiting(lock_graph: &Option<(codeyard_db_core::pool::PgPool, i32)>) -> i64 {
     match lock_graph {
         Some((raw, pid)) => database::blocked_count(raw, *pid).await,
         None => 0,
@@ -845,7 +845,11 @@ async fn refreshes_waiting(lock_graph: &Option<(sqlx::PgPool, i32)>) -> i64 {
 
 /// Waits until one more refresh waits on its CAS. PostgreSQL shows it in the lock graph behind
 /// the blocker; SQLite has no such view, so there the refresh gets `pause_ms` to reach its write.
-async fn until_refresh_waits(lock_graph: &Option<(sqlx::PgPool, i32)>, before: i64, pause_ms: u64) {
+async fn until_refresh_waits(
+    lock_graph: &Option<(codeyard_db_core::pool::PgPool, i32)>,
+    before: i64,
+    pause_ms: u64,
+) {
     match lock_graph {
         Some((raw, pid)) => database::wait_until_blocked(raw, *pid, before + 1).await,
         None => tokio::time::sleep(std::time::Duration::from_millis(pause_ms)).await,

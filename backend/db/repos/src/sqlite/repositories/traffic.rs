@@ -9,7 +9,7 @@ use crate::repositories::traffic::PopularReferrer;
 use crate::repositories::traffic::Summary;
 use crate::repositories::traffic::Window;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn record(
     pool: &SqlitePool,

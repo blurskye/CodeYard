@@ -323,7 +323,11 @@ mod tests {
 
     #[tokio::test]
     async fn owners_have_separate_capacity_and_manual_rate_limits() {
-        let pool = DbPool::Sqlite(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+        let pool = DbPool::Sqlite(
+            codeyard_db_core::pool::SqlitePool::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
         let mut queue = Queue::default();
         let owner = HookOwner::Repository(1);
         for _ in 0..OWNER_QUEUE_LIMIT {
@@ -347,14 +351,21 @@ mod tests {
         }
         assert!(queue.take(&pool, other, Some(3), true, 0).is_none());
         assert!(queue.take(&pool, other, Some(3), false, 0).is_some());
-        let other_pool =
-            DbPool::Sqlite(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+        let other_pool = DbPool::Sqlite(
+            codeyard_db_core::pool::SqlitePool::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
         assert!(queue.take(&other_pool, other, Some(3), true, 0).is_some());
     }
 
     #[tokio::test]
     async fn construction_and_delivery_share_the_queue_limit() {
-        let pool = DbPool::Sqlite(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+        let pool = DbPool::Sqlite(
+            codeyard_db_core::pool::SqlitePool::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
         let mut queue = Queue::default();
         for id in 0..QUEUE_LIMIT as i64 {
             assert!(queue
@@ -372,7 +383,11 @@ mod tests {
 
     #[tokio::test]
     async fn queued_bodies_share_one_byte_budget() {
-        let pool = DbPool::Sqlite(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+        let pool = DbPool::Sqlite(
+            codeyard_db_core::pool::SqlitePool::connect("sqlite::memory:")
+                .await
+                .unwrap(),
+        );
         let mut queue = Queue::default();
         let half = QUEUE_BYTES / 2;
         assert!(queue

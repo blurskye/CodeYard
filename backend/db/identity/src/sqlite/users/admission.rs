@@ -4,8 +4,8 @@ use crate::users::admission::CLIENT_LIMIT;
 use crate::users::admission::WINDOW_SECONDS;
 use anyhow::Result;
 use chrono::Duration;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 
 fn check_keys(client_key: Option<&str>, account_key: &str) -> Result<()> {
     let valid = |key: &str| !key.is_empty() && key.len() <= 80;

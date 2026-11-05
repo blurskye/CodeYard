@@ -1,6 +1,6 @@
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock as RepositoryLock;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
@@ -151,7 +151,7 @@ pub(crate) async fn require_exclusive_contribution_authority(
 }
 
 pub async fn set_lock(
-    pool: &sqlx::PgPool,
+    pool: &codeyard_db_core::pool::PgPool,
     actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
     item: crate::assignees::AssignedItem,
@@ -339,7 +339,7 @@ pub(crate) async fn lock_review_dismissal_authority(
 }
 
 pub async fn list_repo_authors(
-    pool: &sqlx::PgPool,
+    pool: &codeyard_db_core::pool::PgPool,
     repo_id: i64,
     selected: Option<i64>,
 ) -> Result<Vec<String>> {

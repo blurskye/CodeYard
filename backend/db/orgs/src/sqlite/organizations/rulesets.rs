@@ -1,5 +1,6 @@
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::rulesets::records::ListFilter;
 use codeyard_db_core::queries::rulesets::records::Owner;
@@ -18,7 +19,6 @@ use codeyard_db_core::queries::sqlite::organizations::authority::begin;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
 use serde_json::Value;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Denied;
 use OrganizationOutcome::Missing;

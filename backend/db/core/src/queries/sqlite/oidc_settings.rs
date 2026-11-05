@@ -1,3 +1,4 @@
+use crate::pool::SqlitePool;
 use crate::queries::oidc::Inclusion;
 use crate::queries::oidc::Refusal;
 use crate::queries::oidc::Scope;
@@ -9,7 +10,6 @@ use crate::queries::organizations::OrganizationOutcome;
 use anyhow::ensure;
 use anyhow::Result;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 use std::collections::BTreeMap;
 async fn authorize(

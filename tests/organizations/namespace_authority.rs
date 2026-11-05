@@ -20,8 +20,8 @@ use std::{panic::AssertUnwindSafe, str::FromStr, time::Duration};
 
 // Raw SQL below only prepares or observes owned fixtures.
 enum Raw {
-    Postgres(sqlx::PgPool),
-    Sqlite(sqlx::SqlitePool),
+    Postgres(codeyard_db_core::pool::PgPool),
+    Sqlite(codeyard_db_core::pool::SqlitePool),
 }
 struct Database {
     pool: codeyard_db_core::DbPool,
@@ -70,6 +70,7 @@ impl Database {
                     .busy_timeout(Duration::from_secs(5)),
             )
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .expect("required SQLite fixture");
         let pool = raw.clone().into();
         codeyard_db_core::run_migrations(&pool)
@@ -771,7 +772,7 @@ async fn concurrent_namespace_winners(database: &Database, actor: i64) {
     assert!(matches!(org.unwrap(), OrganizationOutcome::Applied(_)));
 }
 
-async fn wait_for_pg_blocked(raw: &sqlx::PgPool, holder: i32) -> i32 {
+async fn wait_for_pg_blocked(raw: &codeyard_db_core::pool::PgPool, holder: i32) -> i32 {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let waiting: Option<i32> = sqlx::query_scalar(

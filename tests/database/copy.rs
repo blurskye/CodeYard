@@ -2,8 +2,8 @@
 
 use crate::support::native_database as native;
 
+use codeyard_db_core::pool::{PgPool, SqlitePool};
 use native::{NativeDatabase, PostgresDatabase};
-use sqlx::{PgPool, SqlitePool};
 use uuid::Uuid;
 
 /// Application tables, read from the catalog so a table added later is covered too.

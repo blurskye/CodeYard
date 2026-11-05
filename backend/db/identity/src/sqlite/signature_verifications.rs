@@ -1,7 +1,7 @@
 use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn verified_at(pool: &SqlitePool, input_hash: &str) -> Result<Option<DateTime<Utc>>> {
     Ok(

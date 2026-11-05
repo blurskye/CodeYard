@@ -107,6 +107,7 @@ async fn metrics_access_is_hidden_and_rechecks_administrator_tokens() {
         assert_eq!(content_type, "text/plain; version=0.0.4; charset=utf-8");
         assert!(body.contains("codeyard_ci_queued_runs 0\n"));
         assert!(body.contains("codeyard_ci_oldest_queued_seconds 0\n"));
+        assert!(body.contains("codeyard_database_pool_waiters 0\n"));
         assert!(!body.contains("scrape-secret"));
 
         let user = database.actor("metrics-admin").await;
@@ -404,6 +405,82 @@ async fn metrics_include_drain_progress_and_quorum_refusals() {
             node.id
         )));
         assert!(body.contains("# TYPE codeyard_quorum_failures_total counter"));
+        database.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn pool_waiter_scrapes_show_pending_acquisition_and_clear_after_completion() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    for pg in [false, true] {
+        let mut database = Database::new(pg).await;
+        database.complete_setup().await;
+        let blocked = Arc::new(AtomicBool::new(false));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Semaphore::new(0));
+        macro_rules! pool {
+            ($options:expr) => {{
+                let blocked = blocked.clone();
+                let started = started.clone();
+                let release = release.clone();
+                $options
+                    .max_connections(2)
+                    .min_connections(2)
+                    .before_acquire(move |_, _| {
+                        let block = blocked.swap(false, Ordering::SeqCst);
+                        let started = started.clone();
+                        let release = release.clone();
+                        Box::pin(async move {
+                            if block {
+                                started.notify_one();
+                                let _permit = release
+                                    .acquire()
+                                    .await
+                                    .map_err(|_| sqlx::Error::PoolClosed)?;
+                            }
+                            Ok(true)
+                        })
+                    })
+                    .connect(&database.connection_url())
+                    .await
+                    .unwrap()
+                    .into()
+            }};
+        }
+        let observed: codeyard_db_core::DbPool = if pg {
+            pool!(sqlx::postgres::PgPoolOptions::new())
+        } else {
+            pool!(sqlx::sqlite::SqlitePoolOptions::new())
+        };
+        let root = tempfile::tempdir().unwrap();
+        let mut app = state(&database, root.path()).await;
+        app.pool = observed.clone();
+        app.metrics_token_hash = Some(token_hash("waiter-scrape"));
+        let router = create_router(app);
+        blocked.store(true, Ordering::SeqCst);
+        let waiting = tokio_util::task::AbortOnDropHandle::new(tokio::spawn({
+            let pool = observed.clone();
+            async move { pool.ping().await }
+        }));
+        tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
+            .await
+            .unwrap();
+        assert_eq!(observed.waiters(), 1);
+        let (status, _, body) = get(&router, "/metrics", Some("Bearer waiter-scrape")).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert!(
+            body.contains("codeyard_database_pool_waiters 1\n"),
+            "{body}"
+        );
+        release.add_permits(1);
+        waiting.await.unwrap().unwrap();
+        let (status, _, body) = get(&router, "/metrics", Some("Bearer waiter-scrape")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            body.contains("codeyard_database_pool_waiters 0\n"),
+            "{body}"
+        );
+        observed.close().await;
         database.finish().await;
     }
 }

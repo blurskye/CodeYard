@@ -1,6 +1,6 @@
 use crate::artifact_metadata::pages::PageRecord;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn list(
     pool: &SqlitePool,

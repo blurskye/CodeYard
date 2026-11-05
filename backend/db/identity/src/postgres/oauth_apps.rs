@@ -6,10 +6,10 @@ use crate::oauth_apps::APPLICATIONS_SQL;
 use crate::oauth_apps::APPLICATION_PAGE_SIZE;
 use anyhow::Result;
 use chrono::Utc;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_support::token_hash::token_hash;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 async fn lock_client_accounts(
     connection: &mut PgConnection,

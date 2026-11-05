@@ -8,9 +8,9 @@ use codeyard_db_core::ci_policy::ACCESS_LOST_MESSAGE;
 use codeyard_db_core::models::CiDeployment;
 use codeyard_db_core::models::CiLogLine;
 use codeyard_db_core::models::CiRun;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::action_settings::Setting;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 use uuid::Uuid;
 

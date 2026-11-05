@@ -4,10 +4,10 @@ use anyhow::Result;
 use codeyard_db_core::models::SshKey;
 use codeyard_db_core::models::User;
 use codeyard_db_core::models::UserWithKey;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_model::identity::SshKeyWriteRefusal;
 use codeyard_support::credentials::AccountRestricted;
-use sqlx::PgPool;
 use tracing::debug;
 
 pub async fn touch_ssh_key(pool: &PgPool, key_id: i64) -> Result<()> {

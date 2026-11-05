@@ -171,6 +171,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
         .max_connections(1)
         .connect(&admin_url)
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap();
     let mut urls = Vec::new();
     let mut names = Vec::new();

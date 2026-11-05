@@ -7,8 +7,8 @@ use crate::deployments::Refusal;
 use crate::deployments::Status;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::credentials::Actor;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

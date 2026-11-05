@@ -3663,6 +3663,7 @@ jobs:
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         let pool = codeyard_db_core::DbPool::from(native);
         codeyard_db_core::run_migrations(&pool).await.unwrap();

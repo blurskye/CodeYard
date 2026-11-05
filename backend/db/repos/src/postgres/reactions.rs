@@ -4,7 +4,7 @@ use crate::reactions::ReactionRefusal;
 use crate::reactions::Subject;
 use crate::reactions::Target;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

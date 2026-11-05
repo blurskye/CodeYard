@@ -1,9 +1,9 @@
 use crate::models::OrgRole;
+use crate::pool::SqlitePool;
 use crate::queries::credentials::Actor;
 use crate::queries::organizations::OrganizationOutcome;
 use crate::queries::secrets::SecretsError;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 pub async fn authorized(
     pool: &SqlitePool,

@@ -280,7 +280,7 @@ async fn login(
 
 struct Fixture {
     temporary: tempfile::TempDir,
-    raw: sqlx::SqlitePool,
+    raw: codeyard_db_core::pool::SqlitePool,
     pool: codeyard_db_core::DbPool,
     storage: Arc<ObjectStore>,
     owner: i64,
@@ -303,6 +303,7 @@ impl Fixture {
                     .busy_timeout(Duration::from_secs(5)),
             )
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         let pool: codeyard_db_core::DbPool = raw.clone().into();
         codeyard_db_core::run_migrations(&pool)

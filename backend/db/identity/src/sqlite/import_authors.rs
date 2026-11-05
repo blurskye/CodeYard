@@ -1,7 +1,7 @@
 use crate::import_authors::Author;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::source_imports::ImportRefusal;
-use sqlx::SqlitePool;
 
 pub async fn record(
     pool: &SqlitePool,

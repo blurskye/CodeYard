@@ -4,6 +4,7 @@ pub async fn closed_state() -> AppState {
     // A closed lazy pool can't reach any server or change any data.
     let pool = sqlx::postgres::PgPoolOptions::new()
         .connect_lazy("postgresql://fixture:fixture@127.0.0.1:1/ssr_fixture")
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap();
     pool.close().await;
     let object_root = tempfile::tempdir().unwrap();

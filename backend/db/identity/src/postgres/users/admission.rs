@@ -6,8 +6,8 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
+use codeyard_db_core::pool::PgPool;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 fn check_keys(client_key: Option<&str>, account_key: &str) -> Result<()> {
     let valid = |key: &str| !key.is_empty() && key.len() <= 80;

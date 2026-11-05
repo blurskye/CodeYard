@@ -606,6 +606,7 @@ mod tests {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         let pool = DbPool::from(native.clone());
         codeyard_db_core::run_migrations(&pool).await.unwrap();

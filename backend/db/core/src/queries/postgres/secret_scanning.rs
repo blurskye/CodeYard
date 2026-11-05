@@ -1,8 +1,8 @@
+use crate::pool::PgPool;
 use crate::queries::secret_scanning::Refusal;
 use crate::queries::secret_scanning::Settings;
 use anyhow::ensure;
 use anyhow::Result;
-use sqlx::PgPool;
 pub async fn settings(pool: &PgPool, repo: i64) -> Result<Settings> {
     Ok(sqlx::query_as(
         "SELECT enabled,push_protection FROM secret_scanning_settings WHERE repo_id=$1",

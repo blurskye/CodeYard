@@ -10,8 +10,8 @@ use crate::repositories::dependencies::LEASE_SECONDS;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 async fn admin(

@@ -1,7 +1,7 @@
 use crate::api_limits::Budget;
 use crate::api_limits::Request;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn budget(pool: &SqlitePool, request: Request<'_>) -> Result<(Budget, bool)> {
     let Request {

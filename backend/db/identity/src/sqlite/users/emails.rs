@@ -2,8 +2,8 @@ use crate::email::secondary_link_condition;
 use crate::users::emails::EmailAddress;
 use crate::users::emails::EmailRefusal;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
-use sqlx::SqlitePool;
 
 const LIST_EMAILS: &str = "SELECT e.email,e.verified FROM user_emails e JOIN users u ON u.id=e.user_id WHERE e.user_id=?1 AND lower(e.email)<>lower(COALESCE(u.email,'')) ORDER BY e.email";
 

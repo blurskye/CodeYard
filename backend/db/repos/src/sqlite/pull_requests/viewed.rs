@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 /// Marks a file as viewed at this blob id, or clears the mark when `blob_sha` is None.
 pub async fn set_pull_request_file_viewed(

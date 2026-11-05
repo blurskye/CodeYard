@@ -5,9 +5,9 @@ use crate::users::gpg_keys::NewGpgKey;
 use crate::users::gpg_keys::StoredGpgKey;
 use crate::users::gpg_keys::StoredGpgKeySummary;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 pub async fn list_gpg_keys(

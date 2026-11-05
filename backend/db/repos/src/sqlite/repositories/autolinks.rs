@@ -2,8 +2,8 @@ use crate::repositories::autolinks::Autolink;
 use crate::repositories::autolinks::NewAutolink;
 use crate::repositories::autolinks::Refusal;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 async fn admin(

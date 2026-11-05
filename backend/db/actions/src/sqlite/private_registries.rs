@@ -1,10 +1,10 @@
 use crate::private_registries::Configuration;
 use crate::private_registries::Registry;
 use crate::private_registries::RegistryError;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::secrets::SecretsError;
 use codeyard_support::secrets::SecretEncryptor;
 use serde_json::Value;
-use sqlx::SqlitePool;
 
 async fn prune(
     c: &mut sqlx::SqliteConnection,

@@ -4,7 +4,7 @@ use crate::pins::ItemPin;
 use crate::pins::Pin;
 use crate::pins::PinRefusal;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn get_pin(pool: &PgPool, item: AssignedItem) -> Result<Option<Pin>> {
     let s = scope(item);

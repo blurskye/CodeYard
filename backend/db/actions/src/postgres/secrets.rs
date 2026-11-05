@@ -1,9 +1,9 @@
 use crate::secrets::SecretKind;
 use codeyard_db_core::models::RepoSecret;
 use codeyard_db_core::models::RepoSecretMeta;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::secrets::SecretsError;
 use codeyard_support::secrets::SecretEncryptor;
-use sqlx::PgPool;
 
 pub async fn encryption_samples(pool: &PgPool) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>> {
     Ok(sqlx::query_as(crate::secrets::ENCRYPTION_SAMPLES_SQL)

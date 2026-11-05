@@ -6,9 +6,9 @@ use crate::environments::Reviewer;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::CiRun;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::action_settings::Refusal;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 
 async fn can_review(
     connection: &mut SqliteConnection,

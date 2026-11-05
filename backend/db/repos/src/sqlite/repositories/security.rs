@@ -2,10 +2,10 @@ use crate::repositories::security::Reply;
 use crate::repositories::security::Report;
 use crate::repositories::security::Thread;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_model::security_reports::NewReport;
 use codeyard_model::security_reports::Refusal;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 async fn authority(

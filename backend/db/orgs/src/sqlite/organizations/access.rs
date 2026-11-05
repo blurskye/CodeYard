@@ -4,10 +4,10 @@ use crate::sqlite::organizations::authority::organization_repo_access_in_transac
 use anyhow::Result;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
 use codeyard_db_core::require_read_org_sqlite;
-use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
 
 pub async fn get_organization_repo_access(

@@ -4,10 +4,10 @@ use crate::issues::management::Refusal;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::Issue;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_support::credentials::AccountRestricted;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 /// Pull requests the viewer can read whose body may close issue `number` of `repo`: same-repository

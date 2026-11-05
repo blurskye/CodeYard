@@ -1,6 +1,6 @@
+use crate::pool::SqlitePool;
 use crate::queries::ci_tokens::JobToken;
 use anyhow::Result;
-use sqlx::SqlitePool;
 pub async fn get(pool: &SqlitePool, token_id: i64) -> Result<Option<JobToken>> {
     let mut connection = pool.acquire().await?;
     get_in_connection(&mut connection, token_id).await

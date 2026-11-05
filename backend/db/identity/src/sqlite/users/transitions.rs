@@ -7,10 +7,10 @@ use crate::users::transitions::SetupClaim;
 use anyhow::Result;
 use codeyard_db_core::models::NodeConfiguration;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::sqlite::users::transitions::credential_live;
 use codeyard_db_core::queries::sqlite::users::transitions::live_session;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 pub(crate) async fn organization_name_exists(

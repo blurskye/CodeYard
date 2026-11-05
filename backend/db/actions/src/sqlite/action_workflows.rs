@@ -1,8 +1,8 @@
 use crate::action_workflows::Workflow;
 use anyhow::Result;
 use codeyard_db_core::models::CiRun;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_repos::repositories::records::RepositorySettingsRefusal;
-use sqlx::SqlitePool;
 
 pub async fn register_workflows(
     pool: &SqlitePool,

@@ -53,6 +53,7 @@ async fn readiness_times_out_the_complete_database_ping() {
         .acquire_timeout(std::time::Duration::from_secs(60))
         .connect("sqlite::memory:")
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap();
     let held = raw.acquire().await.unwrap();
     let mut state = closed_state().await;
@@ -83,6 +84,7 @@ async fn shutdown_keeps_git_task_admission_open_while_http_handlers_drain() {
         .max_connections(1)
         .connect("sqlite::memory:")
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap();
     let held = raw.acquire().await.unwrap();
     let mut state = closed_state().await;

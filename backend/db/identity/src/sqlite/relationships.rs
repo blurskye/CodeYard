@@ -8,8 +8,8 @@ use crate::relationships::RelationCounts;
 use crate::relationships::Window;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 pub async fn window(pool: &SqlitePool, page: &Window<'_>) -> Result<Vec<Link>> {

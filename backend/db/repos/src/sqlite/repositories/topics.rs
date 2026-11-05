@@ -1,7 +1,7 @@
 use crate::repositories::records::RepositorySettingsRefusal as Refusal;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 use std::collections::BTreeMap;
 

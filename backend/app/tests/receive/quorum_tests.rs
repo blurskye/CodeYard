@@ -45,6 +45,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
                 .foreign_keys(true),
         )
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap();
     let pool = DbPool::from(native.clone());
     codeyard_db_core::run_migrations(&pool).await.unwrap();

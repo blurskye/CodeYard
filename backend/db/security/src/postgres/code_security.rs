@@ -4,11 +4,11 @@ use crate::code_security::SETTINGS_PAGE_SIZE;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::code_security::Configuration;
 use codeyard_db_core::queries::code_security::Refusal;
 use codeyard_db_core::queries::code_security::RepositorySettings;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

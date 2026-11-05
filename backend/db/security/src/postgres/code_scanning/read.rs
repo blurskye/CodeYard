@@ -5,9 +5,9 @@ use crate::code_scanning::PullSelection;
 use crate::code_scanning::PullSnapshot;
 use crate::code_scanning::ANALYSIS_COLUMNS;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 async fn allowed(c: &mut PgConnection, actor: i64, session: &str, repo: i64) -> Result<bool> {
     let authority: Option<(Option<i64>, bool)> = sqlx::query_as(&format!(

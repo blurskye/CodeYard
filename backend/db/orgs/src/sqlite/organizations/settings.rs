@@ -6,12 +6,12 @@ use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Organization;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin;
 use codeyard_db_core::queries::sqlite::organizations::authority::begin_read;
 use codeyard_db_core::require_read_org_sqlite;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Denied;
 

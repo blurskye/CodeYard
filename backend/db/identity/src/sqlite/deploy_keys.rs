@@ -1,8 +1,8 @@
 use crate::deploy_keys::NewDeployKey;
 use anyhow::Result;
 use codeyard_db_core::models::DeployKey;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_model::identity::SshKeyWriteRefusal;
-use sqlx::SqlitePool;
 
 const COLUMNS: &str = "id, repo_id, name AS title, fingerprint, public_key, NOT read_only AS can_write, created_by_id, last_used_at, created_at";
 

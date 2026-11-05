@@ -4,9 +4,9 @@ use crate::action_runs::RunQuery;
 use anyhow::Result;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::types::Json;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 
 /// Called inside admission's immediate transaction.
 pub async fn record(

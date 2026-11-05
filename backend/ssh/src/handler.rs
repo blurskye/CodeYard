@@ -826,6 +826,7 @@ mod tests {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         let pool = DbPool::from(native.clone());
         codeyard_db_core::run_migrations(&pool).await.unwrap();
@@ -906,6 +907,7 @@ mod tests {
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         let pool = DbPool::from(native);
         codeyard_db_core::run_migrations(&pool).await.unwrap();
@@ -976,6 +978,7 @@ mod tests {
         // Closed lazy fixture: no database connection or queries can occur.
         let pool = sqlx::postgres::PgPoolOptions::new()
             .connect_lazy("postgres://fixture:fixture@127.0.0.1:1/unused")
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         pool.close().await;
         let pool = DbPool::from(pool);

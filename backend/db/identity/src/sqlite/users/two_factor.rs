@@ -1,7 +1,7 @@
 use crate::users::two_factor::FactorAuthority;
 use crate::users::two_factor::StoredTwoFactor;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 async fn authorized(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,

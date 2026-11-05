@@ -5,9 +5,9 @@ use crate::repositories::immutable_releases::Reservation;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::Release;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_model::release_integrity::Artifact;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 // Enforced when the repository opts in or its organization enforces it for all or selected

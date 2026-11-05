@@ -288,6 +288,9 @@ Node membership (`pending`, `active`, `revoked`) is separate from allocation sta
 (`active`, `draining`, `drained`). Drain admission reserves complete fork families and
 15% free space in one transaction; the existing copier and promoter advance the work.
 The panel, REST and CLI use `cluster::drain::change`. Initialization and drain source checks pass; runtime acceptance is pending.
+Application database queries share `db::pool` acquisition tracking; metrics count yielded
+acquisitions until they complete, time out or are cancelled. Streaming keeps one queued
+row and releases the query and connection together when cancelled. This batch awaits checks.
 Provisioning, lease-led scaling, rebalancing and pool configuration pass source checks;
 their runtime acceptance is pending. [Cluster readiness](CLUSTER_PLAN.md) tracks acceptance.
 

@@ -477,6 +477,7 @@ mod tests {
             .acquire_timeout(std::time::Duration::from_secs(600))
             .connect(&url)
             .await
+            .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         let hook = MembersOnly {
             pool: raw.clone().into(),

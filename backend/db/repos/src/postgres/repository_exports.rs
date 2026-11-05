@@ -3,9 +3,9 @@ use crate::repository_exports::ExportRefusal;
 use crate::repository_exports::RepositoryExport;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 async fn authority(connection: &mut PgConnection, actor: i64, org: Option<i64>) -> Result<bool> {
     if let Some(org) = org {

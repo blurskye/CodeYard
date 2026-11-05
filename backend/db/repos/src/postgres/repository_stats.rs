@@ -3,7 +3,7 @@ use crate::repository_stats::RepoActivityPoint;
 use crate::repository_stats::WorkflowUsage;
 use anyhow::Result;
 use codeyard_db_core::models::RepoLanguage;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn readable_snapshots(
     pool: &PgPool,

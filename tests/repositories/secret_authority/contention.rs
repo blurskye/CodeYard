@@ -192,6 +192,7 @@ async fn sqlite_secrets_require_reserved_writer_even_for_metadata() {
                 .busy_timeout(Duration::ZERO),
         )
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .expect("required independent SQLite contention connection");
     let second: codeyard_db_core::DbPool = raw.clone().into();
     let mut revoke = f.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();

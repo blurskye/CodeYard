@@ -1,7 +1,7 @@
 use crate::{drain::Repository, rebalance::Move};
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::ClusterNode;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn plan(pool: &PgPool, node: i64) -> Result<Option<Move>> {
     let mut tx = pool.begin().await?;

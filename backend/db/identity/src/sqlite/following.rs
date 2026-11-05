@@ -1,6 +1,6 @@
 use anyhow::Result;
 use codeyard_db_core::models::Follow;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn list_connections(
     pool: &SqlitePool,

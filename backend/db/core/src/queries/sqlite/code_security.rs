@@ -1,5 +1,6 @@
 use crate::models::OrgRole;
 use crate::models::Repository;
+use crate::pool::SqlitePool;
 use crate::queries::code_security::apply;
 use crate::queries::code_security::private_reporting;
 use crate::queries::code_security::scanning_settings;
@@ -10,7 +11,6 @@ use crate::queries::organizations::OrganizationOutcome;
 use anyhow::ensure;
 use anyhow::Result;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 pub async fn readable(connection: &mut SqliteConnection, actor: i64, org: i64) -> Result<()> {
     match crate::queries::sqlite::organizations::authority::read_authority(connection, actor, org)
         .await?

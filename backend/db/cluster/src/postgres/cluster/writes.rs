@@ -11,9 +11,9 @@ use codeyard_db_core::models::WriteRecord;
 use codeyard_db_core::models::WriteSettings;
 use codeyard_db_core::models::WriteVote;
 use codeyard_db_core::models::WriteVoter;
+use codeyard_db_core::pool::PgPool;
 use sqlx::FromRow;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 #[derive(FromRow)]
 struct Control {

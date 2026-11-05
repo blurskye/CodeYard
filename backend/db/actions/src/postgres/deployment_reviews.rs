@@ -6,9 +6,9 @@ use crate::environments::Reviewer;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::CiRun;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::action_settings::Refusal;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 async fn can_review(connection: &mut PgConnection, pending: &Pending, actor: i64) -> Result<bool> {
     if pending.environment.prevent_self_review && actor == pending.triggered_by_id {

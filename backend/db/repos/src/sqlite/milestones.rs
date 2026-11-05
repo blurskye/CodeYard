@@ -4,8 +4,8 @@ use crate::milestones::MilestoneWriteRefusal;
 use anyhow::Result;
 use codeyard_db_core::models::Milestone;
 use codeyard_db_core::models::MilestoneSummary;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 pub async fn milestone_document_facts(

@@ -11,9 +11,9 @@ use codeyard_db_core::models::WriteRecord;
 use codeyard_db_core::models::WriteSettings;
 use codeyard_db_core::models::WriteVote;
 use codeyard_db_core::models::WriteVoter;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::FromRow;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 
 #[derive(FromRow)]
 struct Control {

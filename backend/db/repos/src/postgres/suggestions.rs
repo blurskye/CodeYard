@@ -9,9 +9,9 @@ use crate::suggestions::Resolution;
 use crate::suggestions::Suggestion;
 use anyhow::Result;
 use codeyard_db_core::models::Issue;
+use codeyard_db_core::pool::PgPool;
 use serde_json::Value;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

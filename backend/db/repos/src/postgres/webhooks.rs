@@ -4,6 +4,7 @@ use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Webhook;
 use codeyard_db_core::models::WebhookDelivery;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::postgres::discussions::lock_policy_authority;
 use codeyard_db_core::queries::postgres::organizations::authority::authority;
@@ -11,7 +12,6 @@ use codeyard_db_core::queries::webhooks::NewDelivery;
 use codeyard_db_core::queries::webhooks::SealedSecret;
 use codeyard_db_core::queries::webhooks::WebhookFields;
 use codeyard_db_core::queries::webhooks::WebhookPatch;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

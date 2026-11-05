@@ -8,10 +8,10 @@ use crate::projects::ProjectContents;
 use crate::projects::SelectOption;
 use crate::projects::Settings;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use codeyard_model::project_query::Refusal;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 pub(crate) mod exports;
 

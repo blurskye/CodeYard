@@ -4,10 +4,10 @@ use crate::postgres::organizations::authority::organization_repo_access_in_trans
 use anyhow::Result;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
 use codeyard_db_core::require_read_org_postgres;
-use sqlx::PgPool;
 use OrganizationOutcome::Applied;
 
 pub async fn get_organization_repo_access(

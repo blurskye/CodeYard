@@ -1,8 +1,8 @@
 use crate::users::social_accounts::SocialAccount;
 use crate::users::social_accounts::TooManyAccounts;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
-use sqlx::SqlitePool;
 
 pub async fn list_social_accounts(pool: &SqlitePool, user: i64) -> Result<Vec<SocialAccount>> {
     Ok(sqlx::query_as(

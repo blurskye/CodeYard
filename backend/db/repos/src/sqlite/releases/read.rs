@@ -7,8 +7,8 @@ use anyhow::Result;
 use codeyard_db_core::models::ReleaseAsset;
 use codeyard_db_core::models::ReleaseRow;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL;
-use sqlx::SqlitePool;
 
 pub async fn read_release_snapshot(
     pool: &SqlitePool,

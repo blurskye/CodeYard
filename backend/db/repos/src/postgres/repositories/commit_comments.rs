@@ -7,7 +7,7 @@ use crate::repositories::commit_comments::CommentEdited;
 use crate::repositories::commit_comments::CommentRefusal;
 use anyhow::Result;
 use codeyard_db_core::models::CommitComment;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn create_comment(pool: &PgPool, input: CommentCreate<'_>) -> Result<CommitComment> {
     validate_create(&input)?;

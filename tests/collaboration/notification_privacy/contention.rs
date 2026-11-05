@@ -308,6 +308,7 @@ async fn sqlite_notification_operations_require_reserved_writer_then_recheck() {
                 .busy_timeout(Duration::ZERO),
         )
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap();
     let second: codeyard_db_core::DbPool = raw.clone().into();
     let before = fixture.history(recipient).await;
@@ -384,7 +385,7 @@ async fn sqlite_notification_sql_failure_is_not_empty_success() {
 /// finish, or deadlocks if the read holds a source lock that the deletion needs.
 async fn delete_fork_during_read(
     pool: &codeyard_db_core::DbPool,
-    raw: &sqlx::PgPool,
+    raw: &codeyard_db_core::pool::PgPool,
     owner: i64,
     reader: i64,
     fork: i64,

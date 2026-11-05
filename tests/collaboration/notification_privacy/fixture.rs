@@ -213,6 +213,7 @@ impl Fixture {
                 f.raw = sqlx::postgres::PgPoolOptions::new()
                     .connect_with(options)
                     .await
+                    .map(codeyard_db_core::pool::Pool::from)
                     .unwrap();
                 f.pool = f.raw.clone().into();
                 codeyard_db_core::run_migrations(&f.pool)

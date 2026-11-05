@@ -7,7 +7,7 @@ use codeyard_db_core::models::File;
 use codeyard_db_core::models::Release;
 use codeyard_db_core::models::ReleaseAsset;
 use codeyard_db_core::models::ReleaseRow;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 use uuid::Uuid;

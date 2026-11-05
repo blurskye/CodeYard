@@ -1,8 +1,8 @@
+use crate::pool::SqlitePool;
 use crate::queries::secret_scanning::Refusal;
 use crate::queries::secret_scanning::Settings;
 use anyhow::ensure;
 use anyhow::Result;
-use sqlx::SqlitePool;
 pub async fn settings(pool: &SqlitePool, repo: i64) -> Result<Settings> {
     Ok(sqlx::query_as(
         "SELECT enabled,push_protection FROM secret_scanning_settings WHERE repo_id=$1",

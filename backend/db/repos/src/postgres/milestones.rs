@@ -4,7 +4,7 @@ use crate::milestones::MilestoneWriteRefusal;
 use anyhow::Result;
 use codeyard_db_core::models::Milestone;
 use codeyard_db_core::models::MilestoneSummary;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

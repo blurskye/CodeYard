@@ -2,8 +2,8 @@ use crate::events::EventEntry;
 use crate::events::EventScope;
 use crate::events::EventViewer;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use serde_json::Value;
-use sqlx::PgPool;
 
 pub async fn record_event(
     pool: &PgPool,

@@ -5,7 +5,7 @@ use crate::labels::LabelWriteRefusal;
 use crate::labels::PAGE_DESCRIPTION_CHARS;
 use anyhow::Result;
 use codeyard_db_core::models::Label;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

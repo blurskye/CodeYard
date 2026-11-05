@@ -1,7 +1,7 @@
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::QueryBuilder;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 
 pub async fn release_note_rows(
     pool: &SqlitePool,

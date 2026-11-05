@@ -1,3 +1,4 @@
+use crate::pool::SqlitePool;
 use crate::queries::action_settings::Refusal;
 use crate::queries::action_settings::Scope;
 use crate::queries::action_settings::Setting;
@@ -8,7 +9,6 @@ use anyhow::Result;
 use serde_json::Value;
 use sqlx::Sqlite;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 pub async fn authority(
     tx: &mut Transaction<'_, Sqlite>,

@@ -14,8 +14,8 @@ use crate::checks::Suite;
 use crate::checks::SuiteDetails;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use sqlx::types::Json;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

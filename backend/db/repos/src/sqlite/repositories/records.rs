@@ -5,8 +5,8 @@ use crate::repositories::records::RepositorySort;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::models::SharedRepository;
+use codeyard_db_core::pool::SqlitePool;
 use sqlx::Sqlite;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 pub async fn network_fork_count(pool: &SqlitePool, repo: i64) -> Result<i64> {

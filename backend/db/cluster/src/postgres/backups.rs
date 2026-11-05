@@ -1,7 +1,7 @@
 use crate::backups::PullRequestHead;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn export_snapshot(
     pool: &PgPool,

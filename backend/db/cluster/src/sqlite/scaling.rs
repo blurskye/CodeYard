@@ -1,8 +1,9 @@
 use crate::scaling::Action;
 use anyhow::{ensure, Result};
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_support::cluster::ScalingPolicy;
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::SqliteConnection;
 
 pub async fn policies(pool: &SqlitePool) -> Result<Vec<ScalingPolicy>> {
     let rows: Vec<String> = sqlx::query_scalar(

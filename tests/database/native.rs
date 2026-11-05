@@ -4479,6 +4479,7 @@ async fn sqlite_anonymous_sessions_keep_only_the_newest_rows() {
         .max_connections(1)
         .connect(&fixture.url)
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap()
         .into();
     check_concurrent_anonymous_session_sweeps_keep_the_newest_rows(&single).await;
@@ -4495,6 +4496,7 @@ async fn postgres_anonymous_sessions_keep_only_the_newest_rows() {
         .max_connections(1)
         .connect(&fixture.connection_url())
         .await
+        .map(codeyard_db_core::pool::Pool::from)
         .unwrap()
         .into();
     check_concurrent_anonymous_session_sweeps_keep_the_newest_rows(&single).await;

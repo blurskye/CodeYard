@@ -8,7 +8,7 @@ use crate::relationships::RelationCounts;
 use crate::relationships::Window;
 use anyhow::Result;
 use codeyard_db_core::models::Repository;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

@@ -1,7 +1,7 @@
 use crate::import_authors::Author;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::source_imports::ImportRefusal;
-use sqlx::PgPool;
 
 pub async fn record(
     pool: &PgPool,

@@ -12,7 +12,7 @@ use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::PullRequestComment;
 use codeyard_db_core::models::PullRequestReview;
 use codeyard_db_core::models::User;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 use std::collections::HashMap;
 
 pub async fn add_pull_request_comment(

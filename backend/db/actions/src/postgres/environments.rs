@@ -4,8 +4,8 @@ use crate::environments::Environment;
 use crate::environments::Refusal;
 use crate::environments::Update;
 use anyhow::Result;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::credentials::Actor;
-use sqlx::PgPool;
 use sqlx::Postgres;
 use sqlx::Transaction;
 

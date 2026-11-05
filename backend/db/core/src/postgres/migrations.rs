@@ -1,8 +1,8 @@
 //! PostgreSQL schema migrations.
 
+use crate::pool::PgPool;
 use anyhow::{bail, Context, Result};
 use sha2::{Digest, Sha256};
-use sqlx::PgPool;
 use tracing::info;
 
 const MIGRATIONS: &[(i64, &str, &str)] = &[(

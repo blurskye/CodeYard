@@ -1,7 +1,7 @@
 use crate::pull_requests::auto_merge::AutoMerge;
 use crate::pull_requests::auto_merge::AutoMergeRequest;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn enable(
     pool: &PgPool,

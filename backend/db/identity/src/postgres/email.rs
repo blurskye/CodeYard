@@ -6,8 +6,8 @@ use crate::email::RESEND_SECONDS;
 use anyhow::Result;
 use codeyard_db_core::models::EmailSettings;
 use codeyard_db_core::models::OutboxMessage;
+use codeyard_db_core::pool::PgPool;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 pub async fn get_email_settings(pool: &PgPool) -> Result<Option<EmailSettings>> {
     Ok(sqlx::query_as(

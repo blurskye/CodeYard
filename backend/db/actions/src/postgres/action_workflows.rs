@@ -1,8 +1,8 @@
 use crate::action_workflows::Workflow;
 use anyhow::Result;
 use codeyard_db_core::models::CiRun;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_repos::repositories::records::RepositorySettingsRefusal;
-use sqlx::PgPool;
 
 pub async fn register_workflows(
     pool: &PgPool,

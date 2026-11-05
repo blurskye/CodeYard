@@ -6,12 +6,12 @@ use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Organization;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
 use codeyard_db_core::require_read_org_postgres;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Denied;
 

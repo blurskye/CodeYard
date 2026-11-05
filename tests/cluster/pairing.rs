@@ -36,7 +36,7 @@ fn roles(text: &str) -> NodeRoles {
     text.parse().unwrap()
 }
 
-fn pg(pool: &DbPool) -> &sqlx::PgPool {
+fn pg(pool: &DbPool) -> &codeyard_db_core::pool::PgPool {
     match pool {
         DbPool::Postgres(pool) => pool,
         DbPool::Sqlite(_) => panic!("this test needs the PostgreSQL fixture"),

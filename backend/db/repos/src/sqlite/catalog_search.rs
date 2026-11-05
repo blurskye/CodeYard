@@ -4,7 +4,7 @@ use crate::catalog_search::Results;
 use crate::catalog_search::Search;
 use crate::catalog_search::Topic;
 use anyhow::Result;
-use sqlx::SqlitePool;
+use codeyard_db_core::pool::SqlitePool;
 
 pub async fn search(
     pool: &SqlitePool,

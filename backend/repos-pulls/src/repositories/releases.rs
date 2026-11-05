@@ -38,7 +38,9 @@ mod tests {
 
     #[tokio::test]
     async fn authority_storage_failure_is_not_a_permission_refusal() {
-        let raw = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        let raw = codeyard_db_core::pool::SqlitePool::connect("sqlite::memory:")
+            .await
+            .unwrap();
         let pool = codeyard_db_core::DbPool::Sqlite(raw);
         pool.close().await;
         assert!(matches!(

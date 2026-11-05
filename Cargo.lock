@@ -1487,6 +1487,7 @@ dependencies = [
  "codeyard-model",
  "codeyard-support",
  "codeyard-webui",
+ "futures-util",
  "regex",
  "semver",
  "serde",

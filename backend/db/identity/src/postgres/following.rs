@@ -1,6 +1,6 @@
 use anyhow::Result;
 use codeyard_db_core::models::Follow;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn list_connections(
     pool: &PgPool,

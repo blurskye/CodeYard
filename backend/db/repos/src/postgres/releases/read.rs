@@ -7,8 +7,8 @@ use anyhow::Result;
 use codeyard_db_core::models::ReleaseAsset;
 use codeyard_db_core::models::ReleaseRow;
 use codeyard_db_core::models::Repository;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL;
-use sqlx::PgPool;
 
 pub async fn read_release_snapshot(
     pool: &PgPool,

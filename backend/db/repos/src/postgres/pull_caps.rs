@@ -6,10 +6,10 @@ use crate::pull_caps::PullCapScope;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 
 async fn authorize(
     connection: &mut sqlx::Transaction<'_, sqlx::Postgres>,

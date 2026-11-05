@@ -1,5 +1,6 @@
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::postgres::organizations::authority::begin;
 use codeyard_db_core::queries::postgres::organizations::authority::begin_read;
@@ -18,7 +19,6 @@ use codeyard_db_core::queries::rulesets::PropertySource;
 use codeyard_db_core::queries::rulesets::MAX_RULESETS;
 use serde_json::Value;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Denied;
 use OrganizationOutcome::Missing;

@@ -2,9 +2,9 @@ use crate::vulnerabilities::Refusal;
 use crate::vulnerabilities::Settings;
 use anyhow::ensure;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_model::dependency_graph::Snapshot;
 use codeyard_model::vulnerabilities::PreparedAdvisory;
-use sqlx::SqlitePool;
 
 pub async fn settings(pool: &SqlitePool) -> Result<Settings> {
     Ok(

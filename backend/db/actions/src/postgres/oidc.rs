@@ -1,6 +1,6 @@
 use crate::oidc::Job;
 use anyhow::Result;
-use sqlx::PgPool;
+use codeyard_db_core::pool::PgPool;
 
 pub async fn key(pool: &PgPool) -> Result<Option<String>> {
     Ok(

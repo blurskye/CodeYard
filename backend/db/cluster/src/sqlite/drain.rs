@@ -1,8 +1,8 @@
 use crate::drain::{Refusal, Repository, FAMILY};
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::credentials::Actor;
-use sqlx::SqlitePool;
 
 pub async fn change(
     pool: &SqlitePool,

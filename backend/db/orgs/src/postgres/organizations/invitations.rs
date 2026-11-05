@@ -11,6 +11,7 @@ use codeyard_db_core::models::OrgMembership;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::ReceivedInvitation;
 use codeyard_db_core::models::Team;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::organizations::administers;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::postgres::organizations::authority::active;
@@ -20,7 +21,6 @@ use codeyard_db_core::queries::postgres::organizations::authority::membership_ro
 use codeyard_db_core::queries::postgres::organizations::authority::remaining_active_owner;
 use codeyard_db_core::require_read_org_postgres;
 use sqlx::PgConnection;
-use sqlx::PgPool;
 use OrganizationOutcome::Applied;
 use OrganizationOutcome::Conflict;
 use OrganizationOutcome::Denied;

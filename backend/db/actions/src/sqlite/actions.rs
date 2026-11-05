@@ -1,8 +1,8 @@
 use crate::actions::ActionsSettings;
 use crate::actions::RepoActionsSettings;
 use anyhow::Result;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_repos::repositories::records::RepositorySettingsRefusal as Refusal;
-use sqlx::SqlitePool;
 
 pub async fn set_cache_limit(
     pool: &SqlitePool,

@@ -1,8 +1,8 @@
 use crate::drain::{Refusal, Repository, FAMILY};
 use anyhow::{ensure, Result};
 use codeyard_db_core::models::ClusterNode;
+use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::credentials::Actor;
-use sqlx::PgPool;
 
 pub async fn change(
     pool: &PgPool,

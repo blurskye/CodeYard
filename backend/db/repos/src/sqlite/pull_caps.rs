@@ -6,11 +6,11 @@ use crate::pull_caps::PullCapScope;
 use anyhow::Result;
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::User;
+use codeyard_db_core::pool::SqlitePool;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_core::queries::users::accounts::AccountCredential;
 use sqlx::Sqlite;
 use sqlx::SqliteConnection;
-use sqlx::SqlitePool;
 use sqlx::Transaction;
 
 async fn authorize(
