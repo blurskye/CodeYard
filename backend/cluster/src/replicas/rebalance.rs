@@ -81,10 +81,10 @@ async fn remove_retired(root: &Path, path: &Path) -> Result<()> {
     }
     codeyard_repos_core::context::literal_directory(root, path).await?;
     let guards = tokio::time::timeout(Duration::from_secs(2), async {
-        let writer = codeyard_git::locks::lock(path).await;
+        // Publication owns the process mutex as well as the inherited Git lease.
         let publication = codeyard_git::locks::publication(path).await?;
         let readers = codeyard_git::locks::exclusive(path).await;
-        Ok::<_, anyhow::Error>((writer, publication, readers))
+        Ok::<_, anyhow::Error>((publication, readers))
     })
     .await??;
     let path = path.to_owned();

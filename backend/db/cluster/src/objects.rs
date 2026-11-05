@@ -9,6 +9,52 @@ pub struct Object {
     pub content_type: String,
     pub confirmed: i32,
 }
+/// Choose both durable destinations using the same reserve as Git placement and drain.
+pub(crate) fn targets(
+    nodes: &[codeyard_db_core::models::ClusterNode],
+    copies: &[(i64, i32)],
+    pending: &[(i64, i64)],
+    bytes: i64,
+) -> Result<Vec<i64>> {
+    let mut choices = Vec::new();
+    for node in nodes
+        .iter()
+        .filter(|node| node.state == "active" && node.is_serving_storage())
+    {
+        let current = copies.iter().find(|copy| copy.0 == node.id);
+        if current.is_some_and(|copy| copy.1 < 0) || node.disk_total.is_none() {
+            continue;
+        }
+        let Some(available) = node.available_storage_bytes() else {
+            continue;
+        };
+        let reserved = pending
+            .iter()
+            .find(|row| row.0 == node.id)
+            .map_or(0, |row| row.1);
+        let needed = if current.is_some() {
+            0
+        } else {
+            bytes.max(1).saturating_mul(2)
+        };
+        if available.saturating_sub(reserved) >= needed {
+            choices.push((
+                current.is_some_and(|copy| copy.1 == 1),
+                node.disk_free.unwrap_or_default(),
+                node.id,
+            ));
+        }
+    }
+    choices.sort_by_key(|(ready, free, id)| {
+        (std::cmp::Reverse(*ready), std::cmp::Reverse(*free), *id)
+    });
+    anyhow::ensure!(
+        choices.len() >= 2,
+        "two storage nodes with spare capacity are required"
+    );
+    Ok(choices.into_iter().take(2).map(|(_, _, id)| id).collect())
+}
+
 native_operation!(crate::postgres::objects::get, crate::sqlite::objects::get,
     fn get(pool: &DbPool, key: &str) -> Result<Option<Object>>);
 native_operation!(crate::postgres::objects::copies, crate::sqlite::objects::copies,

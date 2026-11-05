@@ -62,16 +62,12 @@ native_operation!(crate::postgres::drain::draining_nodes, crate::sqlite::drain::
 native_operation!(crate::postgres::drain::expired_runs, crate::sqlite::drain::expired_runs,
     fn expired_runs(pool: &DbPool, maximum_seconds: i64) -> Result<Vec<(i64, String)>>);
 
-/// `(repository, node, applied version)`. Primary data is already allocated, as are
-/// current copies. A fresh copy reserves the existing staging factor in addition.
-pub(crate) fn plan(
+/// Remaining capacity for drain and rebalance targets, after existing reservations.
+pub(crate) fn storage_space(
     source: i64,
     nodes: &[ClusterNode],
-    repositories: &[Repository],
-    copies: &[(i64, i64, i64)],
     pending: &[(i64, i64)],
-    wanted: usize,
-) -> Result<Vec<(i64, i64)>> {
+) -> BTreeMap<i64, i64> {
     let mut space = BTreeMap::new();
     for node in nodes
         .iter()
@@ -85,6 +81,20 @@ pub(crate) fn plan(
             space.insert(node.id, free.saturating_sub(reserved).max(0));
         }
     }
+    space
+}
+
+/// `(repository, node, applied version)`. Primary data is already allocated, as are
+/// current copies. A fresh copy reserves the existing staging factor in addition.
+pub(crate) fn plan(
+    source: i64,
+    nodes: &[ClusterNode],
+    repositories: &[Repository],
+    copies: &[(i64, i64, i64)],
+    pending: &[(i64, i64)],
+    wanted: usize,
+) -> Result<Vec<(i64, i64)>> {
+    let mut space = storage_space(source, nodes, pending);
     let mut links = BTreeMap::<i64, Vec<i64>>::new();
     let records: BTreeMap<_, _> = repositories.iter().map(|repo| (repo.id, repo)).collect();
     let copies: BTreeMap<_, _> = copies

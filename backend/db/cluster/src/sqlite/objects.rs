@@ -44,44 +44,7 @@ pub async fn reserve(pool: &SqlitePool, id: i64, key: &str, object: &Object) -> 
         .bind(&object.object_key).fetch_all(&mut *tx).await?;
     ensure!(copies.len() <= 1000, "object copy limit exceeded");
     let pending = pending(&mut tx).await?;
-    let mut choices = Vec::new();
-    for node in nodes
-        .iter()
-        .filter(|node| node.state == "active" && node.is_serving_storage())
-    {
-        let current = copies.iter().find(|copy| copy.0 == node.id);
-        if current.is_some_and(|copy| copy.1 < 0) {
-            continue;
-        }
-        let Some(free) = node.disk_free else { continue };
-        let Some(total) = node.disk_total else {
-            continue;
-        };
-        let reserved = pending
-            .iter()
-            .find(|row| row.0 == node.id)
-            .map_or(0, |row| row.1);
-        let needed = if current.is_some() {
-            0
-        } else {
-            object.bytes.max(1) * 2
-        };
-        if free
-            .saturating_sub(total / 100 * 15 + (total % 100 * 15 + 99) / 100)
-            .saturating_sub(reserved)
-            >= needed
-        {
-            choices.push((current.is_some_and(|copy| copy.1 == 1), free, node.id));
-        }
-    }
-    choices.sort_by_key(|(ready, free, id)| {
-        (std::cmp::Reverse(*ready), std::cmp::Reverse(*free), *id)
-    });
-    ensure!(
-        choices.len() >= 2,
-        "two storage nodes with spare capacity are required"
-    );
-    let targets: Vec<_> = choices.into_iter().take(2).map(|(_, _, id)| id).collect();
+    let targets = crate::objects::targets(&nodes, &copies, &pending, object.bytes)?;
     for node in &targets {
         sqlx::query("INSERT INTO storage_object_copies(object_key,node_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
             .bind(&object.object_key).bind(node).execute(&mut *tx).await?;
@@ -255,24 +218,7 @@ pub(crate) async fn prepare_drain(
         .bind(source).bind(limit+1).fetch_all(&mut *conn).await?;
     ensure!(objects.len() as i64 <= limit, "drain object limit exceeded");
     let pending = pending(conn).await?;
-    let mut space = std::collections::BTreeMap::new();
-    for node in nodes
-        .iter()
-        .filter(|node| node.id != source && node.state == "active" && node.is_serving_storage())
-    {
-        if let (Some(free), Some(total)) = (node.disk_free, node.disk_total) {
-            let reserved = pending
-                .iter()
-                .find(|row| row.0 == node.id)
-                .map_or(0, |row| row.1);
-            space.insert(
-                node.id,
-                free.saturating_sub(total / 100 * 15 + (total % 100 * 15 + 99) / 100)
-                    .saturating_sub(reserved)
-                    .max(0),
-            );
-        }
-    }
+    let mut space = crate::drain::storage_space(source, nodes, &pending);
     for object in &objects {
         let copies:Vec<(i64,i32)>=sqlx::query_as("SELECT node_id,ready FROM storage_object_copies WHERE object_key=$1 ORDER BY node_id LIMIT 1001")
             .bind(&object.object_key).fetch_all(&mut *conn).await?;

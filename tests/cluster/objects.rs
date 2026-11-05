@@ -149,6 +149,9 @@ async fn uploaded_files_survive_web_and_storage_loss_and_drain_without_s3_on_bot
     for pg in [false, true] {
         let mut db = Database::new(pg).await;
         db.complete_setup().await;
+        crate::support::native_database::enable_cluster(db.pool())
+            .await
+            .unwrap();
         let root = tempfile::tempdir().unwrap();
         let mut nodes = Vec::new();
         for (name, role) in [
@@ -172,6 +175,35 @@ async fn uploaded_files_survive_web_and_storage_loss_and_drain_without_s3_on_bot
         };
         let bytes = b"shared bytes acknowledged on two storage nodes";
         let upload = reserve(&writer, bytes).await;
+        for free in [0, 1500, 10001] {
+            db.execute(
+                "UPDATE nodes SET disk_free=$1 WHERE id IN($2,$3,$4)",
+                &[
+                    free,
+                    nodes[2].context.node_id,
+                    nodes[3].context.node_id,
+                    nodes[4].context.node_id,
+                ],
+            )
+            .await;
+            assert_eq!(
+                put(&writer, &upload, bytes).await,
+                StatusCode::SERVICE_UNAVAILABLE
+            );
+            assert_eq!(
+                db.scalar("SELECT COUNT(*) FROM storage_objects", &[]).await,
+                0
+            );
+        }
+        db.execute(
+            "UPDATE nodes SET disk_free=9000 WHERE id IN($1,$2,$3)",
+            &[
+                nodes[2].context.node_id,
+                nodes[3].context.node_id,
+                nodes[4].context.node_id,
+            ],
+        )
+        .await;
         assert_eq!(put(&writer, &upload, bytes).await, StatusCode::NO_CONTENT);
         confirm(&writer, &upload).await;
         assert_eq!(
