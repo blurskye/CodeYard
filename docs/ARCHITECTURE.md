@@ -751,25 +751,17 @@ the round rather than skipping it.
 
 ## 3. Scaling out: cells behind a router (plan, not built)
 
-Stage 0 reuses cluster plan items 3 and 11 and is committed; hard-reset acceptance needs
-an operator VM. Stage 1 source checks pass, but runtime acceptance and capacity measurements
-remain open. Stage 2 range allocation, credential framing, directory registry and authenticated
-transport are built and source-checked. Route metadata, shared GraphQL preflight and scoped
-session storage, catalogue selection and bounded HTTP/GraphQL forwarding pass workspace,
-Clippy and WASM. Their runtime tests are pending; upload cleanup and Git/ref routing also pass source checks. The public router
-role passes source checks; public foreign authorization is not built. Stub schema, metadata upserts and local
-credential/storage/listing guards pass source checks, as do common rooted node IDs.
-Metadata-only root validation also passes checks. Successor-prefix reservations are
-source-checked, as is stopped-cell renewal. Its local issuer-history/OAuth follow-up is
-written; its follow-up cache/public-role batch passes Clippy and WASM, with workspace passing.
-Shared cell authorization RPC and native home answers are written but unchecked; public
-foreign token admission, original SSH-key lookup and publication are written but unchecked;
-foreign browser-session source now connects native pages/forms to cached home CSRF and
-transaction-time session checks, with both-engine HTTP and real TLS revocation tests;
-this follow-up is unchecked. Cold collaborator targets now have bounded directory-verified
-public metadata lookup and retained invitation credentials in source, also unchecked.
-Remote membership pointers remain unfinished. Automatic renewal and
-stages 3 to 6 are not built.
+Stage 0 reuses cluster plan items 3 and 11; automated durability acceptance passes,
+while hard-reset acceptance needs a disposable VM. Stage 1's 51 PgBouncer/replica/quorum
+checks pass; finished-CI shutdown and measured capacity need a delegated cgroup.
+Stage 2 ranges, credentials, directory transport/cache, public HTTP/SSH routing, stubs,
+common rooted IDs and foreign token/SSH admission pass source checks. The browser-session,
+home-CSRF and native two-cell GraphQL follow-up passes Clippy and WASM; workspace is running.
+Cold collaborator metadata lookup and retained invitation credentials are written but
+unchecked. Runtime acceptance runs an earlier snapshot. Native signup/key claim publication,
+remote membership pointers, remaining node families and two-cell gh/Git deployment are
+unfinished; stages 3 to 6 are not built. Range renewal is a deferred owner follow-up.
+[Cluster readiness](CLUSTER_PLAN.md) records current check jobs and runtime gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.
 

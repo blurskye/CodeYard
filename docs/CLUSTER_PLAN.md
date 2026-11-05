@@ -150,41 +150,25 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
 12. **Production controls.** Per-account and per-IP rate limits, SAML or OIDC login for
     organizations, an audit log for organization and site actions, and the abuse controls
     in [ABUSE_PREVENTION.md](ABUSE_PREVENTION.md), all checked in the cluster round.
-13. **Cells.** The owner lifted A16 on 2026-11-05. Stage 0 is committed and checked;
-    hard-reset acceptance is runtime pending, needs a disposable VM. It reuses items 3 and
-    11. Stage 1 source checks pass for scoped locks, object-store CI logs, current-copy
-    clones and issue/PR replica reads. The prior round passes all 51 PgBouncer/replica/quorum
-    e2e checks without skips. Finished-CI shutdown and load measurements are runtime pending,
-    need a writable delegated cgroup. Other content read families and bulk retention remain open.
-    Stage 2 ranges, framed credentials/sessions, directory claims/TLS/cache, bounded HTTP and
-    GraphQL dispatch, stub metadata/storage/credential/list guards and common rooted IDs pass
-    source checks. Generated GraphQL is unchanged. Range renewal is committed as an owner follow-up;
-    stop expanding it unless stage 2 acceptance needs it. Issuer-history, public role and cache source checks pass.
-    Acceptance 049f16eeb8324596b898b230885a66d3 finished on the earlier compiled snapshot. Libraries,
-    CI 220 (19 existing ignored) and database 174 pass. Cluster 227 pass, with the new fake-cell
-    outage fixture failing because listener abort left connections alive; its fix is compiled.
-    Git and token tests that pinned old output now assert the scoped format. New hostile
-    device-code cases use separate fixtures to preserve the long OAuth contract's rate budget.
-    These fixes await rerun. The database-free public HTTP/SSH role and native-cell routing,
-    spoofing, router revocation and outage tests are written but unchecked. Foreign authorization, remote membership
-    pointers, remaining node families and stages 3 to 6 remain unimplemented. A bounded foreign
-    answer cache and both-engine expiry/hostile-source/failure tests are written but unchecked;
-    no foreign credential is accepted yet. Shared bounded node RPC, native home answers,
-    registered RPC listeners and live cell-key tests are written but unchecked; foreign ingress
-    and publication are now wired in source but unchecked. Typed foreign token grants, exact
-    Git proofs and workflow checks have HTTP and SSH collaborator/revocation tests; their source
-    source passes workspace 441a2d1ff80140b0b39da8fcbe7d7e82, Clippy
-    8cbbf2fc77154f0fbdf007222605db4d and WASM 92880ee5cb534d41b01aa5b26782d841. Foreign browser-session pages/forms, home CSRF and transaction-time session expiry
-    are written with both-engine HTTP and real TLS revocation tests; this follow-up is unchecked.
-    Native signup/key claim publication, membership pointers and two-cell gh/Git deployment
-    remain unfinished. Cold collaborator names now resolve through bounded public home metadata
-    RPC; native and GitHub invitation admission retain their credentials in the writing transaction.
-    Both-engine metadata and real HTTP cold-invitation tests are written but unchecked.
-    Member-list/count filters now cover
-    organizations and teams on both engines with database and HTTP assertions. Runtime job
-    375fa054f4204225b5c57bb2b02cd059 covers the preceding committed snapshot. Native two-cell GraphQL
-    acceptance now includes one real split repository/node query with foreign home authorization; unchecked. Automatic user
-    moves and org regional presence are documented owner decisions.
+13. **Cells.** The owner lifted A16 on 2026-11-05. Stage 0 reuses items 3 and 11;
+    automated durability acceptance passes. Hard reset is runtime pending, needs a disposable
+    VM. Stage 1's 51 PgBouncer/replica/quorum e2e checks pass without skips; finished-CI
+    shutdown and capacity measurements need a writable delegated cgroup.
+    Stage 2 ranges, framed credentials/sessions, directory claims/TLS/cache, HTTP/GraphQL
+    routing, stable homes, stubs and common rooted IDs pass source checks. Generated GraphQL
+    is unchanged. Range renewal is a committed, deferred owner follow-up; do not extend it.
+    Foreign token/SSH admission and member filters pass workspace
+    441a2d1ff80140b0b39da8fcbe7d7e82, Clippy 8cbbf2fc77154f0fbdf007222605db4d and
+    WASM 92880ee5cb534d41b01aa5b26782d841. Browser sessions, home CSRF, transaction-time
+    expiry and native two-cell GraphQL have Clippy 51989f211504408ab7128222b8cb3b1b and
+    WASM fe919429f2ab4bfabdfdf341bdb3d336 passes; workspace
+    0c9835e8d1d94b96b879c25e875e3069 is running. Cold collaborator metadata lookup and
+    retained invitation credentials are written with both-engine and real HTTP tests;
+    this next batch is unchecked. Runtime job 375fa054f4204225b5c57bb2b02cd059 runs the
+    earlier snapshot, including the cluster/Git/OAuth fixture fixes from failed job 049.
+    Native signup/key claim publication, remote membership pointers, remaining node families
+    and the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
+    Automatic user moves and org regional presence remain documented owner decisions.
 
 ## Decisions that settle the open questions
 

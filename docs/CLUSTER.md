@@ -689,7 +689,7 @@ copies and the explicit `--write-quorum 1` policy are asynchronous; there is no
 geo-routing. Reads fail over to an eligible copy when the primary cannot be reached,
 and clone/fetch sessions are spread across current copies. Other reads still prefer
  the primary. Take-over requires a current copy of every member of
-the fork family. Legacy copies that are behind require `cluster promote --force`;
+the fork family. Asynchronous copies that are behind require `cluster promote --force`;
 quorum promotion must retain every committed ref. A comparison between two repositories
 (a fork's compare page) is not served by a copy.
 Re-check the iroh and russh versions in [Architecture](ARCHITECTURE.md) when you upgrade
@@ -712,46 +712,36 @@ from the oldest run each time. This is not measured. A hard bound needs indexed
 scheduling buckets or a persistent fair cursor, so keep the queue short for now.
 
 
-The cell directory source uses a separate PostgreSQL database. Initialize it with
+The cell directory uses a separate PostgreSQL database. Initialize it with
 `DIRECTORY_DATABASE_URL=... codeyard cell directory initialize`, register cells with
-`cell directory register`, and grant read-only router keys with
+`cell directory register`, and enroll read-only router keys with
 `cell directory router-key --public-key <key>`. `cell directory serve` owns its node-key
-TLS listener; callers pin that public key. Cell mutations recheck live cell enrollment
-in their transaction. Public HTTP/SSH wiring is written but unchecked; signup claims and
-foreign authorization are unfinished, so multiple cells are not yet a usable deployment.
+TLS listener; callers pin that public key. Cell mutations recheck live enrollment in their
+transaction. Native signup/key publication and remote membership pointers are unfinished,
+so multiple cells are not yet a usable deployment.
 
-Router source now includes bounded HTTP streaming and GraphQL field dispatch using the
-application route catalogue. The unchecked public entry point is `serve --roles router`
-with `DIRECTORY_ADDRESS`, `DIRECTORY_PUBLIC_KEY` and `CELL_REGION`. It opens no cell database.
-Enroll its node key with `cell directory router-key` before starting it. HTTP and SSH
-addresses use the existing serve options. Cell SSH listeners use builtin mode with the
-same pinned directory settings; their cell node keys must be registered. Include each
-cell's SSH host key SHA256 wire digest (hex) in its registered key pins. The router
-terminates client SSH and the receiving cell rechecks the original client key and native
-repository access. Router enrollment is checked live by the receiving cell.
-These paths still need acceptance tests;
-foreign credentials and stub transport remain unfinished. Stub storage and local access/listing
-guards are written but unchecked. The generated schema crate is unchanged.
+The public role is `serve --roles router`, with `DIRECTORY_ADDRESS`,
+`DIRECTORY_PUBLIC_KEY` and `CELL_REGION`. It opens no cell database. Enroll its key before
+starting it; HTTP and SSH addresses use the existing serve options. HTTP forwarding and
+GraphQL dispatch use the application's route catalogue. Cells use builtin SSH with the
+same pinned directory settings; register their node keys and SSH host-key SHA256 wire
+digests (hex). The router terminates client SSH; the receiving cell checks the original
+client key, live router enrollment and local repository access.
 
-Native rooted-ID readers and common repository/team projections pass source checks.
-Metadata-only owner lookup also passes source checks.
-The router uses those repository/org roots for directory lookups; full node-family issuance,
-foreign authorization and the public HTTP/SSH role remain open.
+Configure cell authorization RPC with `CELL_RPC_ADDRESS` and the pinned directory settings;
+register the listener with `cell directory register --rpc-address`. Only live cell keys
+may request home answers. Set `HTTP_TRUSTED_PROXY_IPS` on cell web nodes to the public
+routers' addresses so client rate limits retain the original address. Foreign token/SSH
+admission, exact Git proofs and resource scope checks pass source checks. Browser-session
+pages/forms reuse home CSRF and cached identity without local credentials; their source
+check round is running. Cold collaborator targets have directory-verified home metadata
+lookup before the invitation transaction; this follow-up is unchecked.
 
-The directory source adds `cell directory allocate-prefix --node-key <public key>
---previous <prefix> --last-id <id>` and the matching authenticated TLS operation. A range
-must reach 80% use; retries reserve the same successor and prefix zero is never allocated.
-Successor reservations and stopped-cell renewal pass source checks. The command is
-`cell renew-range --directory-address <address> --directory-key <public key>`. It retains
-state/maintenance locks, reserves through pinned TLS and activates all sequence ranges and
-the issuer together; rollback leaves old rows and stable cell ownership intact. Automatic
-renewal remains open. A local issuer-history follow-up is written but unchecked so pending
-OAuth and device codes can finish after their original range is retired.
+Rooted node readers and common repository/team projections pass source checks; remaining
+node-family issuance is unfinished. Range reservations and stopped-cell `cell renew-range
+--directory-address <address> --directory-key <public key>` are source-checked, committed
+owner follow-ups. Renewal preserves stable homes and existing rows. Issuer history keeps
+pending OAuth/device codes usable. Automatic renewal is deferred.
 
-Cell authorization RPC source uses `CELL_RPC_ADDRESS` with the pinned directory settings; register that listener with `cell directory register --rpc-address`. It shares the directory’s bounded TLS transport. Only live cell keys may request home answers; read-only router keys cannot. Configure `HTTP_TRUSTED_PROXY_IPS` on cell web nodes for the public routers’ addresses so client rate limits retain the original address. Home answers and RPC are unchecked, and foreign ingress and publication are still unfinished. App user-token export is not implemented yet.
-
-Foreign token and SSH admission, exact Git proofs and repository scope checks are now written but unchecked. HTTP tests cover a collaborator writing across cells and live resource/token revocation; SSH tests push and clone through the public listener. Foreign browser-session admission and remote membership pointers remain unfinished.
-
-Foreign browser sessions now have native page/form source wiring through the bounded home-answer cache. Their HTTP, CSRF and revocation acceptance is pending.
-
-Cold foreign collaborator targets now have source wiring for directory-verified home metadata lookup before local invitation creation; runtime acceptance is pending.
+[Cluster readiness](CLUSTER_PLAN.md) records exact source checks, the combined runtime job
+and remaining two-cell gh/Git acceptance. No stage 2 completion is claimed.
