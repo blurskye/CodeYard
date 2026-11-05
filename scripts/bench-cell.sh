@@ -219,9 +219,18 @@ try:
                 except subprocess.TimeoutExpired:
                     terminate(read_process)
                     raise RuntimeError('Reader batch timed out')
-            if code != 0:
-                raise RuntimeError('A reader failed; inspect curl.log')
             lines = (work / 'read-times').read_text().splitlines()
+            if code != 0:
+                statuses = {}
+                for line in lines:
+                    fields = line.split()
+                    status = fields[1] if len(fields) == 3 else 'malformed'
+                    statuses[status] = statuses.get(status, 0) + 1
+                with (work / 'curl.log').open('rb') as errors:
+                    errors.seek(0, os.SEEK_END)
+                    errors.seek(max(0, errors.tell() - 4096))
+                    detail = errors.read(4096).decode(errors='replace')
+                raise RuntimeError(f'Reader batch failed (curl {code}); HTTP counts: {statuses}; {detail}')
             if len(lines) != (550 if batch == 0 else 500):
                 raise RuntimeError('Incomplete reader batch')
             for line in lines:

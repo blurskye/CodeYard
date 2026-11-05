@@ -831,7 +831,7 @@ t_push() {
     cd "$work"
     git_as alice init -q -b main
     printf '# proj\n\nHello from the end-to-end check.\n' >README.md
-    printf 'fn main() {}\n' >backend/app/wiring/main.rs
+    printf 'fn main() {}\n' >src/main.rs
     head -c 2097152 /dev/urandom >blob.bin
     put blob_sha "$(sha256sum blob.bin | cut -d' ' -f1)"
     git_as alice add -A
@@ -2181,7 +2181,7 @@ restore_database_only() {
         pg_restore=$(pg_tool pg_restore)
         pg_command "$GITSERV_TEST_DATABASE_URL" "$dropdb" --maintenance-db --force "$PG_CURRENT"
         pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "$PG_CURRENT"
-        pg_command "$DATABASE_URL" "$pg_restore" --dbname --exit-on-error --single-transaction \
+        pg_command "$DATABASE_URL" "$pg_restore" --dbname --exit-on-error --single-transaction --clean --if-exists \
             --no-owner --no-privileges "$backup/database.pgdump"
     else
         rm -f "$RUN/state/gitserv.db" "$RUN/state/gitserv.db-wal" "$RUN/state/gitserv.db-shm"
@@ -2959,7 +2959,9 @@ run_round() {
 
     step -f -i 'database is ready' prepare_database
     if [[ $db == pgbouncer ]]; then
-        step -f -i 'PgBouncer starts with transaction pooling and two backend connections' start_pgbouncer
+        local pool_mode=${E2E_PGBOUNCER_MODE:-transaction} pool_size=2
+        [[ $pool_mode != session ]] || pool_size=96
+        step -f -i "PgBouncer starts with $pool_mode pooling and $pool_size backend connections" start_pgbouncer
     fi
     step -f -i 'server starts and /health answers' start_server
     step -f 'ssh and test keys are generated' t_keys
@@ -2969,9 +2971,9 @@ run_round() {
         step -f 'repositories: create public and private repositories behind PgBouncer' t_repos
         step -f 'ssh keys: created behind PgBouncer' t_ssh_keys
         step -f 'tokens: created behind PgBouncer' t_tokens
-        step 'git: push through the transaction pool' t_push
-        step 'git: clone and HTTP push through the transaction pool' t_clone
-        step 'issues: create, read and comment through the transaction pool' t_issues
+        step 'git: push through PgBouncer' t_push
+        step 'git: clone and HTTP push through PgBouncer' t_clone
+        step 'issues: create, read and comment through PgBouncer' t_issues
         ROUND_BLOCKED=0
         step 'log: the server log has no panic' t_log_clean
         step -i 'shutdown: SIGTERM exits with status 0' stop_server

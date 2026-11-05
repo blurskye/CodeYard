@@ -9,10 +9,10 @@ keeps the longer plan for cells; this file comes first and does not repeat it.
 Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspace,
 Clippy and WASM checks pass, including the fault tests and full-disk placement fix.
 Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed, 19 ignored) and Helm rendering pass.
-The cluster run has failures in restore and test fixtures; fixes await verification.
-Drain, metrics, provisioning, scaling and mover runtime checks pass. The end-to-end build
-found native dependencies in the app binary’s browser graph; that boundary is corrected
-in source and awaits a bundle build. Rolling upgrades need a previous-release target, and A16
+Storage checks pass (99 passed, 3 ignored). The cluster run has three remaining failures:
+interrupted-restore diagnostics, full-disk fixture ownership and one SQLite deadline.
+The browser app builds; debug-symbol size and an end-to-end fixture path are corrected
+in source and await rerun. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
 Cluster mode stays hidden behind
 `CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.
@@ -32,20 +32,20 @@ and copy now use the same quorum path; source checks pass and runtime tests are 
 Not complete: drain and failover acceptance, backup and restore verification,
 rolling upgrades and measured load limits.
 
-Current acceptance status (runtime checks are still pending):
+Current acceptance status:
 
-- 1: hiding switch built; source checks pass.
-- 2: two-copy storage-node backend, shared drain reservations and HTTP acceptance written; source checks pass, runtime pending.
-- 3: quorum initialization, copy, voter replacement and primary-loss checks pass; default-policy and full-disk fixture corrections await rerun.
+- 1: hiding-switch CLI refusal checks pass.
+- 2: storage-node copies, capacity, loss, retry, drain and private access pass HTTP checks on both engines; native startup without S3 passes.
+- 3: quorum initialization, copy, default selection, voter replacement and primary-loss checks pass; full-disk and one SQLite deadline check await rerun.
 - 4: drain REST, authority and promotion checks pass; native and hydrated browser checks await execution.
 - 5: quorum, drain, bounded scraping and acquisition waiter metrics pass HTTP acceptance.
 - 6: bounded invitations and environment-only provisioning pass library and REST checks.
 - 7: policy forms, lease leader, pause, dry run and storage rules pass on both database engines.
 - 8: mover reservations, bandwidth limits and busy-reader retirement retry pass.
-- 9: pool configuration source checks and Helm render checks pass; PostgreSQL failover, PgBouncer and load runs pending.
+- 9: pool and Helm checks pass; PgBouncer Git fixtures await rerun. The 500-reader debug benchmark failed and finished-CI load needs a delegated cgroup.
 - 10: previous-release target needs confirmation before compatibility work.
 - 11: primary snapshots, object copies, fenced import and per-node restore pass source checks; runtime pending.
-- 12: cross-node REST account/IP and audit acceptance written; organization OIDC login and commit-time membership checks pass source checks; private enrollment CLI passes source checks, runtime pending.
+- 12: cross-node REST account/IP, audit, OIDC membership and private enrollment CLI checks pass; OIDC also passes across web processes with five-minute skew.
 
 ## A. Checks on what exists
 
@@ -57,19 +57,19 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 |---|---|---|---|
 | A1 | `scripts/e2e.sh` cluster round | green | pending builder acceptance |
 | A2 | Push over HTTP and SSH, `kill -9` the storage primary the moment the push returns | within 2 minutes `git clone` has the commit, no `--force` | final cluster e2e step written; runtime pending |
-| A3 | Upload a package or CI artifact through web node 1, download it through web node 2 | same bytes | cross-node HTTP regression written; runtime pending |
+| A3 | Upload a package or CI artifact through web node 1, download it through web node 2 | same bytes | cross-node file and CI-artifact HTTP checks pass |
 | A4 | Stop one web node while clients run `gh` and `git` | other nodes keep serving, sessions survive, no half-written state | gh/Git process-loss step and browser-session regression written; runtime pending |
 | A5 | Kill a storage node during a clone and a push | clear error to the client, no changed refs, clone retries from a copy | e2e pauses real pack transfers for SIGKILL and verifies copy retries; runtime pending |
 | A6 | Fill a storage node's disk | placement skips it, writes fail cleanly, no corrupt repository | bounded tmpfs Git failure/retry and HTTP placement acceptance pass source checks; runtime pending |
 | A7 | Restart PostgreSQL under load | `/ready` goes 503 then 200, nodes reconnect without restart, no lost acknowledged write | owned-database crash step written; runtime pending |
-| A8 | Revoke a node key | the node is refused on its next call, within 60 seconds | pending builder acceptance |
-| A9 | Send an oversized, truncated, replayed and unauthorised frame to the node port | refused, bounded memory, logged without secrets | pending builder acceptance |
+| A8 | Revoke a node key | the node is refused on its next call, within 60 seconds | TCP/QUIC revocation checks pass |
+| A9 | Send an oversized, truncated, replayed and unauthorised frame to the node port | refused, bounded memory, logged without secrets | hostile transport and pairing checks pass |
 | A10 | A compromised runner node asks for another run's token, another repository, another job's logs | refused every time | pending builder acceptance |
 | A11 | Comment on an issue on web node 1 with a browser open on node 2 | page updates within 2 seconds | browser acceptance posts on web1 and watches Bob's open issue on web2; runtime pending |
 | A12 | SIGTERM during running CI and a push | stops within 90 seconds, jobs end failed with a reason, no leaked containers or locks | e2e runs CI with an owned child, interrupts a pack and checks shutdown, failure reason and a later write; runtime pending |
 | A13 | Old and new release side by side | refused with a clear message, or both work | older protocol refused; B10 pending |
-| A14 | Join token: reuse, expiry, cancel, wrong role | each behaves as `CLUSTER.md` says | pending builder acceptance |
-| A15 | Clock skew of 5 minutes on one node | tokens, leases and take-over still behave | second web process runs five minutes ahead in OIDC and e2e acceptance; runtime pending |
+| A14 | Join token: reuse, expiry, cancel, wrong role | each behaves as `CLUSTER.md` says | invitation and role checks pass |
+| A15 | Clock skew of 5 minutes on one node | tokens, leases and take-over still behave | cross-node OIDC passes five-minute skew; full e2e skew checks await acceptance |
 | A16 | Load test on stated hardware: pushes, clones, API reads, CI jobs, 50 organizations inviting at once | numbers recorded in `CLUSTER.md` limits | benchmark written; no measurements yet |
 
 Each of A2 to A10, A12 and A15 becomes a test in `tests/`, driven through HTTP, SSH and

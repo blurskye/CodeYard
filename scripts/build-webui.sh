@@ -108,13 +108,15 @@ echo "== browser dependency graph"
 cargo tree --locked -p codeyard --target wasm32-unknown-unknown --no-default-features \
     --features web --edges normal --prefix none --format '{p}' | python3 scripts/check-web-dependencies.py
 
+# Debug DWARF makes the development WASM exceed the server asset size limit.
+# Keep both profiles servable; the dev profile remains unoptimized.
 echo "== dx build ($MODE)"
 staging=$(mktemp -d "$(dirname "$OUT")/.webui.XXXXXX")
 PUBLIC=$staging/bundle
 args=(build --platform web --package codeyard --bin codeyard --no-default-features --features web
-    --cargo-args=--locked --force-sequential)
+    --cargo-args=--locked --force-sequential --debug-symbols false)
 if [[ $MODE == release ]]; then
-    args+=(--release --debug-symbols false)
+    args+=(--release)
 fi
 "$DX" "${args[@]}" &
 dx_pid=$!
