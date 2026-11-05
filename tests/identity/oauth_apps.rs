@@ -110,7 +110,11 @@ async fn contract(pg: bool) {
     let code = device(&router, "repo read:org gist").await;
     assert_eq!(code["interval"], 5);
     assert_eq!(code["expires_in"], 900);
-    assert_eq!(code["user_code"].as_str().unwrap().len(), 9);
+    assert_eq!(code["user_code"].as_str().unwrap().len(), 11);
+    assert_eq!(
+        codeyard_identity::oauth_apps::user_code_cell(code["user_code"].as_str().unwrap()),
+        Some(codeyard_support::cells::Prefix::ZERO)
+    );
     assert!(code["verification_uri"]
         .as_str()
         .unwrap()

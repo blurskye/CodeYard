@@ -10,7 +10,7 @@ use std::{
     ops::Deref,
     pin::pin,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicU16, AtomicUsize, Ordering},
         Arc,
     },
 };
@@ -21,6 +21,7 @@ pub type SqlitePool = Pool<sqlx::Sqlite>;
 pub struct Pool<DB: Database> {
     inner: sqlx::Pool<DB>,
     waiting: Arc<AtomicUsize>,
+    cell_prefix: Arc<AtomicU16>,
     pub(crate) read_replica: Arc<std::sync::RwLock<Option<PgPool>>>,
     log_objects: Arc<std::sync::RwLock<Option<std::sync::Weak<dyn crate::ci_logs::LogObjects>>>>,
 }
@@ -36,6 +37,7 @@ impl<DB: Database> Clone for Pool<DB> {
         Self {
             inner: self.inner.clone(),
             waiting: self.waiting.clone(),
+            cell_prefix: self.cell_prefix.clone(),
             read_replica: self.read_replica.clone(),
             log_objects: self.log_objects.clone(),
         }
@@ -46,6 +48,7 @@ impl<DB: Database> From<sqlx::Pool<DB>> for Pool<DB> {
         Self {
             inner,
             waiting: Arc::new(AtomicUsize::new(0)),
+            cell_prefix: Arc::default(),
             read_replica: Arc::default(),
             log_objects: Arc::default(),
         }
@@ -70,6 +73,12 @@ impl Drop for Waiter {
     }
 }
 impl<DB: Database> Pool<DB> {
+    pub(crate) fn set_cell_prefix(&self, prefix: codeyard_support::cells::Prefix) {
+        self.cell_prefix.store(prefix.get(), Ordering::Release);
+    }
+    pub fn cell_prefix(&self) -> codeyard_support::cells::Prefix {
+        codeyard_support::cells::Prefix::new(self.cell_prefix.load(Ordering::Acquire))
+    }
     pub(crate) fn same_pool(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.waiting, &other.waiting)
     }

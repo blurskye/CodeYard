@@ -60,18 +60,20 @@ fn secret_scanning_own_tokens_and_entropy() {
         } else {
             "3b17a095fdc84e62091adc64b3f5a7e891c246df938b5a017eafc647320bd952"
         };
-        let value = format!("{prefix}{payload}");
-        let found = scan("tokens.txt", "commit", value.as_bytes()).unwrap();
-        assert!(found
-            .iter()
-            .any(|alert| alert.secret == value && alert.secret_type == kind));
-        let unicode = format!("π{value}π");
-        assert!(scan("tokens.txt", "commit", unicode.as_bytes())
-            .unwrap()
-            .iter()
-            .any(|alert| alert.secret == value
-                && alert.secret_type == kind
-                && alert.start_column == 3));
+        for cell in ["", "0_", "65535_"] {
+            let value = format!("{prefix}{cell}{payload}");
+            let found = scan("tokens.txt", "commit", value.as_bytes()).unwrap();
+            assert!(found
+                .iter()
+                .any(|alert| alert.secret == value && alert.secret_type == kind));
+            let unicode = format!("π{value}π");
+            assert!(scan("tokens.txt", "commit", unicode.as_bytes())
+                .unwrap()
+                .iter()
+                .any(|alert| alert.secret == value
+                    && alert.secret_type == kind
+                    && alert.start_column == 3));
+        }
     }
     let found = scan(
         "config.env",

@@ -737,7 +737,7 @@ jobs:
              "--set", "permission.issues=read", "--submit", "action=create",
              "--status", "200", "--print", "body", "/settings/personal-access-tokens/new"],
             text=True, capture_output=True, env=self.env, cwd=ROOT, timeout=120)
-        found = re.search(r"cy_fgpat_[0-9a-f]{64}", created.stdout)
+        found = re.search(r"cy_fgpat_(?:[0-9]{1,5}_)?[0-9a-f]{64}", created.stdout)
         assert created.returncode == 0 and found, created.stderr[-2000:]
         self.credentials["fine"] = found.group(0)
         self.gh("auth", "login", "--hostname", HOST, "--with-token", "--insecure-storage",

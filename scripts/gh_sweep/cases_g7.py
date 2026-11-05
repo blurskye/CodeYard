@@ -512,7 +512,7 @@ def read_only_account(ctx):
     token = ctx.native("form", "/settings?tab=tokens", "--action", "/settings/tokens",
                        "--has", "name", "--set", "name=" + ctx.name("read-token"),
                        "--set", "scope=read", "--set", "expiry=never", "--status", "200",
-                       "--print", r"re:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})")
+                       "--print", r"re:(?s)Copy this token now.*?(cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64})")
     account = isolated(ctx)
     local_hosts(account, {ctx.account.name: token})
     return account

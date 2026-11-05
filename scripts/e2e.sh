@@ -870,10 +870,10 @@ t_tokens() {
     local read write
     read=$(as alice form '/settings?tab=tokens' --action /settings/tokens --has name \
         --set 'name=e2e read' --set scope=read --set expiry=never --status 200 \
-        --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})')
+        --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64})')
     write=$(as alice form '/settings?tab=tokens' --action /settings/tokens --has name \
         --set 'name=e2e write' --set scope=write --set expiry=never --status 200 \
-        --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})')
+        --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64})')
     put read_token "$read"
     put write_token "$write"
     as alice req GET '/settings?tab=tokens' --contains 'e2e read' --contains 'e2e write' \
@@ -1868,7 +1868,7 @@ t_github_token() {
     local token
     token=$(as bob form '/settings?tab=tokens' --action /settings/tokens --has name \
         --set 'name=real gh client' --set scope=write --set expiry=never --status 200 \
-        --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})')
+        --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64})')
     put gh_bob_token "$token"
 }
 

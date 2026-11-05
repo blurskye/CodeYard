@@ -14,7 +14,6 @@ use crate::sessions::SessionIssueError;
 
 use crate::AuthenticatedAccount;
 use codeyard_db_core::DbPool;
-use codeyard_support::crypto::is_hex_token;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum OAuthError {
@@ -35,11 +34,16 @@ pub enum OAuthError {
     AccountAdmittedSessionFailed(SessionIssueError),
 }
 
-pub fn validate_callback(code: &str, token: &str) -> Result<(), OAuthError> {
-    if code.is_empty() || code.len() > 4096 || !is_hex_token(token, 64) {
+pub fn validate_callback(
+    code: &str,
+    token: &str,
+) -> Result<codeyard_support::cells::Prefix, OAuthError> {
+    if code.is_empty() || code.len() > 4096 {
         return Err(OAuthError::InvalidCode);
     }
-    Ok(())
+    codeyard_support::cells::Secret::cookie(token)
+        .map(|token| token.cell)
+        .map_err(|_| OAuthError::InvalidCode)
 }
 
 pub async fn require_setup(pool: &DbPool) -> Result<(), OAuthError> {
@@ -61,6 +65,12 @@ pub async fn begin(
     verifier: &str,
     return_to: &str,
 ) -> Result<String, OAuthError> {
+    if codeyard_support::cells::Secret::cookie(state_token)
+        .ok()
+        .is_none_or(|token| token.cell != pool.cell_prefix())
+    {
+        return Err(OAuthError::InvalidState);
+    }
     if let Some(configured) = oidc::provider(provider) {
         require_setup(pool).await?;
         return configured
@@ -120,7 +130,9 @@ pub async fn complete(
         session,
     } = callback;
     if let Some(configured) = oidc::provider(provider) {
-        validate_callback(code, token)?;
+        if validate_callback(code, token)? != pool.cell_prefix() {
+            return Err(OAuthError::InvalidState);
+        }
         require_setup(pool).await?;
         let (profile, return_to) = configured
             .complete(pool, code, token, browser_nonce, redirect)
@@ -138,7 +150,9 @@ pub async fn complete(
     let meta = providers::provider_meta(provider).ok_or(OAuthError::UnknownProvider)?;
     let (client_id, secret) =
         providers::provider_credentials(provider).ok_or(OAuthError::Disabled)?;
-    validate_callback(code, token)?;
+    if validate_callback(code, token)? != pool.cell_prefix() {
+        return Err(OAuthError::InvalidState);
+    }
     require_setup(pool).await?;
     let stored = codeyard_db_identity::users::sessions::consume_bound_oauth_state(
         pool,

@@ -235,7 +235,10 @@ pub async fn create(
             ));
         }
     }
-    let value = format!("{PREFIX}{}", codeyard_support::crypto::random_hex());
+    let value = pool
+        .cell_prefix()
+        .token(PREFIX, &codeyard_support::crypto::random_hex())
+        .map_err(|_| TokenError::Unavailable)?;
     let write = permissions.values().any(|level| level != "read");
     let permissions = Value::Object(permissions).to_string();
     let (id, status) = codeyard_db_identity::fine_grained_tokens::create(
@@ -297,7 +300,10 @@ pub async fn regenerate(
             "Choose a future expiry within the owner's maximum lifetime.",
         ));
     }
-    let value = format!("{PREFIX}{}", codeyard_support::crypto::random_hex());
+    let value = pool
+        .cell_prefix()
+        .token(PREFIX, &codeyard_support::crypto::random_hex())
+        .map_err(|_| TokenError::Unavailable)?;
     if codeyard_db_identity::fine_grained_tokens::regenerate(
         pool,
         user,

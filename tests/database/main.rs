@@ -1,4 +1,5 @@
 mod account_transitions;
+mod cells;
 mod copy;
 mod dependency_security;
 mod migrations;

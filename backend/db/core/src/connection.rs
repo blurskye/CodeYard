@@ -147,6 +147,18 @@ fn secure_sqlite_files(path: &Path, create_main: bool) -> std::io::Result<()> {
 }
 
 impl DbPool {
+    pub(crate) fn set_cell_prefix(&self, prefix: codeyard_support::cells::Prefix) {
+        match self {
+            Self::Postgres(pool) => pool.set_cell_prefix(prefix),
+            Self::Sqlite(pool) => pool.set_cell_prefix(prefix),
+        }
+    }
+    pub fn cell_prefix(&self) -> codeyard_support::cells::Prefix {
+        match self {
+            Self::Postgres(pool) => pool.cell_prefix(),
+            Self::Sqlite(pool) => pool.cell_prefix(),
+        }
+    }
     pub fn set_log_objects(&self, store: std::sync::Arc<dyn crate::ci_logs::LogObjects>) {
         match self {
             Self::Postgres(pool) => pool.set_log_objects(store),

@@ -149,7 +149,14 @@ pub async fn oauth_redirect(
     }
     // Always replace the browser nonce; only the latest flow in this browser completes.
     let nonce = codeyard_api_http::session::generate_session_id();
-    let token = codeyard_api_http::session::generate_session_id();
+    let token = match state
+        .pool
+        .cell_prefix()
+        .cookie(&codeyard_api_http::session::generate_session_id())
+    {
+        Ok(token) => token,
+        Err(_) => return failure(OAuthError::StateUnavailable, &provider),
+    };
     let verifier = if codeyard_identity::oauth::providers::supports_pkce(&provider) {
         codeyard_api_http::session::generate_session_id()
     } else {
@@ -241,20 +248,24 @@ pub async fn oauth_callback(
     )
     .await
     {
-        Ok((authenticated, return_to)) => (
-            StatusCode::FOUND,
-            [
-                (
-                    header::SET_COOKIE,
-                    codeyard_api_http::session::build_session_cookie(
-                        &authenticated.session_id,
-                        codeyard_api_http::session::session_duration_days(),
-                    ),
-                ),
-                (header::LOCATION, local_return_to(&return_to).to_owned()),
-            ],
-        )
-            .into_response(),
+        Ok((authenticated, return_to)) => {
+            let cookie = match codeyard_api_http::session::build_session_cookie(
+                &authenticated.session_id,
+                codeyard_api_http::session::session_duration_days(),
+                state.pool.cell_prefix(),
+            ) {
+                Ok(cookie) => cookie,
+                Err(_) => return failure(OAuthError::StateUnavailable, &provider),
+            };
+            (
+                StatusCode::FOUND,
+                [
+                    (header::SET_COOKIE, cookie),
+                    (header::LOCATION, local_return_to(&return_to).to_owned()),
+                ],
+            )
+                .into_response()
+        }
         Err(error) => failure(error, &provider),
     }
 }

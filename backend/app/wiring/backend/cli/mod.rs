@@ -18,6 +18,7 @@ use tracing_subscriber::EnvFilter;
 pub mod commands;
 
 pub mod arguments;
+pub mod cells;
 pub mod cluster;
 
 fn load_dotenv() -> Result<()> {
@@ -419,6 +420,10 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     crate::backend::cli::commands::list_keys_cmd(&pool, &username).await?;
                 }
             },
+
+            Commands::Cell { action } => {
+                crate::backend::cli::cells::run(&action, &pool, &cli.state_dir).await?;
+            }
 
             Commands::Cluster { action } => {
                 crate::backend::cli::cluster::run(&action, &pool, &cli.state_dir, &cli.repos_path)

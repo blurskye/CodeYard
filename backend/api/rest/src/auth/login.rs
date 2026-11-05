@@ -271,14 +271,14 @@ pub(crate) async fn auth_post(
             };
             let redirect = ctx.redirect(&target);
             match session_id {
-                Some(id) => append_auth_cookie(
-                    redirect,
-                    &codeyard_api_http::session::build_session_cookie(
-                        &id,
-                        codeyard_api_http::session::session_duration_days(),
-                    ),
+                Some(id) => codeyard_api_http::session::build_session_cookie(
+                    &id,
+                    codeyard_api_http::session::session_duration_days(),
+                    ctx.state.pool.cell_prefix(),
                 )
-                .unwrap_or_else(|_| {
+                .ok()
+                .and_then(|cookie| append_auth_cookie(redirect, &cookie).ok())
+                .unwrap_or_else(|| {
                     ctx.error(
                         StatusCode::INTERNAL_SERVER_ERROR,
                         "Unable to issue the session cookie. Sign in again.",

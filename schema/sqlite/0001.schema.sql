@@ -58,6 +58,7 @@ CREATE UNIQUE INDEX users_username_folded ON users(lower(username));
 
 CREATE TABLE node_configuration (
     id INTEGER PRIMARY KEY CHECK (id IS NULL OR typeof(id)='integer') CHECK (id BETWEEN -32768 AND 32767),
+    cell_prefix INTEGER NOT NULL DEFAULT 0 CHECK (cell_prefix=0),
     database_id TEXT NOT NULL UNIQUE DEFAULT (lower(hex(randomblob(16)))),
     node_mode TEXT NOT NULL DEFAULT 'public' CHECK (length(node_mode)<=20),
     setup_completed INTEGER NOT NULL DEFAULT 0 CHECK (setup_completed IN (0,1)),
@@ -144,7 +145,7 @@ CREATE TABLE anonymous_sessions (
 );
 
 CREATE TABLE oauth_states (
-    state TEXT NOT NULL PRIMARY KEY CHECK (length(state)<=64),
+    state TEXT NOT NULL PRIMARY KEY CHECK (length(state)<=70),
     pkce_verifier TEXT NOT NULL CHECK (length(pkce_verifier)<=128),
     provider TEXT NOT NULL CHECK (length(provider)<=50),
     redirect_uri TEXT,

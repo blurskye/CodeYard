@@ -147,7 +147,7 @@ try:
                                 confirm_password=password, node_mode='public'))
     token = form('/settings?tab=tokens', '/settings/tokens',
                  dict(name='benchmark', scope='write', expiry='never'), status='200',
-                 output=['--print', r're:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})'])
+                 output=['--print', r're:(?s)Copy this token now.*?(cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64})'])
     curl_config = work / 'auth.curl'
     curl_config.write_text(f'header = "Authorization: Bearer {token}"\n')
     curl_config.chmod(0o600)

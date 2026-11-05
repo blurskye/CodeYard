@@ -94,6 +94,12 @@ pub(super) enum Commands {
         action: crate::backend::cli::cluster::Command,
     },
 
+    /// Cell identity and placement
+    Cell {
+        #[command(subcommand)]
+        action: crate::backend::cli::cells::Command,
+    },
+
     /// Database tools that do not start the server
     Db {
         #[command(subcommand)]

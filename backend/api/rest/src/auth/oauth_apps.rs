@@ -161,8 +161,14 @@ async fn device_code(
         Ok(None) => {}
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
-    let value = codeyard_support::crypto::random_hex();
-    let user_code = codeyard_identity::oauth_apps::user_code();
+    let Ok(value) = state
+        .pool
+        .cell_prefix()
+        .cookie(&codeyard_support::crypto::random_hex())
+    else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+    };
+    let user_code = codeyard_identity::oauth_apps::user_code(state.pool.cell_prefix());
     let grant = Grant {
         hash: token_hash(&value),
         client_id: id.to_owned(),
@@ -214,7 +220,10 @@ async fn access_token(
         return failure(&headers, "incorrect_client_credentials");
     }
     let code = field(&form, if device { "device_code" } else { "code" });
-    if code.len() != 64 {
+    if codeyard_support::cells::Secret::cookie(code)
+        .ok()
+        .is_none_or(|code| code.cell != state.pool.cell_prefix())
+    {
         return failure(
             &headers,
             if device {
@@ -224,10 +233,17 @@ async fn access_token(
             },
         );
     }
-    let value = match codeyard_db_identity::github_apps::app(&state.pool, id).await {
-        Ok(Some(_)) => format!("ghu_{}", codeyard_support::crypto::random_hex()),
-        Ok(None) => codeyard_support::crypto::random_hex(),
+    let namespace = match codeyard_db_identity::github_apps::app(&state.pool, id).await {
+        Ok(Some(_)) => "ghu_",
+        Ok(None) => codeyard_support::tokens::PAT_PREFIX,
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    };
+    let Ok(value) = state
+        .pool
+        .cell_prefix()
+        .token(namespace, &codeyard_support::crypto::random_hex())
+    else {
+        return StatusCode::SERVICE_UNAVAILABLE.into_response();
     };
     // Device polling has its own durable interval; it must not consume the password-login budget.
     match codeyard_db_identity::oauth_apps::exchange(
@@ -502,7 +518,17 @@ async fn authorize_post(
     let Some(session) = codeyard_api_http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let value = codeyard_support::crypto::random_hex();
+    let Ok(value) = ctx
+        .state
+        .pool
+        .cell_prefix()
+        .cookie(&codeyard_support::crypto::random_hex())
+    else {
+        return ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Authorization storage unavailable",
+        );
+    };
     let grant = Grant {
         hash: token_hash(&value),
         client_id: app.client_id,
@@ -634,7 +660,17 @@ async fn register_post(
     let Some(session) = codeyard_api_http::session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let id = codeyard_support::crypto::random_hex();
+    let Ok(id) = ctx
+        .state
+        .pool
+        .cell_prefix()
+        .cookie(&codeyard_support::crypto::random_hex())
+    else {
+        return ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Application registration unavailable",
+        );
+    };
     let secret = codeyard_support::crypto::random_hex();
     match codeyard_db_identity::oauth_apps::register(
         &ctx.state.pool,

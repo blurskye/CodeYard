@@ -73,6 +73,7 @@ CREATE UNIQUE INDEX users_username_folded ON users(lower(username COLLATE "C"));
 
 CREATE TABLE IF NOT EXISTS node_configuration (
     id SMALLINT PRIMARY KEY,
+    cell_prefix INTEGER NOT NULL DEFAULT 0 CHECK (cell_prefix BETWEEN 0 AND 65535),
     database_id TEXT NOT NULL UNIQUE DEFAULT (replace(gen_random_uuid()::text,'-','')),
     node_mode VARCHAR(20) NOT NULL DEFAULT 'public', -- public | private
     setup_completed BOOLEAN NOT NULL DEFAULT FALSE,
@@ -170,7 +171,7 @@ CREATE TABLE IF NOT EXISTS anonymous_sessions (
 CREATE INDEX IF NOT EXISTS idx_anonymous_sessions_expires_at ON anonymous_sessions(expires_at);
 
 CREATE TABLE IF NOT EXISTS oauth_states (
-    state VARCHAR(64) PRIMARY KEY,
+    state VARCHAR(70) PRIMARY KEY,
     pkce_verifier VARCHAR(128) NOT NULL,
     provider VARCHAR(50) NOT NULL,
     redirect_uri TEXT,

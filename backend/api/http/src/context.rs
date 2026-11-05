@@ -122,8 +122,7 @@ impl PageContext {
         let private_mode = config.as_ref().is_some_and(|c| c.is_private());
 
         // Do not treat a failed lookup as anonymous, or a missing setup row as an outage.
-        let supplied_id =
-            crate::session::extract_session_id(&headers).filter(|id| is_hex_token(id, 64));
+        let supplied_id = crate::session::extract_local_session_id(&state.pool, &headers);
         let existing_session = match supplied_id.as_deref() {
             Some(id) => codeyard_db_identity::users::sessions::get_browser_session(&state.pool, id)
                 .await
@@ -220,10 +219,14 @@ impl PageContext {
                     .map_err(|_| unavailable())?;
                     (
                         s,
-                        Some(crate::session::build_session_cookie(
-                            &id,
-                            crate::session::session_duration_days(),
-                        )),
+                        Some(
+                            crate::session::build_session_cookie(
+                                &id,
+                                crate::session::session_duration_days(),
+                                state.pool.cell_prefix(),
+                            )
+                            .map_err(|_| unavailable())?,
+                        ),
                     )
                 }
             };

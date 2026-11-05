@@ -432,7 +432,7 @@ class Sweep:
         account.token = self.native(account, "form", "/settings?tab=tokens", "--action", "/settings/tokens",
                                     "--has", "name", "--set", "name=sweep-" + uuid.uuid4().hex,
                                     "--set", "scope=write", "--set", "expiry=never", "--status", "200",
-                                    "--print", r"re:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})")
+                                    "--print", r"re:(?s)Copy this token now.*?(cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64})")
         self.gh(account, "auth", "login", "--hostname", HOST, "--with-token", "--git-protocol", "https",
                 "--insecure-storage", input=account.token + "\n")
         hosts = account.directory / "config/hosts.yml"

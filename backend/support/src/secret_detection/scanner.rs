@@ -194,8 +194,7 @@ impl Scanner {
     fn load() -> Result<Self> {
         let mut config: Config =
             toml::from_str(include_str!("../../../../spec/gitleaks/gitleaks.toml"))?;
-        // Personal tokens issued before prefixes were introduced remain valid, but cannot be
-        // distinguished reliably from arbitrary hexadecimal values in source code.
+        // The same token rule recognizes explicit cell prefixes and cell-zero values.
         use crate::tokens::ACTIONS_PREFIX;
         use crate::tokens::FGPAT_PREFIX;
         use crate::tokens::HEX_TOKEN_CHARS;
@@ -225,7 +224,7 @@ impl Scanner {
             ),
         ] {
             let regex =
-                format!("(?:^|[^{alphabet}])({prefix}[{alphabet}]{{{length}}})(?:[^{alphabet}]|$)");
+                format!("(?:^|[^{alphabet}])({prefix}(?:[0-9]{{1,5}}_)?[{alphabet}]{{{length}}})(?:[^{alphabet}]|$)");
             let keyword = prefix;
             config.rules.insert(
                 0,

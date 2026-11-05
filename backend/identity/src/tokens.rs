@@ -37,11 +37,10 @@ pub enum TokenError {
 
 /// Installation credentials use the hex format; Actions uses the URL-safe format with
 /// the same public prefix. Scanners must recognize both complete values.
-pub fn installation_token() -> String {
-    format!(
-        "{INSTALLATION_PREFIX}{}",
-        codeyard_support::crypto::random_hex()
-    )
+pub fn installation_token(
+    cell: codeyard_support::cells::Prefix,
+) -> Result<String, codeyard_support::cells::Invalid> {
+    cell.token(INSTALLATION_PREFIX, &codeyard_support::crypto::random_hex())
 }
 
 /// A feed credential has only read-only event access and remains bound to this API token's
@@ -166,7 +165,10 @@ pub async fn create(
 ) -> Result<CreatedToken, TokenError> {
     validate(&input, Utc::now())?;
     let session_id = session_id.ok_or(TokenError::Denied)?;
-    let value = format!("{PAT_PREFIX}{}", codeyard_support::crypto::random_hex());
+    let value = pool
+        .cell_prefix()
+        .token(PAT_PREFIX, &codeyard_support::crypto::random_hex())
+        .map_err(|_| TokenError::Unavailable)?;
     let token = codeyard_db_identity::users::tokens::create_token(
         pool,
         actor,

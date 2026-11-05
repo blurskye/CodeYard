@@ -167,16 +167,15 @@ pub async fn issue_selected(
     let values: BTreeMap<_, _> = policies
         .keys()
         .map(|key| {
-            (
+            Ok((
                 key.clone(),
-                format!(
-                    "{}{}",
+                pool.cell_prefix().token(
                     codeyard_support::tokens::ACTIONS_PREFIX,
-                    crate::runtime::secret()
-                ),
-            )
+                    &crate::runtime::secret(),
+                )?,
+            ))
         })
-        .collect();
+        .collect::<Result<_>>()?;
     let stored: Vec<_> = policies
         .iter()
         .map(|(job, permissions)| {

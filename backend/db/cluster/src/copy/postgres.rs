@@ -73,11 +73,7 @@ pub(super) async fn read_sequences(
 ) -> Result<Vec<Sequence>> {
     let mut sequences = Vec::new();
     for (table, column) in serial_columns(tx).await? {
-        let name: Option<String> = sqlx::query_scalar("SELECT pg_get_serial_sequence($1, $2)")
-            .bind(quote(&table))
-            .bind(&column)
-            .fetch_one(&mut **tx)
-            .await?;
+        let name = codeyard_db_core::cells::sequence_name(tx, &table, &column).await?;
         let Some(name) = name else {
             continue;
         };
@@ -93,14 +89,8 @@ pub(super) async fn read_sequences(
     Ok(sequences)
 }
 
-/// (table, column) for every column whose default draws from a sequence.
 async fn serial_columns(tx: &mut Transaction<'static, Postgres>) -> Result<Vec<(String, String)>> {
-    Ok(sqlx::query_as(
-        "SELECT table_name::text, column_name::text FROM information_schema.columns \
-         WHERE table_schema = current_schema() AND column_default LIKE 'nextval(%'",
-    )
-    .fetch_all(&mut **tx)
-    .await?)
+    codeyard_db_core::cells::serial_columns(tx).await
 }
 
 /// Milestone due dates are calendar days. PostgreSQL stores each as midnight UTC of its day,

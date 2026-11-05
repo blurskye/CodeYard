@@ -81,14 +81,14 @@ pub(crate) async fn sign_in_post(
     match result {
         Ok(authenticated) => {
             let redirect_target = ctx.redirect(&redirect);
-            append_auth_cookie(
-                redirect_target,
-                &codeyard_api_http::session::build_session_cookie(
-                    &authenticated.session_id,
-                    codeyard_api_http::session::session_duration_days(),
-                ),
+            codeyard_api_http::session::build_session_cookie(
+                &authenticated.session_id,
+                codeyard_api_http::session::session_duration_days(),
+                ctx.state.pool.cell_prefix(),
             )
-            .unwrap_or_else(|_| {
+            .ok()
+            .and_then(|cookie| append_auth_cookie(redirect_target, &cookie).ok())
+            .unwrap_or_else(|| {
                 ctx.error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Unable to issue the session cookie. Sign in again.",

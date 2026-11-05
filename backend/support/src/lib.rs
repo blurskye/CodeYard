@@ -42,3 +42,5 @@ pub mod secret_detection;
 pub mod outbound;
 
 pub mod cluster;
+
+pub mod cells;

@@ -391,9 +391,14 @@ async fn issue(
         return Err(Error::invalid("Select at least one repository"));
     }
     let value = if actor.is_some() {
-        format!("ghu_{}", codeyard_support::crypto::random_hex())
+        state
+            .pool
+            .cell_prefix()
+            .token("ghu_", &codeyard_support::crypto::random_hex())
+            .map_err(Error::unavailable)?
     } else {
-        codeyard_identity::tokens::installation_token()
+        codeyard_identity::tokens::installation_token(state.pool.cell_prefix())
+            .map_err(Error::unavailable)?
     };
     let source = body
         .get("access_token")

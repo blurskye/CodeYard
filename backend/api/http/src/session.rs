@@ -3,6 +3,7 @@ use axum::http::header;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::Json;
+use codeyard_support::cells::{Prefix, Secret};
 use codeyard_support::crypto::is_hex_token;
 
 fn cookie_domain() -> Option<String> {
@@ -46,12 +47,21 @@ pub fn generate_session_id() -> String {
     codeyard_support::crypto::random_hex()
 }
 
-pub fn build_session_cookie(session_id: &str, max_age_days: i64) -> String {
-    build_session_cookie_for(session_id, max_age_days.clamp(0, 365) * 24 * 60 * 60)
+pub fn build_session_cookie(
+    session_id: &str,
+    max_age_days: i64,
+    cell: Prefix,
+) -> Result<String, codeyard_support::cells::Invalid> {
+    build_session_cookie_for(session_id, max_age_days.clamp(0, 365) * 24 * 60 * 60, cell)
 }
 
 /// A session cookie that lasts `max_age_seconds`, for reissuing an existing session.
-pub(crate) fn build_session_cookie_for(session_id: &str, max_age_seconds: i64) -> String {
+pub(crate) fn build_session_cookie_for(
+    session_id: &str,
+    max_age_seconds: i64,
+    cell: Prefix,
+) -> Result<String, codeyard_support::cells::Invalid> {
+    let session_id = cell.cookie(session_id)?;
     let name = session_cookie_name();
     let mut cookie = format!(
         "{name}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
@@ -67,7 +77,7 @@ pub(crate) fn build_session_cookie_for(session_id: &str, max_age_seconds: i64) -
         cookie.push_str("; Secure");
     }
 
-    cookie
+    Ok(cookie)
 }
 
 pub fn build_logout_cookie() -> String {
@@ -87,7 +97,7 @@ pub fn build_logout_cookie() -> String {
     cookie
 }
 
-pub fn random_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+fn named_cookie(headers: &HeaderMap, name: &str, limit: usize) -> Option<String> {
     let mut found = None;
     for cookies in headers.get_all(header::COOKIE).iter() {
         for cookie in cookies.to_str().ok()?.split(';') {
@@ -97,13 +107,17 @@ pub fn random_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
             if key != name {
                 continue;
             }
-            if found.is_some() || !is_hex_token(value, 64) {
+            if found.is_some() || value.len() > limit {
                 return None;
             }
-            found = Some(value.to_owned());
+            found = Some(value);
         }
     }
-    found
+    found.map(str::to_owned)
+}
+
+pub fn random_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
+    named_cookie(headers, name, 64).filter(|value| is_hex_token(value, 64))
 }
 
 pub(crate) fn session_cookie_name() -> &'static str {
@@ -114,8 +128,23 @@ pub(crate) fn session_cookie_name() -> &'static str {
     }
 }
 
+pub fn extract_session(headers: &HeaderMap) -> Option<(Prefix, String)> {
+    let value = named_cookie(headers, session_cookie_name(), 70)?;
+    let parsed = Secret::cookie(&value).ok()?;
+    Some((parsed.cell, parsed.secret.to_owned()))
+}
+
 pub fn extract_session_id(headers: &HeaderMap) -> Option<String> {
-    random_cookie(headers, session_cookie_name())
+    extract_session(headers).map(|(_, secret)| secret)
+}
+
+pub fn extract_local_session_id(
+    pool: &codeyard_db_core::DbPool,
+    headers: &HeaderMap,
+) -> Option<String> {
+    extract_session(headers)
+        .filter(|(cell, _)| *cell == pool.cell_prefix())
+        .map(|(_, secret)| secret)
 }
 
 pub fn has_session_cookie(headers: &HeaderMap) -> bool {
@@ -176,7 +205,7 @@ pub async fn get_optional_user(
     pool: &codeyard_db_core::DbPool,
     headers: &HeaderMap,
 ) -> Result<Option<codeyard_db_core::models::User>, (StatusCode, Json<ApiError>)> {
-    let Some(session_id) = extract_session_id(headers) else {
+    let Some(session_id) = extract_local_session_id(pool, headers) else {
         return Ok(None);
     };
     let user = codeyard_db_identity::users::sessions::get_session_account(pool, &session_id)
@@ -210,6 +239,19 @@ mod tests {
             format!("session_id={id}; unrelated=value").parse().unwrap(),
         );
         assert_eq!(extract_session_id(&headers), Some(id.clone()));
+        headers.insert(
+            header::COOKIE,
+            format!("session_id=1.{id}").parse().unwrap(),
+        );
+        assert_eq!(
+            extract_session(&headers),
+            Some((Prefix::new(1), id.clone()))
+        );
+        headers.insert(
+            header::COOKIE,
+            format!("session_id=01.{id}").parse().unwrap(),
+        );
+        assert!(extract_session(&headers).is_none());
         headers.insert(header::COOKIE, "session_id=caller-picked".parse().unwrap());
         assert!(extract_session_id(&headers).is_none());
         headers.insert(
@@ -221,7 +263,7 @@ mod tests {
         headers.append(header::COOKIE, format!("session_id={id}").parse().unwrap());
         assert!(extract_session_id(&headers).is_none());
         assert!(has_session_cookie(&headers));
-        let cookie = build_session_cookie(&id, i64::MAX);
+        let cookie = build_session_cookie(&id, i64::MAX, Prefix::ZERO).unwrap();
         assert!(cookie.contains("Max-Age=31536000"));
     }
 

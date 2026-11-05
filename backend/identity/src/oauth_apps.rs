@@ -8,9 +8,25 @@ use subtle::ConstantTimeEq;
 
 const CLI_SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";
 
-pub fn user_code() -> String {
+pub fn user_code(cell: codeyard_support::cells::Prefix) -> String {
     let value = codeyard_support::crypto::random_hex();
-    format!("{}-{}", &value[..4], &value[4..8]).to_uppercase()
+    format!("{cell}-{}-{}", &value[..4], &value[4..8]).to_uppercase()
+}
+
+pub fn user_code_cell(value: &str) -> Option<codeyard_support::cells::Prefix> {
+    let value = normalize_code(value);
+    if value.len() > 15 {
+        return None;
+    }
+    let parts: Vec<_> = value.split('-').collect();
+    let (cell, code) = match parts.as_slice() {
+        [first, second] => (codeyard_support::cells::Prefix::ZERO, [*first, *second]),
+        [prefix, first, second] => (prefix.parse().ok()?, [*first, *second]),
+        _ => return None,
+    };
+    code.iter()
+        .all(|part| part.len() == 4 && part.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+        .then_some(cell)
 }
 
 pub fn normalize_code(code: &str) -> String {

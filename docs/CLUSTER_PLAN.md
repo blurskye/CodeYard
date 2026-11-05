@@ -161,7 +161,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     experimental gate pass source checks; the combined acceptance rerun is running. Stage 1 finished-CI and load
     measurements are runtime pending, need a writable delegated cgroup. Other content read
     families remain on the primary; bulk retention remains open.
-    Stages 2 to 6 are not built. Individual users may move automatically to
+    Stage 2 ID initialization and credential framing are written but unchecked; directory,
+    router, foreign authorization and stubs are not built. Stages 3 to 6 are not built.
+    Individual users may move automatically to
     their working region in stage 6. Organizations retain one write home and gain read
     presence across regions in stages 5 and 6; see the architecture acceptance lists.
 
