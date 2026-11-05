@@ -50,7 +50,7 @@ pub async fn list_visible_members(
     if filter != "all" && actor_role != Some(OrgRole::Owner) {
         return Ok(Denied);
     }
-    let rows = sqlx::query_as("SELECT u.* FROM users u JOIN org_memberships m ON m.user_id=u.id WHERE m.org_id=?1 AND m.role IN ('owner','admin','member') AND ((?2 AND NOT ?3) OR m.is_public) AND (?4='all' OR (?4='admin' AND m.role='owner') OR (?4='member' AND m.role IN ('admin','member'))) AND (?5='all' OR (?5='2fa_disabled' AND NOT u.two_factor_enabled)) ORDER BY u.username,u.id LIMIT ?6 OFFSET ?7")
+    let rows = sqlx::query_as("SELECT u.* FROM users u JOIN org_memberships m ON m.user_id=u.id WHERE m.org_id=?1 AND NOT u.is_stub AND m.role IN ('owner','admin','member') AND ((?2 AND NOT ?3) OR m.is_public) AND (?4='all' OR (?4='admin' AND m.role='owner') OR (?4='member' AND m.role IN ('admin','member'))) AND (?5='all' OR (?5='2fa_disabled' AND NOT u.two_factor_enabled)) ORDER BY u.username,u.id LIMIT ?6 OFFSET ?7")
         .bind(org).bind(member).bind(public).bind(role).bind(filter).bind(window.1).bind(window.0).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(rows))

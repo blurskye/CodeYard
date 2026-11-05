@@ -34,10 +34,10 @@ use OrganizationOutcome::Missing;
 pub(crate) mod exports;
 
 /// One page of a team's members who are still active members of its organization.
-const TEAM_MEMBERS_PAGE: &str = "SELECT tm.* FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.id>?3 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.id LIMIT ?4";
+const TEAM_MEMBERS_PAGE: &str = "SELECT tm.* FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.id>?3 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_stub AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.id LIMIT ?4";
 
 /// Team members with the role the GitHub API reports: organization owners count as maintainers.
-const REPORTED_MEMBERS: &str = "SELECT tm.id, tm.team_id, tm.user_id, CASE WHEN om.role='owner' THEN 'maintainer' ELSE tm.role END AS role, tm.created_at FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password";
+const REPORTED_MEMBERS: &str = "SELECT tm.id, tm.team_id, tm.user_id, CASE WHEN om.role='owner' THEN 'maintainer' ELSE tm.role END AS role, tm.created_at FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_stub AND NOT u.is_banned AND NOT u.must_change_password";
 
 /// A team's visible parent in the same organization. Secret teams have no parent.
 const PARENT: &str = "SELECT p.* FROM teams t JOIN teams p ON p.id=t.parent_team_id AND p.org_id=t.org_id WHERE t.id=?1 AND t.privacy='visible' AND p.privacy='visible'";
@@ -78,7 +78,7 @@ async fn public_team(
     team: Team,
 ) -> Result<PublicTeam> {
     let org = team.org_id;
-    let member_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password")
+    let member_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_stub AND NOT u.is_banned AND NOT u.must_change_password")
         .bind(org).bind(team.id).fetch_one(&mut *connection).await?;
     let repository_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM effective_team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=?4 WHERE a.team_id=?1 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=?2 AND r.owner_user_id IS NULL AND (?3 OR NOT r.is_private OR ({USER_REPO_ACCESS_SQL})>=1)"))
         .bind(team.id).bind(org).bind(administers(role)).bind(actor).fetch_one(&mut *connection).await?;

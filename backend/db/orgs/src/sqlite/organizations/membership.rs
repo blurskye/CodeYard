@@ -35,7 +35,7 @@ pub async fn count_organization_members(
 ) -> Result<OrganizationOutcome<i64>> {
     let mut tx = begin_read(pool).await?;
     require_read_org_sqlite!(tx, actor, org);
-    let count = sqlx::query_scalar("SELECT COUNT(*) FROM org_memberships WHERE org_id=?1")
+    let count = sqlx::query_scalar("SELECT COUNT(*) FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=?1 AND NOT u.is_stub")
         .bind(org)
         .fetch_one(&mut *tx)
         .await?;
@@ -52,7 +52,7 @@ pub async fn list_organization_members(
     let mut tx = begin_read(pool).await?;
     require_read_org_sqlite!(tx, actor, org);
     let rows = sqlx::query_as(
-        "SELECT * FROM org_memberships WHERE org_id=?1 AND id>?2 ORDER BY id LIMIT ?3",
+        "SELECT m.* FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=?1 AND NOT u.is_stub AND m.id>?2 ORDER BY m.id LIMIT ?3",
     )
     .bind(org)
     .bind(page.after)
