@@ -358,6 +358,39 @@ fn arg(ctx: &Arguments, name: &str) -> Result<String> {
 }
 
 async fn node(id: &str, request: &RequestContext) -> Result<Value> {
+    let value = node_value(id, request).await?;
+    if let Some(expected) = codeyard_model::node_id::scoped_root(id) {
+        let mut actual = value["_repo"]
+            .as_i64()
+            .or_else(|| value["_owner"].as_i64())
+            .or_else(|| value["organization"]["databaseId"].as_i64());
+        if actual.is_none() {
+            if let Some(project) = value["_project"].as_i64() {
+                actual = Some(
+                    codeyard_db_repos::projects::by_id(
+                        &request.state.pool,
+                        Some(request.auth.user.id),
+                        project,
+                    )
+                    .await
+                    .map_err(unavailable)?
+                    .owner_id,
+                );
+            } else if matches!(
+                value["__typename"].as_str(),
+                Some("Repository" | "User" | "Organization")
+            ) {
+                actual = value["databaseId"].as_i64();
+            }
+        }
+        if actual != Some(expected) {
+            return Err(missing());
+        }
+    }
+    Ok(value)
+}
+
+async fn node_value(id: &str, request: &RequestContext) -> Result<Value> {
     if id.starts_with("D_") || id.starts_with("DIC_") || id.starts_with("DC_") {
         return crate::discussions::node(id, request).await;
     }

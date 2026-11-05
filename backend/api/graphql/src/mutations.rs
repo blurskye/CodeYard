@@ -91,11 +91,61 @@ pub(super) fn issue_change_error(
     }
 }
 
+/// Every mutation validates explicit root hints before any domain operation runs.
+/// ID fields retain their schema-coerced values; free text is never interpreted as an ID.
+async fn validate_input_roots(args: &Arguments, request: &RequestContext) -> Result<()> {
+    let Some(input) = args.args.get("input") else {
+        return Ok(());
+    };
+    let input: Value = input.deserialize()?;
+    let mut pending = vec![("input", &input, 0usize)];
+    let mut visited = 0usize;
+    let mut roots = 0usize;
+    while let Some((key, value, depth)) = pending.pop() {
+        visited += 1;
+        if visited > 10000 || depth > 64 {
+            return Err(Error::new("Mutation input exceeds the request limit"));
+        }
+        match value {
+            Value::Object(fields) => {
+                if fields.len() > 10000usize.saturating_sub(visited + pending.len()) {
+                    return Err(Error::new("Mutation input exceeds the request limit"));
+                }
+                for (key, value) in fields {
+                    pending.push((key.as_str(), value, depth + 1));
+                }
+            }
+            Value::Array(values) => {
+                if values.len() > 10000usize.saturating_sub(visited + pending.len()) {
+                    return Err(Error::new("Mutation input exceeds the request limit"));
+                }
+                for value in values {
+                    pending.push((key, value, depth + 1));
+                }
+            }
+            Value::String(id)
+                if key != "clientMutationId"
+                    && (key == "id" || key.ends_with("Id") || key.ends_with("Ids"))
+                    && node_id::scoped_root(id).is_some() =>
+            {
+                roots += 1;
+                if roots > 1000 {
+                    return Err(Error::new("Mutation input exceeds the request limit"));
+                }
+                boxed(|| crate::node(id, request)).await?;
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 pub(super) async fn resolve(
     field: &str,
     args: &Arguments,
     request: &RequestContext,
 ) -> Result<Value> {
+    validate_input_roots(args, request).await?;
     if field.contains("Discussion") {
         return boxed(|| crate::discussions::mutation(field, args, request)).await;
     }

@@ -152,7 +152,15 @@ impl Routes {
     }
     pub async fn by_node(&self, value: &str) -> Result<Option<ReadyCell>> {
         let node = codeyard_model::node_id::routed(value).ok_or(Failure::Invalid)?;
+        let scoped = codeyard_model::node_id::scoped_root(value).is_some();
         let kind = match node.kind {
+            "I" | "PR" | "IC" | "PC" | "PRR" | "PRRC" | "D" | "DIC" | "L" | "M" | "REA" | "RE"
+            | "RA" | "CS" | "CSU" | "CRU" | "IE" | "S" | "ART" | "CC" | "IT" | "LB"
+                if scoped =>
+            {
+                Some(ObjectKind::Repository)
+            }
+            "T" if scoped => Some(ObjectKind::Organization),
             "R" | "REF" | "C" | "B" | "TAG" | "SCR" | "STAT" | "DC" => Some(ObjectKind::Repository),
             "U" => Some(ObjectKind::User),
             "O" => Some(ObjectKind::Organization),

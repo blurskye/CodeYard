@@ -482,6 +482,55 @@ async fn contract(pg: bool) {
     let data = query(&router,token,"query($id:ID!,$ids:[ID!]!) { node(id:$id) { id ... on Repository { name } } nodes(ids:$ids) { id } }",json!({"id":repository_id,"ids":[viewer_id,repository_id,issue_id,pull_id]})).await;
     assert_eq!(data["node"]["name"], "proj");
     assert_eq!(data["nodes"].as_array().unwrap().len(), 4);
+    // Root hints select a cell, but the native reader verifies the actual owner.
+    let issue_row = codeyard_model::node_id::decode(issue_id.as_str().unwrap())
+        .unwrap()
+        .1;
+    let scoped_issue = codeyard_model::node_id::scoped("I", repo.id, issue_row).unwrap();
+    let rooted = query(
+        &router,
+        token,
+        "query($id:ID!){node(id:$id){...on Issue{number title}}}",
+        json!({"id":scoped_issue}),
+    )
+    .await;
+    assert_eq!(rooted["node"]["number"], issue_number);
+    let forged = codeyard_model::node_id::scoped("I", repo.id + 1000, issue_row).unwrap();
+    let (_, rejected) = call(
+        &router,
+        Some(token),
+        "query($id:ID!){node(id:$id){id}}",
+        json!({"id":forged}),
+    )
+    .await;
+    assert!(rejected["data"]["node"].is_null(), "{rejected}");
+    assert!(
+        rejected["errors"]
+            .as_array()
+            .is_some_and(|errors| !errors.is_empty()),
+        "{rejected}"
+    );
+    let (_, rejected) = call(
+        &router,
+        Some(token),
+        "mutation($input:CloseIssueInput!){closeIssue(input:$input){issue{state}}}",
+        json!({"input":{"issueId":forged}}),
+    )
+    .await;
+    assert!(
+        rejected["errors"]
+            .as_array()
+            .is_some_and(|errors| !errors.is_empty()),
+        "{rejected}"
+    );
+    assert_eq!(
+        codeyard_db_repos::issues::get_issue_by_id(f.pool(), issue_row)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        "open"
+    );
     for query_text in ["{ repository(owner:\"graphql-alice\",name:\"proj\") { id issues(first:101) { totalCount } } }","{ repository(owner:\"graphql-alice\",name:\"proj\") { id issues { nodes { id } } } }"] {
         let (_,body) = call(&router,Some(token),query_text,json!({})).await;
         assert!(body["errors"].as_array().is_some_and(|errors| !errors.is_empty()),"{body}");

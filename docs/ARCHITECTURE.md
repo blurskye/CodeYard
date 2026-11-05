@@ -754,8 +754,7 @@ an operator VM. Stage 1 source checks pass, but runtime acceptance and capacity 
 remain open. Stage 2 range allocation, credential framing, directory registry and authenticated
 transport are built and source-checked. Route metadata, shared GraphQL preflight and scoped
 session storage, catalogue selection and bounded HTTP/GraphQL forwarding pass workspace,
-Clippy and WASM. Their runtime tests are pending; upload cleanup and Git/ref routing are
-in source for the next check batch. The public router
+Clippy and WASM. Their runtime tests are pending; upload cleanup and Git/ref routing also pass source checks. The public router
 role and foreign authorization are not built. Stub schema, metadata upserts and local
 credential/storage/listing guards are written but unchecked; stages 3 to 6 are not built.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain

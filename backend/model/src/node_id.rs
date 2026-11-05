@@ -13,6 +13,9 @@ pub fn encode(kind: &str, id: i64) -> String {
 }
 
 pub fn decode(value: &str) -> Option<(&str, i64)> {
+    if value.len() > 128 {
+        return None;
+    }
     let (kind, value) = value.split_once('_')?;
     if !matches!(
         kind,
@@ -58,7 +61,15 @@ pub fn decode(value: &str) -> Option<(&str, i64)> {
     ) {
         return None;
     }
-    let bytes: [u8; 8] = URL_SAFE_NO_PAD.decode(value).ok()?.try_into().ok()?;
+    let bytes = URL_SAFE_NO_PAD.decode(value).ok()?;
+    if let Some((root, id)) = decode_messagepack(&bytes) {
+        codeyard_support::cells::Prefix::for_id(root).ok()?;
+        codeyard_support::cells::Prefix::for_id(id).ok()?;
+        // Existing resolvers distinguish conversation comments by the low bit.
+        // The wire form carries the actual row ID and a separate kind instead.
+        return Some((kind, if kind == "IC" { id.checked_mul(2)? } else { id }));
+    }
+    let bytes: [u8; 8] = bytes.try_into().ok()?;
     let id = i64::from_be_bytes(bytes);
     (id > 0).then_some((kind, id))
 }
@@ -120,6 +131,15 @@ fn decode_messagepack(bytes: &[u8]) -> Option<(i64, i64)> {
     let root = integer(&mut bytes)?;
     let id = integer(&mut bytes)?;
     (bytes.is_empty() && root > 0 && id > 0).then_some((root, id))
+}
+
+/// The explicit ownership hint in a numeric MessagePack node ID, if present.
+/// Resource readers must compare it to the row's actual owner after authorization.
+pub fn scoped_root(value: &str) -> Option<i64> {
+    decode(value)?;
+    let (_, encoded) = value.split_once('_')?;
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).ok()?;
+    decode_messagepack(&bytes).map(|(root, _)| root)
 }
 
 /// Decode before routing without querying an object's cell. The resource cell still
@@ -355,6 +375,26 @@ mod tests {
         ] {
             assert!(routed(&format!("IC_{}", super::URL_SAFE_NO_PAD.encode(raw))).is_none());
         }
+    }
+
+    #[test]
+    fn numeric_resolvers_accept_rooted_ids_and_keep_comment_kinds_distinct() {
+        let root = *codeyard_support::cells::Prefix::new(2).ids().start();
+        for kind in ["I", "PR", "D", "DIC", "L", "T", "PVT", "PRRC"] {
+            let wire = super::scoped(kind, root, 17).unwrap();
+            assert_eq!(decode(&wire), Some((kind, 17)));
+            assert_eq!(super::scoped_root(&wire), Some(root));
+        }
+        assert_eq!(
+            decode(&super::scoped("IC", root, 17).unwrap()),
+            Some(("IC", 34))
+        );
+        assert_eq!(
+            decode(&super::scoped("PC", root, 17).unwrap()),
+            Some(("PC", 17))
+        );
+        assert_eq!(super::scoped_root(&encode("I", 17)), None);
+        assert_eq!(decode(&super::scoped("UNKNOWN", root, 17).unwrap()), None);
     }
 
     #[test]

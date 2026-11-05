@@ -173,7 +173,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Acceptance rerun 049f16eeb8324596b898b230885a66d3 runs the compiled snapshot. A new
     unchecked batch adds stable cell identity, stub storage/metadata, credential/storage
     guards and native list filters, with SQLite/PostgreSQL HTTP and storage tests. Exact
-    lookups retain stubs for references. Its first source check round is next.
+    lookups retain stubs for references. Workspace a01f0a8780954bbbba9f9d985affa50e,
+    Clippy 49b15ab6972445e1bcf022d3c31cb9f3 and WASM a192af85af5945458deaa483d93431f4
+    are running or queued. The following unchecked batch adds native rooted-ID decoding,
+    owner verification for reads and mutation inputs, and forged-root HTTP tests.
     The public proxy role, foreign authorization and stages 3 to 6 remain unimplemented.
     Automatic individual moves and org regional presence are documented owner decisions.
 
