@@ -243,9 +243,9 @@ impl Page {
                         List::BrowserRepositories => key == "q" && value.chars().count() <= 100,
                         List::BrowserOrganizations =>
                             key == "after"
-                                && value.parse::<i64>().ok().is_some_and(
-                                    |id| id >= 0 && id <= codeyard_support::cells::MAX_ID
-                                ),
+                                && value.parse::<i64>().ok().is_some_and(|id| (0
+                                    ..=codeyard_support::cells::MAX_ID)
+                                    .contains(&id)),
                         _ => false,
                     },
                 "Invalid membership query"

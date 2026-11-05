@@ -191,7 +191,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     unchecked batch reads remote native dashboard/org lists through authorized page models
     with the original cookie, shares all row/byte budgets, and filters private stub orgs on
     both engines. Tests cover HTML/model output and session revocation during a remote wait.
-    Runtime acceptance remains open. No stage 2 completion is claimed.
+    Native home lists pass workspace 3558f18d0b6b4127a35692a5a1ddb414 and WASM
+    2b6662dfec0c47709de59dd2ab1b2ae3. Clippy 61436b90a5524d909e663bc000b9c1b2 found one
+    range-check lint, corrected for the combined recheck. Runtime acceptance remains open.
+    No stage 2 completion is claimed.
     Stages 3 to 6 are not built. Automatic user moves and org regional presence remain
     documented owner decisions.
     Owner follow-ups: foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded
