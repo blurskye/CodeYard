@@ -294,7 +294,7 @@ CLI acceptance, including interrupted import and per-node recovery. Single node 
 Node membership (`pending`, `active`, `revoked`) is separate from allocation state
 (`active`, `draining`, `drained`). Drain admission reserves complete fork families and
 15% free space in one transaction; the existing copier and promoter advance the work.
-The panel, REST and CLI use `cluster::drain::change`. Initialization, REST drain and
+The panel, REST and CLI use `cluster::drain::change`. Initialization, REST drain,
 promotion and native/hydrated browser acceptance pass. Finished-CI drain acceptance
 requires a writable delegated cgroup on the builder.
 Application database queries share `db::pool` acquisition tracking; metrics count yielded

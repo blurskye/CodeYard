@@ -28,13 +28,13 @@ The experimental write path uses two storage voters, PostgreSQL decisions and a 
 journal. Cluster files use two storage-node copies or optional shared S3. Repository initialization
 and copy use the same quorum path and pass runtime checks on both database engines.
 
-Not complete: drain and failover acceptance, browser acceptance, rolling upgrades
-and measured load limits.
+Not complete: finished-CI drain and shutdown, the final process-loss checks, rolling
+upgrades and measured load limits.
 
 Current acceptance status:
 
 - 1: hiding-switch CLI refusal checks pass.
-- 2: storage-node copies, capacity, loss, retry, drain and private access pass HTTP checks on both engines; native startup without S3 passes. A single-node runner-transport backend correction awaits checks.
+- 2: storage-node copies, capacity, loss, retry, drain and private access pass HTTP checks on both engines; native startup without S3 passes. A single-node runner-transport backend correction passes source checks; HTTP rerun pending.
 - 3: quorum initialization, copy, default selection, voter replacement, primary loss and full-disk retry pass.
 - 4: drain REST, authority, promotion and native/hydrated browser checks pass. Finished-CI drain acceptance needs a delegated cgroup.
 - 5: quorum, drain, bounded scraping and acquisition waiter metrics pass HTTP acceptance.

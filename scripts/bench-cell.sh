@@ -323,7 +323,7 @@ try:
     disk = os.statvfs(work)
     print(f'Fixture filesystem: {filesystem}; block size: {disk.f_frsize}; available: {disk.f_bavail * disk.f_frsize} bytes')
     print(f'Git/API network: loopback; PostgreSQL host: {u.urlsplit(upstream).hostname}')
-    print('PostgreSQL hardware is external; record its CPU, RAM, disk and network with these results.')
+    print('If PostgreSQL runs on another host, record its CPU, RAM, disk and network with these results.')
     print(f'{"operation":<12} {"samples":>8} {"p50 ms":>10} {"p95 ms":>10} {"p99 ms":>10} {"ops/s":>10}')
     for kind, values in samples.items():
         if not values:

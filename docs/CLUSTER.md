@@ -662,8 +662,9 @@ promote) is the operator's job; Codeyard does not route reads to database replic
 `DATABASE_POOL_SIZE` sets each process's PostgreSQL pool (1–1,000, default 20), with
 a five-second acquisition deadline and connection validation before reuse. Lost
 connections reconnect through `DATABASE_URL`; writes with an uncertain result are
-not automatically replayed. The cluster
-has not been load tested, so size it from your own measurements.
+not automatically replayed. The debug load workload completed its 500-reader traffic
+and 50 simultaneous invitations, but CI jobs failed without cgroup delegation. There
+is no completed capacity measurement; size the installation from your own measurements.
 
 Majority writes require both fixed storage voters before acknowledgement. Additional
 copies and the explicit `--write-quorum 1` policy are asynchronous; there is no
