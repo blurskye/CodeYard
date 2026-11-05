@@ -16,7 +16,7 @@ pub async fn list_deploy_keys(
     after: i64,
     limit: i64,
 ) -> Result<Vec<DeployKey>> {
-    let credential = credential.into();
+    let credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential = credential.into();
     let mut tx = pool.begin().await?;
     let live = codeyard_db_core::queries::sqlite::credentials::repository(
         &mut tx,
@@ -109,7 +109,8 @@ pub async fn insert_deploy_key(
     credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
 ) -> Result<DeployKey> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_admin(&mut tx, key.created_by_id, key.repo_id, credential.into()).await?;
+    let credential = credential.into();
+    require_admin(&mut tx, key.created_by_id, key.repo_id, credential.clone()).await?;
     let enabled:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=?1 AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories)").bind(key.repo_id).fetch_one(&mut *tx).await?;
     anyhow::ensure!(
         enabled,
@@ -142,6 +143,11 @@ pub async fn insert_deploy_key(
             }
             _ => anyhow::Error::from(error),
         })?;
+    if pool.directory().is_some() {
+        let fingerprint = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Ssh, &key.fingerprint)?;
+        anyhow::ensure!(codeyard_db_core::cells::directory::sqlite::publish(pool, &mut tx, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::Repository, id: key.repo_id }, &[fingerprint]).await?, SshKeyWriteRefusal::AlreadyUsed);
+        require_admin(&mut tx, key.created_by_id, key.repo_id, credential).await?;
+    }
     tx.commit().await?;
     Ok(row)
 }
@@ -155,13 +161,16 @@ pub async fn delete_deploy_key(
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     require_admin(&mut tx, actor, repo_id, credential.into()).await?;
-    let result = sqlx::query("DELETE FROM deploy_keys WHERE id = ?1 AND repo_id = ?2")
-        .bind(key_id)
-        .bind(repo_id)
-        .execute(&mut *tx)
-        .await?;
+    let removed: Option<String> = sqlx::query_scalar("DELETE FROM deploy_keys WHERE id=$1 AND repo_id=$2 RETURNING fingerprint")
+        .bind(key_id).bind(repo_id).fetch_optional(&mut *tx).await?;
     tx.commit().await?;
-    Ok(result.rows_affected() > 0)
+    if let Some(fingerprint) = &removed {
+        if pool.directory().is_some() {
+            let key = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Ssh, fingerprint)?;
+            codeyard_db_core::cells::directory::sqlite::release(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::Repository, id: repo_id }, &[key]).await?;
+        }
+    }
+    Ok(removed.is_some())
 }
 
 /// Records a use. It runs outside any transaction, and its caller ignores a failure.

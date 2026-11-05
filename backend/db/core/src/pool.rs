@@ -117,9 +117,6 @@ impl<DB: Database> Pool<DB> {
     pub(crate) fn same_pool(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.waiting, &other.waiting)
     }
-    pub fn set_directory(&self, provider: crate::cells::directory::Provider) {
-        *self.directory.write().unwrap_or_else(|error| error.into_inner()) = Some(provider);
-    }
     pub fn directory(&self) -> Option<crate::cells::directory::Provider> {
         self.directory.read().unwrap_or_else(|error| error.into_inner()).clone()
     }
@@ -395,5 +392,13 @@ mod tests {
             .unwrap()
             .unwrap();
         pool.close().await;
+    }
+}
+
+// Directory-enrolled cells use PostgreSQL. SQLite remains a standalone cell and
+// must be copied to PostgreSQL before joining a multi-cell deployment.
+impl Pool<sqlx::Postgres> {
+    pub fn set_directory(&self, provider: crate::cells::directory::Provider) {
+        *self.directory.write().unwrap_or_else(|error| error.into_inner()) = Some(provider);
     }
 }

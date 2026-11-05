@@ -403,8 +403,14 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         )
         .await?;
         let cell_rpc = match (&config.directory, config.cell_rpc_address) {
-            (None, None) => None,
+            (None, None) => {
+                anyhow::ensure!(pool.cell_id() == codeyard_support::cells::Prefix::ZERO,
+                    "A nonzero cell requires directory settings and CELL_RPC_ADDRESS");
+                None
+            }
             (Some(settings), Some(address)) => {
+                anyhow::ensure!(matches!(&pool, codeyard_db_core::DbPool::Postgres(_)),
+                    "Copy this SQLite cell to PostgreSQL before enrolling it in the directory");
                 anyhow::ensure!(
                     transport.mode != codeyard_support::ssh_mode::SshMode::Openssh,
                     "Cells behind a router use builtin SSH or disabled SSH"
@@ -418,6 +424,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
                     address,
                 )
                 .await?;
+                pool.set_directory(Arc::new(directory.client.clone()))?;
                 pool.set_foreign_authorization(Arc::new(
                     codeyard_cells_router::accounts::Remote::new(key, directory.client)?,
                 ));

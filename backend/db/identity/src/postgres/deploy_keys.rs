@@ -16,7 +16,7 @@ pub async fn list_deploy_keys(
     after: i64,
     limit: i64,
 ) -> Result<Vec<DeployKey>> {
-    let credential = credential.into();
+    let credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential = credential.into();
     let mut tx = pool.begin().await?;
     let live = codeyard_db_core::queries::postgres::credentials::repository(
         &mut tx,
@@ -111,7 +111,8 @@ pub async fn insert_deploy_key(
     credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
 ) -> Result<DeployKey> {
     let mut tx = pool.begin().await?;
-    require_admin(&mut tx, key.created_by_id, key.repo_id, credential.into()).await?;
+    let credential = credential.into();
+    require_admin(&mut tx, key.created_by_id, key.repo_id, credential.clone()).await?;
     let enabled:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=$1 AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories)").bind(key.repo_id).fetch_one(&mut *tx).await?;
     anyhow::ensure!(
         enabled,
@@ -119,10 +120,7 @@ pub async fn insert_deploy_key(
     );
 
     // The same advisory lock as account-key enrollment, so one fingerprint is checked once.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 37000003))")
-        .bind(&key.fingerprint)
-        .execute(&mut *tx)
-        .await?;
+    codeyard_db_core::queries::postgres::users::transitions::lock_fingerprints(&mut tx, &[&key.fingerprint]).await?;
     let used: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM ssh_keys WHERE fingerprint = $1) OR EXISTS(SELECT 1 FROM deploy_keys WHERE fingerprint = $1)",
     )
@@ -142,6 +140,11 @@ pub async fn insert_deploy_key(
         .bind(key.created_by_id)
         .fetch_one(&mut *tx)
         .await?;
+    if pool.directory().is_some() {
+        let fingerprint = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Ssh, &key.fingerprint)?;
+        anyhow::ensure!(codeyard_db_core::cells::directory::postgres::publish(pool, &mut tx, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::Repository, id: key.repo_id }, &[fingerprint]).await?, SshKeyWriteRefusal::AlreadyUsed);
+        require_admin(&mut tx, key.created_by_id, key.repo_id, credential).await?;
+    }
     tx.commit().await?;
     Ok(row)
 }
@@ -155,13 +158,16 @@ pub async fn delete_deploy_key(
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     require_admin(&mut tx, actor, repo_id, credential.into()).await?;
-    let result = sqlx::query("DELETE FROM deploy_keys WHERE id = $1 AND repo_id = $2")
-        .bind(key_id)
-        .bind(repo_id)
-        .execute(&mut *tx)
-        .await?;
+    let removed: Option<String> = sqlx::query_scalar("DELETE FROM deploy_keys WHERE id=$1 AND repo_id=$2 RETURNING fingerprint")
+        .bind(key_id).bind(repo_id).fetch_optional(&mut *tx).await?;
     tx.commit().await?;
-    Ok(result.rows_affected() > 0)
+    if let Some(fingerprint) = &removed {
+        if pool.directory().is_some() {
+            let key = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Ssh, fingerprint)?;
+            codeyard_db_core::cells::directory::postgres::release(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::Repository, id: repo_id }, &[key]).await?;
+        }
+    }
+    Ok(removed.is_some())
 }
 
 /// Records a use. It runs outside any transaction, and its caller ignores a failure.

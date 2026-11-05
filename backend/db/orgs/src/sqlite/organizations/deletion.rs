@@ -52,6 +52,7 @@ pub async fn delete_organization(
         .await?;
     }
     tx.commit().await?;
+    codeyard_db_core::cells::directory::sqlite::forget(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::Organization, id: org }).await?;
     Ok(Applied(()))
 }
 
@@ -140,6 +141,7 @@ pub async fn delete_organization_repository(
         .await?;
     }
     tx.commit().await?;
+    codeyard_db_core::cells::directory::sqlite::forget(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::Repository, id: repo }).await?;
     Ok(Applied(deleted))
 }
 

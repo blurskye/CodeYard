@@ -47,6 +47,10 @@ pub(crate) async fn require_user_namespace(
 }
 
 /// Call within the operation's transaction to retain one authority snapshot.
+pub async fn native_account(connection: &mut sqlx::SqliteConnection, actor: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar(&crate::users::transitions::native_account_sql()).bind(actor).fetch_one(connection).await?)
+}
+
 pub(crate) async fn active_account(
     connection: &mut sqlx::SqliteConnection,
     actor: i64,
@@ -62,6 +66,7 @@ pub(crate) async fn active_session(
 ) -> Result<bool> {
     Ok(
         active_account(connection, actor).await?
+            && native_account(connection, actor).await?
             && live_session(connection, actor, session).await?,
     )
 }
@@ -80,6 +85,17 @@ pub async fn require_account(
     credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
     require_account_with_mode(tx, actor, credential, true).await
+}
+
+/// Private account writes belong to the account's native home, including cached sessions.
+pub(crate) async fn require_account_exclusive(
+    tx: &mut Transaction<'_, sqlx::Sqlite>,
+    actor: i64,
+    credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
+) -> Result<()> {
+    require_account(tx, actor, credential).await?;
+    anyhow::ensure!(native_account(tx, actor).await?, codeyard_support::credentials::AccountRestricted);
+    Ok(())
 }
 
 pub async fn require_read_account(
@@ -381,6 +397,10 @@ pub async fn change_email(
     if email_owned(&mut tx, Some(email), user_id).await? {
         return Ok(EmailChange::Taken);
     }
+    let previous: Option<String> = if pool.directory().is_some() {
+        sqlx::query_scalar("SELECT substr(email,1,256) FROM users WHERE id=$1")
+            .bind(user_id).fetch_one(&mut *tx).await?
+    } else { None };
     let changed: bool = sqlx::query_scalar("SELECT email IS NOT ?2 FROM users WHERE id=?1")
         .bind(user_id)
         .bind(email)
@@ -410,7 +430,15 @@ pub async fn change_email(
     let Some(user) = user else {
         return Ok(EmailChange::Missing);
     };
+    if !codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await? { return Ok(EmailChange::Taken); }
+    if !current_password(&mut tx, user_id, expected, session, false).await? { return Ok(EmailChange::Missing); }
     tx.commit().await?;
+    if pool.directory().is_some() {
+        if let Some(previous) = previous {
+            let key = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, &previous)?;
+            codeyard_db_core::cells::directory::sqlite::release(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::User, id: user_id }, &[key]).await?;
+        }
+    }
     Ok(EmailChange::Updated(Box::new(user)))
 }
 

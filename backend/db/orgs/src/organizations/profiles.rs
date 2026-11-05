@@ -9,7 +9,7 @@ use sqlx::FromRow;
 use uuid::Uuid;
 
 native_operation!(crate::postgres::organizations::profiles::create_organization, crate::sqlite::organizations::profiles::create_organization,
-    fn create_organization(pool: &DbPool, actor: i64, input: &NewOrganization) -> Result<OrganizationOutcome<OrganizationMetadata>>);
+    fn create_organization(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, input: &NewOrganization) -> Result<OrganizationOutcome<OrganizationMetadata>>);
 native_operation!(crate::postgres::organizations::profiles::update_organization_profile, crate::sqlite::organizations::profiles::update_organization_profile,
     fn update_organization_profile(pool: &DbPool, actor: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>, org: i64, input: &OrganizationProfile) -> Result<OrganizationOutcome<OrganizationMetadata>>);
 // The picture is a file id. Setting one needs an owner or admin, and the file has to

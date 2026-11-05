@@ -42,11 +42,12 @@ pub async fn register(
     secret_hash: &str,
 ) -> Result<Option<App>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let registered = register_in_connection(&mut tx, actor, session, app, secret_hash).await?;
+    let registered = register_in_connection(pool, &mut tx, actor, session, app, secret_hash).await?;
     tx.commit().await?;
     Ok(registered)
 }
 pub(super) async fn register_in_connection(
+    pool: &SqlitePool,
     tx: &mut sqlx::SqliteConnection,
     actor: i64,
     session: &str,
@@ -67,6 +68,8 @@ pub(super) async fn register_in_connection(
     .await?;
     let app=sqlx::query_as("INSERT INTO github_apps(owner_id,bot_id,client_id,slug,name,description,homepage,public_key,permissions,events,access_level,is_public) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *")
         .bind(actor).bind(bot).bind(&app.client_id).bind(&app.slug).bind(&app.name).bind(&app.description).bind(&app.homepage).bind(&app.public_key).bind(&app.permissions).bind(&app.events).bind(app.access_level).bind(app.is_public).fetch_one(&mut *tx).await?;
+    if !codeyard_db_core::cells::directory::sqlite::user_id(pool, tx, bot, &[]).await? { return Ok(None); }
+    if !crate::sqlite::users::transitions::active_session(tx, actor, session).await? { return Ok(None); }
     Ok(Some(app))
 }
 /// Whether a client's owner, and a GitHub App's bot, may still use it. A missing client is

@@ -176,11 +176,12 @@ impl DbPool {
             Self::Sqlite(pool) => pool.cell_prefix(),
         }
     }
-    pub fn set_directory(&self, provider: crate::cells::directory::Provider) {
+    pub fn set_directory(&self, provider: crate::cells::directory::Provider) -> Result<()> {
         match self {
             Self::Postgres(pool) => pool.set_directory(provider),
-            Self::Sqlite(pool) => pool.set_directory(provider),
+            Self::Sqlite(_) => bail!("Copy this SQLite cell to PostgreSQL before enrolling it in the directory"),
         }
+        Ok(())
     }
     pub fn directory(&self) -> Option<crate::cells::directory::Provider> {
         match self {

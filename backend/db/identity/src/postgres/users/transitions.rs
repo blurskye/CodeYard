@@ -53,19 +53,7 @@ pub(crate) async fn organization_name_exists(
     )
 }
 
-/// Address locks are shared by primary and secondary enrollment, in hash order.
-pub(crate) async fn lock_emails(connection: &mut PgConnection, emails: &[&str]) -> Result<()> {
-    let keys: Vec<i64> = sqlx::query_scalar(
-        "SELECT DISTINCT hashtextextended(COALESCE(current_schema(),'') || ':email:' || lower(email),0) AS key FROM unnest($1::text[]) email ORDER BY key",
-    ).bind(emails).fetch_all(&mut *connection).await?;
-    for key in keys {
-        sqlx::query("SELECT pg_advisory_xact_lock($1)")
-            .bind(key)
-            .execute(&mut *connection)
-            .await?;
-    }
-    Ok(())
-}
+pub(crate) use codeyard_db_core::queries::postgres::users::transitions::lock_emails;
 
 pub(crate) async fn email_owned(
     tx: &mut Transaction<'_, Postgres>,
@@ -110,6 +98,10 @@ async fn active_account_locked(
     .unwrap_or(false))
 }
 
+pub async fn native_account(connection: &mut sqlx::PgConnection, actor: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar(&crate::users::transitions::native_account_sql()).bind(actor).fetch_one(connection).await?)
+}
+
 pub(crate) async fn active_account(connection: &mut PgConnection, actor: i64) -> Result<bool> {
     active_account_locked(connection, actor, true).await
 }
@@ -121,6 +113,7 @@ async fn active_session_locked(
     exclusive: bool,
 ) -> Result<bool> {
     Ok(active_account_locked(connection, actor, exclusive).await?
+        && native_account(connection, actor).await?
         && live_session(connection, actor, session).await?)
 }
 
@@ -155,7 +148,9 @@ pub(crate) async fn require_account_exclusive(
     actor: i64,
     credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
-    require_account_with_mode(tx, actor, credential, true, true).await
+    require_account_with_mode(tx, actor, credential, true, true).await?;
+    anyhow::ensure!(native_account(tx, actor).await?, codeyard_support::credentials::AccountRestricted);
+    Ok(())
 }
 
 pub async fn require_read_account(
@@ -512,6 +507,10 @@ pub async fn change_email(
     if email_owned(&mut tx, Some(email), user_id).await? {
         return Ok(EmailChange::Taken);
     }
+    let previous: Option<String> = if pool.directory().is_some() {
+        sqlx::query_scalar("SELECT substr(email,1,256) FROM users WHERE id=$1")
+            .bind(user_id).fetch_one(&mut *tx).await?
+    } else { None };
     let changed: bool =
         sqlx::query_scalar("SELECT email IS DISTINCT FROM $2 FROM users WHERE id=$1")
             .bind(user_id)
@@ -549,7 +548,15 @@ pub async fn change_email(
     let Some(user) = user else {
         return Ok(EmailChange::Missing);
     };
+    if !codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &user).await? { return Ok(EmailChange::Taken); }
+    if !current_password(&mut tx, user_id, expected, session, false).await? { return Ok(EmailChange::Missing); }
     tx.commit().await?;
+    if pool.directory().is_some() {
+        if let Some(previous) = previous {
+            let key = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, &previous)?;
+            codeyard_db_core::cells::directory::postgres::release(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::User, id: user_id }, &[key]).await?;
+        }
+    }
     Ok(EmailChange::Updated(Box::new(user)))
 }
 

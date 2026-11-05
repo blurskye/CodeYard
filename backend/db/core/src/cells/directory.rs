@@ -58,17 +58,28 @@ fn present_sql(object: ObjectKind, key: KeyKind) -> Result<&'static str> {
     })
 }
 
-pub fn user_keys(user: &crate::models::User) -> Result<Vec<Key>> {
-    ensure!(!user.is_stub, Refusal::Denied);
+fn account_keys(name: &str, email: Option<&str>, stub: bool) -> Result<Vec<Key>> {
+    ensure!(!stub, Refusal::Denied);
     // This is a cell's internal CI principal, not a globally named user account.
-    if user.username == crate::queries::ci_tokens::BOT { return Ok(Vec::new()); }
-    let mut keys = vec![Key::new(KeyKind::Name, &user.username)?];
-    if let Some(email) = &user.email { keys.push(Key::new(KeyKind::Email, email)?); }
+    if name == crate::queries::ci_tokens::BOT { return Ok(Vec::new()); }
+    let mut keys = vec![Key::new(KeyKind::Name, name)?];
+    if let Some(email) = email { keys.push(Key::new(KeyKind::Email, email)?); }
     Ok(keys)
 }
 
+pub fn user_keys(user: &crate::models::User) -> Result<Vec<Key>> {
+    account_keys(&user.username, user.email.as_deref(), user.is_stub)
+}
+fn object_sql(kind: ObjectKind) -> &'static str {
+    match kind {
+        ObjectKind::User => "SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)",
+        ObjectKind::Organization => "SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1)",
+        ObjectKind::Repository => "SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1)",
+    }
+}
+
 macro_rules! engine {
-    ($module:ident, $pool:ty, $connection:ty) => {
+    ($module:ident, $pool:ty, $connection:ty, $begin:literal, $lock:path) => {
         pub mod $module {
             use super::*;
             async fn free_key(pool: &$pool, connection: &mut $connection, provider: &Provider, key: &Key, expected: Option<Object>) -> Result<bool> {
@@ -123,8 +134,56 @@ macro_rules! engine {
                     Err(error) => Err(error),
                 }
             }
+            /// Recheck absence under the same local key locks as enrollment. A concurrent
+            /// re-enrollment by this object must not lose its new directory mapping.
+            pub async fn release(pool: &$pool, object: Object, keys: &[Key]) -> Result<()> {
+                let Some(provider) = pool.directory() else { return Ok(()); };
+                let config = provider.config();
+                config.validate()?;
+                object.validate()?;
+                ensure!(keys.len() <= config.maximum_keys && keys.iter().all(|key| key.kind()!=KeyKind::Name && key.belongs_to(object.kind)), Refusal::Denied);
+                tokio::time::timeout(Duration::from_secs(config.request_seconds), async {
+                    let mut tx = pool.begin_with($begin).await?;
+                    $lock(&mut tx, keys).await?;
+                    let mut absent = Vec::new();
+                    for key in keys {
+                        let present: bool = sqlx::query_scalar(present_sql(object.kind, key.kind())?)
+                            .bind(object.id).bind(key.value()).fetch_one(&mut *tx).await?;
+                        if !present { absent.push(key.clone()); }
+                    }
+                    provider.release(object, &absent).await?;
+                    tx.commit().await?;
+                    Ok(())
+                }).await.map_err(|_| Refusal::Unavailable)?
+            }
+            pub async fn forget(pool: &$pool, object: Object) -> Result<()> {
+                let Some(provider) = pool.directory() else { return Ok(()); };
+                let config = provider.config();
+                config.validate()?;
+                object.validate()?;
+                tokio::time::timeout(Duration::from_secs(config.request_seconds), async {
+                    let present: bool = sqlx::query_scalar(object_sql(object.kind)).bind(object.id).fetch_one(pool).await?;
+                    if !present { provider.forget(object).await?; }
+                    Ok(())
+                }).await.map_err(|_| Refusal::Unavailable)?
+            }
+            pub async fn user_id(pool: &$pool, connection: &mut $connection, user: i64, extra: &[Key]) -> Result<bool> {
+                let Some(provider) = pool.directory() else { return Ok(true); };
+                let config = provider.config();
+                config.validate()?;
+                let row: Option<(String, Option<String>, bool, i32)> = sqlx::query_as("SELECT substr(username,1,256),substr(email,1,256),is_stub,home_cell FROM users WHERE id=$1")
+                    .bind(user).fetch_optional(&mut *connection).await?;
+                let (name, email, stub, home) = row.ok_or(Refusal::Denied)?;
+                ensure!(home == i32::from(pool.cell_id().get()), Refusal::Denied);
+                let mut keys = account_keys(&name, email.as_deref(), stub)?;
+                if keys.is_empty() { ensure!(extra.is_empty(), Refusal::Denied); return Ok(true); }
+                ensure!(keys.len() <= config.maximum_keys && extra.len() <= config.maximum_keys.saturating_sub(keys.len()), Refusal::Unavailable);
+                keys.extend_from_slice(extra);
+                publish(pool, connection, Object { kind: ObjectKind::User, id: user }, &keys).await
+            }
             pub async fn user(pool: &$pool, connection: &mut $connection, user: &crate::models::User) -> Result<bool> {
                 if pool.directory().is_none() { return Ok(true); }
+                ensure!(user.home_cell == i32::from(pool.cell_id().get()), Refusal::Denied);
                 let keys = user_keys(user)?;
                 if keys.is_empty() { return Ok(true); }
                 publish(pool, connection, Object { kind: ObjectKind::User, id: user.id }, &keys).await
@@ -132,5 +191,5 @@ macro_rules! engine {
         }
     };
 }
-engine!(postgres, crate::pool::PgPool, sqlx::PgConnection);
-engine!(sqlite, crate::pool::SqlitePool, sqlx::SqliteConnection);
+engine!(postgres, crate::pool::PgPool, sqlx::PgConnection, "BEGIN", crate::queries::postgres::users::transitions::lock_directory_keys);
+engine!(sqlite, crate::pool::SqlitePool, sqlx::SqliteConnection, "BEGIN IMMEDIATE", crate::queries::sqlite::users::transitions::lock_directory_keys);

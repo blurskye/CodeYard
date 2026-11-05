@@ -234,7 +234,7 @@ pub async fn set_user_avatar(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     // The account and the requesting session must still be live when the picture changes,
     // which happens after the upload's storage work.
-    crate::sqlite::users::transitions::require_account(&mut tx, user_id, credential).await?;
+    crate::sqlite::users::transitions::require_account_exclusive(&mut tx, user_id, credential).await?;
     let previous: Option<uuid::Uuid> =
         sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=?1")
             .bind(user_id)

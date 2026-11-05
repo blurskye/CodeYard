@@ -74,6 +74,7 @@ pub async fn convert(
         return Ok(None);
     }
     let Some(app) = crate::postgres::github_apps::register_in_connection(
+        pool,
         &mut tx,
         actor,
         &session,

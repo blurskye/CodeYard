@@ -18,9 +18,11 @@ use OrganizationOutcome::Denied;
 
 pub async fn create_organization(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     input: &NewOrganization,
 ) -> Result<OrganizationOutcome<OrganizationMetadata>> {
+    let owner = actor.into();
+    let actor = owner.user_id;
     let mut tx = begin(pool).await?;
     // Ownership and namespace locks precede the new organization and membership.
     codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
@@ -30,8 +32,13 @@ pub async fn create_organization(
     .await?;
     codeyard_db_identity::postgres::users::transitions::lock_namespace(&mut tx, &input.slug)
         .await?;
-    if !active(&mut tx, actor).await? {
+    if !active(&mut tx, actor).await? || !codeyard_db_identity::postgres::users::transitions::native_account(&mut tx, actor).await? {
         return Ok(Denied);
+    }
+    if let Some(credential) = owner.credential() {
+        if !codeyard_db_core::queries::postgres::users::transitions::credential_live(&mut tx, actor, &credential, true).await? {
+            return Ok(Denied);
+        }
     }
     let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username COLLATE \"C\")=lower($1 COLLATE \"C\") UNION ALL SELECT 1 FROM organizations WHERE lower(name COLLATE \"C\")=lower($1 COLLATE \"C\"))")
         .bind(&input.slug).fetch_one(&mut *tx).await?;
@@ -49,6 +56,12 @@ pub async fn create_organization(
         .execute(&mut *tx)
         .await?;
     let result = metadata(&mut tx, id).await?;
+    let object = codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::Organization, id };
+    let keys = [codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, &input.slug)?];
+    if !codeyard_db_core::cells::directory::postgres::publish(pool, &mut tx, object, &keys).await? { return Ok(Conflict); }
+    if let Some(credential) = owner.credential() {
+        if !codeyard_db_core::queries::postgres::users::transitions::credential_live(&mut tx, actor, &credential, true).await? { return Ok(Denied); }
+    }
     tx.commit().await?;
     Ok(Applied(result))
 }

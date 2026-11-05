@@ -1305,7 +1305,7 @@ pub(super) async fn mutate(
     let outcome = match command {
         Command::Create(input) => codeyard_db_orgs::organizations::profiles::create_organization(
             &ctx.state.pool,
-            actor,
+            (actor, ctx.session_id.as_deref().unwrap_or("").to_owned()),
             &input,
         )
         .await

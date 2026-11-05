@@ -79,7 +79,20 @@ pub async fn change_emails(
         .fetch_one(&mut *tx)
         .await?;
     anyhow::ensure!(count <= 100, EmailRefusal::Limit);
+    let keys = if let Some(directory) = pool.directory() {
+        let config = directory.config();
+        config.validate()?;
+        anyhow::ensure!(emails.len() <= config.maximum_keys, EmailRefusal::Limit);
+        emails.iter().map(|email| codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, email)).collect::<Result<Vec<_>>>()?
+    } else { Vec::new() };
+    if add && pool.directory().is_some() {
+        anyhow::ensure!(codeyard_db_core::cells::directory::postgres::user_id(pool, &mut tx, user, &keys).await?, EmailRefusal::Taken);
+        crate::postgres::users::transitions::require_account_exclusive(&mut tx, user, credential).await?;
+    }
     tx.commit().await?;
+    if !add && !keys.is_empty() {
+        codeyard_db_core::cells::directory::postgres::release(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::User, id: user }, &keys).await?;
+    }
     Ok(())
 }
 

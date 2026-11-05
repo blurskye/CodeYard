@@ -24,7 +24,7 @@ pub async fn list_gpg_key_summaries(
     credential: &AccountCredential<'_>,
 ) -> Result<Vec<GpgKeySummary>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    crate::sqlite::users::transitions::require_account(&mut tx, user, credential).await?;
+    crate::sqlite::users::transitions::require_account_exclusive(&mut tx, user, credential).await?;
     let keys = sqlx::query_as::<_, StoredGpgKeySummary>("SELECT id,name,fingerprint,key_id,json_extract(key_data,'$.created_at') AS created_at,json_extract(key_data,'$.expires_at') AS expires_at,json_extract(key_data,'$.revoked') AS revoked FROM gpg_keys WHERE user_id=?1 AND primary_key_id IS NULL ORDER BY id LIMIT 100")
         .bind(user).fetch_all(&mut *tx).await?;
     tx.commit().await?;
@@ -83,7 +83,7 @@ pub async fn add_gpg_key(
     key: &NewGpgKey,
 ) -> Result<GpgKey> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    crate::sqlite::users::transitions::require_account(&mut tx, user, credential).await?;
+    crate::sqlite::users::transitions::require_account_exclusive(&mut tx, user, credential).await?;
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM gpg_keys WHERE user_id=?1 AND primary_key_id IS NULL",
     )
@@ -105,7 +105,7 @@ pub async fn delete_gpg_key(
     id: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    crate::sqlite::users::transitions::require_account(&mut tx, user, credential).await?;
+    crate::sqlite::users::transitions::require_account_exclusive(&mut tx, user, credential).await?;
     let changed =
         sqlx::query("DELETE FROM gpg_keys WHERE user_id=?1 AND id=?2 AND primary_key_id IS NULL")
             .bind(user)

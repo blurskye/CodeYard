@@ -57,7 +57,7 @@ pub async fn change_block(
 ) -> Result<()> {
     anyhow::ensure!(user != target, InvalidBlock);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    crate::sqlite::users::transitions::require_account(&mut tx, user, credential).await?;
+    crate::sqlite::users::transitions::require_account_exclusive(&mut tx, user, credential).await?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1)")
         .bind(target)
         .fetch_one(&mut *tx)

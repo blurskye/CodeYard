@@ -101,3 +101,28 @@ pub async fn credential_live(
         }
     })
 }
+
+/// Shared by personal/deploy-key enrollment and post-commit directory cleanup.
+pub async fn lock_fingerprints(connection: &mut PgConnection, fingerprints: &[&str]) -> Result<()> {
+    let keys: Vec<i64> = sqlx::query_scalar("SELECT DISTINCT hashtextextended(fingerprint,37000003) AS key FROM unnest($1::text[]) fingerprint ORDER BY key")
+        .bind(fingerprints).fetch_all(&mut *connection).await?;
+    for key in keys { sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(key).execute(&mut *connection).await?; }
+    Ok(())
+}
+
+/// Primary and secondary email writers retain these locks through their committing transaction.
+pub async fn lock_emails(connection: &mut PgConnection, emails: &[&str]) -> Result<()> {
+    let keys: Vec<i64> = sqlx::query_scalar(
+        "SELECT DISTINCT hashtextextended(COALESCE(current_schema(),'') || ':email:' || lower(email),0) AS key FROM unnest($1::text[]) email ORDER BY key",
+    ).bind(emails).fetch_all(&mut *connection).await?;
+    for key in keys { sqlx::query("SELECT pg_advisory_xact_lock($1)").bind(key).execute(&mut *connection).await?; }
+    Ok(())
+}
+
+pub async fn lock_directory_keys(connection: &mut PgConnection, keys: &[codeyard_model::cells::Key]) -> Result<()> {
+    use codeyard_model::cells::KeyKind;
+    let emails: Vec<_> = keys.iter().filter(|key| key.kind()==KeyKind::Email).map(|key| key.value()).collect();
+    let fingerprints: Vec<_> = keys.iter().filter(|key| key.kind()==KeyKind::Ssh).map(|key| key.value()).collect();
+    lock_emails(connection, &emails).await?;
+    lock_fingerprints(connection, &fingerprints).await
+}
