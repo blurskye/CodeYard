@@ -264,6 +264,16 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
         assert_eq!(status, 200, "{body}");
         assert_eq!(body["login"], name);
         assert_eq!(body["id"], id);
+        let response = client
+            .get(format!("{}/api/v3/user/{id}", router.url()))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(status, 200, "{body}");
+        assert_eq!(body["login"], name);
+        assert_eq!(body["id"], id);
         let repo = client
             .get(format!("{}/api/v3/repos/{name}/repo", router.url()))
             .send()
