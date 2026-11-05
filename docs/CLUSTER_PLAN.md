@@ -29,8 +29,9 @@ The experimental write path uses two storage voters, PostgreSQL decisions and a 
 journal. Cluster files use two storage-node copies or optional shared S3. Repository initialization
 and copy use the same quorum path and pass runtime checks on both database engines.
 
-Not complete: finished-CI drain and shutdown, the final process-loss checks, rolling
-upgrades and measured load limits.
+Not complete: finished-CI drain and shutdown, rolling upgrades and measured load limits.
+The latest cluster round has 48 passes, one CI execution failure and six CI-dependent
+skips on the builder without cgroup delegation.
 
 Current acceptance status:
 
@@ -55,11 +56,11 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 
 | # | Check | Pass when | Current check |
 |---|---|---|---|
-| A1 | `scripts/e2e.sh` cluster round | green | pending builder acceptance |
+| A1 | `scripts/e2e.sh` cluster round | green | 48 passes; one CI execution failure and six CI-dependent skips need a delegated cgroup |
 | A2 | Push over HTTP and SSH, `kill -9` the storage primary the moment the push returns | within 2 minutes `git clone` has the commit, no `--force` | HTTP and SSH acknowledgements survive immediate storage-primary SIGKILL; both clone paths recover the acknowledged commit |
 | A3 | Upload a package or CI artifact through web node 1, download it through web node 2 | same bytes | cross-node file and CI-artifact HTTP checks pass |
 | A4 | Stop one web node while clients run `gh` and `git` | other nodes keep serving, sessions survive, no half-written state | gh/Git traffic survives web1 SIGKILL through web2; saved browser sessions work on web2 |
-| A5 | Kill a storage node during a clone and a push | clear error to the client, no changed refs, clone retries from a copy | e2e pauses real pack transfers for SIGKILL and verifies copy retries; runtime pending |
+| A5 | Kill a storage node during a clone and a push | clear error to the client, no changed refs, clone retries from a copy | real clone and push PACK interruptions return client errors; copy retries preserve expected refs |
 | A6 | Fill a storage node's disk | placement skips it, writes fail cleanly, no corrupt repository | owned tmpfs Git failure/retry and HTTP placement checks pass on both engines |
 | A7 | Restart PostgreSQL under load | `/ready` goes 503 then 200, nodes reconnect without restart, no lost acknowledged write | owned PostgreSQL crashes during gh issue create; readiness recovers and every acknowledged write remains |
 | A8 | Revoke a node key | the node is refused on its next call, within 60 seconds | TCP/QUIC revocation checks pass |
