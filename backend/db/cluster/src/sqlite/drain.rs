@@ -71,13 +71,15 @@ pub async fn change(
             .await?
             .write_quorum
             .is_some();
+        let voters: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(voters),2) FROM (SELECT COUNT(*) AS voters FROM repository_voters v JOIN repositories r ON r.id=v.repository_id WHERE r.storage_node_id=$1 OR EXISTS(SELECT 1 FROM repository_voters held WHERE held.repository_id=r.id AND held.node_id=$1) GROUP BY v.repository_id) counts")
+            .bind(node.id).fetch_one(&mut *tx).await?;
         let targets = crate::drain::plan(
             node.id,
             &nodes,
             &repos,
             &copies,
             &pending,
-            if quorum { 2 } else { 1 },
+            if quorum { usize::try_from(voters)? } else { 1 },
         )?;
         for (repo, target) in targets {
             sqlx::query("INSERT INTO node_drain_repositories(node_id,repository_id,target_node_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
@@ -183,7 +185,7 @@ pub async fn record_error(pool: &SqlitePool, node: i64, repo: i64) -> Result<()>
 }
 
 pub async fn recovering(pool: &SqlitePool, node: i64) -> Result<Vec<i64>> {
-    Ok(sqlx::query_scalar("SELECT v.repository_id FROM repository_voters v JOIN repository_write_control c ON c.repository_id=v.repository_id WHERE v.node_id=$1 AND c.serving=0 ORDER BY v.repository_id LIMIT 128")
+    Ok(sqlx::query_scalar("SELECT v.repository_id FROM repository_voters v JOIN repository_write_control c ON c.repository_id=v.repository_id WHERE v.node_id=$1 AND (c.serving=0 OR v.applied_version<c.committed_version) ORDER BY v.repository_id LIMIT 128")
         .bind(node).fetch_all(pool).await?)
 }
 

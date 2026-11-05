@@ -1,4 +1,4 @@
-//! Two fixed voters, both required. Git preparation and publication belong to the stores;
+//! Fixed voters and a database-decided quorum. Git preparation and publication belong to the stores;
 //! only their durable votes and applied versions can complete a write here.
 use anyhow::Context;
 
@@ -57,7 +57,7 @@ pub async fn require_legacy_publisher(pool: &DbPool, repo: i64) -> Result<()> {
 /// authoritative; the monotonic budget also bounds waiting when a peer's clock differs.
 pub struct PreparedWrite {
     record: WriteRecord,
-    voters: [i64; 2],
+    voters: Vec<i64>,
     deadline: Instant,
 }
 
@@ -106,26 +106,18 @@ async fn begin_write(
         view.primary_id == primary && view.term == term && view.serving,
         "repository term is not serving"
     );
+    let required = codeyard_db_cluster::cluster::writes::required_votes(
+        settings
+            .write_quorum
+            .as_deref()
+            .context("write quorum is disabled")?,
+        view.voters.len(),
+    )?;
     ensure!(
-        view.voters.len() == 2,
-        "write quorum requires two fixed voters"
-    );
-    ensure!(
-        view.voters
-            .iter()
-            .all(|voter| { voter.term == term && voter.applied_version == view.committed_version })
-            && view.voters.iter().any(|voter| voter.node_id == primary),
-        "voters have not applied committed refs"
-    );
-    ensure!(
-        codeyard_db_cluster::cluster::writes::required_votes(
-            settings
-                .write_quorum
-                .as_deref()
-                .context("write quorum is disabled")?,
-            2,
-        )? == 2,
-        "two-voter mode requires both votes"
+        view.voters.iter().any(|voter| voter.node_id == primary
+            && voter.term == term
+            && voter.applied_version == view.committed_version),
+        "primary has not applied committed refs"
     );
     let result = timeout_at(
         deadline,
@@ -152,7 +144,7 @@ async fn begin_write(
         record.repository_id == repo
             && record.primary_id == primary
             && record.term == term
-            && record.required_votes == 2
+            && record.required_votes == required
             && record.manifest_hash
                 == codeyard_db_cluster::cluster::writes::manifest_hash(
                     repo,
@@ -165,7 +157,7 @@ async fn begin_write(
     );
     Ok(PreparedWrite {
         record,
-        voters: [view.voters[0].node_id, view.voters[1].node_id],
+        voters: view.voters.iter().map(|voter| voter.node_id).collect(),
         deadline,
     })
 }
@@ -196,7 +188,9 @@ pub async fn collect_votes(pool: &DbPool, write: &PreparedWrite) -> Result<bool>
         if write
             .voters
             .iter()
-            .all(|node| record.votes.iter().any(|vote| vote.node_id == *node))
+            .filter(|node| record.votes.iter().any(|vote| vote.node_id == **node))
+            .count() as i64
+            >= write.record.required_votes
         {
             return Ok(true);
         }

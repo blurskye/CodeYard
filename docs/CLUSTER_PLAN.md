@@ -146,9 +146,11 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
 12. **Production controls.** Per-account and per-IP rate limits, SAML or OIDC login for
     organizations, an audit log for organization and site actions, and the abuse controls
     in [ABUSE_PREVENTION.md](ABUSE_PREVENTION.md), all checked in the cluster round.
-13. **Cells.** Stages 1 to 6 of the architecture document, in order, each with its own
-    acceptance list. Not started until one cell is measured (A16) and PostgreSQL is the
-    limit.
+13. **Cells.** Stages 0 to 6 of the architecture document, in order, each with its own
+    acceptance list. The owner lifted the A16 gate on 2026-11-05. Stage 0 review is in
+    progress; stages 1 to 6 are not built. Individual users may move automatically to
+    their working region in stage 6. Organizations retain one write home and gain read
+    presence across regions in stages 5 and 6; see the architecture acceptance lists.
 
 ## Decisions that settle the open questions
 

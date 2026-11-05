@@ -749,9 +749,9 @@ the round rather than skipping it.
 
 ## 3. Scaling out: cells behind a router (plan, not built)
 
-Nothing in this section is built. Facts about today's code were checked in the source,
-industry figures come from public engineering posts, and every capacity number is an
-assumption until stage 1 measures a real cell.
+Stage 0 reuses the durability work from cluster plan items 3 and 11; stages 1 to 6
+are not built. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
+numbers remain assumptions until stage 1 measures a real cell.
 
 Two findings set the order of work:
 
@@ -855,7 +855,8 @@ verify. GitHub keeps deleted repositories for 90 days.
 ### Cells and placement
 
 **The owner account, a user or an org, is the unit of sharding.** Its repositories, issues,
-pull requests, packages, CI and settings live in one cell, and an org is never split. Why:
+pull requests, packages, CI and settings have one home cell for writes. Organizations
+span regions through read replicas and Git copies; their rows stay together in that cell. Why:
 URLs, permissions and nearly all 4,728 query sites are scoped by owner and repository, so a
 cell runs today's code unchanged, as in GitLab Cells. Cost: anything between owners in two
 cells crosses cells: forks, pull requests from forks, stars, follows, outside members.
@@ -1035,6 +1036,35 @@ for a very large org. Splitting an account by repository is rejected, since its 
 permissions would span cells; a single repository transferred to another cell uses the
 same rules (stage 3).
 
+Automatic region moves apply only to individual user accounts. Routers count requests
+per authenticated account, source region and day, including its API and CI tokens and SSH
+keys. Anonymous requests and outside readers of public repositories never count. Defaults
+in site settings: a seven-day window, at least 1,000 counted requests, at least 70% from
+one other region, held on three consecutive days. The hourly evaluator moves the account
+to the least full open cell in that region using the move above. It reuses scaling-policy
+database leases, dry run and pause: one leader, a 30-day account cooldown, one move per
+cell, a daily cap per region pair, no moves for pinned accounts, and no evaluation with
+only one region. Every move is audited; dry run only logs and audits "would move". All
+thresholds and controls are editable in site settings.
+
+Organizations never move automatically. They gain presence regions where at least 15% of
+their members' counted requests originate over seven days, with at least 500 requests and
+the condition held for three days. Counting follows the same authenticated-actor rule.
+Admins can edit thresholds and add or remove presence by hand. Remove presence when its
+share remains below 5% for 14 days. An org still has one home cell for every write, with
+no multi-master, two-phase commit or splitting its rows across cells.
+
+In a presence region, the home cell has an asynchronous database read replica shared by
+all its organizations; provision one when any organization first needs it. The org's
+repositories have non-voting Git copies there, using the existing copier, rebalancer and
+publication path. Routers send GETs and fetch/clone to the nearest current replica or Git
+copy, fall back to home when unavailable, and send all writes and reads for a few seconds
+after the same session wrote to home. A behind Git copy never serves clones. Regional
+presence adds one full copy of the cell database per presence region, plus one full Git
+copy of each present org's repositories per storage copy, indexes and WAL included in
+capacity planning. Only reads become local: distant writes still pay the round trip to
+the home region.
+
 ### Failures
 
 | Failure | What users see | RPO | RTO |
@@ -1138,18 +1168,27 @@ nothing returns the same results. (3) Explore, trending and "used by" cover both
 a new advisory raises alerts in both. (4) With search stopped, pages work and search shows
 an error.
 
-**Stage 5.** (1) Signups go to their region's cells, and a pinned org stays in its region.
+**Stage 5.** (1) Signups go to their region's cells, and pinned accounts keep their home
+region; org presence can span regions.
 (2) With a region stopped, its cells serve from the paired region within 30 minutes, and
 `codeyard repo verify --repair` lists what it fixed. (3) A schema change goes out in waves,
 a failing canary stops it, and old and new binaries run side by side. (4) A directory shard
-moves between clusters with no failed lookup.
+moves between clusters with no failed lookup. (5) With two regions, an org whose members
+work from B gains presence there: clone and `gh issue list` use B's current copies and
+match home, a push reaches home and the following B read shows it, a stopped replica
+falls back to home, and presence is removed after the share drops.
 
 **Stage 6.** (1) A test fails when a table has no ownership rule. (2) A user with
 repositories, issues, pull requests, CI history and packages moves cells, and `git clone`,
 `gh repo view`, `gh issue list`, `gh run list`, old REST and node ids and links from other
 cells keep working. (3) An org with 1,000 members moves with every member's access
 unchanged. (4) During the freeze writes get a retry message, and a move stopped halfway
-leaves the source serving as before.
+leaves the source serving as before. (5) With two regions, self-authenticated counts from
+another region crossing the threshold on three days move a user and preserve clone,
+`gh` and links. Anonymous reads never trigger a move; pinned and cooled-down accounts
+never move, and dry run changes no placement. Lease contention, pause, the daily region
+pair cap and one-move-per-cell guard hold. (6) Organization presence meets stage 5's
+two-region acceptance without moving its home cell or splitting its rows.
 
 ### Not built, rejected, and the biggest risk
 

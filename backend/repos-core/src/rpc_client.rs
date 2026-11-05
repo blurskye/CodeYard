@@ -88,24 +88,8 @@ impl NodeContext {
     ) -> anyhow::Result<()> {
         let limits = crate::git_transport::WriteLimits::load(self.database()?).await?;
         tokio::time::timeout(limits.timeout, async {
-            let follower = self.write_follower(write).await?;
             self.prepare_local_write(path, write, limits).await?;
-            let (reply, _) = self
-                .call(
-                    follower,
-                    Request {
-                        repository,
-                        operation: Operation::PrepareWrite {
-                            id: write.id.clone(),
-                        },
-                        actor: None,
-                        ci_run: None,
-                    },
-                    &[],
-                )
-                .await?;
-            reply.result.map_err(|_| unavailable())?;
-            Ok::<_, anyhow::Error>(())
+            self.write_followers(repository, write, true).await
         })
         .await?
     }
@@ -118,26 +102,11 @@ impl NodeContext {
     ) -> anyhow::Result<()> {
         let limits = crate::git_transport::WriteLimits::load(self.database()?).await?;
         tokio::time::timeout(limits.timeout, async {
-            let follower = self.write_follower(write).await?;
             self.publish_local_write(path, write).await?;
-            let (reply, _) = self
-                .call(
-                    follower,
-                    Request {
-                        repository,
-                        operation: Operation::ApplyWrite {
-                            id: write.id.clone(),
-                        },
-                        actor: None,
-                        ci_run: None,
-                    },
-                    &[],
-                )
-                .await?;
-            reply.result.map_err(|_| unavailable())?;
-            self.remove_write_preparation(path, write, limits).await?;
+            self.write_followers(repository, write, false).await?;
+            // Retain the primary's prepared objects until the database confirms publication.
             codeyard_cluster_core::writes::publish(self.database()?, write).await?;
-            Ok::<_, anyhow::Error>(())
+            self.remove_write_preparation(path, write, limits).await
         })
         .await?
     }
@@ -153,33 +122,25 @@ impl NodeContext {
             limits.timeout.min(std::time::Duration::from_secs(1)),
             async {
                 anyhow::ensure!(write.decision == "abort", "write is not aborted");
-                let follower = self.write_follower(write).await?;
                 self.remove_write_preparation(path, write, limits).await?;
-                let (reply, _) = self
-                    .call(
-                        follower,
-                        Request {
-                            repository,
-                            operation: Operation::ApplyWrite {
-                                id: write.id.clone(),
-                            },
-                            actor: None,
-                            ci_run: None,
-                        },
-                        &[],
-                    )
-                    .await?;
-                reply.result.map_err(|_| unavailable())?;
-                Ok::<_, anyhow::Error>(())
+                // An unavailable voter cannot prevent local abort cleanup; its unserved
+                // preparation is discarded when that voter reconstructs its term.
+                let _ = self.write_followers(repository, write, false).await;
+                Ok(())
             },
         )
         .await?
     }
 
-    async fn write_follower(
+    /// Fan out to the fixed voters concurrently. A slow or stopped minority cannot
+    /// prevent a majority from preparing and publishing within the write deadline.
+    async fn write_followers(
         &self,
+        repository: Uuid,
         write: &codeyard_db_core::models::WriteRecord,
-    ) -> anyhow::Result<i64> {
+        prepare: bool,
+    ) -> anyhow::Result<()> {
+        use futures_util::{stream::FuturesUnordered, StreamExt};
         let view = codeyard_db_cluster::cluster::writes::recovery_view(
             self.database()?,
             write.repository_id,
@@ -188,15 +149,48 @@ impl NodeContext {
         anyhow::ensure!(
             view.primary_id == self.node_id
                 && write.primary_id == self.node_id
-                && view.term == write.term
-                && view.voters.len() == 2,
+                && view.term == write.term,
             "write term changed"
         );
-        view.voters
-            .iter()
-            .find(|voter| voter.node_id != self.node_id && voter.term == write.term)
-            .map(|voter| voter.node_id)
-            .ok_or_else(|| anyhow::anyhow!("write voter missing"))
+        let mut pending = FuturesUnordered::new();
+        for voter in &view.voters {
+            if voter.node_id == self.node_id {
+                continue;
+            }
+            let operation = if prepare {
+                Operation::PrepareWrite {
+                    id: write.id.clone(),
+                }
+            } else {
+                Operation::ApplyWrite {
+                    id: write.id.clone(),
+                }
+            };
+            pending.push(self.call(
+                voter.node_id,
+                Request {
+                    repository,
+                    operation,
+                    actor: None,
+                    ci_run: None,
+                },
+                &[],
+            ));
+        }
+        let mut applied = 1_i64;
+        if applied >= write.required_votes {
+            return Ok(());
+        }
+        while let Some(answer) = pending.next().await {
+            if answer.is_ok_and(|(reply, _)| reply.result.is_ok()) {
+                applied += 1;
+            }
+            if applied >= write.required_votes {
+                return Ok(());
+            }
+        }
+        anyhow::ensure!(applied >= write.required_votes, "write quorum unavailable");
+        Ok(())
     }
 
     pub async fn call(

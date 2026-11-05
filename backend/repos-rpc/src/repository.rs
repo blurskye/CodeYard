@@ -504,6 +504,47 @@ impl RpcHandler {
                 Some(row.id),
             ));
         }
+        if matches!(request.operation, Operation::ReplicaPack { .. })
+            && node.roles.iter().any(|role| role == "storage")
+            && codeyard_db_cluster::cluster::writes::write_settings(pool)
+                .await
+                .map_err(|_| unavailable())?
+                .write_quorum
+                .is_some()
+        {
+            let repo = codeyard_db_cluster::cluster::get_repository_by_uuid(
+                pool,
+                &request.repository.to_string(),
+            )
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(unavailable)?;
+            let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, repo.id)
+                .await
+                .map_err(|_| unavailable())?;
+            if !view.serving {
+                let current = view.voters.iter().any(|voter| {
+                    voter.node_id == self.context.node_id
+                        && voter.term == view.term
+                        && voter.applied_version == view.committed_version
+                });
+                let caller_voter = view
+                    .voters
+                    .iter()
+                    .any(|voter| voter.node_id == node.id && voter.term == view.term);
+                if !current || !caller_voter {
+                    return Err(unavailable());
+                }
+                let path = codeyard_repos_core::context::term_path(
+                    &self.context.repos_path,
+                    request.repository,
+                    view.term,
+                );
+                codeyard_repos_core::context::literal_directory(&self.context.repos_path, &path)
+                    .await?;
+                return Ok((store_at(&path, self.context.node_id)?, Some(repo.id)));
+            }
+        }
         let (repo_id, directory) = self
             .check_repository(
                 request.repository,
@@ -534,6 +575,11 @@ impl RpcHandler {
                         .await
                         .map_err(|_| unavailable())?
                         .is_some()
+                        || codeyard_db_cluster::cluster::writes::recovery_view(pool, repo_id)
+                            .await
+                            .is_ok_and(|view| {
+                                view.voters.iter().any(|voter| voter.node_id == node.id)
+                            })
                 }
                 None => false,
             };
@@ -626,7 +672,6 @@ impl RpcHandler {
         if repo.id != write.repository_id
             || view.term != write.term
             || view.primary_id != write.primary_id
-            || view.voters.len() != 2
             || !view
                 .voters
                 .iter()

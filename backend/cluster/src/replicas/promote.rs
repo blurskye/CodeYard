@@ -192,8 +192,8 @@ async fn promote_quorum(
     let mut voters: Vec<_> = first.voters.iter().map(|voter| voter.node_id).collect();
     voters.sort_unstable();
     ensure!(
-        voters.len() == 2,
-        "promotion requires the same two fixed voters"
+        (2..=999).contains(&voters.len()),
+        "promotion requires fixed voters"
     );
     let original = voters.clone();
     if let Some(replacement) = replacement {
@@ -257,6 +257,7 @@ async fn promote_quorum(
                 });
                 ensure!(
                     current
+                        || (original.contains(voter) && *voter != to)
                         || codeyard_db_cluster::cluster::replica_is_current(pool, *member, *voter)
                             .await?,
                     "replacement copy has not applied canonical refs"
@@ -314,8 +315,92 @@ pub async fn promote_to_voters(
     .await?
 }
 
-/// Each voter reconstructs only its own directories. Enabling still requires both
-/// voters' durable applied versions and no unfinished operation in the whole family.
+/// Refill a missed voter from a current copy before enabling it or using it for reads.
+/// ReplicaPack is also the backup transport; no new publication protocol is involved.
+pub async fn catch_up_voter(
+    context: &codeyard_repos_core::context::NodeContext,
+    repository: i64,
+) -> Result<()> {
+    use codeyard_db_cluster::cluster::writes as journal;
+    use codeyard_repos_core::repositories::store::RepoStore;
+    let pool = context.database()?;
+    let view = journal::recovery_view(pool, repository).await?;
+    if !view
+        .voters
+        .iter()
+        .any(|voter| voter.node_id == context.node_id)
+        || view.unfinished.as_ref().is_some_and(|write| write.decision == "pending")
+    {
+        return Ok(());
+    }
+    let row = codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository)
+        .await?
+        .context("repository disappeared during voter catch-up")?;
+    let uuid = codeyard_repos_core::wire::repository_uuid(&row.disk_path)?;
+    let path = codeyard_repos_core::context::term_path(&context.repos_path, uuid, view.term);
+    let guards = tokio::time::timeout(Duration::from_millis(500), async {
+        let publication = codeyard_git::locks::publication(&path).await?;
+        let readers = codeyard_git::locks::exclusive(&path).await;
+        Ok::<_, anyhow::Error>((publication, readers))
+    })
+    .await??;
+    let latest = journal::recovery_view(pool, repository).await?;
+    ensure!(
+        latest.term == view.term
+            && latest.committed_version == view.committed_version
+            && latest.unfinished.as_ref().is_none_or(|write| write.decision != "pending"),
+        "canonical refs changed before voter catch-up"
+    );
+    let want: Vec<_> = view
+        .refs
+        .iter()
+        .filter(|value| value.kind == "oid")
+        .map(|value| value.target.clone())
+        .collect();
+    let nodes = codeyard_db_cluster::cluster::list_nodes(pool).await?;
+    for source in view.voters.iter().filter(|voter| {
+        voter.node_id != context.node_id
+            && voter.term == view.term
+            && voter.applied_version == view.committed_version
+            && is_reporting_storage(&nodes, voter.node_id)
+    }) {
+        if super::transfer::snapshot(context, source.node_id, uuid, &path, &want)
+            .await
+            .is_err()
+        {
+            continue;
+        }
+        let store = RepoStore::from_disk_path(path.to_str().context("invalid term path")?);
+        store.restore_refs(&view.refs).await?;
+        let current = journal::recovery_view(pool, repository).await?;
+        ensure!(
+            current.term == view.term
+                && current.committed_version == view.committed_version
+                && current.unfinished.as_ref().is_none_or(|write| write.decision != "pending"),
+            "canonical refs changed during voter catch-up"
+        );
+        ensure!(
+            journal::mark_write_applied(
+                pool,
+                repository,
+                context.node_id,
+                view.term,
+                view.committed_version
+            )
+            .await?,
+            "voter term changed"
+        );
+        if let Some(write) = &view.unfinished {
+            journal::finish_write(pool, &write.id, view.term).await?;
+        }
+        drop(guards);
+        return Ok(());
+    }
+    anyhow::bail!("no current voter could supply canonical objects")
+}
+
+/// Each voter reconstructs only its own directories. Enabling requires a quorum
+/// of durable applied versions and no unfinished operation in the whole family.
 pub async fn recover_family(
     pool: &DbPool,
     repository: i64,
@@ -420,12 +505,19 @@ pub async fn take_over(
         if quorum {
             let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, row.repository_id)
                 .await?;
-            // Two voters cannot complete reconstruction while one is offline. Keep the
-            // last serving term available for read fallback until a voter can be replaced.
-            if !view
+            let settings = codeyard_db_cluster::cluster::writes::write_settings(pool)
+                .await?
+                .write_quorum;
+            let required = codeyard_db_cluster::cluster::writes::required_votes(
+                settings.as_deref().context("write quorum is disabled")?,
+                view.voters.len(),
+            )?;
+            if view
                 .voters
                 .iter()
-                .all(|voter| is_reporting_storage(&nodes, voter.node_id))
+                .filter(|voter| is_reporting_storage(&nodes, voter.node_id))
+                .count()
+                < required as usize
             {
                 continue;
             }

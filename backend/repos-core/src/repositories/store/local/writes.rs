@@ -314,7 +314,7 @@ impl LocalStore {
         }) {
             return Err(RepoError::storage_node_unavailable());
         }
-        let other = if primary == context.node_id {
+        let others = if primary == context.node_id {
             if codeyard_db_cluster::cluster::get_write_version(pool, repository)
                 .await
                 .map_err(RepoError::from)?
@@ -322,16 +322,23 @@ impl LocalStore {
             {
                 return Err(RepoError::write_denied());
             }
-            let other = codeyard_db_core::models::ClusterNode::ranked_storage(&nodes)
+            let others: Vec<_> = codeyard_db_core::models::ClusterNode::ranked_storage(&nodes)
                 .into_iter()
-                .find(|node| node.id != primary)
-                .ok_or_else(RepoError::storage_node_unavailable)?
-                .id;
+                .filter(|node| node.id != primary)
+                .take(2)
+                .map(|node| node.id)
+                .collect();
+            if others.is_empty() {
+                return Err(RepoError::storage_node_unavailable());
+            }
+            let voters: Vec<_> = std::iter::once(primary)
+                .chain(others.iter().copied())
+                .collect();
             journal::bootstrap_writes(
                 pool,
                 repository,
                 primary,
-                &[primary, other],
+                &voters,
                 &[RefValue {
                     name: "HEAD".into(),
                     kind: "symbolic".into(),
@@ -340,7 +347,7 @@ impl LocalStore {
             )
             .await
             .map_err(RepoError::from)?;
-            Some(other)
+            Some(others)
         } else {
             None
         };
@@ -380,25 +387,27 @@ impl LocalStore {
         ))
         .await
         .map_err(RepoError::from)?;
-        if let Some(other) = other {
-            let (reply, _) = Box::pin(context.call(
-                other,
-                crate::wire::Request {
-                    repository: uuid,
-                    operation: crate::wire::Operation::Initialize {
-                        source: None,
-                        default_branch: default_branch.into(),
+        if let Some(others) = others {
+            for other in others {
+                let (reply, _) = Box::pin(context.call(
+                    other,
+                    crate::wire::Request {
+                        repository: uuid,
+                        operation: crate::wire::Operation::Initialize {
+                            source: None,
+                            default_branch: default_branch.into(),
+                        },
+                        actor: None,
+                        ci_run: None,
                     },
-                    actor: None,
-                    ci_run: None,
-                },
-                b"",
-            ))
-            .await?;
-            reply.result.map_err(|failure| match failure {
-                crate::wire::Failure::Repository(error) => error,
-                _ => RepoError::storage_node_unavailable(),
-            })?;
+                    b"",
+                ))
+                .await?;
+                reply.result.map_err(|failure| match failure {
+                    crate::wire::Failure::Repository(error) => error,
+                    _ => RepoError::storage_node_unavailable(),
+                })?;
+            }
             if !journal::enable_initialized_repository(pool, repository, primary)
                 .await
                 .map_err(RepoError::from)?

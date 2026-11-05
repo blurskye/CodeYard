@@ -55,7 +55,6 @@ pub async fn plan(pool: &PgPool, node: i64) -> Result<Option<Move>> {
         .await?
         .write_quorum
         .is_some();
-    let wanted = if quorum { 2 } else { setting.parse::<usize>()? };
     let candidates: Vec<i64> = sqlx::query_scalar("SELECT r.id FROM repositories r WHERE r.storage_node_id=$1 AND NOT EXISTS(SELECT 1 FROM node_drain_repositories d WHERE d.repository_id=r.id) ORDER BY r.size_bytes,COALESCE((SELECT MAX(created_at) FROM repository_pushes WHERE repo_id=r.id),r.created_at),r.id LIMIT 128")
         .bind(node).fetch_all(&mut *tx).await?;
     let limit = crate::drain::repository_limit()?;
@@ -73,6 +72,16 @@ pub async fn plan(pool: &PgPool, node: i64) -> Result<Option<Move>> {
             copies.len() as i64 <= limit.saturating_mul(1000),
             "rebalance copy limit exceeded"
         );
+        let voters: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM repository_voters WHERE repository_id=$1")
+                .bind(repository)
+                .fetch_one(&mut *tx)
+                .await?;
+        let wanted = if quorum {
+            usize::try_from(voters)?
+        } else {
+            setting.parse::<usize>()?
+        };
         let planned = match crate::drain::plan(node, &nodes, &rows, &copies, &pending, wanted) {
             Ok(plan) => plan,
             Err(error) if error.is::<crate::drain::Refusal>() => continue,

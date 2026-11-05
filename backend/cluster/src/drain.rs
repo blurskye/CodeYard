@@ -24,7 +24,8 @@ pub async fn change(
 pub async fn step(context: &NodeContext) -> Result<()> {
     let pool = context.database()?;
     for repository in codeyard_db_cluster::drain::recovering(pool, context.node_id).await? {
-        // Each voter reconstructs its own retained bytes. Serving waits for every voter.
+        // Try retained bytes first. A voter missing acknowledged objects can fetch them
+        // from a reconstructed voter while client writes remain fenced.
         if let Err(error) = crate::replicas::promote::recover_family(
             pool,
             repository,
@@ -34,6 +35,9 @@ pub async fn step(context: &NodeContext) -> Result<()> {
         .await
         {
             tracing::debug!(repository, %error, "canonical recovery is pending");
+        }
+        if let Err(error) = crate::replicas::promote::catch_up_voter(context, repository).await {
+            tracing::debug!(repository, %error, "voter catch-up is pending");
         }
     }
     let node = codeyard_db_cluster::cluster::get_node_by_id(pool, context.node_id)

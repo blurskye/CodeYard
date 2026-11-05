@@ -56,6 +56,10 @@ pub(super) struct Stores {
 
 impl Stores {
     pub(super) async fn new(pool: &DbPool) -> Self {
+        Self::with_voters(pool, 2).await
+    }
+
+    async fn with_voters(pool: &DbPool, count: usize) -> Self {
         let seed = tempfile::tempdir().unwrap();
         let seed_repo = git2::Repository::init_bare(seed.path()).unwrap();
         let old = commit(&seed_repo, "initial", None);
@@ -75,7 +79,7 @@ impl Stores {
                 target: old.clone(),
             },
         ];
-        let fixture = setup_with_refs(pool, 2, "2", &refs).await;
+        let fixture = setup_with_refs(pool, count, "majority", &refs).await;
         assert!(crate::support::native_database::enable_cluster(pool)
             .await
             .unwrap());
@@ -1061,4 +1065,48 @@ engine_pair!(
     sqlite_acknowledged_push_survives_primary_loss,
     postgres_acknowledged_push_survives_primary_loss,
     acknowledged_push_is_advertised_when_the_primary_listener_disappears
+);
+
+async fn three_voters_keep_a_majority_and_recover_a_missed_write(pool: &DbPool) {
+    let stores = Stores::with_voters(pool, 3).await;
+    set_timeout(pool, 2).await.unwrap();
+    // Stop one follower before a real receive-pack. Two durable voters still suffice.
+    stores.listeners[2].stop().await;
+    let (status, output, errors) = stores.push(pool).await;
+    assert!(status.as_ref().is_ok_and(|status| status.success()),
+        "{status:?}: {}", String::from_utf8_lossy(&errors));
+    assert!(String::from_utf8_lossy(&output).contains("ok refs/heads/main"));
+    let write = last_write(pool, stores.fixture.repo).await;
+    assert_eq!(write.required_votes, 2);
+    assert!(write.finished);
+    assert_eq!(stores.refs().await[1][MAIN], stores.new);
+    assert_eq!(stores.refs().await[2][MAIN], stores.old);
+
+    // The missed voter fetches acknowledged objects from a current copy. Its own
+    // outbound connection works while its inbound listener is stopped.
+    codeyard_cluster::replicas::promote::catch_up_voter(
+        &stores.contexts[2], stores.fixture.repo,
+    ).await.unwrap();
+    assert_eq!(stores.refs().await[2][MAIN], stores.new);
+    let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, stores.fixture.repo)
+        .await.unwrap();
+    assert!(view.voters.iter().all(|voter| voter.applied_version == view.committed_version));
+
+    // Two stopped followers cannot acknowledge a branch mutation or change any refs.
+    stores.listeners[1].stop().await;
+    let before = stores.refs().await;
+    let authority = codeyard_db_core::queries::credentials::Actor::ssh_key(
+        stores.fixture.owner,
+        match stores.credential { ReceiveCredential::SshKey(id) => id, _ => unreachable!() },
+    );
+    let store = stores.store(pool).await;
+    assert!(store.create_ref(pool, stores.fixture.repo, &authority,
+        "refs/heads/refused", &stores.new).await.is_err());
+    assert_eq!(stores.refs().await, before);
+    stores.stop().await;
+}
+engine_pair!(
+    sqlite_three_voters_keep_a_majority,
+    postgres_three_voters_keep_a_majority,
+    three_voters_keep_a_majority_and_recover_a_missed_write
 );
