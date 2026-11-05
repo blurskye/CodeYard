@@ -143,6 +143,10 @@ async fn contract(pg: bool) {
     )
     .await;
     let suite_id = suite["id"].as_i64().unwrap();
+    assert_eq!(
+        suite["node_id"],
+        codeyard_model::node_id::scoped("CSU", repo.id, suite_id).unwrap()
+    );
     assert_eq!(suite["head_branch"], "main");
     assert_eq!(suite["status"], "queued");
     let (_, existing) = send(

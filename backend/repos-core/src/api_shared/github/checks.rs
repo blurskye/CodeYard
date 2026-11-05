@@ -111,7 +111,7 @@ pub fn suite_value(
         pull_requests,
     } = documents;
     let url = format!("{}/check-suites/{}", repo_url(owner, &repo.name), suite.id);
-    json!({"id":suite.id,"node_id":codeyard_model::node_id::encode("CSU",suite.id),"head_sha":suite.head_sha,"head_branch":suite.head_branch,"status":status,"conclusion":conclusion,"url":url,"before":null,"after":null,"created_at":suite.created_at,"updated_at":suite.updated_at,"repository":payloads::repository(repo,owner),"latest_check_runs_count":count,"check_runs_url":format!("{url}/check-runs"),"app":publisher,"head_commit":head_commit,"pull_requests":pull_requests,"rerequestable":true,"runs_rerequestable":true})
+    json!({"id":suite.id,"node_id":codeyard_model::node_id::scoped("CSU",repo.id,suite.id),"head_sha":suite.head_sha,"head_branch":suite.head_branch,"status":status,"conclusion":conclusion,"url":url,"before":null,"after":null,"created_at":suite.created_at,"updated_at":suite.updated_at,"repository":payloads::repository(repo,owner),"latest_check_runs_count":count,"check_runs_url":format!("{url}/check-runs"),"app":publisher,"head_commit":head_commit,"pull_requests":pull_requests,"rerequestable":true,"runs_rerequestable":true})
 }
 
 /// Uses the bounded head snapshot captured on the store that accepted the publication. The
