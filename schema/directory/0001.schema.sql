@@ -15,7 +15,9 @@ CREATE TABLE directory_cells (
 CREATE INDEX directory_cells_placement ON directory_cells(region,state,database_bytes,id);
 CREATE TABLE directory_cell_prefixes (
     prefix INTEGER PRIMARY KEY CHECK(prefix BETWEEN 0 AND 65535),
-    cell_id INTEGER NOT NULL REFERENCES directory_cells(id)
+    cell_id INTEGER NOT NULL REFERENCES directory_cells(id),
+    previous_prefix INTEGER UNIQUE REFERENCES directory_cell_prefixes(prefix),
+    CHECK(previous_prefix IS NULL OR previous_prefix<>prefix)
 );
 CREATE TABLE directory_node_keys (
     public_key TEXT PRIMARY KEY CHECK(length(public_key)=64),

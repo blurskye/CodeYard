@@ -34,6 +34,15 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path) -> Result<()> {
 
 #[derive(Debug, Subcommand)]
 pub enum DirectoryCommand {
+    /// Reserve a successor for a cell range that has reached 80% use.
+    AllocatePrefix {
+        #[arg(long)]
+        node_key: String,
+        #[arg(long)]
+        previous: Prefix,
+        #[arg(long)]
+        last_id: i64,
+    },
     /// Initialize the directory's separate PostgreSQL database.
     Initialize,
     /// Serve authenticated directory lookups and claims with the node key.
@@ -95,6 +104,16 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
     let result = async {
         directory.migrate().await?;
         match command {
+            DirectoryCommand::AllocatePrefix {
+                node_key,
+                previous,
+                last_id,
+            } => {
+                println!(
+                    "{}",
+                    directory.next_prefix(node_key, *previous, *last_id).await?
+                );
+            }
             DirectoryCommand::Initialize => println!("Directory initialized."),
             DirectoryCommand::RouterKey { public_key, revoke } => {
                 directory.set_router_key(public_key, !revoke).await?;

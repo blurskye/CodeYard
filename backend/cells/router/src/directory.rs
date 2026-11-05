@@ -48,6 +48,10 @@ impl Config {
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    NextPrefix {
+        previous: Prefix,
+        last_id: i64,
+    },
     Cell {
         prefix: Prefix,
     },
@@ -78,6 +82,7 @@ pub enum Request {
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "result", content = "value", rename_all = "snake_case")]
 pub enum Reply {
+    Prefix(Prefix),
     Cell(Option<Cell>),
     Location(Option<Location>),
     Home(Option<Prefix>),
@@ -263,6 +268,9 @@ async fn handle(directory: &Directory, peer: &str, request: Request) -> Result<R
     // A router key is read-only. Mutations recheck cell enrollment and retain it
     // inside their committing transaction, so this read admission grants no writes.
     Ok(match request {
+        Request::NextPrefix { previous, last_id } => {
+            Reply::Prefix(directory.next_prefix(peer, previous, last_id).await?)
+        }
         Request::Cell { prefix } => Reply::Cell(directory.cell_for(Some(peer), prefix).await?),
         Request::Choose { region } => {
             Reply::Cell(directory.choose_cell_for(Some(peer), &region).await?)

@@ -182,7 +182,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     that pinned prefix-only output now assert rooted output. Workspace
     9b48ed0ede81492a983d778bf7f0685f, Clippy e7e52deddcfb4410ab8cdd9a026b3491
     and WASM db4415d3a44047e9b8efe007bc3521d7 pass. Metadata-only owner validation
-    and separate hostile-device-code fixtures are the next unchecked source.
+    and separate hostile-device-code fixtures pass workspace 8ebdc01a8f004f7894327a8349a9ec23,
+    Clippy 1479f7b8de6947bca79da2c9d9033dd2 and WASM 20f40e535815478e9883094602057fd0.
+    Idempotent successor-prefix reservations, CLI/TLS operations and their tests are written
+    but unchecked. Native range activation and automatic renewal remain open.
     The public proxy role, foreign authorization and stages 3 to 6 remain unimplemented.
     Automatic individual moves and org regional presence are documented owner decisions.
 

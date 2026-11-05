@@ -90,6 +90,29 @@ async fn directory_cli_owns_a_separate_baseline_and_bounds_pages_and_placement()
             String::from_utf8_lossy(&output.stderr)
         );
     }
+    let end = Prefix::ZERO.ids().end().to_string();
+    for _ in 0..2 {
+        let output = cli(
+            root.path(),
+            &database.connection_url(),
+            &[
+                "allocate-prefix",
+                "--node-key",
+                &a,
+                "--previous",
+                "0",
+                "--last-id",
+                &end,
+            ],
+        )
+        .await;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8(output.stdout).unwrap().trim(), "2");
+    }
     let output = cli(
         root.path(),
         &database.connection_url(),
@@ -269,6 +292,75 @@ async fn expired_directory_claims_do_not_publish_and_cleanup_releases_the_name()
         directory.lookup(&keys[0]).await.unwrap().unwrap().object,
         new
     );
+    directory.close().await;
+    database.finish().await;
+}
+
+#[tokio::test]
+async fn successor_prefixes_are_atomic_owned_and_retry_the_same_reservation() {
+    let mut database = PostgresDatabase::unmigrated().await;
+    let directory = Directory::connect(&database.connection_url(), Config::default())
+        .await
+        .unwrap();
+    directory.migrate().await.unwrap();
+    directory.register_cell(cell(1, 'a')).await.unwrap();
+    directory.register_cell(cell(3, 'b')).await.unwrap();
+    let first = Prefix::new(1);
+    let other = Prefix::new(3);
+    let a = "a".repeat(64);
+    let b = "b".repeat(64);
+    assert!(directory
+        .next_prefix(&a, first, *first.ids().start())
+        .await
+        .is_err());
+    assert!(directory
+        .next_prefix(&a, first, *other.ids().end())
+        .await
+        .is_err());
+    assert!(directory
+        .next_prefix(&b, first, *first.ids().end())
+        .await
+        .is_err());
+    let capacity = codeyard_support::cells::IDS_PER_PREFIX - 1;
+    let threshold = *first.ids().start() + capacity - capacity / 5 - 1;
+    assert!(directory
+        .next_prefix(&a, first, threshold - 1)
+        .await
+        .is_err());
+    let (one, retry, two) = tokio::join!(
+        directory.next_prefix(&a, first, threshold),
+        directory.next_prefix(&a, first, threshold),
+        directory.next_prefix(&b, other, *other.ids().end()),
+    );
+    let one = one.unwrap();
+    let two = two.unwrap();
+    assert_eq!(one, retry.unwrap());
+    assert_ne!(one, two);
+    assert!(one != Prefix::ZERO && two != Prefix::ZERO);
+    assert_eq!(directory.cell(one).await.unwrap().unwrap().id, first);
+    assert_eq!(directory.cell(two).await.unwrap().unwrap().id, other);
+    let object = Object {
+        kind: ObjectKind::User,
+        id: *one.ids().start(),
+    };
+    let keys = [Key::new(KeyKind::Name, "later-range").unwrap()];
+    directory
+        .reserve(&a, object, &keys, &"c".repeat(64))
+        .await
+        .unwrap();
+    directory
+        .confirm(&a, object, &keys, &"c".repeat(64))
+        .await
+        .unwrap();
+    assert_eq!(directory.object_home(object).await.unwrap(), Some(first));
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM directory_cell_prefixes")
+        .fetch_one(&database.raw)
+        .await
+        .unwrap();
+    assert_eq!(count, 4);
+    // Registering another cell cannot take a prefix already reserved by a cell.
+    assert!(directory.register_cell(cell(one.get(), 'd')).await.is_err());
+    assert_eq!(directory.cell(one).await.unwrap().unwrap().id, first);
     directory.close().await;
     database.finish().await;
 }

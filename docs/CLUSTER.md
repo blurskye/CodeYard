@@ -726,6 +726,11 @@ foreign credentials and stub transport remain unfinished. Stub storage and local
 guards are written but unchecked. The generated schema crate is unchanged.
 
 Native rooted-ID readers and common repository/team projections pass source checks.
-A metadata-only owner lookup is the next unchecked batch.
+Metadata-only owner lookup also passes source checks.
 The router uses those repository/org roots for directory lookups; full node-family issuance,
 foreign authorization and the public HTTP/SSH role remain open.
+
+The directory source adds `cell directory allocate-prefix --node-key <public key>
+--previous <prefix> --last-id <id>` and the matching authenticated TLS operation. A range
+must reach 80% use; retries reserve the same successor and prefix zero is never allocated.
+This batch is unchecked. Reserving a successor does not activate it in the cell yet.

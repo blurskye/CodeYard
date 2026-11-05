@@ -66,6 +66,39 @@ impl Directory {
         }).await
     }
 
+    /// At 80% use, reserve one permanent successor. Retrying an uncertain response
+    /// returns the same prefix; enrollment and the previous range are retained at commit.
+    pub async fn next_prefix(&self, peer: &str, previous: Prefix, last_id: i64) -> Result<Prefix> {
+        self.run(async {
+            ensure!(Prefix::for_id(last_id).ok() == Some(previous), Refusal::Invalid);
+            let capacity = codeyard_support::cells::IDS_PER_PREFIX - 1;
+            let used = last_id - *previous.ids().start() + 1;
+            ensure!(used >= capacity - capacity / 5, Refusal::Invalid);
+            let mut tx = self.begin().await?;
+            let cell = super::owner(&mut tx, peer, false).await?;
+            let owned: Option<i32> = sqlx::query_scalar("SELECT cell_id FROM directory_cell_prefixes WHERE prefix=$1 FOR UPDATE")
+                .bind(i32::from(previous.get())).fetch_optional(&mut *tx).await?;
+            ensure!(owned == Some(i32::from(cell.get())), Refusal::Denied);
+            let existing: Option<i32> = sqlx::query_scalar("SELECT prefix FROM directory_cell_prefixes WHERE previous_prefix=$1")
+                .bind(i32::from(previous.get())).fetch_optional(&mut *tx).await?;
+            if let Some(prefix) = existing {
+                tx.commit().await?;
+                return Ok(Prefix::try_from(i64::from(prefix))?);
+            }
+            for _ in 0..8 {
+                // Prefix zero belongs to an existing single-cell installation, even
+                // before an operator enrolls it. The 16-bit search is bounded.
+                let prefix: Option<i32> = sqlx::query_scalar("INSERT INTO directory_cell_prefixes(prefix,cell_id,previous_prefix) SELECT candidate,$1,$2 FROM generate_series(1,65535) candidate WHERE NOT EXISTS(SELECT 1 FROM directory_cell_prefixes p WHERE p.prefix=candidate) ORDER BY candidate LIMIT 1 ON CONFLICT DO NOTHING RETURNING prefix")
+                    .bind(i32::from(cell.get())).bind(i32::from(previous.get())).fetch_optional(&mut *tx).await?;
+                if let Some(prefix) = prefix {
+                    tx.commit().await?;
+                    return Ok(Prefix::try_from(i64::from(prefix))?);
+                }
+            }
+            anyhow::bail!(Refusal::Unavailable)
+        }).await
+    }
+
     /// Local operator only, with a transport-authenticated key at use time.
     pub async fn set_router_key(&self, key: &str, enabled: bool) -> Result<()> {
         self.run(async {

@@ -69,6 +69,17 @@ async fn directory_transport_pins_keys_and_read_only_routers_cannot_claim_names(
     )
     .unwrap();
     assert!(wrong_pin.request(&cell).await.is_err());
+    let next = Request::NextPrefix {
+        previous: Prefix::new(1),
+        last_id: *Prefix::new(1).ids().end(),
+    };
+    assert!(router_client.request(&next).await.is_err());
+    assert!(
+        matches!(member_client.request(&next).await.unwrap(), Reply::Prefix(prefix) if prefix==Prefix::new(2))
+    );
+    assert!(
+        matches!(member_client.request(&next).await.unwrap(), Reply::Prefix(prefix) if prefix==Prefix::new(2))
+    );
     let object = Object {
         kind: ObjectKind::User,
         id: *Prefix::new(1).ids().start(),
@@ -104,6 +115,7 @@ async fn directory_transport_pins_keys_and_read_only_routers_cannot_claim_names(
     revoked.node_keys = vec![unknown.public_hex()];
     directory.register_cell(revoked).await.unwrap();
     assert!(member_client.request(&confirm).await.is_err());
+    assert!(member_client.request(&next).await.is_err());
     assert!(matches!(
         connect(unknown.clone()).request(&confirm).await.unwrap(),
         Reply::Done
