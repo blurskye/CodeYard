@@ -168,7 +168,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     library tests pass without skips, including real foreign SSH push/clone and revocation;
     cluster 234, Git 42 and identity 166 also pass without skips. Database passes 179 and
     fails two foreign browser-page checks because package counts assume local session rows;
-    the shared live-session fix is written. Repository contracts and e2e are still running.
+    the shared live-session fix is written. Both exhaustive GraphQL contracts pass. PgBouncer,
+    replica and quorum e2e pass; the new cells round fails at native cell-1 startup, before
+    client acceptance, and its cleanup step is skipped. The fixture now prints a bounded
+    child-log tail on startup failure; the next runtime round will expose the cause.
     Numeric child IDs and remote membership delivery/REST discovery pass workspace
     95564883b4604fb5bbd2968e4c6c5188, Clippy dc45e3525fc74aaabc0f286151667188 and WASM
     ba06675531a94ac0a434f8822c9a23ca. Both baselines retain stable review-request row IDs
@@ -181,8 +184,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     discovers remote orgs through bounded GraphQL pages with the original token, and resolves
     numeric foreign invitation targets through the existing home RPC. It shares package
     session checks with the native/foreign credential owner; HTTP, hostile-root, invitation,
-    revocation and cursor tests are written. Native home lists and runtime acceptance remain
-    open. No stage 2 completion is claimed.
+    revocation and cursor tests are written. Workspace ccd54b9276ec4460b20047f8794f4f6a and
+    WASM 11432ad448f9400eb75e00f2eee16e80 pass; Clippy 0634de72aa504774b5ddde46187bace7
+    is running. Native home lists and runtime acceptance remain open. No stage 2 completion
+    is claimed.
     Stages 3 to 6 are not built. Automatic user moves and org regional presence remain
     documented owner decisions.
     Owner follow-ups: foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded

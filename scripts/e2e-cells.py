@@ -126,10 +126,17 @@ class Deployment:
             log.close()
         assert not failures, "; ".join(failures)
 
+    def diagnostic(self, name):
+        path = self.root / name / "server.log"
+        with path.open("rb") as log:
+            log.seek(0, 2)
+            log.seek(max(0, log.tell() - 4096))
+            return log.read(4096).decode("utf-8", errors="replace")
+
     def wait(self, name, url):
         deadline = time.monotonic() + 60
         while time.monotonic() < deadline:
-            assert self.processes[name].poll() is None, f"{name} stopped; see its server.log"
+            assert self.processes[name].poll() is None, f"{name} stopped: {self.diagnostic(name)}"
             try:
                 with self.http.open(url + "/health", timeout=2) as response:
                     if response.status == 200:
@@ -137,7 +144,7 @@ class Deployment:
             except (OSError, urllib.error.HTTPError):
                 pass
             threading.Event().wait(0.1)
-        raise AssertionError(f"{name} did not become ready")
+        raise AssertionError(f"{name} did not become ready: {self.diagnostic(name)}")
 
     def register(self, index, opened=True):
         name = ("zero", "one")[index]
