@@ -251,7 +251,8 @@ Each node resumes its drain during heartbeats. Core nodes also finish idle runne
 running jobs retain their normal timeout, and the drain cancels remaining jobs after
 `CI_RUN_TIMEOUT_SECONDS`. `CLUSTER_DRAIN_MAX_REPOSITORIES` bounds a preflight (default
 10,000, maximum 1,000,000); node lists support at most 1,000 nodes. REST drain, authority,
-promotion and metrics checks pass. Browser acceptance remains pending.
+promotion, metrics and native/hydrated browser checks pass. Finished-CI drain
+acceptance still needs a writable delegated cgroup.
 
 ## Provisioning and automatic scaling
 

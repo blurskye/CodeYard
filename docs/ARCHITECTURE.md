@@ -295,7 +295,8 @@ Node membership (`pending`, `active`, `revoked`) is separate from allocation sta
 (`active`, `draining`, `drained`). Drain admission reserves complete fork families and
 15% free space in one transaction; the existing copier and promoter advance the work.
 The panel, REST and CLI use `cluster::drain::change`. Initialization, REST drain and
-promotion acceptance pass; native and hydrated browser acceptance remain pending.
+promotion and native/hydrated browser acceptance pass. Finished-CI drain acceptance
+requires a writable delegated cgroup on the builder.
 Application database queries share `db::pool` acquisition tracking; metrics count yielded
 acquisitions until they complete, time out or are cancelled. Streaming keeps one queued
 row and releases the query and connection together when cancelled. Acquisition, cancellation

@@ -2767,21 +2767,22 @@ t_cluster_github_clients() {
 # Run last: existing legacy repositories keep their fixtures; these new repositories
 # exercise the two-voter path with real pushes and process death immediately after ack.
 t_cluster_quorum_primary_loss() {
-    local transport name source primary pid expected destination deadline
-    pg_query "UPDATE node_configuration SET write_quorum='majority',replicas='2' WHERE id=1" >/dev/null
+    local transport name source primary pid expected destination deadline restart_millis
+    pg_query "UPDATE node_configuration SET write_quorum='majority',replicas='2' WHERE id=1" >/dev/null || return 1
     for transport in http ssh; do
         name=quorum-survival-$transport
-        as alice req POST /api/repos --accept json --status 201 --json "{\"name\":\"$name\",\"is_private\":true}"
+        as alice req POST /api/repos --accept json --status 201 --json "{\"name\":\"$name\",\"is_private\":true}" || return 1
         source=$RUN/work/$name
-        mkdir -p "$source"
-        git_as alice -C "$source" init -q -b main
-        printf 'acknowledged over %s\n' "$transport" >"$source/README.md"
-        git_as alice -C "$source" add README.md
-        git_as alice -C "$source" commit -qm 'A quorum holds this commit'
-        expected=$(git_as alice -C "$source" rev-parse HEAD)
-        primary=$(repo_node alice "$name")
-        [[ $primary == store1 || $primary == store2 ]]
-        pid=${SERVER_PIDS[$primary]}
+        mkdir -p "$source" || return 1
+        git_as alice -C "$source" init -q -b main || return 1
+        printf 'acknowledged over %s\n' "$transport" >"$source/README.md" || return 1
+        git_as alice -C "$source" add README.md || return 1
+        git_as alice -C "$source" commit -qm 'A quorum holds this commit' || return 1
+        expected=$(git_as alice -C "$source" rev-parse HEAD) || return 1
+        primary=$(repo_node alice "$name") || return 1
+        [[ $primary == store1 || $primary == store2 ]] || return 1
+        pid=${SERVER_PIDS[$primary]:-}
+        [[ $pid =~ ^[0-9]+$ ]] || { echo 'The storage primary has no owned process' >&2; return 1; }
         if [[ $transport == http ]]; then
             git_with_token write -C "$source" push -q "$BASE/alice/$name.git" main || return 1
             kill -KILL "$pid" || return 1
@@ -2798,12 +2799,16 @@ t_cluster_quorum_primary_loss() {
             [[ ! -e $destination ]] || rm -rf -- "$destination"
             sleep 1
         done
-        [[ $(git_as alice -C "$destination" rev-parse HEAD) == "$expected" ]]
-        git_as alice clone -q "$SSH_URL/alice/$name.git" "$destination-ssh"
-        [[ $(git_as alice -C "$destination-ssh" rev-parse HEAD) == "$expected" ]]
-        start_server "$primary"
+        [[ $(git_as alice -C "$destination" rev-parse HEAD) == "$expected" ]] || return 1
+        git_as alice clone -q "$SSH_URL/alice/$name.git" "$destination-ssh" || return 1
+        [[ $(git_as alice -C "$destination-ssh" rev-parse HEAD) == "$expected" ]] || return 1
+        # /ready can answer before startup publishes the node. A pre-crash heartbeat
+        # must not admit the next operation against a process that is still reconciling.
+        restart_millis=$(pg_query "SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint") || return 1
+        [[ $restart_millis =~ ^[0-9]+$ ]] || return 1
+        start_server "$primary" || return 1
         deadline=$((SECONDS + 60))
-        until [[ $(pg_query "SELECT last_seen>clock_timestamp()-INTERVAL '30 seconds' FROM nodes WHERE name='$primary'") == t ]]; do
+        until [[ $(pg_query "SELECT last_seen>=to_timestamp($restart_millis::double precision/1000) FROM nodes WHERE name='$primary'") == t ]]; do
             ((SECONDS < deadline)) || { echo 'Storage did not report after restart' >&2; return 1; }
             sleep 1
         done

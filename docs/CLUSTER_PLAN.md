@@ -10,8 +10,8 @@ Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspa
 Clippy and WASM checks pass, including the fault-test source and full-disk placement fix.
 Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed, 19 ignored) and Helm rendering pass.
 Storage checks pass (99 passed, 3 ignored). All 221 cluster integration checks pass,
-including full-disk failure/retry and interrupted cluster backup/restore. Browser bundle publication and HTTP delivery pass; hydrated cluster pages remain
-pending. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
+including full-disk failure/retry and interrupted cluster backup/restore. Browser bundle publication, delivery, native and hydrated cluster forms, and live
+cross-node issue updates pass. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
 Cluster mode stays hidden behind
 `CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.
@@ -36,7 +36,7 @@ Current acceptance status:
 - 1: hiding-switch CLI refusal checks pass.
 - 2: storage-node copies, capacity, loss, retry, drain and private access pass HTTP checks on both engines; native startup without S3 passes. A single-node runner-transport backend correction awaits checks.
 - 3: quorum initialization, copy, default selection, voter replacement, primary loss and full-disk retry pass.
-- 4: drain REST, authority and promotion checks pass; native and hydrated browser checks await execution.
+- 4: drain REST, authority, promotion and native/hydrated browser checks pass. Finished-CI drain acceptance needs a delegated cgroup.
 - 5: quorum, drain, bounded scraping and acquisition waiter metrics pass HTTP acceptance.
 - 6: bounded invitations and environment-only provisioning pass library and REST checks.
 - 7: policy forms, lease leader, pause, dry run and storage rules pass on both database engines.
@@ -64,7 +64,7 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 | A8 | Revoke a node key | the node is refused on its next call, within 60 seconds | TCP/QUIC revocation checks pass |
 | A9 | Send an oversized, truncated, replayed and unauthorised frame to the node port | refused, bounded memory, logged without secrets | hostile transport and pairing checks pass |
 | A10 | A compromised runner node asks for another run's token, another repository, another job's logs | refused every time | dedicated network isolation test written without local CI execution; runtime pending |
-| A11 | Comment on an issue on web node 1 with a browser open on node 2 | page updates within 2 seconds | browser acceptance posts on web1 and watches Bob's open issue on web2; runtime pending |
+| A11 | Comment on an issue on web node 1 with a browser open on node 2 | page updates within 2 seconds | browser acceptance passes: posts on web1 and updates Bob's open issue on web2 within two seconds |
 | A12 | SIGTERM during running CI and a push | stops within 90 seconds, jobs end failed with a reason, no leaked containers or locks | e2e runs CI with an owned child, interrupts a pack and checks shutdown, failure reason and a later write; runtime pending |
 | A13 | Old and new release side by side | refused with a clear message, or both work | older protocol refused; B10 pending |
 | A14 | Join token: reuse, expiry, cancel, wrong role | each behaves as `CLUSTER.md` says | invitation and role checks pass |
