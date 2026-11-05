@@ -759,8 +759,8 @@ common rooted IDs and foreign token/SSH admission pass source checks. The browse
 home-CSRF and native two-cell GraphQL follow-up passes workspace, Clippy and WASM.
 Cold collaborator metadata lookup and retained invitation credentials also pass source
 checks. Runtime acceptance on an earlier snapshot passes Git, identity and all 51 targeted
-e2e checks; collected query, routing, fixture and rooted-ID fixes await their next check.
-Native signup/key claim publication,
+e2e checks. Collected query, routing, fixture and rooted-ID fixes pass source checks and
+await their runtime retry. Native signup/key claim publication is written but unchecked;
 remote membership pointers, remaining node families and two-cell gh/Git deployment are
 unfinished; stages 3 to 6 are not built. Range renewal is a deferred owner follow-up.
 [Cluster readiness](CLUSTER_PLAN.md) records current check jobs and runtime gaps.

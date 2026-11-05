@@ -339,6 +339,15 @@ async fn insert_kind(
     }
     if let Some(repository) = repository.as_ref() {
         grant_creator(&mut tx, input.owner, repository.id).await?;
+        codeyard_db_core::cells::directory::postgres::repository(pool, &mut tx, repository).await?;
+    }
+    if let Some(credential) = admission.authority.and_then(|actor| actor.credential()) {
+        codeyard_db_identity::postgres::users::transitions::require_account(
+            &mut tx,
+            creator,
+            &credential,
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(repository)

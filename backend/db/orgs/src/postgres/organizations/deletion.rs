@@ -67,8 +67,24 @@ pub async fn delete_organization(
         )
         .await?;
     }
+    codeyard_db_core::cells::outbox::postgres::forget(
+        pool,
+        &mut tx,
+        codeyard_model::cells::Object {
+            kind: codeyard_model::cells::ObjectKind::Organization,
+            id: org,
+        },
+    )
+    .await?;
     tx.commit().await?;
-    codeyard_db_core::cells::directory::postgres::forget(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::Organization, id: org }).await?;
+    codeyard_db_core::cells::directory::postgres::finish_forget(
+        pool,
+        codeyard_model::cells::Object {
+            kind: codeyard_model::cells::ObjectKind::Organization,
+            id: org,
+        },
+    )
+    .await;
     Ok(Applied(()))
 }
 
@@ -173,8 +189,24 @@ pub async fn delete_organization_repository(
         )
         .await?;
     }
+    codeyard_db_core::cells::outbox::postgres::forget(
+        pool,
+        &mut tx,
+        codeyard_model::cells::Object {
+            kind: codeyard_model::cells::ObjectKind::Repository,
+            id: repo,
+        },
+    )
+    .await?;
     tx.commit().await?;
-    codeyard_db_core::cells::directory::postgres::forget(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::Repository, id: repo }).await?;
+    codeyard_db_core::cells::directory::postgres::finish_forget(
+        pool,
+        codeyard_model::cells::Object {
+            kind: codeyard_model::cells::ObjectKind::Repository,
+            id: repo,
+        },
+    )
+    .await;
     Ok(Applied(deleted))
 }
 

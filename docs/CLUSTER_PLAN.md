@@ -167,8 +167,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     rooted-ID assertions and issue-transfer root redirects. Runtime retry
     616868dc57e7437c85afe790dcf2161a covers changed crates/targets and the nine repository
     failures; it is submitted.
-    Native signup/key claim publication, remote membership pointers, remaining node families
-    and the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
+    Native signup/key claim publication, bounded stopped-cell publication and TLS failure/retry
+    tests and transactional directory-cleanup delivery are written but unchecked. Remote membership pointers, remaining node families and
+    the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
     Automatic user moves and org regional presence remain documented owner decisions.
     Owner follow-up: check foreign-cache expiry after PostgreSQL row-lock waits.
 

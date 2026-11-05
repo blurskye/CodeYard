@@ -16,7 +16,8 @@ pub async fn list_deploy_keys(
     after: i64,
     limit: i64,
 ) -> Result<Vec<DeployKey>> {
-    let credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential = credential.into();
+    let credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential =
+        credential.into();
     let mut tx = pool.begin().await?;
     let live = codeyard_db_core::queries::postgres::credentials::repository(
         &mut tx,
@@ -111,7 +112,8 @@ pub async fn insert_deploy_key(
     credential: impl Into<codeyard_db_core::queries::users::accounts::OwnedAccountCredential>,
 ) -> Result<DeployKey> {
     let mut tx = pool.begin().await?;
-    let credential = credential.into();
+    let credential: codeyard_db_core::queries::users::accounts::OwnedAccountCredential =
+        credential.into();
     require_admin(&mut tx, key.created_by_id, key.repo_id, credential.clone()).await?;
     let enabled:bool=sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=$1 AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories)").bind(key.repo_id).fetch_one(&mut *tx).await?;
     anyhow::ensure!(
@@ -120,7 +122,11 @@ pub async fn insert_deploy_key(
     );
 
     // The same advisory lock as account-key enrollment, so one fingerprint is checked once.
-    codeyard_db_core::queries::postgres::users::transitions::lock_fingerprints(&mut tx, &[&key.fingerprint]).await?;
+    codeyard_db_core::queries::postgres::users::transitions::lock_fingerprints(
+        &mut tx,
+        &[&key.fingerprint],
+    )
+    .await?;
     let used: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM ssh_keys WHERE fingerprint = $1) OR EXISTS(SELECT 1 FROM deploy_keys WHERE fingerprint = $1)",
     )
@@ -141,8 +147,21 @@ pub async fn insert_deploy_key(
         .fetch_one(&mut *tx)
         .await?;
     if pool.directory().is_some() {
-        let fingerprint = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Ssh, &key.fingerprint)?;
-        anyhow::ensure!(codeyard_db_core::cells::directory::postgres::publish(pool, &mut tx, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::Repository, id: key.repo_id }, &[fingerprint]).await?, SshKeyWriteRefusal::AlreadyUsed);
+        let fingerprint =
+            codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Ssh, &key.fingerprint)?;
+        anyhow::ensure!(
+            codeyard_db_core::cells::directory::postgres::publish(
+                pool,
+                &mut tx,
+                codeyard_model::cells::Object {
+                    kind: codeyard_model::cells::ObjectKind::Repository,
+                    id: key.repo_id
+                },
+                &[fingerprint]
+            )
+            .await?,
+            SshKeyWriteRefusal::AlreadyUsed
+        );
         require_admin(&mut tx, key.created_by_id, key.repo_id, credential).await?;
     }
     tx.commit().await?;
@@ -158,14 +177,49 @@ pub async fn delete_deploy_key(
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     require_admin(&mut tx, actor, repo_id, credential.into()).await?;
-    let removed: Option<String> = sqlx::query_scalar("DELETE FROM deploy_keys WHERE id=$1 AND repo_id=$2 RETURNING fingerprint")
-        .bind(key_id).bind(repo_id).fetch_optional(&mut *tx).await?;
+    let removed: Option<String> = sqlx::query_scalar(
+        "DELETE FROM deploy_keys WHERE id=$1 AND repo_id=$2 RETURNING fingerprint",
+    )
+    .bind(key_id)
+    .bind(repo_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let cleanup = if pool.directory().is_some() {
+        removed
+            .as_ref()
+            .map(|fingerprint| -> Result<_> {
+                Ok((
+                    codeyard_model::cells::Object {
+                        kind: codeyard_model::cells::ObjectKind::Repository,
+                        id: repo_id,
+                    },
+                    codeyard_model::cells::Key::new(
+                        codeyard_model::cells::KeyKind::Ssh,
+                        fingerprint,
+                    )?,
+                ))
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    if let Some((object, key)) = &cleanup {
+        codeyard_db_core::cells::outbox::postgres::release(
+            pool,
+            &mut tx,
+            *object,
+            std::slice::from_ref(key),
+        )
+        .await?;
+    }
     tx.commit().await?;
-    if let Some(fingerprint) = &removed {
-        if pool.directory().is_some() {
-            let key = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Ssh, fingerprint)?;
-            codeyard_db_core::cells::directory::postgres::release(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::Repository, id: repo_id }, &[key]).await?;
-        }
+    if let Some((object, key)) = &cleanup {
+        codeyard_db_core::cells::directory::postgres::finish_release(
+            pool,
+            *object,
+            std::slice::from_ref(key),
+        )
+        .await;
     }
     Ok(removed.is_some())
 }

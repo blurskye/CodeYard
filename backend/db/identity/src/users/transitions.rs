@@ -161,5 +161,8 @@ native_operation!(crate::postgres::users::transitions::compare_exchange_password
 ) -> Result<Option<User>>);
 
 pub(crate) fn native_account_sql() -> String {
-    format!("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_stub AND home_cell={})", codeyard_db_core::cells::LOCAL_HOME_SQL)
+    format!(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_stub AND home_cell={})",
+        codeyard_db_core::cells::LOCAL_HOME_SQL
+    )
 }

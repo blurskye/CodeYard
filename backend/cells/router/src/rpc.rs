@@ -66,7 +66,9 @@ impl Client {
             config,
         })
     }
-    pub fn config(&self) -> Config { self.config }
+    pub fn config(&self) -> Config {
+        self.config
+    }
     pub async fn request<T: Serialize + Sync, R: DeserializeOwned>(
         &self,
         request: &T,

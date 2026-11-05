@@ -404,13 +404,17 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         .await?;
         let cell_rpc = match (&config.directory, config.cell_rpc_address) {
             (None, None) => {
-                anyhow::ensure!(pool.cell_id() == codeyard_support::cells::Prefix::ZERO,
-                    "A nonzero cell requires directory settings and CELL_RPC_ADDRESS");
+                anyhow::ensure!(
+                    pool.cell_id() == codeyard_support::cells::Prefix::ZERO,
+                    "A nonzero cell requires directory settings and CELL_RPC_ADDRESS"
+                );
                 None
             }
             (Some(settings), Some(address)) => {
-                anyhow::ensure!(matches!(&pool, codeyard_db_core::DbPool::Postgres(_)),
-                    "Copy this SQLite cell to PostgreSQL before enrolling it in the directory");
+                anyhow::ensure!(
+                    matches!(&pool, codeyard_db_core::DbPool::Postgres(_)),
+                    "Copy this SQLite cell to PostgreSQL before enrolling it in the directory"
+                );
                 anyhow::ensure!(
                     transport.mode != codeyard_support::ssh_mode::SshMode::Openssh,
                     "Cells behind a router use builtin SSH or disabled SSH"
@@ -566,6 +570,13 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         ))
     });
     // Durable inventory jobs are claimed transactionally; every web node may drain the queue.
+    let (stop_outbox, outbox_stop) = tokio::sync::watch::channel(false);
+    let outbox = (config.roles.contains(NodeRole::Web) && pool.directory().is_some()).then(|| {
+        tokio::spawn(codeyard_db_core::cells::outbox::run(
+            pool.clone(),
+            outbox_stop,
+        ))
+    });
     let (stop_metadata, metadata_stop) = tokio::sync::watch::channel(false);
     let metadata = config.roles.contains(NodeRole::Web).then(|| {
         tokio::spawn(codeyard_app::artifact_metadata::run(
@@ -658,6 +669,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     stop_expiry.send_replace(true);
     stop_email.send_replace(true);
     stop_metadata.send_replace(true);
+    stop_outbox.send_replace(true);
     stop_secret_scanning.send_replace(true);
     stop_auto_merge.send_replace(true);
     stop_replicas.send_replace(true);
@@ -697,6 +709,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     drain_worker(expiry, deadline).await;
     drain_worker(email, deadline).await;
     drain_worker(metadata, deadline).await;
+    drain_worker(outbox, deadline).await;
     drain_worker(secret_scanning, deadline).await;
     // A merge may already have published Git. Stop between PRs, but never abort
     // its authoritative post-publication bookkeeping on the listener deadline.

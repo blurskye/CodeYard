@@ -79,15 +79,46 @@ pub async fn change_emails(
         let config = directory.config();
         config.validate()?;
         anyhow::ensure!(emails.len() <= config.maximum_keys, EmailRefusal::Limit);
-        emails.iter().map(|email| codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, email)).collect::<Result<Vec<_>>>()?
-    } else { Vec::new() };
+        emails
+            .iter()
+            .map(|email| {
+                codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, email)
+            })
+            .collect::<Result<Vec<_>>>()?
+    } else {
+        Vec::new()
+    };
     if add && pool.directory().is_some() {
-        anyhow::ensure!(codeyard_db_core::cells::directory::sqlite::user_id(pool, &mut tx, user, &keys).await?, EmailRefusal::Taken);
-        crate::sqlite::users::transitions::require_account_exclusive(&mut tx, user, credential).await?;
+        anyhow::ensure!(
+            codeyard_db_core::cells::directory::sqlite::user_id(pool, &mut tx, user, &keys).await?,
+            EmailRefusal::Taken
+        );
+        crate::sqlite::users::transitions::require_account_exclusive(&mut tx, user, credential)
+            .await?;
+    }
+    if !add && !keys.is_empty() {
+        codeyard_db_core::cells::outbox::sqlite::release(
+            pool,
+            &mut tx,
+            codeyard_model::cells::Object {
+                kind: codeyard_model::cells::ObjectKind::User,
+                id: user,
+            },
+            &keys,
+        )
+        .await?;
     }
     tx.commit().await?;
     if !add && !keys.is_empty() {
-        codeyard_db_core::cells::directory::sqlite::release(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::User, id: user }, &keys).await?;
+        codeyard_db_core::cells::directory::sqlite::finish_release(
+            pool,
+            codeyard_model::cells::Object {
+                kind: codeyard_model::cells::ObjectKind::User,
+                id: user,
+            },
+            &keys,
+        )
+        .await;
     }
     Ok(())
 }

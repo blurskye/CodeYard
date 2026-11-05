@@ -69,9 +69,14 @@ pub async fn register(
     crate::postgres::users::transitions::lock_accounts(&mut tx, &[actor]).await?;
     crate::postgres::users::transitions::lock_namespace(&mut tx, &format!("{}[bot]", app.slug))
         .await?;
-    let registered = register_in_connection(pool, &mut tx, actor, session, app, secret_hash).await?;
+    let Some(registered) =
+        register_in_connection(pool, &mut tx, actor, session, app, secret_hash).await?
+    else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
     tx.commit().await?;
-    Ok(registered)
+    Ok(Some(registered))
 }
 pub(super) async fn register_in_connection(
     pool: &PgPool,
@@ -95,8 +100,12 @@ pub(super) async fn register_in_connection(
     .await?;
     let app=sqlx::query_as("INSERT INTO github_apps(owner_id,bot_id,client_id,slug,name,description,homepage,public_key,permissions,events,access_level,is_public) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *")
         .bind(actor).bind(bot).bind(&app.client_id).bind(&app.slug).bind(&app.name).bind(&app.description).bind(&app.homepage).bind(&app.public_key).bind(&app.permissions).bind(&app.events).bind(app.access_level).bind(app.is_public).fetch_one(&mut *tx).await?;
-    if !codeyard_db_core::cells::directory::postgres::user_id(pool, tx, bot, &[]).await? { return Ok(None); }
-    if !crate::postgres::users::transitions::active_session(tx, actor, session).await? { return Ok(None); }
+    if !codeyard_db_core::cells::directory::postgres::user_id(pool, tx, bot, &[]).await? {
+        return Ok(None);
+    }
+    if !crate::postgres::users::transitions::active_session(tx, actor, session).await? {
+        return Ok(None);
+    }
     Ok(Some(app))
 }
 /// Whether a client's owner, and a GitHub App's bot, may still use it. A missing client is

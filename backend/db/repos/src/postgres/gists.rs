@@ -357,13 +357,49 @@ pub async fn delete(
         .bind(repo.id)
         .execute(&mut *tx)
         .await?;
+    codeyard_db_core::cells::outbox::postgres::forget(
+        pool,
+        &mut tx,
+        codeyard_model::cells::Object {
+            kind: codeyard_model::cells::ObjectKind::Repository,
+            id: repo.id,
+        },
+    )
+    .await?;
     tx.commit().await?;
+    codeyard_db_core::cells::directory::postgres::finish_forget(
+        pool,
+        codeyard_model::cells::Object {
+            kind: codeyard_model::cells::ObjectKind::Repository,
+            id: repo.id,
+        },
+    )
+    .await;
     Ok(repo)
 }
 pub async fn discard(pool: &PgPool, repo: i64, orphan_only: bool) -> Result<Option<Repository>> {
     let mut tx = pool.begin().await?;
     let deleted = sqlx::query_as("DELETE FROM repositories r WHERE r.id=$1 AND r.is_gist AND NOT EXISTS(SELECT 1 FROM gists g WHERE g.repo_id=r.id AND ($2 OR g.ready OR g.pending_sha IS NOT NULL)) RETURNING r.*").bind(repo).bind(orphan_only).fetch_optional(&mut *tx).await?;
+    if deleted.is_some() {
+        codeyard_db_core::cells::outbox::postgres::forget(
+            pool,
+            &mut tx,
+            codeyard_model::cells::Object {
+                kind: codeyard_model::cells::ObjectKind::Repository,
+                id: repo,
+            },
+        )
+        .await?;
+    }
     tx.commit().await?;
+    codeyard_db_core::cells::directory::postgres::finish_forget(
+        pool,
+        codeyard_model::cells::Object {
+            kind: codeyard_model::cells::ObjectKind::Repository,
+            id: repo,
+        },
+    )
+    .await;
     Ok(deleted)
 }
 pub async fn starred(pool: &PgPool, actor: i64, repo: i64) -> Result<bool> {

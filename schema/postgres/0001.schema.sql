@@ -39,6 +39,19 @@ CREATE TABLE IF NOT EXISTS pending_object_deletions (
 CREATE INDEX IF NOT EXISTS idx_pending_object_deletions_due
     ON pending_object_deletions(delete_after);
 
+-- Durable cross-cell effects are recorded with their native transaction.
+CREATE TABLE cell_outbox (
+    id BIGSERIAL PRIMARY KEY,
+    root_kind TEXT NOT NULL CHECK(root_kind IN ('user','organization','repository')),
+    root_id BIGINT NOT NULL CHECK(root_id>0),
+    topic TEXT NOT NULL CHECK(length(topic) BETWEEN 1 AND 64),
+    payload TEXT NOT NULL CHECK(octet_length(payload)<=524288),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    delivered_at TIMESTAMPTZ
+);
+CREATE INDEX cell_outbox_pending ON cell_outbox(next_attempt_at,id) WHERE delivered_at IS NULL;
+
 --------------------------------------------------------------------------------
 -- PART 2: USERS
 --------------------------------------------------------------------------------

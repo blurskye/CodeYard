@@ -33,6 +33,19 @@ CREATE TABLE pending_object_deletions (
 CREATE INDEX idx_pending_object_deletions_due
     ON pending_object_deletions(delete_after);
 
+-- Durable cross-cell effects are recorded with their native transaction.
+CREATE TABLE cell_outbox (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    root_kind TEXT NOT NULL CHECK(root_kind IN ('user','organization','repository')),
+    root_id INTEGER NOT NULL CHECK(typeof(root_id)='integer' AND root_id>0),
+    topic TEXT NOT NULL CHECK(length(topic) BETWEEN 1 AND 64),
+    payload TEXT NOT NULL CHECK(length(CAST(payload AS BLOB))<=524288),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    next_attempt_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    delivered_at TEXT
+);
+CREATE INDEX cell_outbox_pending ON cell_outbox(next_attempt_at,id) WHERE delivered_at IS NULL;
+
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
     home_cell INTEGER NOT NULL DEFAULT 0 CHECK (home_cell BETWEEN 0 AND 65535),

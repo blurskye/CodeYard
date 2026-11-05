@@ -11,18 +11,28 @@ pub struct Config {
 }
 impl Default for Config {
     fn default() -> Self {
-        Self { request_seconds: 10, maximum_keys: 1000 }
+        Self {
+            request_seconds: 10,
+            maximum_keys: 1000,
+        }
     }
 }
 impl Config {
     pub fn validate(self) -> Result<()> {
-        ensure!((1..=60).contains(&self.request_seconds) && (1..=1000).contains(&self.maximum_keys), Refusal::Unavailable);
+        ensure!(
+            (1..=60).contains(&self.request_seconds) && (1..=1000).contains(&self.maximum_keys),
+            Refusal::Unavailable
+        );
         Ok(())
     }
 }
 
 #[derive(Debug)]
-pub enum Refusal { Conflict, Denied, Unavailable }
+pub enum Refusal {
+    Conflict,
+    Denied,
+    Unavailable,
+}
 impl fmt::Display for Refusal {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(match self {
@@ -38,8 +48,18 @@ impl std::error::Error for Refusal {}
 pub trait Directory: Send + Sync {
     fn config(&self) -> Config;
     fn lookup<'a>(&'a self, key: &'a Key) -> BoxFuture<'a, Result<Option<Location>>>;
-    fn reserve<'a>(&'a self, object: Object, keys: &'a [Key], nonce: &'a str) -> BoxFuture<'a, Result<()>>;
-    fn confirm<'a>(&'a self, object: Object, keys: &'a [Key], nonce: &'a str) -> BoxFuture<'a, Result<()>>;
+    fn reserve<'a>(
+        &'a self,
+        object: Object,
+        keys: &'a [Key],
+        nonce: &'a str,
+    ) -> BoxFuture<'a, Result<()>>;
+    fn confirm<'a>(
+        &'a self,
+        object: Object,
+        keys: &'a [Key],
+        nonce: &'a str,
+    ) -> BoxFuture<'a, Result<()>>;
     fn release<'a>(&'a self, object: Object, keys: &'a [Key]) -> BoxFuture<'a, Result<()>>;
     fn forget(&self, object: Object) -> BoxFuture<'_, Result<()>>;
 }
@@ -61,9 +81,13 @@ fn present_sql(object: ObjectKind, key: KeyKind) -> Result<&'static str> {
 fn account_keys(name: &str, email: Option<&str>, stub: bool) -> Result<Vec<Key>> {
     ensure!(!stub, Refusal::Denied);
     // This is a cell's internal CI principal, not a globally named user account.
-    if name == crate::queries::ci_tokens::BOT { return Ok(Vec::new()); }
+    if name == crate::queries::ci_tokens::BOT {
+        return Ok(Vec::new());
+    }
     let mut keys = vec![Key::new(KeyKind::Name, name)?];
-    if let Some(email) = email { keys.push(Key::new(KeyKind::Email, email)?); }
+    if let Some(email) = email {
+        keys.push(Key::new(KeyKind::Email, email)?);
+    }
     Ok(keys)
 }
 
@@ -167,6 +191,13 @@ macro_rules! engine {
                     Ok(())
                 }).await.map_err(|_| Refusal::Unavailable)?
             }
+            /// The native transaction already queued this effect. Failure leaves it for the worker.
+            pub async fn finish_release(pool: &$pool, object: Object, keys: &[Key]) {
+                if release(pool, object, keys).await.is_err() { tracing::warn!(object_id=object.id, "Directory key cleanup remains queued"); }
+            }
+            pub async fn finish_forget(pool: &$pool, object: Object) {
+                if forget(pool, object).await.is_err() { tracing::warn!(object_id=object.id, "Directory object cleanup remains queued"); }
+            }
             pub async fn user_id(pool: &$pool, connection: &mut $connection, user: i64, extra: &[Key]) -> Result<bool> {
                 let Some(provider) = pool.directory() else { return Ok(true); };
                 let config = provider.config();
@@ -181,6 +212,12 @@ macro_rules! engine {
                 keys.extend_from_slice(extra);
                 publish(pool, connection, Object { kind: ObjectKind::User, id: user }, &keys).await
             }
+            pub async fn repository(pool: &$pool, connection: &mut $connection, repository: &crate::models::Repository) -> Result<()> {
+                if pool.directory().is_none() { return Ok(()); }
+                ensure!(!repository.is_stub && repository.home_cell == i32::from(pool.cell_id().get()), Refusal::Denied);
+                ensure!(publish(pool, connection, Object { kind: ObjectKind::Repository, id: repository.id }, &[]).await?, Refusal::Conflict);
+                Ok(())
+            }
             pub async fn user(pool: &$pool, connection: &mut $connection, user: &crate::models::User) -> Result<bool> {
                 if pool.directory().is_none() { return Ok(true); }
                 ensure!(user.home_cell == i32::from(pool.cell_id().get()), Refusal::Denied);
@@ -191,5 +228,110 @@ macro_rules! engine {
         }
     };
 }
-engine!(postgres, crate::pool::PgPool, sqlx::PgConnection, "BEGIN", crate::queries::postgres::users::transitions::lock_directory_keys);
-engine!(sqlite, crate::pool::SqlitePool, sqlx::SqliteConnection, "BEGIN IMMEDIATE", crate::queries::sqlite::users::transitions::lock_directory_keys);
+engine!(
+    postgres,
+    crate::pool::PgPool,
+    sqlx::PgConnection,
+    "BEGIN",
+    crate::queries::postgres::users::transitions::lock_directory_keys
+);
+engine!(
+    sqlite,
+    crate::pool::SqlitePool,
+    sqlx::SqliteConnection,
+    "BEGIN IMMEDIATE",
+    crate::queries::sqlite::users::transitions::lock_directory_keys
+);
+
+/// Publish one bounded page while the operator owns the stopped-cell maintenance lock.
+/// Rerunning a page is safe, including when a preceding TLS confirmation reply was lost.
+pub async fn publish_native(
+    pool: &crate::pool::PgPool,
+    kind: ObjectKind,
+    after: i64,
+    limit: i64,
+) -> Result<(i64, usize)> {
+    ensure!(after >= 0 && (1..=250).contains(&limit), Refusal::Denied);
+    let provider = pool.directory().ok_or(Refusal::Unavailable)?;
+    let config = provider.config();
+    config.validate()?;
+    let table = match kind {
+        ObjectKind::User => "users",
+        ObjectKind::Organization => "organizations",
+        ObjectKind::Repository => "repositories",
+    };
+    let ids: Vec<i64> = sqlx::query_scalar(&format!(
+        "SELECT id FROM {table} WHERE id>$1 AND NOT is_stub AND home_cell=$2 ORDER BY id LIMIT $3"
+    ))
+    .bind(after)
+    .bind(i32::from(pool.cell_id().get()))
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    for &id in &ids {
+        let mut tx = pool.begin().await?;
+        if kind == ObjectKind::User {
+            crate::queries::postgres::users::transitions::account_locks(&mut tx, &[id], false)
+                .await?;
+        }
+        let present: Option<i64> = sqlx::query_scalar(&format!(
+            "SELECT id FROM {table} WHERE id=$1 AND NOT is_stub AND home_cell=$2 FOR UPDATE"
+        ))
+        .bind(id)
+        .bind(i32::from(pool.cell_id().get()))
+        .fetch_optional(&mut *tx)
+        .await?;
+        if present.is_none() {
+            continue;
+        }
+        let object = Object { kind, id };
+        let keys = match kind {
+            ObjectKind::User => {
+                let rows: Vec<(String, String)> = sqlx::query_as("SELECT 'email',substr(email,1,256) FROM user_emails WHERE user_id=$1 UNION ALL SELECT 'ssh',substr(fingerprint,1,256) FROM ssh_keys WHERE user_id=$1 LIMIT $2")
+                    .bind(id).bind((config.maximum_keys + 1) as i64).fetch_all(&mut *tx).await?;
+                ensure!(rows.len() <= config.maximum_keys, Refusal::Unavailable);
+                let keys = rows
+                    .into_iter()
+                    .map(|(kind, value)| {
+                        Key::new(
+                            if kind == "email" {
+                                KeyKind::Email
+                            } else {
+                                KeyKind::Ssh
+                            },
+                            &value,
+                        )
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                ensure!(
+                    postgres::user_id(pool, &mut tx, id, &keys).await?,
+                    Refusal::Conflict
+                );
+                tx.commit().await?;
+                continue;
+            }
+            ObjectKind::Organization => {
+                let name: String =
+                    sqlx::query_scalar("SELECT substr(name,1,256) FROM organizations WHERE id=$1")
+                        .bind(id)
+                        .fetch_one(&mut *tx)
+                        .await?;
+                vec![Key::new(KeyKind::Name, &name)?]
+            }
+            ObjectKind::Repository => {
+                let rows: Vec<String> = sqlx::query_scalar("SELECT substr(fingerprint,1,256) FROM deploy_keys WHERE repo_id=$1 ORDER BY id LIMIT $2")
+                    .bind(id).bind((config.maximum_keys + 1) as i64).fetch_all(&mut *tx).await?;
+                ensure!(rows.len() <= config.maximum_keys, Refusal::Unavailable);
+                rows.into_iter()
+                    .map(|value| Key::new(KeyKind::Ssh, &value))
+                    .collect::<Result<Vec<_>>>()?
+            }
+        };
+        ensure!(
+            postgres::publish(pool, &mut tx, object, &keys).await?,
+            Refusal::Conflict
+        );
+        tx.commit().await?;
+    }
+    Ok((ids.last().copied().unwrap_or(after), ids.len()))
+}

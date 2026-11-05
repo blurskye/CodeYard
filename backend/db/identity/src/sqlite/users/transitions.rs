@@ -48,7 +48,12 @@ pub(crate) async fn require_user_namespace(
 
 /// Call within the operation's transaction to retain one authority snapshot.
 pub async fn native_account(connection: &mut sqlx::SqliteConnection, actor: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar(&crate::users::transitions::native_account_sql()).bind(actor).fetch_one(connection).await?)
+    Ok(
+        sqlx::query_scalar(&crate::users::transitions::native_account_sql())
+            .bind(actor)
+            .fetch_one(connection)
+            .await?,
+    )
 }
 
 pub(crate) async fn active_account(
@@ -64,11 +69,9 @@ pub(crate) async fn active_session(
     actor: i64,
     session: &str,
 ) -> Result<bool> {
-    Ok(
-        active_account(connection, actor).await?
-            && native_account(connection, actor).await?
-            && live_session(connection, actor, session).await?,
-    )
+    Ok(active_account(connection, actor).await?
+        && native_account(connection, actor).await?
+        && live_session(connection, actor, session).await?)
 }
 
 pub(crate) async fn active_session_read(
@@ -94,7 +97,10 @@ pub(crate) async fn require_account_exclusive(
     credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
     require_account(tx, actor, credential).await?;
-    anyhow::ensure!(native_account(tx, actor).await?, codeyard_support::credentials::AccountRestricted);
+    anyhow::ensure!(
+        native_account(tx, actor).await?,
+        codeyard_support::credentials::AccountRestricted
+    );
     Ok(())
 }
 
@@ -245,7 +251,10 @@ pub async fn complete_setup(
     };
     sqlx::query("INSERT INTO node_configuration (id,node_mode,setup_completed) VALUES (1,?1,TRUE) ON CONFLICT (id) DO UPDATE SET node_mode=?1,setup_completed=TRUE,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
         .bind(mode).execute(&mut *tx).await?;
-    anyhow::ensure!(codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?, codeyard_db_core::cells::directory::Refusal::Conflict);
+    anyhow::ensure!(
+        codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
+        codeyard_db_core::cells::directory::Refusal::Conflict
+    );
     tx.commit().await?;
     Ok(SetupClaim::Completed(Box::new(user)))
 }
@@ -317,7 +326,10 @@ pub async fn bootstrap_admin(
     .await?;
     sqlx::query("INSERT INTO node_configuration (id,node_mode,setup_completed) VALUES (1,?1,TRUE) ON CONFLICT (id) DO UPDATE SET node_mode=?1,setup_completed=TRUE,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
         .bind(mode).execute(&mut *tx).await?;
-    anyhow::ensure!(codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?, codeyard_db_core::cells::directory::Refusal::Conflict);
+    anyhow::ensure!(
+        codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
+        codeyard_db_core::cells::directory::Refusal::Conflict
+    );
     tx.commit().await?;
     Ok(SetupClaim::Completed(Box::new(user)))
 }
@@ -399,8 +411,12 @@ pub async fn change_email(
     }
     let previous: Option<String> = if pool.directory().is_some() {
         sqlx::query_scalar("SELECT substr(email,1,256) FROM users WHERE id=$1")
-            .bind(user_id).fetch_one(&mut *tx).await?
-    } else { None };
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await?
+    } else {
+        None
+    };
     let changed: bool = sqlx::query_scalar("SELECT email IS NOT ?2 FROM users WHERE id=?1")
         .bind(user_id)
         .bind(email)
@@ -430,14 +446,37 @@ pub async fn change_email(
     let Some(user) = user else {
         return Ok(EmailChange::Missing);
     };
-    if !codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await? { return Ok(EmailChange::Taken); }
-    if !current_password(&mut tx, user_id, expected, session, false).await? { return Ok(EmailChange::Missing); }
+    if !codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await? {
+        return Ok(EmailChange::Taken);
+    }
+    if !current_password(&mut tx, user_id, expected, session, false).await? {
+        return Ok(EmailChange::Missing);
+    }
+    let cleanup = previous
+        .as_deref()
+        .map(|email| codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, email))
+        .transpose()?;
+    let object = codeyard_model::cells::Object {
+        kind: codeyard_model::cells::ObjectKind::User,
+        id: user_id,
+    };
+    if let Some(key) = &cleanup {
+        codeyard_db_core::cells::outbox::sqlite::release(
+            pool,
+            &mut tx,
+            object,
+            std::slice::from_ref(key),
+        )
+        .await?;
+    }
     tx.commit().await?;
-    if pool.directory().is_some() {
-        if let Some(previous) = previous {
-            let key = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, &previous)?;
-            codeyard_db_core::cells::directory::sqlite::release(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::User, id: user_id }, &[key]).await?;
-        }
+    if let Some(key) = &cleanup {
+        codeyard_db_core::cells::directory::sqlite::finish_release(
+            pool,
+            object,
+            std::slice::from_ref(key),
+        )
+        .await;
     }
     Ok(EmailChange::Updated(Box::new(user)))
 }
@@ -517,11 +556,26 @@ pub async fn register_password(
     }
     if config.node_mode == "private" && administrator.is_none() {
         if pool.directory().is_some() {
-        let mut keys = vec![codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, username)?];
-        if let Some(email) = email { keys.push(codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, email)?); }
-        if !codeyard_db_core::cells::directory::sqlite::available(pool, &mut tx, codeyard_model::cells::ObjectKind::User, &keys).await? {
-            return Ok(AccountAdmission::Conflict);
-        }
+            let mut keys = vec![codeyard_model::cells::Key::new(
+                codeyard_model::cells::KeyKind::Name,
+                username,
+            )?];
+            if let Some(email) = email {
+                keys.push(codeyard_model::cells::Key::new(
+                    codeyard_model::cells::KeyKind::Email,
+                    email,
+                )?);
+            }
+            if !codeyard_db_core::cells::directory::sqlite::available(
+                pool,
+                &mut tx,
+                codeyard_model::cells::ObjectKind::User,
+                &keys,
+            )
+            .await?
+            {
+                return Ok(AccountAdmission::Conflict);
+            }
         }
         if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM signup_requests WHERE status='pending' AND (username_key=?1 OR (?2 IS NOT NULL AND email_key=?2)))")
             .bind(username.to_lowercase()).bind(email.map(str::to_lowercase)).fetch_one(&mut *tx).await? { return Ok(AccountAdmission::Conflict); }
@@ -599,7 +653,10 @@ pub async fn admit_oauth_account(
             .bind(&name).bind(display_name).fetch_optional(&mut *tx).await?;
         if let Some(user) = user {
             if !codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await? {
-                sqlx::query("DELETE FROM users WHERE id=$1").bind(user.id).execute(&mut *tx).await?;
+                sqlx::query("DELETE FROM users WHERE id=$1")
+                    .bind(user.id)
+                    .execute(&mut *tx)
+                    .await?;
                 continue;
             }
             // Login requires neither offline access nor token persistence. Do not retain

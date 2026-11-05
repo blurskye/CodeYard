@@ -45,7 +45,10 @@ fn checked_keys(object: Object, keys: &[Key]) -> Result<Vec<Key>> {
     Ok(keys)
 }
 fn checked(object: Object, keys: &[Key], nonce: &str) -> Result<(Vec<Key>, String)> {
-    ensure!(codeyard_support::tokens::is_hex_token(nonce, 64), Refusal::Invalid);
+    ensure!(
+        codeyard_support::tokens::is_hex_token(nonce, 64),
+        Refusal::Invalid
+    );
     Ok((checked_keys(object, keys)?, token_hash(nonce)))
 }
 
@@ -59,13 +62,24 @@ async fn home(tx: &mut Transaction<'_, Postgres>, object: Object, cell: Prefix) 
     Ok(row)
 }
 
-async fn removal_home(tx: &mut Transaction<'_, Postgres>, object: Object, cell: Prefix) -> Result<()> {
+async fn removal_home(
+    tx: &mut Transaction<'_, Postgres>,
+    object: Object,
+    cell: Prefix,
+) -> Result<()> {
     let owner = locked_home(tx, object).await?.map(|row| row.home_cell);
     let owner = match owner {
         Some(owner) => Some(owner),
-        None => sqlx::query_scalar("SELECT cell_id FROM directory_cell_prefixes WHERE prefix=$1")
-            .bind(i32::from(Prefix::for_id(object.id).map_err(|_| Refusal::Invalid)?.get()))
-            .fetch_optional(&mut **tx).await?,
+        None => {
+            sqlx::query_scalar("SELECT cell_id FROM directory_cell_prefixes WHERE prefix=$1")
+                .bind(i32::from(
+                    Prefix::for_id(object.id)
+                        .map_err(|_| Refusal::Invalid)?
+                        .get(),
+                ))
+                .fetch_optional(&mut **tx)
+                .await?
+        }
     };
     ensure!(owner == Some(i32::from(cell.get())), Refusal::Denied);
     Ok(())
@@ -179,11 +193,15 @@ impl Directory {
             removal_home(&mut tx, object, cell).await?;
             // The schema bounds an object's keys to 1000; its existing FK removes them together.
             sqlx::query("DELETE FROM directory_objects WHERE kind=$1 AND id=$2 AND home_cell=$3")
-                .bind(object.kind.as_str()).bind(object.id).bind(i32::from(cell.get()))
-                .execute(&mut *tx).await?;
+                .bind(object.kind.as_str())
+                .bind(object.id)
+                .bind(i32::from(cell.get()))
+                .execute(&mut *tx)
+                .await?;
             tx.commit().await?;
             Ok(())
-        }).await
+        })
+        .await
     }
 
     pub async fn lookup(&self, key: &Key) -> Result<Option<Location>> {

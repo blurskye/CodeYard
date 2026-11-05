@@ -54,4 +54,9 @@ pub async fn credential_live(
 }
 
 /// BEGIN IMMEDIATE already serializes native key writers with directory cleanup.
-pub async fn lock_directory_keys(_connection: &mut sqlx::SqliteConnection, _keys: &[codeyard_model::cells::Key]) -> Result<()> { Ok(()) }
+pub async fn lock_directory_keys(
+    _connection: &mut sqlx::SqliteConnection,
+    _keys: &[codeyard_model::cells::Key],
+) -> Result<()> {
+    Ok(())
+}

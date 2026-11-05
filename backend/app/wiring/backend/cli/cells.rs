@@ -12,6 +12,19 @@ pub enum Command {
         #[command(subcommand)]
         action: DirectoryCommand,
     },
+    /// Publish a bounded page of native names, emails, keys and object homes; stop cell servers first.
+    Publish {
+        #[arg(long)]
+        directory_address: std::net::SocketAddr,
+        #[arg(long)]
+        directory_key: String,
+        #[arg(long, value_parser = ["user", "organization", "repository"])]
+        kind: String,
+        #[arg(long, default_value_t = 0)]
+        after: i64,
+        #[arg(long, default_value_t = 250)]
+        limit: i64,
+    },
     /// Renew an 80%-used range through its pinned directory; stop cell servers first.
     RenewRange {
         #[arg(long)]
@@ -31,6 +44,34 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path) -> Result<()> {
     let maintenance = codeyard_db_cluster::cluster::maintenance_lock(pool).await?;
     let result = match command {
         Command::Initialize { prefix } => codeyard_db_core::cells::initialize(pool, *prefix).await,
+        Command::Publish {
+            directory_address,
+            directory_key,
+            kind,
+            after,
+            limit,
+        } => {
+            async {
+                let client = codeyard_cells_router::directory::Client::new(
+                    codeyard_support::node_identity::load_or_create(state)?,
+                    *directory_address,
+                    codeyard_support::node_identity::parse_public_key(directory_key)?,
+                    Default::default(),
+                )?;
+                pool.set_directory(std::sync::Arc::new(client))?;
+                let DbPool::Postgres(pool) = pool else {
+                    unreachable!("directory attachment requires PostgreSQL")
+                };
+                let kind = codeyard_model::cells::ObjectKind::parse(kind)
+                    .ok_or_else(|| anyhow::anyhow!("Invalid object kind"))?;
+                let (next, count) =
+                    codeyard_db_core::cells::directory::publish_native(pool, kind, *after, *limit)
+                        .await?;
+                println!("{}", serde_json::json!({ "after": next, "count": count }));
+                Ok(())
+            }
+            .await
+        }
         Command::RenewRange {
             directory_address,
             directory_key,
@@ -66,6 +107,9 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path) -> Result<()> {
     };
     maintenance.release().await;
     result?;
+    if matches!(command, Command::Publish { .. }) {
+        return Ok(());
+    }
     if matches!(command, Command::RenewRange { .. }) {
         println!(
             "Cell {} now issues prefix {}.",
@@ -246,4 +290,25 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
     .await;
     directory.close().await;
     result
+}
+
+/// Native CLI constructors use the same pinned directory client as the server.
+pub fn attach_directory(pool: &DbPool, state: &Path) -> Result<()> {
+    let address = std::env::var("DIRECTORY_ADDRESS")
+        .ok()
+        .map(|value| value.parse())
+        .transpose()?;
+    let key = std::env::var("DIRECTORY_PUBLIC_KEY").ok();
+    let settings =
+        crate::backend::node::router::DirectorySettings::from_options(address, key.as_deref())?;
+    match settings {
+        Some(settings) => pool.set_directory(std::sync::Arc::new(settings.client(state)?)),
+        None => {
+            anyhow::ensure!(
+                pool.cell_id() == Prefix::ZERO,
+                "A nonzero cell requires DIRECTORY_ADDRESS and DIRECTORY_PUBLIC_KEY"
+            );
+            Ok(())
+        }
+    }
 }

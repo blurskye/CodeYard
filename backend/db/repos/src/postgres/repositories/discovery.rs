@@ -16,6 +16,7 @@ pub async fn create_forked_repository(
     pool: &PgPool,
     input: NewForkedRepository<'_>,
 ) -> Result<Repository> {
+    let mut tx = pool.begin().await?;
     let result = sqlx::query_as::<_, Repository>(
         &format!(r#"
         INSERT INTO repositories (home_cell,owner_kind, owner_user_id, name, description, is_private, disk_path, is_fork, forked_from_id, default_branch, created_by_id)
@@ -31,9 +32,11 @@ pub async fn create_forked_repository(
     .bind(input.disk_path)
     .bind(input.forked_from)
     .bind(input.default_branch)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
 
+    codeyard_db_core::cells::directory::postgres::repository(pool, &mut tx, &result).await?;
+    tx.commit().await?;
     Ok(result)
 }
 

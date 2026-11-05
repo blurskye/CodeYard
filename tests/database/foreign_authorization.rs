@@ -210,6 +210,48 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
             .display_name,
         provider.answer.user.display_name
     );
+    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Session(&value);
+    assert!(codeyard_db_identity::users::emails::change_emails(
+        pool,
+        user,
+        &credential,
+        &["foreign@example.test".into()],
+        true
+    )
+    .await
+    .is_err());
+    assert!(
+        codeyard_db_identity::users::social_accounts::change_social_accounts(
+            pool,
+            user,
+            &credential,
+            &[
+                codeyard_db_identity::users::social_accounts::SocialAccount {
+                    provider: "web".into(),
+                    url: "https://example.test/foreign".into()
+                }
+            ],
+            true
+        )
+        .await
+        .is_err()
+    );
+    assert!(codeyard_db_identity::users::blocks::change_block(
+        pool,
+        user,
+        &credential,
+        owner,
+        true
+    )
+    .await
+    .is_err());
+    for table in ["user_emails", "user_social_accounts", "user_blocks"] {
+        assert_eq!(
+            count(pool, table).await,
+            0,
+            "foreign sessions cannot create account-local rows"
+        );
+    }
     database
         .execute(
             "DELETE FROM repo_access WHERE repo_id=$1 AND user_id=$2",

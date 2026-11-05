@@ -45,8 +45,13 @@ pub enum Request {
         keys: Vec<Key>,
         nonce: String,
     },
-    Release { object: Object, keys: Vec<Key> },
-    Forget { object: Object },
+    Release {
+        object: Object,
+        keys: Vec<Key>,
+    },
+    Forget {
+        object: Object,
+    },
     ReportLoad {
         database_bytes: i64,
         write_rate: i64,
@@ -239,33 +244,77 @@ impl codeyard_db_core::cells::directory::Directory for Client {
             ..Default::default()
         }
     }
-    fn lookup<'a>(&'a self, key: &'a Key) -> futures_util::future::BoxFuture<'a, Result<Option<Location>>> {
+    fn lookup<'a>(
+        &'a self,
+        key: &'a Key,
+    ) -> futures_util::future::BoxFuture<'a, Result<Option<Location>>> {
         Box::pin(async move {
-            match self.request(&Request::Lookup { key: key.clone() }).await.map_err(publication_error)? {
+            match self
+                .request(&Request::Lookup { key: key.clone() })
+                .await
+                .map_err(publication_error)?
+            {
                 Reply::Location(location) => Ok(location),
                 _ => Err(codeyard_db_core::cells::directory::Refusal::Unavailable.into()),
             }
         })
     }
-    fn reserve<'a>(&'a self, object: Object, keys: &'a [Key], nonce: &'a str) -> futures_util::future::BoxFuture<'a, Result<()>> {
+    fn reserve<'a>(
+        &'a self,
+        object: Object,
+        keys: &'a [Key],
+        nonce: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            match self.request(&Request::Reserve { object, keys: keys.to_vec(), nonce: nonce.into() }).await.map_err(publication_error)? {
+            match self
+                .request(&Request::Reserve {
+                    object,
+                    keys: keys.to_vec(),
+                    nonce: nonce.into(),
+                })
+                .await
+                .map_err(publication_error)?
+            {
                 Reply::Reserved => Ok(()),
                 _ => Err(codeyard_db_core::cells::directory::Refusal::Unavailable.into()),
             }
         })
     }
-    fn confirm<'a>(&'a self, object: Object, keys: &'a [Key], nonce: &'a str) -> futures_util::future::BoxFuture<'a, Result<()>> {
+    fn confirm<'a>(
+        &'a self,
+        object: Object,
+        keys: &'a [Key],
+        nonce: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            match self.request(&Request::Confirm { object, keys: keys.to_vec(), nonce: nonce.into() }).await.map_err(publication_error)? {
+            match self
+                .request(&Request::Confirm {
+                    object,
+                    keys: keys.to_vec(),
+                    nonce: nonce.into(),
+                })
+                .await
+                .map_err(publication_error)?
+            {
                 Reply::Done => Ok(()),
                 _ => Err(codeyard_db_core::cells::directory::Refusal::Unavailable.into()),
             }
         })
     }
-    fn release<'a>(&'a self, object: Object, keys: &'a [Key]) -> futures_util::future::BoxFuture<'a, Result<()>> {
+    fn release<'a>(
+        &'a self,
+        object: Object,
+        keys: &'a [Key],
+    ) -> futures_util::future::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            match self.request(&Request::Release { object, keys: keys.to_vec() }).await.map_err(publication_error)? {
+            match self
+                .request(&Request::Release {
+                    object,
+                    keys: keys.to_vec(),
+                })
+                .await
+                .map_err(publication_error)?
+            {
                 Reply::Done => Ok(()),
                 _ => Err(codeyard_db_core::cells::directory::Refusal::Unavailable.into()),
             }
@@ -273,7 +322,11 @@ impl codeyard_db_core::cells::directory::Directory for Client {
     }
     fn forget(&self, object: Object) -> futures_util::future::BoxFuture<'_, Result<()>> {
         Box::pin(async move {
-            match self.request(&Request::Forget { object }).await.map_err(publication_error)? {
+            match self
+                .request(&Request::Forget { object })
+                .await
+                .map_err(publication_error)?
+            {
                 Reply::Done => Ok(()),
                 _ => Err(codeyard_db_core::cells::directory::Refusal::Unavailable.into()),
             }

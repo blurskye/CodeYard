@@ -717,8 +717,21 @@ The cell directory uses a separate PostgreSQL database. Initialize it with
 `cell directory register`, and enroll read-only router keys with
 `cell directory router-key --public-key <key>`. `cell directory serve` owns its node-key
 TLS listener; callers pin that public key. Cell mutations recheck live enrollment in their
-transaction. Native signup/key publication and remote membership pointers are unfinished,
-so multiple cells are not yet a usable deployment.
+transaction. Native signup/key publication is written but unchecked; remote membership
+pointers and two-cell deployment acceptance remain unfinished.
+
+Directory-enrolled cells use PostgreSQL; copy standalone SQLite with `codeyard db copy`
+before enrollment. Nonzero cells require the directory and authorization RPC settings.
+For an existing stopped cell, publish each bounded page with `codeyard cell publish
+--directory-address <address> --directory-key <public key> --kind <user|organization|repository>
+--after <id> --limit 250`. Repeat with the returned `after` until `count` is zero, for each
+kind. It publishes native names, primary/secondary emails, personal/deploy fingerprints and
+repository homes. A repeated page is safe. Native CLI user/key creation uses
+`DIRECTORY_ADDRESS` and `DIRECTORY_PUBLIC_KEY`, just like the server. New public mutations
+reserve and confirm directory claims before their native transaction commits; failed claims
+leave no usable local account or key. Claim removals are queued in `cell_outbox` in the
+native transaction and retried by owned web workers, so directory outages do not interrupt
+committed deletions or storage cleanup. This publication batch is unchecked.
 
 The public role is `serve --roles router`, with `DIRECTORY_ADDRESS`,
 `DIRECTORY_PUBLIC_KEY` and `CELL_REGION`. It opens no cell database. Enroll its key before

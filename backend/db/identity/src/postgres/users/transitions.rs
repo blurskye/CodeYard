@@ -99,7 +99,12 @@ async fn active_account_locked(
 }
 
 pub async fn native_account(connection: &mut sqlx::PgConnection, actor: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar(&crate::users::transitions::native_account_sql()).bind(actor).fetch_one(connection).await?)
+    Ok(
+        sqlx::query_scalar(&crate::users::transitions::native_account_sql())
+            .bind(actor)
+            .fetch_one(connection)
+            .await?,
+    )
 }
 
 pub(crate) async fn active_account(connection: &mut PgConnection, actor: i64) -> Result<bool> {
@@ -149,7 +154,10 @@ pub(crate) async fn require_account_exclusive(
     credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<()> {
     require_account_with_mode(tx, actor, credential, true, true).await?;
-    anyhow::ensure!(native_account(tx, actor).await?, codeyard_support::credentials::AccountRestricted);
+    anyhow::ensure!(
+        native_account(tx, actor).await?,
+        codeyard_support::credentials::AccountRestricted
+    );
     Ok(())
 }
 
@@ -347,7 +355,10 @@ pub async fn complete_setup(
     };
     sqlx::query("INSERT INTO node_configuration (id,node_mode,setup_completed) VALUES (1,$1,TRUE) ON CONFLICT (id) DO UPDATE SET node_mode=$1,setup_completed=TRUE,updated_at=NOW()")
         .bind(mode).execute(&mut *tx).await?;
-    anyhow::ensure!(codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &user).await?, codeyard_db_core::cells::directory::Refusal::Conflict);
+    anyhow::ensure!(
+        codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &user).await?,
+        codeyard_db_core::cells::directory::Refusal::Conflict
+    );
     tx.commit().await?;
     Ok(SetupClaim::Completed(Box::new(user)))
 }
@@ -424,7 +435,10 @@ pub async fn bootstrap_admin(
     .await?;
     sqlx::query("INSERT INTO node_configuration (id,node_mode,setup_completed) VALUES (1,$1,TRUE) ON CONFLICT (id) DO UPDATE SET node_mode=$1,setup_completed=TRUE,updated_at=NOW()")
         .bind(mode).execute(&mut *tx).await?;
-    anyhow::ensure!(codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &user).await?, codeyard_db_core::cells::directory::Refusal::Conflict);
+    anyhow::ensure!(
+        codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &user).await?,
+        codeyard_db_core::cells::directory::Refusal::Conflict
+    );
     tx.commit().await?;
     Ok(SetupClaim::Completed(Box::new(user)))
 }
@@ -509,8 +523,12 @@ pub async fn change_email(
     }
     let previous: Option<String> = if pool.directory().is_some() {
         sqlx::query_scalar("SELECT substr(email,1,256) FROM users WHERE id=$1")
-            .bind(user_id).fetch_one(&mut *tx).await?
-    } else { None };
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await?
+    } else {
+        None
+    };
     let changed: bool =
         sqlx::query_scalar("SELECT email IS DISTINCT FROM $2 FROM users WHERE id=$1")
             .bind(user_id)
@@ -548,14 +566,37 @@ pub async fn change_email(
     let Some(user) = user else {
         return Ok(EmailChange::Missing);
     };
-    if !codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &user).await? { return Ok(EmailChange::Taken); }
-    if !current_password(&mut tx, user_id, expected, session, false).await? { return Ok(EmailChange::Missing); }
+    if !codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &user).await? {
+        return Ok(EmailChange::Taken);
+    }
+    if !current_password(&mut tx, user_id, expected, session, false).await? {
+        return Ok(EmailChange::Missing);
+    }
+    let cleanup = previous
+        .as_deref()
+        .map(|email| codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, email))
+        .transpose()?;
+    let object = codeyard_model::cells::Object {
+        kind: codeyard_model::cells::ObjectKind::User,
+        id: user_id,
+    };
+    if let Some(key) = &cleanup {
+        codeyard_db_core::cells::outbox::postgres::release(
+            pool,
+            &mut tx,
+            object,
+            std::slice::from_ref(key),
+        )
+        .await?;
+    }
     tx.commit().await?;
-    if pool.directory().is_some() {
-        if let Some(previous) = previous {
-            let key = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, &previous)?;
-            codeyard_db_core::cells::directory::postgres::release(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::User, id: user_id }, &[key]).await?;
-        }
+    if let Some(key) = &cleanup {
+        codeyard_db_core::cells::directory::postgres::finish_release(
+            pool,
+            object,
+            std::slice::from_ref(key),
+        )
+        .await;
     }
     Ok(EmailChange::Updated(Box::new(user)))
 }
@@ -604,14 +645,6 @@ pub async fn register_password(
     administrator: Option<(i64, &str, bool)>,
 ) -> Result<AccountAdmission> {
     let mut tx = pool.begin().await?;
-    if !codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &user).await? {
-        return Ok(AccountAdmission::Conflict);
-    }
-    if let Some((actor, session, _)) = administrator {
-        if !active_admin(&mut tx, actor).await? || !live_session(&mut tx, actor, session).await? {
-            return Ok(AccountAdmission::Denied);
-        }
-    }
     if let Some((actor, _, _)) = administrator {
         lock_accounts(&mut tx, &[actor]).await?;
     }
@@ -653,11 +686,26 @@ pub async fn register_password(
         .bind(username).fetch_one(&mut *tx).await? { return Ok(AccountAdmission::Conflict); }
     if config.node_mode == "private" && administrator.is_none() {
         if pool.directory().is_some() {
-        let mut keys = vec![codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, username)?];
-        if let Some(email) = email { keys.push(codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Email, email)?); }
-        if !codeyard_db_core::cells::directory::postgres::available(pool, &mut tx, codeyard_model::cells::ObjectKind::User, &keys).await? {
-            return Ok(AccountAdmission::Conflict);
-        }
+            let mut keys = vec![codeyard_model::cells::Key::new(
+                codeyard_model::cells::KeyKind::Name,
+                username,
+            )?];
+            if let Some(email) = email {
+                keys.push(codeyard_model::cells::Key::new(
+                    codeyard_model::cells::KeyKind::Email,
+                    email,
+                )?);
+            }
+            if !codeyard_db_core::cells::directory::postgres::available(
+                pool,
+                &mut tx,
+                codeyard_model::cells::ObjectKind::User,
+                &keys,
+            )
+            .await?
+            {
+                return Ok(AccountAdmission::Conflict);
+            }
         }
         if sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM signup_requests WHERE status='pending' AND (username_key=$1 OR ($2::text IS NOT NULL AND email_key=$2)))")
             .bind(username.to_lowercase()).bind(email.map(str::to_lowercase)).fetch_one(&mut *tx).await? { return Ok(AccountAdmission::Conflict); }
@@ -674,6 +722,14 @@ pub async fn register_password(
     }
     let user = sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,email,password_hash,is_admin,must_change_password) VALUES ({cell_home},$1,$2,$3,$5,$4) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
         .bind(username).bind(email).bind(hash).bind(administrator.is_some()).bind(administrator.is_some_and(|(_, _, admin)| admin)).fetch_one(&mut *tx).await?;
+    if !codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &user).await? {
+        return Ok(AccountAdmission::Conflict);
+    }
+    if let Some((actor, session, _)) = administrator {
+        if !active_admin(&mut tx, actor).await? || !live_session(&mut tx, actor, session).await? {
+            return Ok(AccountAdmission::Denied);
+        }
+    }
     if let Some((actor, _, _)) = administrator {
         sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES($1,'user.create','user',$2,$3)")
             .bind(actor).bind(user.id).bind(serde_json::json!({"is_admin":user.is_admin,"must_change_password":true})).execute(&mut *tx).await?;
@@ -742,7 +798,10 @@ pub async fn admit_oauth_account(
             .bind(&name).bind(display_name).fetch_optional(&mut *tx).await?;
         if let Some(user) = user {
             if !codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &user).await? {
-                sqlx::query("DELETE FROM users WHERE id=$1").bind(user.id).execute(&mut *tx).await?;
+                sqlx::query("DELETE FROM users WHERE id=$1")
+                    .bind(user.id)
+                    .execute(&mut *tx)
+                    .await?;
                 continue;
             }
             // Login requires neither offline access nor token persistence. Do not retain

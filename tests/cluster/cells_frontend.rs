@@ -50,7 +50,7 @@ impl Server {
         format!("http://{}", self.address)
     }
 }
-async fn native(database: &PostgresDatabase, name: &str) -> (Server, i64, String) {
+pub(super) async fn native(database: &PostgresDatabase, name: &str) -> (Server, i64, String) {
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();

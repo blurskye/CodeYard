@@ -118,7 +118,10 @@ impl<DB: Database> Pool<DB> {
         Arc::ptr_eq(&self.waiting, &other.waiting)
     }
     pub fn directory(&self) -> Option<crate::cells::directory::Provider> {
-        self.directory.read().unwrap_or_else(|error| error.into_inner()).clone()
+        self.directory
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
     }
     pub fn set_foreign_authorization(&self, provider: crate::cells::authorization::Provider) {
         *self
@@ -273,6 +276,17 @@ impl<'a, DB: Database> sqlx::Acquire<'a> for &Pool<DB> {
     }
 }
 
+// Directory-enrolled cells use PostgreSQL. SQLite remains a standalone cell and
+// must be copied to PostgreSQL before joining a multi-cell deployment.
+impl Pool<sqlx::Postgres> {
+    pub fn set_directory(&self, provider: crate::cells::directory::Provider) {
+        *self
+            .directory
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some(provider);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -392,13 +406,5 @@ mod tests {
             .unwrap()
             .unwrap();
         pool.close().await;
-    }
-}
-
-// Directory-enrolled cells use PostgreSQL. SQLite remains a standalone cell and
-// must be copied to PostgreSQL before joining a multi-cell deployment.
-impl Pool<sqlx::Postgres> {
-    pub fn set_directory(&self, provider: crate::cells::directory::Provider) {
-        *self.directory.write().unwrap_or_else(|error| error.into_inner()) = Some(provider);
     }
 }

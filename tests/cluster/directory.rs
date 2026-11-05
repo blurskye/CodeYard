@@ -163,6 +163,96 @@ async fn directory_transport_pins_keys_and_read_only_routers_cannot_claim_names(
         connect(unknown.clone()).request(&cell).await.unwrap(),
         Reply::Cell(Some(_))
     ));
+    let email = Key::new(KeyKind::Email, "alice@example.test").unwrap();
+    let reserve_email = Request::Reserve {
+        object,
+        keys: vec![email.clone()],
+        nonce: "b".repeat(64),
+    };
+    let confirm_email = Request::Confirm {
+        object,
+        keys: vec![email.clone()],
+        nonce: "b".repeat(64),
+    };
+    connect(unknown.clone())
+        .request(&reserve_email)
+        .await
+        .unwrap();
+    connect(unknown.clone())
+        .request(&confirm_email)
+        .await
+        .unwrap();
+    directory
+        .set_router_key(&router.public_hex(), true)
+        .await
+        .unwrap();
+    let release = Request::Release {
+        object,
+        keys: vec![email.clone()],
+    };
+    assert!(router_client.request(&release).await.is_err());
+    assert!(
+        member_client.request(&release).await.is_err(),
+        "revoked cell key cannot remove claims"
+    );
+    connect(unknown.clone()).request(&release).await.unwrap();
+    connect(unknown.clone()).request(&release).await.unwrap();
+    let replacement = Object {
+        kind: ObjectKind::User,
+        id: object.id + 1,
+    };
+    let replacement_keys = vec![
+        Key::new(KeyKind::Name, "replacement").unwrap(),
+        email.clone(),
+    ];
+    connect(unknown.clone())
+        .request(&Request::Reserve {
+            object: replacement,
+            keys: replacement_keys.clone(),
+            nonce: "c".repeat(64),
+        })
+        .await
+        .unwrap();
+    connect(unknown.clone())
+        .request(&Request::Confirm {
+            object: replacement,
+            keys: replacement_keys,
+            nonce: "c".repeat(64),
+        })
+        .await
+        .unwrap();
+    connect(unknown.clone()).request(&release).await.unwrap();
+    assert_eq!(
+        directory.lookup(&email).await.unwrap().unwrap().object,
+        replacement,
+        "late cleanup cannot remove a replacement claim"
+    );
+    let stranger = NodeKey::generate();
+    directory
+        .register_cell(Cell {
+            id: Prefix::new(3),
+            name: "other".into(),
+            region: "a".into(),
+            state: State::Open,
+            web_urls: vec!["http://127.0.0.1:3001".into()],
+            ssh_addresses: vec![],
+            rpc_addresses: vec![],
+            node_keys: vec![stranger.public_hex()],
+            database_bytes: 0,
+            write_rate: 0,
+            maximum_database_bytes: 1000,
+            maximum_write_rate: 100,
+        })
+        .await
+        .unwrap();
+    let forget = Request::Forget {
+        object: replacement,
+    };
+    assert!(connect(stranger).request(&forget).await.is_err());
+    assert!(member_client.request(&forget).await.is_err());
+    connect(unknown.clone()).request(&forget).await.unwrap();
+    connect(unknown.clone()).request(&forget).await.unwrap();
+    assert_eq!(directory.lookup(&email).await.unwrap(), None);
     let routes =
         codeyard_cells_router::routes::Routes::new(connect(unknown.clone()), Default::default())
             .unwrap();

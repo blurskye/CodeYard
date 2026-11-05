@@ -26,6 +26,7 @@ pub async fn create_repository(
     is_private: bool,
     disk_path: &str,
 ) -> Result<Repository> {
+    let mut tx = pool.begin().await?;
     let result = sqlx::query_as::<_, Repository>(
         &format!(r#"
         INSERT INTO repositories (home_cell,owner_kind, owner_user_id, name, description, is_private, disk_path, created_by_id)
@@ -38,9 +39,11 @@ pub async fn create_repository(
     .bind(description)
     .bind(is_private)
     .bind(disk_path)
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
 
+    codeyard_db_core::cells::directory::postgres::repository(pool, &mut tx, &result).await?;
+    tx.commit().await?;
     Ok(result)
 }
 
@@ -633,9 +636,31 @@ pub async fn delete_unattached_advisory_fork(
     pool: &PgPool,
     repo_id: i64,
 ) -> Result<Option<Repository>> {
-    Ok(sqlx::query_as::<_, Repository>(
+    let mut tx = pool.begin().await?;
+    let deleted = sqlx::query_as::<_, Repository>(
         "DELETE FROM repositories WHERE id=$1 AND is_private AND contribution_version=1 AND NOT EXISTS(SELECT 1 FROM repository_advisories WHERE private_fork_id=$1) RETURNING *",
-    ).bind(repo_id).fetch_optional(pool).await?)
+    ).bind(repo_id).fetch_optional(&mut *tx).await?;
+    if deleted.is_some() {
+        codeyard_db_core::cells::outbox::postgres::forget(
+            pool,
+            &mut tx,
+            codeyard_model::cells::Object {
+                kind: codeyard_model::cells::ObjectKind::Repository,
+                id: repo_id,
+            },
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    codeyard_db_core::cells::directory::postgres::finish_forget(
+        pool,
+        codeyard_model::cells::Object {
+            kind: codeyard_model::cells::ObjectKind::Repository,
+            id: repo_id,
+        },
+    )
+    .await;
+    Ok(deleted)
 }
 
 pub async fn delete_unwritten_repository(
@@ -651,7 +676,26 @@ pub async fn delete_unwritten_repository(
     let deleted = sqlx::query_as::<_, Repository>(
         "DELETE FROM repositories WHERE id=$1 AND contribution_version=0 AND NOT EXISTS(SELECT 1 FROM repository_discussion_counters WHERE repo_id=$1) AND NOT EXISTS(SELECT 1 FROM discussions WHERE repo_id=$1) AND NOT EXISTS(SELECT 1 FROM repository_security_reports WHERE repo_id=$1) RETURNING *",
     ).bind(repo_id).fetch_optional(&mut *tx).await?;
+    if deleted.is_some() {
+        codeyard_db_core::cells::outbox::postgres::forget(
+            pool,
+            &mut tx,
+            codeyard_model::cells::Object {
+                kind: codeyard_model::cells::ObjectKind::Repository,
+                id: repo_id,
+            },
+        )
+        .await?;
+    }
     tx.commit().await?;
+    codeyard_db_core::cells::directory::postgres::finish_forget(
+        pool,
+        codeyard_model::cells::Object {
+            kind: codeyard_model::cells::ObjectKind::Repository,
+            id: repo_id,
+        },
+    )
+    .await;
     Ok(deleted)
 }
 
@@ -702,7 +746,24 @@ pub async fn delete_repository(
         )
         .await?;
     }
+    codeyard_db_core::cells::outbox::postgres::forget(
+        pool,
+        &mut tx,
+        codeyard_model::cells::Object {
+            kind: codeyard_model::cells::ObjectKind::Repository,
+            id: repo_id,
+        },
+    )
+    .await?;
     tx.commit().await?;
+    codeyard_db_core::cells::directory::postgres::finish_forget(
+        pool,
+        codeyard_model::cells::Object {
+            kind: codeyard_model::cells::ObjectKind::Repository,
+            id: repo_id,
+        },
+    )
+    .await;
     Ok(deleted)
 }
 

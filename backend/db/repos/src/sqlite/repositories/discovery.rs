@@ -17,13 +17,17 @@ pub async fn create_forked_repository(
     pool: &SqlitePool,
     input: NewForkedRepository<'_>,
 ) -> Result<Repository> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     // Read source policy and insert in one statement. Visibility-floor triggers
     // preserve/narrow descendants after source changes; no HTTP backend branch.
-    Ok(sqlx::query_as(&format!(r#"INSERT INTO repositories(home_cell,owner_kind,owner_user_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,created_by_id)
+    let result = sqlx::query_as::<_, Repository>(&format!(r#"INSERT INTO repositories(home_cell,owner_kind,owner_user_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,created_by_id)
         SELECT {cell_home},'user',?1,?2,?3,(?4 OR source.is_private OR source.visibility_locked),?5,1,?6,?7,?1
         FROM repositories source WHERE source.id=?6 AND NOT source.is_gist RETURNING *"#, cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
         .bind(input.owner_id).bind(input.name).bind(input.description).bind(input.is_private)
-        .bind(input.disk_path).bind(input.forked_from).bind(input.default_branch).fetch_one(pool).await?)
+        .bind(input.disk_path).bind(input.forked_from).bind(input.default_branch).fetch_one(&mut *tx).await?;
+    codeyard_db_core::cells::directory::sqlite::repository(pool, &mut tx, &result).await?;
+    tx.commit().await?;
+    Ok(result)
 }
 
 pub async fn get_user_fork(

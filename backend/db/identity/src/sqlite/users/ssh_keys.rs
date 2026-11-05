@@ -57,7 +57,7 @@ pub async fn add_ssh_key_for_token(
 ) -> Result<SshKey> {
     insert_ssh_key(
         pool,
-        Some(user_id),
+        user_id,
         Some(&AccountCredential::Token(token, hash)),
         name,
         public_key,
@@ -70,7 +70,10 @@ async fn require_key_account(
     user: i64,
     credential: Option<&AccountCredential<'_>>,
 ) -> Result<()> {
-    if let Some(credential @ (AccountCredential::Token(_, _) | AccountCredential::ForeignToken(_, _))) = credential {
+    if let Some(
+        credential @ (AccountCredential::Token(_, _) | AccountCredential::ForeignToken(_, _)),
+    ) = credential
+    {
         return crate::sqlite::users::transitions::require_account_exclusive(tx, user, credential)
             .await
             .map_err(|error| {
@@ -87,7 +90,10 @@ async fn require_key_account(
     .bind(user)
     .fetch_optional(&mut **tx)
     .await?;
-    anyhow::ensure!(active == Some(true) && crate::sqlite::users::transitions::native_account(tx, user).await?, SshKeyWriteRefusal::AccountRestricted);
+    anyhow::ensure!(
+        active == Some(true) && crate::sqlite::users::transitions::native_account(tx, user).await?,
+        SshKeyWriteRefusal::AccountRestricted
+    );
     if let Some(AccountCredential::Session(session)) = credential {
         anyhow::ensure!(
             codeyard_db_core::queries::sqlite::users::transitions::live_session(tx, user, session)
@@ -144,8 +150,15 @@ async fn insert_ssh_key(
         _ => anyhow::Error::from(error),
     })?;
     if pool.directory().is_some() {
-        let key = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Ssh, &result.fingerprint)?;
-        anyhow::ensure!(codeyard_db_core::cells::directory::sqlite::user_id(pool, &mut tx, user_id, &[key]).await?, SshKeyWriteRefusal::AlreadyUsed);
+        let key = codeyard_model::cells::Key::new(
+            codeyard_model::cells::KeyKind::Ssh,
+            &result.fingerprint,
+        )?;
+        anyhow::ensure!(
+            codeyard_db_core::cells::directory::sqlite::user_id(pool, &mut tx, user_id, &[key])
+                .await?,
+            SshKeyWriteRefusal::AlreadyUsed
+        );
         require_key_account(&mut tx, user_id, credential).await?;
     }
     tx.commit().await?;
@@ -264,7 +277,7 @@ pub async fn delete_user_ssh_key_for_token(
 ) -> Result<bool> {
     delete_key(
         pool,
-        user_id,
+        Some(user_id),
         Some(&AccountCredential::Token(token, hash)),
         key_id,
     )
@@ -278,16 +291,47 @@ async fn delete_key(
     key_id: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if let Some(user) = user_id { require_key_account(&mut tx, user, credential).await?; }
+    if let Some(user) = user_id {
+        require_key_account(&mut tx, user, credential).await?;
+    }
     let removed: Option<(i64, String)> = sqlx::query_as("DELETE FROM ssh_keys WHERE id=$1 AND (CAST($2 AS BIGINT) IS NULL OR user_id=$2) RETURNING user_id,fingerprint")
         .bind(key_id).bind(user_id).fetch_optional(&mut *tx).await?;
+    let cleanup = if pool.directory().is_some() {
+        removed
+            .as_ref()
+            .map(|(user, fingerprint)| -> Result<_> {
+                Ok((
+                    codeyard_model::cells::Object {
+                        kind: codeyard_model::cells::ObjectKind::User,
+                        id: *user,
+                    },
+                    codeyard_model::cells::Key::new(
+                        codeyard_model::cells::KeyKind::Ssh,
+                        fingerprint,
+                    )?,
+                ))
+            })
+            .transpose()?
+    } else {
+        None
+    };
+    if let Some((object, key)) = &cleanup {
+        codeyard_db_core::cells::outbox::sqlite::release(
+            pool,
+            &mut tx,
+            *object,
+            std::slice::from_ref(key),
+        )
+        .await?;
+    }
     tx.commit().await?;
-
-    if let Some((user, fingerprint)) = &removed {
-        if pool.directory().is_some() {
-            let key = codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Ssh, fingerprint)?;
-            codeyard_db_core::cells::directory::sqlite::release(pool, codeyard_model::cells::Object { kind: codeyard_model::cells::ObjectKind::User, id: *user }, &[key]).await?;
-        }
+    if let Some((object, key)) = &cleanup {
+        codeyard_db_core::cells::directory::sqlite::finish_release(
+            pool,
+            *object,
+            std::slice::from_ref(key),
+        )
+        .await;
     }
     Ok(removed.is_some())
 }

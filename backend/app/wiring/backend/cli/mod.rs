@@ -313,6 +313,16 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         .await
         .map_err(|_| anyhow::anyhow!("could not open the configured application database"))?;
     codeyard_db_core::run_migrations(&pool).await?;
+    if matches!(
+        &cli.command,
+        Commands::User {
+            action: UserAction::Create { .. } | UserAction::Bootstrap { .. }
+        } | Commands::Key {
+            action: KeyAction::Add { .. }
+        }
+    ) {
+        crate::backend::cli::cells::attach_directory(&pool, &cli.state_dir)?;
+    }
     let command = async {
         match cli.command {
             Commands::Init => {
