@@ -7,9 +7,10 @@ every open question. [Architecture](ARCHITECTURE.md#3-scaling-out-cells-behind-a
 keeps the longer plan for cells; this file comes first and does not repeat it.
 
 Items 1–9 have source implementations and acceptance tests. Workspace, Clippy and WASM
-checks pass for that batch; its runtime tests are running. Pool waiters, rolling
-upgrades, organization SSO and the full acceptance round are not complete. Cluster
-backup and restore are in their first check round.
+checks pass for that batch; the runtime job passed 1,013 library tests and Helm render checks. One CI fixture failed;
+it is corrected and awaits a rerun. Cluster and storage integration targets still need
+their run. Pool waiters, rolling
+upgrades, organization SSO and the full acceptance round are not complete. Backup and restore pass source checks and await runtime verification.
 Cluster mode stays hidden behind
 `CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.
 
@@ -38,7 +39,7 @@ Current acceptance status (runtime checks are still pending):
 - 6: bounded invitations and environment-only provisioning source checks pass; runtime pending.
 - 7: lease leader, policy settings, pause and dry run source checks pass; runtime pending.
 - 8: mover and bandwidth limit source checks pass; runtime pending.
-- 9: pool configuration and owned PostgreSQL crash checks written; Helm, pool and load runs pending.
+- 9: pool configuration source checks and Helm render checks pass; PostgreSQL failover, PgBouncer and load runs pending.
 - 10: previous-release target needs confirmation before compatibility work.
 - 11: primary snapshots, object copies, fenced import and per-node restore pass source checks; runtime pending.
 - 12: cross-node REST account/IP and audit acceptance written; organization OIDC login and commit-time membership checks are written, awaiting source checks.
@@ -49,24 +50,24 @@ Run these first, on the builder, against real servers. Each has a pass condition
 that fails today is a bug or a known gap; it is fixed, or listed as a gap with the item in
 part B that closes it. "Expected" is what the documents imply, not something already run.
 
-| # | Check | Pass when | Expected today |
+| # | Check | Pass when | Current check |
 |---|---|---|---|
-| A1 | `scripts/e2e.sh` cluster round | green | pass |
-| A2 | Push over HTTP and SSH, `kill -9` the storage primary the moment the push returns | within 2 minutes `git clone` has the commit, no `--force` | fail: copies are asynchronous (closed by B3) |
-| A3 | Upload a package or CI artifact through web node 1, download it through web node 2 | same bytes | fail with local files (closed by B2) |
-| A4 | Stop one web node while clients run `gh` and `git` | other nodes keep serving, sessions survive, no half-written state | pass |
-| A5 | Kill a storage node during a clone and a push | clear error to the client, no changed refs, clone retries from a copy | unknown |
-| A6 | Fill a storage node's disk | placement skips it, writes fail cleanly, no corrupt repository | unknown |
-| A7 | Restart PostgreSQL under load | `/ready` goes 503 then 200, nodes reconnect without restart, no lost acknowledged write | unknown |
-| A8 | Revoke a node key | the node is refused on its next call, within 60 seconds | unknown |
-| A9 | Send an oversized, truncated, replayed and unauthorised frame to the node port | refused, bounded memory, logged without secrets | unknown |
-| A10 | A compromised runner node asks for another run's token, another repository, another job's logs | refused every time | unknown |
-| A11 | Comment on an issue on web node 1 with a browser open on node 2 | page updates within 2 seconds | pass (stated in the docs) |
-| A12 | SIGTERM during running CI and a push | stops within 90 seconds, jobs end failed with a reason, no leaked containers or locks | unknown |
-| A13 | Old and new release side by side | refused with a clear message, or both work | refused today (cores and workers must match) |
-| A14 | Join token: reuse, expiry, cancel, wrong role | each behaves as `CLUSTER.md` says | unknown |
-| A15 | Clock skew of 5 minutes on one node | tokens, leases and take-over still behave | unknown |
-| A16 | Load test on stated hardware: pushes, clones, API reads, CI jobs, 50 organizations inviting at once | numbers recorded in `CLUSTER.md` limits | never run |
+| A1 | `scripts/e2e.sh` cluster round | green | pending builder acceptance |
+| A2 | Push over HTTP and SSH, `kill -9` the storage primary the moment the push returns | within 2 minutes `git clone` has the commit, no `--force` | quorum regression written; runtime pending |
+| A3 | Upload a package or CI artifact through web node 1, download it through web node 2 | same bytes | cross-node HTTP regression written; runtime pending |
+| A4 | Stop one web node while clients run `gh` and `git` | other nodes keep serving, sessions survive, no half-written state | pending builder acceptance |
+| A5 | Kill a storage node during a clone and a push | clear error to the client, no changed refs, clone retries from a copy | pending builder acceptance |
+| A6 | Fill a storage node's disk | placement skips it, writes fail cleanly, no corrupt repository | pending builder acceptance |
+| A7 | Restart PostgreSQL under load | `/ready` goes 503 then 200, nodes reconnect without restart, no lost acknowledged write | owned-database crash step written; runtime pending |
+| A8 | Revoke a node key | the node is refused on its next call, within 60 seconds | pending builder acceptance |
+| A9 | Send an oversized, truncated, replayed and unauthorised frame to the node port | refused, bounded memory, logged without secrets | pending builder acceptance |
+| A10 | A compromised runner node asks for another run's token, another repository, another job's logs | refused every time | pending builder acceptance |
+| A11 | Comment on an issue on web node 1 with a browser open on node 2 | page updates within 2 seconds | pending builder acceptance |
+| A12 | SIGTERM during running CI and a push | stops within 90 seconds, jobs end failed with a reason, no leaked containers or locks | pending builder acceptance |
+| A13 | Old and new release side by side | refused with a clear message, or both work | older protocol refused; B10 pending |
+| A14 | Join token: reuse, expiry, cancel, wrong role | each behaves as `CLUSTER.md` says | pending builder acceptance |
+| A15 | Clock skew of 5 minutes on one node | tokens, leases and take-over still behave | pending builder acceptance |
+| A16 | Load test on stated hardware: pushes, clones, API reads, CI jobs, 50 organizations inviting at once | numbers recorded in `CLUSTER.md` limits | benchmark written; no measurements yet |
 
 Each of A2 to A10, A12 and A15 becomes a test in `tests/`, driven through HTTP, SSH and
 Git, or an `e2e.sh` step when it needs several processes. A check that cannot be automated

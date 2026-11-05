@@ -557,7 +557,8 @@ checks ordinary API/Git traffic only. Run the session setup with
 rounds crash that owned database during `gh issue create`, check `/ready` goes 503 then
 200 without restarting Codeyard, and verify every acknowledged issue remains. They never
 restart an external database. `E2E_REQUIRE_PG_RESTART=1` makes a missing owned fixture a
-failure. The new crash and session-pool checks await execution.
+failure. Helm lint and render checks pass, including the pool-size setting and credential
+isolation. The PostgreSQL crash and session-pool checks await execution.
 
 ## One-cell benchmark
 
