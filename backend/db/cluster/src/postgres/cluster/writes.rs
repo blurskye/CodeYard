@@ -641,7 +641,7 @@ pub async fn held_voters(
     let limit = crate::drain::repository_limit()?;
     let rows: Vec<codeyard_db_core::models::HeldReplica> = sqlx::query_as(
         "SELECT v.repository_id,r.disk_path,r.storage_node_id AS primary_node_id,
-            v.applied_version,c.committed_version AS write_version
+            v.applied_version,c.committed_version AS write_version,c.serving=0 AS fenced
          FROM repository_voters v JOIN repositories r ON r.id=v.repository_id
          JOIN repository_write_control c ON c.repository_id=r.id
          WHERE v.node_id=$1 AND v.term=c.term ORDER BY v.repository_id LIMIT $2",
@@ -651,5 +651,19 @@ pub async fn held_voters(
     .fetch_all(pool)
     .await?;
     ensure!(rows.len() as i64 <= limit, "voter holding limit exceeded");
+    Ok(rows)
+}
+
+pub async fn write_family_terms(pool: &PgPool, repo: i64) -> Result<Vec<(i64, i64)>> {
+    let rows: Vec<(i64, i64)> = sqlx::query_as(&format!(
+        "WITH family AS ({}) SELECT r.id,c.term FROM family f JOIN repositories r ON r.id=f.id
+         JOIN repository_write_control c ON c.repository_id=r.id ORDER BY r.id LIMIT $2",
+        crate::postgres::cluster::FORK_FAMILY,
+    ))
+    .bind(repo)
+    .bind((MAX_FAMILY + 1) as i64)
+    .fetch_all(pool)
+    .await?;
+    crate::cluster::writes::validate_terms(&rows)?;
     Ok(rows)
 }

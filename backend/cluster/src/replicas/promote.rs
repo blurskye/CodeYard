@@ -500,9 +500,7 @@ pub async fn take_over(
             let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, row.repository_id)
                 .await?;
             if !view.serving {
-                if let Err(error) = recover_family(pool, row.repository_id, node, repos).await {
-                    warn!(repository = row.repository_id, %error, "canonical recovery remains fenced");
-                }
+                // Reconstruction belongs to the owned copy queue, not this scan.
                 continue;
             }
         }
@@ -550,11 +548,7 @@ pub async fn take_over(
                 Ok(promotions) => {
                     taken.extend(promotions.into_iter().map(|promotion| promotion.repository))
                 }
-                Err(error) if error.is::<RecoveryPending>() => {
-                    if recover_family(pool, row.repository_id, node, repos).await? {
-                        taken.extend(members.iter().map(|(member, _)| *member));
-                    }
-                }
+                Err(error) if error.is::<RecoveryPending>() => {}
                 Err(error) => {
                     if silent.skipped.insert(row.repository_id, from) != Some(from) {
                         warn!(repository = row.repository_id, %error, "primary offline; canonical recovery was refused");

@@ -74,6 +74,11 @@ native_operation!(crate::postgres::cluster::writes::held_voters,
     /// Bounded voting holdings for takeover, independently of asynchronous copy policy.
     fn held_voters(pool: &DbPool, node: i64) -> Result<Vec<codeyard_db_core::models::HeldReplica>>);
 
+native_operation!(crate::postgres::cluster::writes::write_family_terms,
+    crate::sqlite::cluster::writes::write_family_terms,
+    /// Current family terms for enabling already-reconstructed copies in one transaction.
+    fn write_family_terms(pool: &DbPool, repo: i64) -> Result<Vec<(i64, i64)>>);
+
 pub fn validate_id(id: &str) -> Result<()> {
     ensure!(
         id.len() == 36 && uuid::Uuid::parse_str(id).is_ok(),

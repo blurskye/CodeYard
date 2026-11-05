@@ -55,9 +55,6 @@ native_operation!(crate::postgres::drain::finish, crate::sqlite::drain::finish,
     fn finish(pool: &DbPool, node: i64) -> Result<bool>);
 native_operation!(crate::postgres::drain::record_error, crate::sqlite::drain::record_error,
     fn record_error(pool: &DbPool, node: i64, repository: i64) -> Result<()>);
-native_operation!(crate::postgres::drain::recovering, crate::sqlite::drain::recovering,
-    fn recovering(pool: &DbPool, node: i64) -> Result<Vec<i64>>);
-
 native_operation!(crate::postgres::drain::draining_nodes, crate::sqlite::drain::draining_nodes,
     fn draining_nodes(pool: &DbPool) -> Result<Vec<i64>>);
 native_operation!(crate::postgres::drain::expired_runs, crate::sqlite::drain::expired_runs,

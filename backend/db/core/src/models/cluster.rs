@@ -139,6 +139,8 @@ pub struct HeldReplica {
     /// The primary's version this copy has been brought up to; -1 before the first copy.
     pub applied_version: i64,
     pub write_version: i64,
+    /// The quorum term still needs to be enabled, even if this copy is already current.
+    pub fenced: bool,
 }
 
 /// How many repositories a node is primary for, and how many copies it holds, of which

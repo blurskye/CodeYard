@@ -185,11 +185,6 @@ pub async fn record_error(pool: &PgPool, node: i64, repo: i64) -> Result<()> {
     Ok(())
 }
 
-pub async fn recovering(pool: &PgPool, node: i64) -> Result<Vec<i64>> {
-    Ok(sqlx::query_scalar("SELECT v.repository_id FROM repository_voters v JOIN repository_write_control c ON c.repository_id=v.repository_id WHERE v.node_id=$1 AND (c.serving=0 OR v.applied_version<c.committed_version) ORDER BY v.repository_id LIMIT 128")
-        .bind(node).fetch_all(pool).await?)
-}
-
 pub async fn draining_nodes(pool: &PgPool) -> Result<Vec<i64>> {
     Ok(sqlx::query_scalar(
         "SELECT id FROM nodes WHERE state='draining' AND status='active' ORDER BY id LIMIT 128",

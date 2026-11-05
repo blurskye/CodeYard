@@ -23,20 +23,6 @@ pub async fn change(
 
 pub async fn step(context: &NodeContext) -> Result<()> {
     let pool = context.database()?;
-    for repository in codeyard_db_cluster::drain::recovering(pool, context.node_id).await? {
-        // Try retained bytes first. A voter missing acknowledged objects can fetch them
-        // from a reconstructed voter while client writes remain fenced.
-        if let Err(error) = crate::replicas::promote::recover_family(
-            pool,
-            repository,
-            context.node_id,
-            &context.repos_path,
-        )
-        .await
-        {
-            tracing::debug!(repository, %error, "canonical recovery is pending");
-        }
-    }
     let node = codeyard_db_cluster::cluster::get_node_by_id(pool, context.node_id)
         .await?
         .context("node membership disappeared")?;

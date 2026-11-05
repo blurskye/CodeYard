@@ -1087,6 +1087,12 @@ async fn three_voters_keep_a_majority_and_recover_a_missed_write(pool: &DbPool) 
         assert_eq!(held.len(), 1);
         assert_eq!(held[0].repository_id, stores.fixture.repo);
     }
+    assert_eq!(
+        codeyard_db_cluster::cluster::writes::write_family_terms(pool, stores.fixture.repo)
+            .await
+            .unwrap(),
+        vec![(stores.fixture.repo, 1)]
+    );
     // Stop one follower before a real receive-pack. Two durable voters still suffice.
     stores.listeners[2].stop().await;
     let (status, output, errors) = stores.push(pool).await;
@@ -1122,6 +1128,8 @@ async fn three_voters_keep_a_majority_and_recover_a_missed_write(pool: &DbPool) 
         .all(|voter| voter.applied_version == view.committed_version));
 
     // Two stopped followers cannot acknowledge a branch mutation or change any refs.
+    // Use the minimum timeout to cover optional remote cleanup consuming that budget.
+    set_timeout(pool, 1).await.unwrap();
     stores.listeners[1].stop().await;
     let before = stores.refs().await;
     let store = stores.store(pool).await;
@@ -1189,6 +1197,70 @@ async fn three_voter_recovery_refills_a_stale_survivor_while_public_reads_stay_f
             .is_err(),
         "fenced terms must refuse client reads"
     );
+    // Even an active storage peer cannot obtain a fenced repository's objects
+    // without being one of that term's assigned voters.
+    let outsider_key = codeyard_support::node_identity::NodeKey::generate();
+    let outsider = codeyard_db_cluster::cluster::register_own_node(
+        pool,
+        &outsider_key.public_hex(),
+        "outsider",
+        &["storage".into()],
+        "test",
+    )
+    .await
+    .unwrap();
+    let mut foreign = stores.contexts[2].clone();
+    foreign.node_id = outsider.id;
+    foreign.key = outsider_key.clone();
+    foreign.iroh = IrohDialer::new(Relay::Off, outsider_key);
+    let mut leaked = Vec::new();
+    let refused = timeout(
+        WAIT,
+        foreign.git_session(
+            target,
+            codeyard_repos_core::wire::Request {
+                repository: codeyard_repos_core::wire::repository_uuid(&row.disk_path).unwrap(),
+                operation: codeyard_repos_core::wire::Operation::ReplicaPack {
+                    have: Vec::new(),
+                    want: Vec::new(),
+                },
+                actor: None,
+                ci_run: None,
+            },
+            GitStreams {
+                input: &mut tokio::io::empty(),
+                output: &mut leaked,
+                errors: &mut tokio::io::sink(),
+            },
+        ),
+    )
+    .await
+    .unwrap();
+    assert!(refused.is_err());
+    assert!(leaked.is_empty());
+    foreign.iroh.close().await;
+
+    let cancelled = tokio_util::sync::CancellationToken::new();
+    cancelled.cancel();
+    assert!(codeyard_cluster::replicas::promote::catch_up_voter(
+        &stores.contexts[2],
+        repo,
+        &cancelled,
+    )
+    .await
+    .is_err());
+    let interrupted = codeyard_db_cluster::cluster::writes::recovery_view(pool, repo)
+        .await
+        .unwrap();
+    assert_eq!(
+        interrupted
+            .voters
+            .iter()
+            .find(|voter| voter.node_id == stores.fixture.voters[2])
+            .unwrap()
+            .applied_version,
+        -1
+    );
     codeyard_cluster::replicas::promote::catch_up_voter(
         &stores.contexts[2],
         repo,
@@ -1196,14 +1268,21 @@ async fn three_voter_recovery_refills_a_stale_survivor_while_public_reads_stay_f
     )
     .await
     .unwrap();
-    assert!(codeyard_cluster::replicas::promote::recover_family(
-        pool,
-        repo,
-        stores.fixture.voters[2],
-        &stores.contexts[2].repos_path,
+    // Already-current voters must still retry enabling a fenced family.
+    codeyard_cluster::replicas::pass(
+        &stores.contexts[2],
+        &mut codeyard_cluster::replicas::Retry::default(),
+        &mut codeyard_cluster::replicas::promote::Silent::default(),
+        &mut codeyard_cluster::replicas::Copying::default(),
     )
     .await
-    .unwrap());
+    .unwrap();
+    assert!(
+        codeyard_db_cluster::cluster::writes::recovery_view(pool, repo)
+            .await
+            .unwrap()
+            .serving
+    );
     let current = stores.contexts[2]
         .repository_store(&row, true)
         .await

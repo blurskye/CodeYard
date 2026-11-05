@@ -100,6 +100,7 @@ mod tests {
                 primary_node_id: Some(2),
                 applied_version: -1,
                 write_version: 0,
+                fenced: false,
             })
             .collect();
         let mut copying = Copying::default();
@@ -682,7 +683,7 @@ impl Copying {
             .filter(|row| {
                 (self.voting.contains(&row.repository_id)
                     || row.primary_node_id.is_some_and(|primary| primary != node))
-                    && row.applied_version < row.write_version
+                    && (row.fenced || row.applied_version < row.write_version)
                     && codeyard_repos_core::wire::repository_uuid(&row.disk_path)
                         .is_ok_and(|uuid| !self.is_running(uuid))
             })
@@ -748,7 +749,11 @@ async fn copy_one(
         }
         let view =
             codeyard_db_cluster::cluster::writes::recovery_view(pool, row.repository_id).await?;
-        if !view.serving {
+        if !view.serving
+            && view.voters.iter().any(|voter| {
+                voter.node_id == context.node_id && voter.applied_version != view.committed_version
+            })
+        {
             // Reconstruction may outlast a heartbeat. Try retained local objects in
             // this owned slot before a network refill.
             let _ = codeyard_repos_core::repositories::store::RepoStore::recover_term(
@@ -762,7 +767,15 @@ async fn copy_one(
         if stop.is_cancelled() {
             return Ok(());
         }
-        return promote::catch_up_voter(context, row.repository_id, stop).await;
+        promote::catch_up_voter(context, row.repository_id, stop).await?;
+        if let Some(write) = &view.unfinished {
+            codeyard_db_cluster::cluster::writes::finish_write(pool, &write.id, view.term).await?;
+        }
+        let terms =
+            codeyard_db_cluster::cluster::writes::write_family_terms(pool, row.repository_id)
+                .await?;
+        codeyard_db_cluster::cluster::writes::enable_write_family(pool, &terms).await?;
+        return Ok(());
     }
     let primary = row
         .primary_node_id

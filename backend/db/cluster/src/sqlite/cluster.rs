@@ -700,7 +700,7 @@ pub async fn assign_replica_family(
 pub async fn list_held_replicas(pool: &SqlitePool, node_id: i64) -> Result<Vec<HeldReplica>> {
     Ok(sqlx::query_as(
         "SELECT rr.repository_id, r.disk_path, r.storage_node_id AS primary_node_id,
-                rr.applied_version, r.write_version
+                rr.applied_version, r.write_version, 0 AS fenced
          FROM repository_replicas rr
          JOIN repositories r ON r.id = rr.repository_id
          WHERE rr.node_id = ?1
