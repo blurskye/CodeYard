@@ -672,7 +672,8 @@ for issue and pull request GET content. The server checks database identity and 
 once per request and falls back to primary when it cannot prove the copy current within
 two seconds. Authentication, permission checks and writes stay on primary; the same
 credential's reads stay there for five seconds after a write. Other content families still
-use primary. Source and replica acceptance checks are pending.
+use primary. Workspace, Clippy and WASM checks pass; replica runtime acceptance is
+pending.
 `DATABASE_POOL_SIZE` sets each process's PostgreSQL pool (1–1,000, default 20), with
 a five-second acquisition deadline and connection validation before reuse. Lost
 connections reconnect through `DATABASE_URL`; writes with an uncertain result are

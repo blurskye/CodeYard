@@ -155,7 +155,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     acceptance list. The owner lifted the A16 gate on 2026-11-05. Stage 0 automated
     durability checks pass; its VM hard-reset check remains open. Stage 1 reuses scoped authority and package locks, notification polling,
     configurable pools. Object-store log chunks, current-copy clone distribution and
-    issue/PR replica reads are written; source and runtime checks are pending.
+    issue/PR replica reads pass workspace, Clippy and WASM checks. Focused library,
+    CI/database/cluster and PgBouncer/replica/quorum acceptance is running.
     Remaining read families, bulk retention and valid load measurements are open.
     Stages 2 to 6 are not built. Individual users may move automatically to
     their working region in stage 6. Organizations retain one write home and gain read
