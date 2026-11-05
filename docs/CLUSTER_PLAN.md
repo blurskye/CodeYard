@@ -167,7 +167,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     including mixed-cell nodes and ordered mutations, pass all three checks. Git/ref/composite
     routing hints and upload cleanup pass workspace 53188113fc0f4d4aa1a760d067f3d97a,
     Clippy e9247e79663843cbb6fe5cee24024561 and WASM a65f391359894621b5b10e48a84d1c9a.
-    Two real HTTP cells and TLS-directory tests cover the dispatch source; these tests have not run.
+    Two real HTTP cells and TLS-directory tests cover the dispatch source; the outage fixture
+    needs a connection-shutdown fix before its rerun can pass.
     Token tests that pinned the former unprefixed length now assert the scoped format; the
     directory CLI fixture now supplies the capacity it asserts. Runtime rechecks are pending.
     Acceptance rerun 049f16eeb8324596b898b230885a66d3 runs the compiled snapshot. A new
@@ -175,7 +176,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     guards and native list filters, with SQLite/PostgreSQL HTTP and storage tests. Exact
     lookups retain stubs for references. Workspace a01f0a8780954bbbba9f9d985affa50e,
     Clippy 49b15ab6972445e1bcf022d3c31cb9f3 and WASM a192af85af5945458deaa483d93431f4
-    are running or queued. The following unchecked batch adds native rooted-ID decoding,
+    pass. The following unchecked batch adds native rooted-ID decoding,
     owner verification for reads and mutation inputs, common repository/team ID issuance in
     REST/webhooks/GraphQL, and forged-root HTTP tests. Object and job-token assertions
     that pinned prefix-only output now assert rooted output.

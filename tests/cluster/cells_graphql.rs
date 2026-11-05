@@ -25,14 +25,33 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc, Mutex,
 };
-use tokio_util::task::AbortOnDropHandle;
+use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+
+struct CellServer {
+    stop: CancellationToken,
+    task: AbortOnDropHandle<()>,
+}
+impl Drop for CellServer {
+    fn drop(&mut self) {
+        self.stop.cancel();
+    }
+}
+impl CellServer {
+    async fn stop(&mut self) {
+        self.stop.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(5), &mut self.task)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
 
 async fn cell(
     prefix: Prefix,
     writes: Arc<Mutex<Vec<u16>>>,
     revoked: Arc<AtomicBool>,
     fail: Arc<AtomicBool>,
-) -> (String, AbortOnDropHandle<()>) {
+) -> (String, CellServer) {
     let app = Router::new().route(
         "/api/graphql",
         post(move |Json(body): Json<Value>| {
@@ -108,10 +127,15 @@ async fn cell(
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
+    let stop = CancellationToken::new();
+    let stopping = stop.clone();
     let task = AbortOnDropHandle::new(tokio::spawn(async move {
-        axum::serve(listener, app).await.unwrap()
+        axum::serve(listener, app)
+            .with_graceful_shutdown(stopping.cancelled_owned())
+            .await
+            .unwrap()
     }));
-    (format!("http://{address}"), task)
+    (format!("http://{address}"), CellServer { stop, task })
 }
 async fn response(dispatch: &Dispatcher, headers: &HeaderMap, query: &str) -> Value {
     let response = dispatch
@@ -133,14 +157,14 @@ async fn two_cells_split_queries_keep_node_positions_and_validate_before_ordered
     let writes = Arc::new(Mutex::new(Vec::new()));
     let revoked = Arc::new(AtomicBool::new(false));
     let fail = Arc::new(AtomicBool::new(false));
-    let (zero, _zero_server) = cell(
+    let (zero, mut zero_server) = cell(
         Prefix::ZERO,
         writes.clone(),
         revoked.clone(),
         Arc::new(AtomicBool::new(false)),
     )
     .await;
-    let (one, one_server) = cell(
+    let (one, mut one_server) = cell(
         Prefix::new(1),
         writes.clone(),
         Arc::new(AtomicBool::new(false)),
@@ -203,6 +227,24 @@ async fn two_cells_split_queries_keep_node_positions_and_validate_before_ordered
         Default::default(),
     )
     .unwrap();
+    // Directory ownership can differ from a row's allocation prefix after a move.
+    // No move protocol is exercised here: these are authoritative route fixtures.
+    sqlx::query("INSERT INTO directory_objects(kind,id,home_cell,active,nonce_hash) VALUES('repository',99,1,true,$1),('organization',$2,0,true,$1)")
+        .bind("a".repeat(64))
+        .bind(*Prefix::new(1).ids().start() + 99)
+        .execute(&database.raw).await.unwrap();
+    for kind in ["I", "PR", "IC", "PC", "PRR", "PRRC", "D", "DIC", "L", "M"] {
+        let id = node_id::scoped(kind, 99, 17).unwrap();
+        assert_eq!(
+            routes.by_node(&id).await.unwrap().unwrap().id,
+            Prefix::new(1)
+        );
+    }
+    let team = node_id::scoped("T", *Prefix::new(1).ids().start() + 99, 17).unwrap();
+    assert_eq!(
+        routes.by_node(&team).await.unwrap().unwrap().id,
+        Prefix::ZERO
+    );
     let transport = Transport::new(Default::default()).unwrap();
     let dispatch = Dispatcher::new(routes, transport.clone(), Config::default()).unwrap();
     let mut headers = HeaderMap::new();
@@ -272,8 +314,7 @@ async fn two_cells_split_queries_keep_node_positions_and_validate_before_ordered
     );
     assert!(writes.lock().unwrap().is_empty());
     revoked.store(false, Ordering::SeqCst);
-    one_server.abort();
-    let _ = one_server.await;
+    one_server.stop().await;
     assert!(dispatch
         .execute(&headers, json!({"query":query}))
         .await
@@ -286,6 +327,7 @@ async fn two_cells_split_queries_keep_node_positions_and_validate_before_ordered
     .await;
     assert_eq!(value["data"]["a"]["name"], "repo-0");
     transport.shutdown().await;
+    zero_server.stop().await;
     listener.stop().await;
     directory.close().await;
     database.finish().await;

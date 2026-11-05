@@ -53,7 +53,11 @@ async fn create_token(client: &Client, base: &str, cookie: &str, csrf: &str, sco
     };
     let value = model.new_token.unwrap();
     assert!(value.starts_with("cy_pat_"));
-    assert_eq!(value.len(), 71);
+    let framed =
+        codeyard_support::cells::Secret::token(&value, codeyard_support::tokens::PAT_PREFIX)
+            .unwrap();
+    assert_eq!(framed.cell, codeyard_support::cells::Prefix::ZERO);
+    assert_eq!(framed.secret.len(), 64);
     let token = model
         .tokens
         .iter()
