@@ -771,10 +771,18 @@ async fn copy_one(
         if let Some(write) = &view.unfinished {
             codeyard_db_cluster::cluster::writes::finish_write(pool, &write.id, view.term).await?;
         }
-        let terms =
-            codeyard_db_cluster::cluster::writes::write_family_terms(pool, row.repository_id)
-                .await?;
-        codeyard_db_cluster::cluster::writes::enable_write_family(pool, &terms).await?;
+        // The creator enables a fresh empty term only after every selected voter has
+        // initialized. A background majority must not race its remaining Initialize RPCs.
+        let initializing = view.term == 1
+            && view.committed_version == 0
+            && view.refs.len() == 1
+            && view.refs[0].name == "HEAD";
+        if !initializing {
+            let terms =
+                codeyard_db_cluster::cluster::writes::write_family_terms(pool, row.repository_id)
+                    .await?;
+            codeyard_db_cluster::cluster::writes::enable_write_family(pool, &terms).await?;
+        }
         return Ok(());
     }
     let primary = row
