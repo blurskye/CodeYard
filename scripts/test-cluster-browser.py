@@ -4,10 +4,13 @@ import json
 import os
 import re
 import sys
+import subprocess
+import time
+from pathlib import Path
 
 from playwright.sync_api import expect, sync_playwright
 
-base, jar, node = sys.argv[1:]
+base, jar, node, other, peer_jar = sys.argv[1:]
 with open(jar, encoding="utf-8") as source:
     session = json.load(source)["session_id"]
 
@@ -64,4 +67,34 @@ with sync_playwright() as playwright:
         assert not errors, errors
         print(f"PASS cluster administration {'hydrated navigation' if javascript else 'without JavaScript'}: drain, progress, cancel and paused dry-run policy save", flush=True)
         context.close()
+    # Alice comments through web1 while Bob has the issue open on web2. The
+    # existing notification hint must refresh that page, including with clock skew.
+    helper = Path(__file__).with_name("e2e-web.py")
+    def post(path, payload, field):
+        result = subprocess.run([sys.executable, "-I", str(helper), "req", "--base", base,
+                                 "--jar", jar, "--who", "alice", "POST", path,
+                                 "--accept", "json", "--status", "201", "--json", json.dumps(payload),
+                                 "--print", "json:" + field], text=True, capture_output=True,
+                                timeout=30, check=True)
+        return result.stdout.strip()
+    number = post("/api/repos/alice/proj/issues", {"title": "Cross-node browser update", "body": "Live hint fixture"}, "number")
+    assert number.isdigit()
+    with open(peer_jar, encoding="utf-8") as source:
+        peer_session = json.load(source)["session_id"]
+    context = browser.new_context()
+    context.add_cookies([{"name": "session_id", "value": peer_session, "url": other}])
+    page = context.new_page()
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    with page.expect_websocket(timeout=60000):
+        page.goto(f"{other}/alice/proj/issues/{number}")
+    page.locator('[data-hydrated="true"]').wait_for(state="attached", timeout=60000)
+    marker = "Cross-node comment arrives within two seconds"
+    post(f"/api/repos/alice/proj/issues/{number}/comments", {"body": "@bob " + marker}, "id")
+    started = time.monotonic()
+    expect(page.get_by_text(marker, exact=False).first).to_be_visible(timeout=2000)
+    assert time.monotonic() - started <= 2, "cross-node refresh exceeded two seconds"
+    assert not errors, errors
+    print("PASS cluster live issue: comment on web1 updates Bob's open page on web2 within two seconds", flush=True)
+    context.close()
     browser.close()

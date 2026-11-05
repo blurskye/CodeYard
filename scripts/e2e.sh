@@ -2918,7 +2918,8 @@ t_cluster_drain_worker() {
 }
 
 t_cluster_browser() {
-    "$GITHUB_PYTHON" -I "$ROOT/scripts/test-cluster-browser.py" "$BASE" "$RUN/jar-alice.json" ci1
+    "$GITHUB_PYTHON" -I "$ROOT/scripts/test-cluster-browser.py" "$BASE" "$RUN/jar-alice.json" ci1 \
+        "http://127.0.0.1:${HTTP_PORTS[web2]}" "$RUN/jar-bob.json"
 }
 
 t_cluster_shutdown() { # inline: attempt every stop even when one fails
