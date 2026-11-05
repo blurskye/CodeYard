@@ -156,7 +156,7 @@ API crates depend on the app library, and binary wiring composes them from above
 - **CI:** triggers call `CiRuns::trigger_run` → `ci::admission` pins the
   commit and workflow blobs → `db::ci::enqueue_ci_run`. Nodes with the
   `runner` role use `RunQueue` to claim runs (`claim_ci_run`,
-  `FOR UPDATE SKIP LOCKED` on PostgreSQL), run `act`, stream logs into `ci_logs`,
+  `FOR UPDATE SKIP LOCKED` on PostgreSQL), run `act`, stream logs into compressed `ci_log_chunks`,
   heartbeat, and finish the run with a commit status. Each workflow uses
   `gitserv/workflow/<full path>` (including the filename extension); runs covering
   several workflows use `gitserv/pipeline/<pipeline>`. Older attempts cannot replace
@@ -253,9 +253,10 @@ only after rechecking active membership. Private nodes enroll an existing member
   migration statement stops after 120 seconds.
 - Bare repositories live at `<REPOS_PATH>/<uuid>.git`, so renames and
   ownership changes never move files.
-- On PostgreSQL, every authority check and notification read takes the shared membership
-  advisory lock first, before any row lock. A ban or other account or membership change
-  takes it exclusively, before the organizations and accounts it locks. A fork's sources
+- On PostgreSQL, authority checks take shared locks scoped to the affected account ids,
+  sorted and deduplicated. Account changes take those account locks exclusively; org
+  authority is retained through org and membership rows. Unrelated accounts and orgs do
+  not share a membership lock. A fork's sources
   are locked before the fork, lowest id first, in every path that locks both: authority
   checks, notification reads and fork deletion (`lock_fork_ancestors`). Reads take the
   sources FOR SHARE; deletions and privacy changes take them FOR NO KEY UPDATE.
@@ -749,8 +750,10 @@ the round rather than skipping it.
 
 ## 3. Scaling out: cells behind a router (plan, not built)
 
-Stage 0 reuses the durability work from cluster plan items 3 and 11; stages 1 to 6
-are not built. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
+Stage 0 reuses the durability work from cluster plan items 3 and 11. Stage 1 already
+has account and package lock scoping, cursor polling, configurable pools and compressed
+log batches in the database; object-store logs and read routing are still missing.
+Stages 2 to 6 are not built. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
 numbers remain assumptions until stage 1 measures a real cell.
 
 Two findings set the order of work:
@@ -760,12 +763,11 @@ Two findings set the order of work:
   provide quorum publication, copies, backups and fenced restore. Stage 0 extends
   acceptance to three voters and every ref publisher; VM hard-reset acceptance remains
   an operator check.
-- **One database hits global locks long before its size.** Every authority check takes the
-  membership advisory lock (37002) shared; signups, membership changes, blocks and gist
-  stars and comments take it exclusively. Every package registry call, reads included,
-  takes one lock (723947120). Notification hints already use bounded cursor polling;
-  the pool is configurable. CI logs are still a row per line. Stage 1 replaces the
-  hot-path global locks and log storage and adds replica read routing.
+- **One large cell still needs work.** Account authority locks are scoped by account,
+  organizations use row locks, and package reads use snapshots without package locks.
+  Notification hints use bounded cursor polling and the pool is configurable. CI logs
+  use compressed batches in `ci_log_chunks`, still in the database. Stage 1 moves those
+  bytes to object storage, adds replica read routing and measures a real cell.
 
 So stages 0 and 1 work inside one installation, and cells come after. "With ease" does not
 hold at 10 billion accounts: every part is well known, but the base case is about 1,000
@@ -800,7 +802,7 @@ Stage 0 needs no cells or router. It closes every gap where acknowledged data ca
 | Derived Git data: pack indexes, bitmaps, commit-graphs, the language and contributor tables | not backed up or replicated; `codeyard repo rebuild` makes it again | none | slower pages meanwhile |
 | PostgreSQL | Patroni with `synchronous_mode_strict` and a synchronous standby in another zone; WAL archive and daily base backups with pgBackRest or WAL-G; 14 days of point-in-time recovery | 0 on node or zone loss; under a minute on cluster loss | about 30 s failover; about 2 h to restore 4 TB |
 | SQLite | already WAL with `synchronous=FULL`; `codeyard backup` copies it online with `VACUUM INTO`; Litestream optional | 0 on a crash; the last backup on disk loss | minutes |
-| CI logs | database rows until stage 1, then chunks in object storage; a job completes only after its last chunk is stored | the unstored tail of a running job | none |
+| CI logs | compressed database chunks until stage 1, then chunks in object storage; a job completes only after its last chunk is stored | the unstored tail of a running job | none |
 | Artifacts, caches, uploads | Two checked storage-node copies, or optional versioned S3; local disk on one machine | last completed cluster backup, or the operator's S3 recovery point | restore time |
 | Node keys, membership | membership is in the database; a lost node pairs again with a new key; `SECRETS_MASTER_KEY` and `CLUSTER_*` are kept offline, apart from the backups | none | minutes |
 
@@ -1011,11 +1013,11 @@ transactions per second at peak, and closes to new accounts at 2 TB.** Why: a 4 
 takes about 2 hours, which bounds the worst outage; size, not load, sets the cell count.
 Cost: four PostgreSQL nodes per 10 million accounts.
 
-- First code changes (stage 1): per-org and per-account membership locks; per-package
-  registry locks and none for reads; web nodes polling for new notification ids instead of
-  `LISTEN`/`NOTIFY`; CI logs in object storage; a configurable pool behind PgBouncer; GET
-  requests on a replica except for a few seconds after the same session wrote; retention
-  for the bulky tables.
+- Stage 1 reuses scoped account and org authority, per-package publish locks and
+  lock-free registry snapshots, notification cursor polling and configurable pools behind
+  PgBouncer. CI log batches still live in `ci_log_chunks`; their bytes must move to object
+  storage. GET requests still need replica routing except for a few seconds after the
+  same session wrote, and bulky tables need retention.
 - Four nodes: primary, synchronous standby in a second zone, asynchronous read replica in a
   third, and an asynchronous copy in the disaster-recovery region. Patroni with etcd runs
   failover, pgBackRest or WAL-G archives WAL (pgBackRest changed maintainers in 2026), and
