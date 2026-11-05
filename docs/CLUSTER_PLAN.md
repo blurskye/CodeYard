@@ -67,7 +67,7 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 | A9 | Send an oversized, truncated, replayed and unauthorised frame to the node port | refused, bounded memory, logged without secrets | pending builder acceptance |
 | A10 | A compromised runner node asks for another run's token, another repository, another job's logs | refused every time | pending builder acceptance |
 | A11 | Comment on an issue on web node 1 with a browser open on node 2 | page updates within 2 seconds | pending builder acceptance |
-| A12 | SIGTERM during running CI and a push | stops within 90 seconds, jobs end failed with a reason, no leaked containers or locks | pending builder acceptance |
+| A12 | SIGTERM during running CI and a push | stops within 90 seconds, jobs end failed with a reason, no leaked containers or locks | e2e runs CI with an owned child, interrupts a pack and checks shutdown, failure reason and a later write; runtime pending |
 | A13 | Old and new release side by side | refused with a clear message, or both work | older protocol refused; B10 pending |
 | A14 | Join token: reuse, expiry, cancel, wrong role | each behaves as `CLUSTER.md` says | pending builder acceptance |
 | A15 | Clock skew of 5 minutes on one node | tokens, leases and take-over still behave | second web process runs five minutes ahead in OIDC and e2e acceptance; runtime pending |

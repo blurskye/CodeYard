@@ -1110,8 +1110,8 @@ def storage_loss(args):
                                 return
                             fired.set()
                         assert resume.wait(timeout=45), "storage loss was not released"
-                    tail = body[-3:] if args.storage_loss == "push" else b""
-                    if target and args.storage_loss == "push" and b"PACK" in body:
+                    tail = body[-3:] if args.storage_loss != "clone" else b""
+                    if target and args.storage_loss != "clone" and b"PACK" in body:
                         gate()
                     deadline = time.monotonic() + 150
                     while time.monotonic() < deadline:
@@ -1122,7 +1122,7 @@ def storage_loss(args):
                                 return
                             receiver = remote if sender is self.request else self.request
                             receiver.sendall(data)
-                            if target and ((args.storage_loss == "push" and sender is self.request)
+                            if target and ((args.storage_loss != "clone" and sender is self.request)
                                            or (args.storage_loss == "clone" and sender is remote)):
                                 if b"PACK" in tail + data:
                                     gate()
@@ -1147,17 +1147,38 @@ def storage_loss(args):
         child = subprocess.Popen(command, env=env, stdout=log, stderr=log, start_new_session=True)
         try:
             assert fired.wait(timeout=40), "Git did not start its smart-HTTP transfer"
-            os.kill(args.primary_pid, signal.SIGKILL)
+            stopping = args.storage_loss == "shutdown"
+            if stopping:
+                assert args.runner_pid and args.runner_pid > 1
+            targets = [args.primary_pid, *([args.runner_pid] if stopping else [])]
+            for pid in targets:
+                os.kill(pid, signal.SIGTERM if stopping else signal.SIGKILL)
             resume.set()
-            assert child.wait(timeout=120) != 0, "Git accepted a truncated transfer"
+            if stopping:
+                def live(pid):
+                    try:
+                        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0] != "Z"
+                    except FileNotFoundError:
+                        return False
+                deadline = time.monotonic() + 90
+                while any(live(pid) for pid in targets):
+                    assert time.monotonic() < deadline, "SIGTERM did not stop both nodes within 90 seconds"
+                    time.sleep(0.05)
+            status = child.wait(timeout=30 if stopping else 120)
             log.seek(0)
-            assert log.read(4096), "Git returned no failure reason"
+            if not stopping:
+                assert status != 0, "Git accepted a truncated transfer"
+            if status != 0:
+                assert log.read(4096), "Git returned no failure reason"
         finally:
             resume.set()
             if child.poll() is None:
                 os.killpg(child.pid, signal.SIGKILL)
             child.wait(timeout=10)
-    print(f"PASS cluster {args.storage_loss}: storage SIGKILL returns a client error", flush=True)
+    if args.storage_loss == "shutdown":
+        print(f"PASS cluster shutdown: both nodes stopped within 90 seconds; ack={status == 0}", flush=True)
+    else:
+        print(f"PASS cluster {args.storage_loss}: storage SIGKILL returns a client error", flush=True)
 
 
 def main():
@@ -1166,8 +1187,9 @@ def main():
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--skip-runs", metavar="REASON", default="",
                         help="skip the checks that need a finished workflow run, for this reason")
-    parser.add_argument("--storage-loss", choices=("clone", "push"))
+    parser.add_argument("--storage-loss", choices=("clone", "push", "shutdown"))
     parser.add_argument("--primary-pid", type=int)
+    parser.add_argument("--runner-pid", type=int)
     parser.add_argument("--repository")
     parser.add_argument("--source", type=Path)
     args = parser.parse_args()

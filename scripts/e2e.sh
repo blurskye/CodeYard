@@ -2800,14 +2800,14 @@ t_cluster_quorum_primary_loss() {
 t_cluster_storage_loss() {
     local name=quorum-survival-http source=$RUN/work/quorum-survival-http expected primary pid mode destination
     for mode in clone push; do
-        "$PYTHON" -I - "$source/loss-$mode.bin" <<'PYDATA'
+        "$PYTHON" -I - "$source/loss-$mode.bin" <<'PYDATA' || return 1
 import os, sys
 with open(sys.argv[1], 'wb') as output:
     for _ in range(20):
         output.write(os.urandom(1024 * 1024))
 PYDATA
-        git_as alice -C "$source" add "loss-$mode.bin"
-        git_as alice -C "$source" commit -qm "Storage loss during $mode"
+        git_as alice -C "$source" add "loss-$mode.bin" || return 1
+        git_as alice -C "$source" commit -qm "Storage loss during $mode" || return 1
         if [[ $mode == clone ]]; then
             git_with_token write -C "$source" push -q "$BASE/alice/$name.git" main || return 1
             expected=$(git_as alice -C "$source" rev-parse HEAD)
@@ -2824,6 +2824,74 @@ PYDATA
         [[ $(git_as alice -C "$destination" rev-parse HEAD) == "$expected" ]] || return 1
         start_server "$primary" || return 1
     done
+}
+
+t_cluster_graceful_shutdown() {
+    needs_ci_runs || return
+    local source=$RUN/work/shutdown-ci name=quorum-survival-http publisher=$RUN/work/quorum-survival-http
+    local id deadline child primary pid old new reply status
+    as alice req POST /api/repos --accept json --status 201 --json '{"name":"shutdown-ci","is_private":true}'
+    mkdir -p "$source/.github/workflows"
+    cat >"$source/.github/workflows/shutdown.yml" <<'YAML'
+name: Shutdown ownership
+on: [push]
+jobs:
+  running:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          sleep 240 &
+          child=$!
+          echo "OWNED_SHUTDOWN_CHILD=$child"
+          wait "$child"
+YAML
+    git_as alice -C "$source" init -q -b main || return 1
+    git_as alice -C "$source" add .github/workflows/shutdown.yml || return 1
+    git_as alice -C "$source" commit -qm 'A running job owns its child during shutdown' || return 1
+    git_with_token write -C "$source" push -q "$BASE/alice/shutdown-ci.git" main || return 1
+    deadline=$((SECONDS + 90))
+    until id=$(as alice req GET '/api/ci/jobs?owner=alice&repo=shutdown-ci' --accept json --print json:jobs.0.id 2>/dev/null) && \
+          child=$(as alice req GET "/alice/shutdown-ci/actions?job=$id&view=logs" --print 're:OWNED_SHUTDOWN_CHILD=([0-9]+)' 2>/dev/null); do
+        ((SECONDS < deadline)) || { echo 'The owned CI child did not start' >&2; return 1; }
+        sleep 1
+    done
+    [[ $id =~ ^[0-9a-f-]{36}$ && $child =~ ^[0-9]+$ ]]
+    as alice req GET "/api/ci/jobs/$id" --accept json --json-eq status=running
+    old=$(git_with_token read ls-remote "$BASE/alice/$name.git" refs/heads/main | cut -f1)
+    # A fresh 20 MiB object guarantees the pause occurs before the push is complete.
+    "$PYTHON" -I - "$publisher/shutdown.bin" <<'PYDATA' || return 1
+import os, sys
+with open(sys.argv[1], 'wb') as output:
+    for _ in range(20):
+        output.write(os.urandom(1024 * 1024))
+PYDATA
+    git_as alice -C "$publisher" add shutdown.bin || return 1
+    git_as alice -C "$publisher" commit -qm 'A push is active during SIGTERM' || return 1
+    new=$(git_as alice -C "$publisher" rev-parse HEAD)
+    primary=$(repo_node alice "$name")
+    pid=${SERVER_PIDS[$primary]}
+    reply=$("$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" \
+        --storage-loss shutdown --repository "alice/$name" --primary-pid "$pid" \
+        --runner-pid "${SERVER_PIDS[ci1]}" --source "$publisher") || return 1
+    printf '%s\n' "$reply"
+    wait "$pid" || return 1
+    wait "${SERVER_PIDS[ci1]}" || return 1
+    unset "SERVER_PIDS[$primary]" 'SERVER_PIDS[ci1]'
+    as alice req GET "/api/ci/jobs/$id" --accept json --json-eq status=failed
+    [[ -n $(as alice req GET "/api/ci/jobs/$id" --accept json --print json:error_message) ]]
+    ! kill -0 "$child" 2>/dev/null || { echo 'CI leaked its owned child after shutdown' >&2; return 1; }
+    git_with_token read clone -q "$BASE/alice/$name.git" "$RUN/clone-after-shutdown" || return 1
+    status=$(git_as alice -C "$RUN/clone-after-shutdown" rev-parse HEAD)
+    if [[ $reply == *'ack=True'* ]]; then
+        [[ $status == "$new" ]] || return 1
+    else
+        [[ $status == "$old" || $status == "$new" ]] || return 1
+    fi
+    start_server "$primary" || return 1
+    start_server ci1 || return 1
+    # Another write proves both the repository locks and quorum admission were released.
+    git_as alice -C "$publisher" commit -q --allow-empty -m 'Write after graceful shutdown' || return 1
+    git_with_token write -C "$publisher" push -q "$BASE/alice/$name.git" main
 }
 
 t_cluster_drain_worker() {
@@ -3058,7 +3126,7 @@ run_cluster_round() {
     step -f 'ci: ci1 runs it; logs, page and commit status reach web1' t_cluster_ci_result
     step 'ci: fork waits for approval, runs on ci1 without secrets' t_cluster_fork_ci
     step 'organization: created for real GitHub clients' t_org
-    step 'web loss: real gh and Git continue through web2 while web1 dies' t_cluster_github_clients
+    step -i 'web loss: real gh and Git continue through web2 while web1 dies' t_cluster_github_clients
     step -f 'replica: setting 2 keeps a current copy on store2' t_replica_create
     step -f 'failure: revoke store1 to hold automatic takeover during fallback checks' cluster_cli web1 revoke store1
     step -i 'failure: store1 exits cleanly on SIGTERM' stop_server store1
@@ -3079,6 +3147,7 @@ run_cluster_round() {
     step 'cluster pages: drain and scaling save with and without hydration' t_cluster_browser
     step -f -i 'quorum: HTTP and SSH acknowledgements survive immediate primary SIGKILL' t_cluster_quorum_primary_loss
     step -f -i 'storage loss: interrupted clone and push fail clearly; retries preserve refs' t_cluster_storage_loss
+    step -f -i 'SIGTERM: active CI and push stop within 90 seconds without leaked children or locks' t_cluster_graceful_shutdown
     # Shutdown is still checked after a required step fails.
     ROUND_BLOCKED=0
     step -i 'shutdown: every node exits with status 0 and no log has a panic' t_cluster_shutdown

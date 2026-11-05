@@ -9,16 +9,13 @@ mod objects;
 mod pairing;
 mod production_controls;
 mod quorum;
+mod quorum_default;
+mod quorum_disk;
 mod quorum_sql;
 mod replicas;
 mod scaling;
 mod search;
+mod sso;
 #[path = "../support/mod.rs"]
 mod support;
 mod tcp;
-
-mod sso;
-
-mod quorum_default;
-
-mod quorum_disk;
