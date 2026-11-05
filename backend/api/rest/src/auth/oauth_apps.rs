@@ -223,7 +223,7 @@ async fn access_token(
     let code = field(&form, if device { "device_code" } else { "code" });
     if codeyard_support::cells::Secret::cookie(code)
         .ok()
-        .is_none_or(|code| code.cell != state.pool.cell_prefix())
+        .is_none_or(|code| !state.pool.owns_prefix(code.cell))
     {
         return failure(
             &headers,
@@ -348,7 +348,7 @@ async fn device_post(
         return response;
     }
     if codeyard_identity::oauth_apps::user_code_cell(field(&form, "user_code"))
-        != Some(ctx.state.pool.cell_prefix())
+        .is_none_or(|prefix| !ctx.state.pool.owns_prefix(prefix))
     {
         return invalid_device(&ctx);
     }

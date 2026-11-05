@@ -4138,3 +4138,6 @@ BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
 CREATE TRIGGER users_stub_credentials BEFORE UPDATE OF is_stub ON users
 WHEN NOT OLD.is_stub AND NEW.is_stub AND (EXISTS(SELECT 1 FROM sessions WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM personal_access_tokens WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM ssh_keys WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM oauth_accounts WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM two_factor_auth WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM two_factor_recovery_codes WHERE user_id=NEW.id))
 BEGIN SELECT RAISE(ABORT,'Remote account retains credentials'); END;
+
+-- Issuer prefixes retained locally so pending credentials survive range renewal.
+CREATE TABLE cell_prefixes (prefix INTEGER PRIMARY KEY CHECK(prefix =0));

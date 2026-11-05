@@ -151,10 +151,17 @@ impl DbPool {
         &self,
         cell: codeyard_support::cells::Prefix,
         prefix: codeyard_support::cells::Prefix,
+        prefixes: Vec<codeyard_support::cells::Prefix>,
     ) {
         match self {
-            Self::Postgres(pool) => pool.set_cell_identity(cell, prefix),
-            Self::Sqlite(pool) => pool.set_cell_identity(cell, prefix),
+            Self::Postgres(pool) => pool.set_cell_identity(cell, prefix, prefixes),
+            Self::Sqlite(pool) => pool.set_cell_identity(cell, prefix, prefixes),
+        }
+    }
+    pub fn owns_prefix(&self, prefix: codeyard_support::cells::Prefix) -> bool {
+        match self {
+            Self::Postgres(pool) => pool.owns_prefix(prefix),
+            Self::Sqlite(pool) => pool.owns_prefix(prefix),
         }
     }
     pub fn cell_id(&self) -> codeyard_support::cells::Prefix {

@@ -160,8 +160,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     GraphQL dispatch, stub metadata/storage/credential/list guards and common rooted IDs pass
     source checks. Generated GraphQL is unchanged. Successor reservations pass workspace
     27b7d9690c524daa95c0e71b98de882c, Clippy 12da351fea0f41e69e2a1a5f949c6b4a and
-    WASM 63d1cd1a38504fdc804e3c7dc2495fcf. Stopped-cell range activation and CLI rollback/
-    retry tests are written but unchecked; automatic renewal remains open.
+    WASM 63d1cd1a38504fdc804e3c7dc2495fcf. Stopped-cell activation passes workspace
+    fa6a766eb62a4291995643a47ac03f39, Clippy db3bcf2e41de4ba4b56830be5c7ad167 and WASM
+    0669bd91ca7b46598dbbf34eb1722b71. Issuer history and HTTP grant continuation after
+    renewal are the next unchecked batch; automatic renewal remains open.
     Acceptance 049f16eeb8324596b898b230885a66d3 runs the earlier compiled snapshot. Libraries,
     CI 220 (19 existing ignored) and database 174 pass. Cluster 227 pass, with the new fake-cell
     outage fixture failing because listener abort left connections alive; its fix is compiled.

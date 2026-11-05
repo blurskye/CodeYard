@@ -733,8 +733,9 @@ foreign authorization and the public HTTP/SSH role remain open.
 The directory source adds `cell directory allocate-prefix --node-key <public key>
 --previous <prefix> --last-id <id>` and the matching authenticated TLS operation. A range
 must reach 80% use; retries reserve the same successor and prefix zero is never allocated.
-Successor reservations pass source checks. The following unchecked source adds stopped-cell
+Successor reservations and stopped-cell renewal pass source checks. The command is
 `cell renew-range --directory-address <address> --directory-key <public key>`. It retains
 state/maintenance locks, reserves through pinned TLS and activates all sequence ranges and
 the issuer together; rollback leaves old rows and stable cell ownership intact. Automatic
-renewal remains open.
+renewal remains open. A local issuer-history follow-up is written but unchecked so pending
+OAuth and device codes can finish after their original range is retired.

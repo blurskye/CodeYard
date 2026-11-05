@@ -4261,3 +4261,6 @@ END;
 $$;
 CREATE TRIGGER users_stub_credentials BEFORE UPDATE OF is_stub ON users FOR EACH ROW
 WHEN (NOT OLD.is_stub AND NEW.is_stub) EXECUTE FUNCTION cell_stub_credentials();
+
+-- Issuer prefixes retained locally so pending credentials survive range renewal.
+CREATE TABLE cell_prefixes (prefix INTEGER PRIMARY KEY CHECK(prefix BETWEEN 0 AND 65535));

@@ -210,6 +210,41 @@ async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_parti
     let first = codeyard_db_identity::users::accounts::create_user(&database.pool, "before", None)
         .await
         .unwrap();
+    let storage = std::sync::Arc::new(
+        codeyard_storage::ObjectStore::open(root.path(), None)
+            .await
+            .unwrap(),
+    );
+    let router =
+        codeyard_api_rest::create_router(std::sync::Arc::new(codeyard_app::app::AppState::new(
+            database.pool.clone(),
+            root.path().join("repos"),
+            storage,
+            None,
+            codeyard_ci::config::CiConfig::default(),
+            None,
+        )));
+    let browser =
+        crate::support::http_client::Client::login(&router, &database.pool, first.id).await;
+    let issued = browser
+        .exchange(
+            "POST",
+            "/login/device/code",
+            "application/x-www-form-urlencoded",
+            format!("client_id={}", codeyard_model::identity::CLI_CLIENT).into_bytes(),
+        )
+        .await;
+    assert_eq!(
+        issued.status,
+        axum::http::StatusCode::OK,
+        "{}",
+        issued.text()
+    );
+    let grant: std::collections::HashMap<String, String> =
+        url::form_urlencoded::parse(&issued.body)
+            .into_owned()
+            .collect();
+    assert!(grant["device_code"].starts_with("1."));
     let member = load_or_create(&root.path().join("state")).unwrap();
     let server = NodeKey::generate();
     let directory =
@@ -272,6 +307,7 @@ async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_parti
     assert!(String::from_utf8_lossy(&output.stderr).contains("injected range activation failure"));
     codeyard_db_core::cells::load(&database.pool).await.unwrap();
     assert_eq!(database.pool.cell_prefix(), Prefix::new(1));
+    assert!(!database.pool.owns_prefix(Prefix::new(2)));
     let bounds: (i64, i64) = sqlx::query_as("SELECT min_value,max_value FROM pg_sequences WHERE schemaname=current_schema() AND sequencename='users_id_seq'")
         .fetch_one(&database.raw).await.unwrap();
     assert_eq!(
@@ -295,6 +331,53 @@ async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_parti
     codeyard_db_core::cells::load(&database.pool).await.unwrap();
     assert_eq!(database.pool.cell_id(), Prefix::new(1));
     assert_eq!(database.pool.cell_prefix(), Prefix::new(2));
+    assert!(database.pool.owns_prefix(Prefix::new(1)));
+    assert!(database.pool.owns_prefix(Prefix::new(2)));
+    assert!(!database.pool.owns_prefix(Prefix::ZERO));
+    let approval = browser
+        .form_reply(
+            "/login/device",
+            &[
+                ("user_code", grant["user_code"].as_str()),
+                ("decision", "approve"),
+            ],
+        )
+        .await;
+    assert_eq!(
+        approval.status,
+        axum::http::StatusCode::OK,
+        "{}",
+        approval.text()
+    );
+    assert!(
+        approval.text().contains("Device authorized"),
+        "{}",
+        approval.text()
+    );
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("client_id", codeyard_model::identity::CLI_CLIENT)
+        .append_pair("device_code", &grant["device_code"])
+        .append_pair("grant_type", "urn:ietf:params:oauth:grant-type:device_code")
+        .finish();
+    let exchanged = browser
+        .exchange(
+            "POST",
+            "/login/oauth/access_token",
+            "application/x-www-form-urlencoded",
+            body.into_bytes(),
+        )
+        .await;
+    assert_eq!(
+        exchanged.status,
+        axum::http::StatusCode::OK,
+        "{}",
+        exchanged.text()
+    );
+    let fields: std::collections::HashMap<String, String> =
+        url::form_urlencoded::parse(&exchanged.body)
+            .into_owned()
+            .collect();
+    assert!(fields["access_token"].starts_with("cy_pat_2_"));
     let second = codeyard_db_identity::users::accounts::create_user(&database.pool, "after", None)
         .await
         .unwrap();

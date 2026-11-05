@@ -67,7 +67,7 @@ pub async fn begin(
 ) -> Result<String, OAuthError> {
     if codeyard_support::cells::Secret::cookie(state_token)
         .ok()
-        .is_none_or(|token| token.cell != pool.cell_prefix())
+        .is_none_or(|token| !pool.owns_prefix(token.cell))
     {
         return Err(OAuthError::InvalidState);
     }
@@ -130,7 +130,7 @@ pub async fn complete(
         session,
     } = callback;
     if let Some(configured) = oidc::provider(provider) {
-        if validate_callback(code, token)? != pool.cell_prefix() {
+        if !pool.owns_prefix(validate_callback(code, token)?) {
             return Err(OAuthError::InvalidState);
         }
         require_setup(pool).await?;
@@ -150,7 +150,7 @@ pub async fn complete(
     let meta = providers::provider_meta(provider).ok_or(OAuthError::UnknownProvider)?;
     let (client_id, secret) =
         providers::provider_credentials(provider).ok_or(OAuthError::Disabled)?;
-    if validate_callback(code, token)? != pool.cell_prefix() {
+    if !pool.owns_prefix(validate_callback(code, token)?) {
         return Err(OAuthError::InvalidState);
     }
     require_setup(pool).await?;

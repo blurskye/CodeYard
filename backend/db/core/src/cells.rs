@@ -21,10 +21,39 @@ pub async fn load(pool: &DbPool) -> Result<()> {
                 .await?
         }
     };
+    let mut prefixes: Vec<i32> = match pool {
+        DbPool::Postgres(pool) => {
+            sqlx::query_scalar("SELECT prefix FROM cell_prefixes ORDER BY prefix LIMIT 65537")
+                .fetch_all(pool)
+                .await?
+        }
+        DbPool::Sqlite(pool) => {
+            sqlx::query_scalar("SELECT prefix FROM cell_prefixes ORDER BY prefix LIMIT 65537")
+                .fetch_all(pool)
+                .await?
+        }
+    };
     let (cell, prefix) = value.unwrap_or((0, 0));
+    // An ordinary standalone cell has issuer zero without any enrollment rows.
+    if prefixes.is_empty() && prefix == 0 {
+        prefixes.push(0);
+    }
+    ensure!(
+        !prefixes.is_empty() && prefixes.len() <= 65536,
+        "invalid cell prefix history"
+    );
+    ensure!(
+        prefixes.contains(&prefix),
+        "issuer prefix is missing from cell history"
+    );
+    let prefixes = prefixes
+        .into_iter()
+        .map(|value| Prefix::try_from(i64::from(value)))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     pool.set_cell_identity(
         Prefix::try_from(i64::from(cell))?,
         Prefix::try_from(i64::from(prefix))?,
+        prefixes,
     );
     Ok(())
 }
@@ -32,15 +61,13 @@ pub async fn load(pool: &DbPool) -> Result<()> {
 /// The caller excludes serving processes with the existing maintenance and state locks.
 /// Cell zero retains every ID and sequence position; a nonzero prefix needs an empty cell.
 pub async fn initialize(pool: &DbPool, prefix: Prefix) -> Result<()> {
-    let cell = match pool {
-        DbPool::Postgres(pool) => initialize_postgres(pool, prefix, None).await?,
-        DbPool::Sqlite(_) => {
-            ensure!(prefix == Prefix::ZERO, "multiple cells require PostgreSQL");
-            Prefix::ZERO
+    match pool {
+        DbPool::Postgres(pool) => {
+            initialize_postgres(pool, prefix, None).await?;
         }
-    };
-    pool.set_cell_identity(cell, prefix);
-    Ok(())
+        DbPool::Sqlite(_) => ensure!(prefix == Prefix::ZERO, "multiple cells require PostgreSQL"),
+    }
+    load(pool).await
 }
 
 /// The caller holds state/maintenance locks and obtains `prefix` from the pinned
@@ -49,9 +76,8 @@ pub async fn renew(pool: &DbPool, previous: Prefix, prefix: Prefix) -> Result<()
     let DbPool::Postgres(postgres) = pool else {
         anyhow::bail!("multiple cells require PostgreSQL")
     };
-    let cell = initialize_postgres(postgres, prefix, Some(previous)).await?;
-    pool.set_cell_identity(cell, prefix);
-    Ok(())
+    initialize_postgres(postgres, prefix, Some(previous)).await?;
+    load(pool).await
 }
 
 /// Read only the bounded sequence catalog, before reserving a successor externally.
@@ -164,6 +190,22 @@ async fn initialize_postgres(
         renewal.is_none() || needs_prefix,
         "no cell sequence has reached 80% use"
     );
+    if renewal.is_some() {
+        sqlx::query("INSERT INTO cell_prefixes(prefix) VALUES($1)")
+            .bind(i32::from(prefix.get()))
+            .execute(&mut *tx)
+            .await?;
+    } else {
+        if fresh {
+            sqlx::query("DELETE FROM cell_prefixes")
+                .execute(&mut *tx)
+                .await?;
+        }
+        sqlx::query("INSERT INTO cell_prefixes(prefix) VALUES($1) ON CONFLICT DO NOTHING")
+            .bind(i32::from(prefix.get()))
+            .execute(&mut *tx)
+            .await?;
+    }
     sqlx::query("UPDATE node_configuration SET cell_id=CASE WHEN $2 AND cell_prefix=0 THEN $1 ELSE cell_id END,cell_prefix=$1,setup_completed=CASE WHEN $1<>0 THEN true ELSE setup_completed END WHERE id=1")
         .bind(i32::from(prefix.get())).bind(renewal.is_none())
         .execute(&mut *tx)

@@ -22,6 +22,7 @@ pub struct Pool<DB: Database> {
     inner: sqlx::Pool<DB>,
     waiting: Arc<AtomicUsize>,
     cell_identity: Arc<AtomicU32>,
+    cell_prefixes: Arc<std::sync::RwLock<Vec<codeyard_support::cells::Prefix>>>,
     pub(crate) read_replica: Arc<std::sync::RwLock<Option<PgPool>>>,
     log_objects: Arc<std::sync::RwLock<Option<std::sync::Weak<dyn crate::ci_logs::LogObjects>>>>,
 }
@@ -38,6 +39,7 @@ impl<DB: Database> Clone for Pool<DB> {
             inner: self.inner.clone(),
             waiting: self.waiting.clone(),
             cell_identity: self.cell_identity.clone(),
+            cell_prefixes: self.cell_prefixes.clone(),
             read_replica: self.read_replica.clone(),
             log_objects: self.log_objects.clone(),
         }
@@ -49,6 +51,9 @@ impl<DB: Database> From<sqlx::Pool<DB>> for Pool<DB> {
             inner,
             waiting: Arc::new(AtomicUsize::new(0)),
             cell_identity: Arc::default(),
+            cell_prefixes: Arc::new(std::sync::RwLock::new(vec![
+                codeyard_support::cells::Prefix::ZERO,
+            ])),
             read_replica: Arc::default(),
             log_objects: Arc::default(),
         }
@@ -77,11 +82,23 @@ impl<DB: Database> Pool<DB> {
         &self,
         cell: codeyard_support::cells::Prefix,
         prefix: codeyard_support::cells::Prefix,
+        prefixes: Vec<codeyard_support::cells::Prefix>,
     ) {
+        *self
+            .cell_prefixes
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = prefixes;
         self.cell_identity.store(
             (u32::from(cell.get()) << 16) | u32::from(prefix.get()),
             Ordering::Release,
         );
+    }
+    pub fn owns_prefix(&self, prefix: codeyard_support::cells::Prefix) -> bool {
+        self.cell_prefixes
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .binary_search(&prefix)
+            .is_ok()
     }
     pub fn cell_id(&self) -> codeyard_support::cells::Prefix {
         codeyard_support::cells::Prefix::new(
