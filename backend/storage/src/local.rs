@@ -31,6 +31,20 @@ pub struct LocalStore {
 type IoGuard = std::sync::Arc<tokio::sync::OwnedSemaphorePermit>;
 struct TemporaryUpload(Option<tempfile::NamedTempFile>, IoGuard);
 
+impl TemporaryUpload {
+    async fn discard(mut self) -> Result<(), StorageError> {
+        let temporary = self.0.take().ok_or(StorageError::Unavailable)?;
+        let guard = self.1.clone();
+        tokio::task::spawn_blocking(move || {
+            let _guard = guard;
+            temporary.close()
+        })
+        .await
+        .map_err(|_| StorageError::Unavailable)??;
+        Ok(())
+    }
+}
+
 impl Drop for TemporaryUpload {
     fn drop(&mut self) {
         if let Some(temporary) = self.0.take() {
@@ -138,37 +152,48 @@ impl LocalStore {
         .await
         .map_err(|_| StorageError::Unavailable)??;
         let mut output = tokio::fs::File::from_std(file);
-        let mut buffer = vec![0u8; 64 * 1024];
-        let mut hash = Sha256::new();
-        let mut prefix = Vec::with_capacity(16);
-        let mut count = 0i64;
-        loop {
-            // Read one byte past the declared size so oversized bodies are caught.
-            let wanted = ((upload.bytes - count + 1) as usize).min(buffer.len());
-            let read = reader
-                .read(&mut buffer[..wanted])
-                .await
-                .map_err(|_| StorageError::Rejected)?;
-            if read == 0 {
-                break;
+        let written = async {
+            let mut buffer = vec![0u8; 64 * 1024];
+            let mut hash = Sha256::new();
+            let mut prefix = Vec::with_capacity(16);
+            let mut count = 0i64;
+            loop {
+                // Read one byte past the declared size so oversized bodies are caught.
+                let wanted = ((upload.bytes - count + 1) as usize).min(buffer.len());
+                let read = reader
+                    .read(&mut buffer[..wanted])
+                    .await
+                    .map_err(|_| StorageError::Rejected)?;
+                if read == 0 {
+                    break;
+                }
+                count += read as i64;
+                if count > upload.bytes {
+                    return Err(StorageError::Rejected);
+                }
+                let take = (16 - prefix.len()).min(read);
+                prefix.extend_from_slice(&buffer[..take]);
+                hash.update(&buffer[..read]);
+                output.write_all(&buffer[..read]).await?;
             }
-            count += read as i64;
-            if count > upload.bytes {
+            if count != upload.bytes
+                || hex::encode(hash.finalize()) != upload.sha256_hex
+                || !media_signature_matches(upload.content_type, &prefix)
+            {
                 return Err(StorageError::Rejected);
             }
-            let take = (16 - prefix.len()).min(read);
-            prefix.extend_from_slice(&buffer[..take]);
-            hash.update(&buffer[..read]);
-            output.write_all(&buffer[..read]).await?;
+            output.flush().await?;
+            output.sync_all().await?;
+            Ok::<_, StorageError>(())
         }
-        if count != upload.bytes
-            || hex::encode(hash.finalize()) != upload.sha256_hex
-            || !media_signature_matches(upload.content_type, &prefix)
-        {
-            return Err(StorageError::Rejected);
+        .await;
+        if let Err(error) = written {
+            // The caller must not observe a rejected upload while its temporary file
+            // remains visible. Cancellation still uses the drop cleanup above.
+            drop(output);
+            temporary.discard().await?;
+            return Err(error);
         }
-        output.flush().await?;
-        output.sync_all().await?;
         Ok(StagedUpload {
             temporary,
             target: path,

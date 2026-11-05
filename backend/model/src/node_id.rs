@@ -125,7 +125,7 @@ fn decode_messagepack(bytes: &[u8]) -> Option<(i64, i64)> {
 /// Decode before routing without querying an object's cell. The resource cell still
 /// checks that the ID belongs to this root; routing hints never grant access.
 pub fn routed(value: &str) -> Option<Routed<'_>> {
-    if value.len() > 128 {
+    if value.len() > 2048 {
         return None;
     }
     let (kind, encoded) = value.split_once('_')?;
@@ -138,6 +138,57 @@ pub fn routed(value: &str) -> Option<Routed<'_>> {
         codeyard_support::cells::Prefix::for_id(id).ok()?;
         return Some(Routed { kind, root, id });
     }
+    if kind == "REF" && (9..=1032).contains(&bytes.len()) {
+        let root = i64::from_be_bytes(bytes[..8].try_into().ok()?);
+        codeyard_support::cells::Prefix::for_id(root).ok()?;
+        let name = std::str::from_utf8(&bytes[8..]).ok()?;
+        if name
+            .bytes()
+            .any(|byte| byte == 0 || byte.is_ascii_control())
+        {
+            return None;
+        }
+        return Some(Routed {
+            kind,
+            root,
+            id: root,
+        });
+    }
+    if kind == "RR" {
+        if let Some((pull, _, target)) = decode_review_request(value) {
+            codeyard_support::cells::Prefix::for_id(pull).ok()?;
+            codeyard_support::cells::Prefix::for_id(target).ok()?;
+            return Some(Routed {
+                kind,
+                root: pull,
+                id: pull,
+            });
+        }
+    }
+    if matches!(kind, "C" | "B" | "TAG" | "T" | "SCR" | "STAT" | "RR") {
+        if let Some((root, key)) = std::str::from_utf8(&bytes)
+            .ok()
+            .and_then(|value| value.split_once('/'))
+        {
+            if root.len() > 16 || !root.bytes().all(|byte| byte.is_ascii_digit()) {
+                return None;
+            }
+            let root = root.parse::<i64>().ok()?;
+            codeyard_support::cells::Prefix::for_id(root).ok()?;
+            if kind == "RR" {
+                codeyard_support::cells::Prefix::for_id(key.parse::<i64>().ok()?).ok()?;
+            } else if !matches!(key.len(), 40 | 64)
+                || !key.bytes().all(|byte| byte.is_ascii_hexdigit())
+            {
+                return None;
+            }
+            return Some(Routed {
+                kind,
+                root,
+                id: root,
+            });
+        }
+    }
     let (mut kind, mut id) = decode(value)?;
     // The former IC form tagged issue/pull comments in the low bit. Its cell
     // comes from the actual row ID, before that display tag was applied.
@@ -148,6 +199,7 @@ pub fn routed(value: &str) -> Option<Routed<'_>> {
             return None;
         }
     }
+    codeyard_support::cells::Prefix::for_id(id).ok()?;
     Some(Routed { kind, root: id, id })
 }
 
@@ -232,6 +284,35 @@ mod tests {
         }
         assert_eq!(decode_review_request(&review_request(0, false, 1)), None);
         assert_eq!(decode_review_request(&review_request(1, true, -1)), None);
+    }
+
+    #[test]
+    fn git_and_composite_node_routes_retain_their_existing_repository_or_pull() {
+        let root = *codeyard_support::cells::Prefix::new(1).ids().start();
+        let reference = super::reference(root, &format!("refs/heads/{}", "a".repeat(900)));
+        assert_eq!(super::routed(&reference).unwrap().root, root);
+        for kind in ["C", "B", "TAG", "T", "SCR", "STAT"] {
+            assert_eq!(
+                super::routed(&super::git_object(kind, root, &"a".repeat(40)))
+                    .unwrap()
+                    .root,
+                root
+            );
+            assert!(super::routed(&super::git_object(kind, root, "invalid")).is_none());
+        }
+        assert_eq!(
+            super::routed(&super::review_request(root, true, 3))
+                .unwrap()
+                .root,
+            root
+        );
+        assert_eq!(
+            super::routed(&super::git("RR", &format!("{root}/3")))
+                .unwrap()
+                .root,
+            root
+        );
+        assert!(super::routed(&super::reference(root, "refs/heads/bad\0")).is_none());
     }
 
     #[test]

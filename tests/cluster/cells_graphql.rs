@@ -225,6 +225,18 @@ async fn two_cells_split_queries_keep_node_positions_and_validate_before_ordered
         value,
         json!({"data":{"a":{"id":a},"b":{"id":b},"all":[{"id":b},{"id":a},{"id":b}]}})
     );
+    let reference = node_id::reference(*Prefix::new(1).ids().start(), "refs/heads/main");
+    let commit = node_id::git_object("C", *Prefix::new(1).ids().start(), &"a".repeat(40));
+    let value = response(
+        &dispatch,
+        &headers,
+        &format!("{{reference:node(id:\"{reference}\"){{id}} commit:node(id:\"{commit}\"){{id}}}}"),
+    )
+    .await;
+    assert_eq!(
+        value,
+        json!({"data":{"reference":{"id":reference},"commit":{"id":commit}}})
+    );
     let a = node_id::encode("I", 1);
     let b = node_id::encode("I", *Prefix::new(1).ids().start());
     let mutation = format!("mutation{{ a:addComment(input:{{subjectId:\"{a}\",body:\"one\"}}){{clientMutationId}} b:addComment(input:{{subjectId:\"{b}\",body:\"two\"}}){{clientMutationId}} c:addComment(input:{{subjectId:\"{a}\",body:\"three\"}}){{clientMutationId}} }}");

@@ -154,16 +154,18 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 0 is committed and checked; hard-reset acceptance is runtime pending, needs a
     disposable VM. Stage 1 source checks pass for scoped locks, object-store CI logs,
     current-copy clones and issue/PR replica routing. PgBouncer and quorum e2e previously
-    passed. The latest acceptance rerun passes CI (220); quorum, SSO, upload and token-test
-    failures are under investigation. Its replica e2e result is still pending. Finished-CI
+    passed. Acceptance job 7f62166ed6354862b69d40473edba91b passes CI (220, 19 existing
+    ignored) and all 51 PgBouncer, replica and quorum e2e checks without skips. Quorum,
+    SSO, upload cleanup and old token-format integration assertions need reruns. Finished-CI
     shutdown and load measurements are runtime pending, need a writable delegated cgroup.
     Other content read families remain on primary; bulk retention remains open.
     Stage 2 ranges, credential framing, directory registry/claims, pinned TLS exchanges,
     read-only router keys and bounded route caches pass source checks. Route declarations,
-    router-owned GraphQL preflight and full scoped session storage pass workspace and WASM;
-    Clippy found an unused import after HTTP streaming extraction, now removed in source.
+    router-owned GraphQL preflight and full scoped session storage pass workspace, Clippy
+    and WASM after removing the HTTP extraction's unused import.
     Generated GraphQL remains unchanged. Catalogue selection and bounded GraphQL dispatch,
-    including mixed-cell nodes and ordered mutations, are written but unchecked. Two real
+    including mixed-cell nodes and ordered mutations, pass all three checks. Git/ref/composite
+    routing hints and upload cleanup are the next unchecked batch. Two real
     HTTP cells and TLS-directory tests cover the dispatch source; these tests have not run.
     Token tests that pinned the former unprefixed length now assert the scoped format; the
     directory CLI fixture now supplies the capacity it asserts. Runtime rechecks are pending.
