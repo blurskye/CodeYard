@@ -61,6 +61,26 @@ pub(crate) fn node_owner_sql(kind: &str) -> Option<&'static str> {
     })
 }
 
+/// A transfer keeps prior issue roots valid through the existing, durable URL redirects.
+/// They are routing hints only; readers and writers still authorize the current repository.
+pub(crate) fn node_root_sql(kind: &str) -> Option<String> {
+    let current = node_owner_sql(kind)?.replace("$2", "$3");
+    let issue = match kind {
+        "I" => Some("SELECT id FROM issues WHERE id=$1"),
+        "IC" => Some("SELECT issue_id FROM issue_comments WHERE id=$1"),
+        "IE" => Some("SELECT subject_id FROM timeline_events WHERE id=$1 AND subject_kind='issue'"),
+        "REA" => Some("SELECT CASE WHEN r.subject_kind='issue' THEN r.subject_id ELSE c.issue_id END FROM reactions r LEFT JOIN issue_comments c ON r.subject_kind='issue_comment' AND c.id=r.subject_id WHERE r.id=$1 AND r.subject_kind IN ('issue','issue_comment')"),
+        _ => None,
+    };
+    let historical = issue.map_or_else(String::new, |issue| format!(
+        " OR EXISTS(SELECT 1 FROM owner JOIN issue_redirects d ON d.issue_id=({issue}) WHERE d.repo_id=$2)"
+    ));
+    Some(format!("WITH owner(root) AS ({current}) SELECT EXISTS(SELECT 1 FROM owner WHERE root=$2){historical}"))
+}
+
+native_operation!(crate::postgres::graphql::node_root_matches,
+    crate::sqlite::graphql::node_root_matches,
+    fn node_root_matches(pool: &DbPool, kind: &str, id: i64, root: i64) -> Result<bool>);
 native_operation!(crate::postgres::graphql::node_owner,
     crate::sqlite::graphql::node_owner,
     fn node_owner(pool: &DbPool, kind: &str, id: i64) -> Result<Option<i64>>);

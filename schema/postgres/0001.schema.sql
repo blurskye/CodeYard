@@ -4103,6 +4103,7 @@ CREATE TABLE issue_redirects (
     issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
     PRIMARY KEY(repo_id, number)
 );
+CREATE INDEX idx_issue_redirects_issue_root ON issue_redirects(issue_id, repo_id);
 
 CREATE TABLE issue_duplicates (
     issue_id BIGINT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,

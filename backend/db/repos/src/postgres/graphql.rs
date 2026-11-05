@@ -37,6 +37,16 @@ pub async fn team_locator(pool: &PgPool, id: i64) -> Result<Option<(i64, String)
         .fetch_optional(pool)
         .await?)
 }
+pub async fn node_root_matches(pool: &PgPool, kind: &str, id: i64, root: i64) -> Result<bool> {
+    let Some(sql) = crate::graphql::node_root_sql(kind) else {
+        return Ok(false);
+    };
+    let mut query = sqlx::query_scalar(&sql).bind(id).bind(root);
+    if kind == "ART" {
+        query = query.bind(chrono::Utc::now().timestamp());
+    }
+    Ok(query.fetch_one(pool).await?)
+}
 pub async fn node_owner(pool: &PgPool, kind: &str, id: i64) -> Result<Option<i64>> {
     let Some(sql) = crate::graphql::node_owner_sql(kind) else {
         return Ok(None);

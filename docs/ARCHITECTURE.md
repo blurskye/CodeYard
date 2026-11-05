@@ -758,7 +758,9 @@ Stage 2 ranges, credentials, directory transport/cache, public HTTP/SSH routing,
 common rooted IDs and foreign token/SSH admission pass source checks. The browser-session,
 home-CSRF and native two-cell GraphQL follow-up passes workspace, Clippy and WASM.
 Cold collaborator metadata lookup and retained invitation credentials also pass source
-checks. Runtime acceptance runs an earlier snapshot. Native signup/key claim publication,
+checks. Runtime acceptance on an earlier snapshot passes Git, identity and all 51 targeted
+e2e checks; collected query, routing, fixture and rooted-ID fixes await their next check.
+Native signup/key claim publication,
 remote membership pointers, remaining node families and two-cell gh/Git deployment are
 unfinished; stages 3 to 6 are not built. Range renewal is a deferred owner follow-up.
 [Cluster readiness](CLUSTER_PLAN.md) records current check jobs and runtime gaps.
@@ -967,6 +969,8 @@ Node ids for every kind except repositories, users and orgs move to the msgpack 
 `[0, root id, id]`, which GitHub uses and Codeyard already uses for discussion comments, so
 a moved repository needs one forwarding entry, not one per comment. The
 `{kind}_{base64 id}` form keeps resolving.
+Recorded issue-transfer redirects also validate former roots for issues, comments and
+their events and reactions. Every read and write still checks the current repository.
 
 ### Accounts across cells
 

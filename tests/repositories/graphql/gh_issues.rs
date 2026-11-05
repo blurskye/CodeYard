@@ -1169,6 +1169,14 @@ async fn contract(pg: bool) {
     }
     f.execute("INSERT INTO projects(owner_user_id,number,creator_id,title,created_at,updated_at) VALUES($1,1,$1,'Board',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)", &[alice]).await;
     f.execute("INSERT INTO project_items(project_id,creator_id,repo_id,issue_id,created_at,updated_at) SELECT id,$1,$2,$3,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP FROM projects WHERE owner_user_id=$1", &[alice, repo.id, metadata_record.id]).await;
+    let moving_comment = query(
+        &router,
+        token,
+        "mutation($input:AddCommentInput!){addComment(input:$input){commentEdge{node{id}}}}",
+        json!({"input":{"subjectId":metadata_id,"body":"Moves with its issue"}}),
+    )
+    .await["addComment"]["commentEdge"]["node"]["id"]
+        .clone();
     let data = query(
         &router,
         token,
@@ -1186,6 +1194,39 @@ async fn contract(pg: bool) {
         .unwrap();
     assert_eq!(moved.repo_id, target.id);
     assert_eq!(moved.milestone_id, Some(target_milestone.id));
+    // Existing node IDs survive the transfer, while live access follows its destination.
+    let lookup = "query($id:ID!){node(id:$id){id ...on Issue{url} ...on IssueComment{body}}}";
+    for (id, field, expected) in [
+        (
+            metadata_id.clone(),
+            "url",
+            data["transferIssue"]["issue"]["url"].clone(),
+        ),
+        (moving_comment, "body", json!("Moves with its issue")),
+    ] {
+        let found = query(&router, token, lookup, json!({"id":id})).await;
+        assert_eq!(found["node"][field], expected);
+        let (_, denied) = call(&router, Some(&credentials[1]), lookup, json!({"id":id})).await;
+        assert!(denied["data"]["node"].is_null(), "{denied}");
+        assert!(!denied.to_string().contains("Moves with its issue"));
+    }
+    let forged = codeyard_model::node_id::scoped("I", target.id + 10000, moved.id).unwrap();
+    let (_, denied) = call(
+        &router,
+        Some(token),
+        close,
+        json!({"input":{"issueId":forged,"duplicateIssueId":parent,"stateReason":"DUPLICATE"}}),
+    )
+    .await;
+    assert!(denied["errors"].is_array(), "{denied}");
+    assert_eq!(
+        codeyard_db_repos::issues::get_issue_by_id(f.pool(), moved.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .state,
+        moved.state
+    );
     // The issue keeps its place in the owner's project.
     assert_eq!(
         f.scalar(

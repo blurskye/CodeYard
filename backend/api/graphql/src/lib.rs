@@ -366,10 +366,15 @@ fn arg(ctx: &Arguments, name: &str) -> Result<String> {
 async fn validate_node_root(id: &str, request: &RequestContext) -> Result<()> {
     if let Some(expected) = codeyard_model::node_id::scoped_root(id) {
         let row = codeyard_model::node_id::routed(id).ok_or_else(missing)?;
-        let actual = codeyard_db_repos::graphql::node_owner(&request.state.pool, row.kind, row.id)
-            .await
-            .map_err(unavailable)?;
-        if actual != Some(expected) {
+        if !codeyard_db_repos::graphql::node_root_matches(
+            &request.state.pool,
+            row.kind,
+            row.id,
+            expected,
+        )
+        .await
+        .map_err(unavailable)?
+        {
             return Err(missing());
         }
     }

@@ -134,7 +134,7 @@ fn decode_messagepack(bytes: &[u8]) -> Option<(i64, i64)> {
 }
 
 /// The explicit ownership hint in a numeric MessagePack node ID, if present.
-/// Resource readers must compare it to the row's actual owner after authorization.
+/// Resource readers validate ownership or recorded redirects; the hint never grants access.
 pub fn scoped_root(value: &str) -> Option<i64> {
     decode(value)?;
     let (_, encoded) = value.split_once('_')?;

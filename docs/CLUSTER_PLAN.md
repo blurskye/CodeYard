@@ -157,33 +157,16 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 2 ranges, framed credentials/sessions, directory claims/TLS/cache, HTTP/GraphQL
     routing, stable homes, stubs and common rooted IDs pass source checks. Generated GraphQL
     is unchanged. Range renewal is a committed, deferred owner follow-up; do not extend it.
-    Foreign token/SSH admission and member filters pass workspace
-    441a2d1ff80140b0b39da8fcbe7d7e82, Clippy 8cbbf2fc77154f0fbdf007222605db4d and
-    WASM 92880ee5cb534d41b01aa5b26782d841. Browser sessions, home CSRF, transaction-time
-    expiry and native two-cell GraphQL have Clippy 51989f211504408ab7128222b8cb3b1b and
-    WASM fe919429f2ab4bfabdfdf341bdb3d336 passes; workspace
-    0c9835e8d1d94b96b879c25e875e3069 also passes. Cold collaborator metadata lookup and
-    retained invitation credentials have both-engine and real HTTP tests; their first check
-    round passes workspace b518ddaa51694fb6925a9d3d408cb19a, Clippy
-    161ffaa2e0e6470480f700dc80aa81d5 and WASM aa012bf0486f481db20c53d7dde25835. Runtime job 375fa054f4204225b5c57bb2b02cd059 runs the
-    earlier snapshot, including the cluster/Git/OAuth fixture fixes from failed job 049.
-    Its libraries report 533 passed, two failed, no ignores. Missing HTTP home/stub fixture
-    fields and the SSH fixture's non-UUID storage path are fixed in unchecked source;
-    CI reports 206 passed, 14 failed and 19 existing environment-dependent ignores.
-    Both-engine Actions projections retain/reject the stub marker, and PostgreSQL cached
-    JSON fields are parenthesized before concatenation; these fixes and a native/stub
-    variable regression are unchecked. Cluster reports 230 passed/one failed; database
-    reports 176 passed/five failed, with no ignores. Name routing and stub search filters
-    are fixed in source; web-bundle, unreserved-prefix and orphan-table fixtures are updated.
-    Git passes all 42 tests and identity all 166, with no ignores. Repositories and
-    e2e are still running; Pages, releases and GraphQL failures await diagnostics.
-    Project CLI assertions now require rooted issue/pull/team IDs instead of the obsolete
-    prefix-only output. The exhaustive GraphQL contracts run past their former stack overflow.
+    The last source round passes workspace f78a4a1f7d344f04822977b0aa180990, Clippy
+    45eb885b846949d39b1a4973faa8e89e and WASM 761e04b62cdf4670a5e8b84135462d15.
+    Runtime 375fa054f4204225b5c57bb2b02cd059 ran the earlier snapshot: libraries 533
+    passed/two failed; CI 206/14 with 19 existing environment-dependent ignores; cluster
+    230/one; database 176/five; repositories 309/nine. Git 42, identity 166 and all 51
+    PgBouncer/replica/quorum e2e checks pass without skips. Collected fixes cover fixtures,
+    both-engine stub projections/search, PostgreSQL cached JSON, login-name routing,
+    rooted-ID assertions and issue-transfer root redirects. Their combined check is next.
     Native signup/key claim publication, remote membership pointers, remaining node families
     and the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
-    Check suites/runs, artifacts and pull-request stacks now issue rooted IDs, with HTTP resolution/forged-root and projection assertions on both engines.
-    They pass workspace f78a4a1f7d344f04822977b0aa180990, Clippy
-    45eb885b846949d39b1a4973faa8e89e and WASM 761e04b62cdf4670a5e8b84135462d15.
     Automatic user moves and org regional presence remain documented owner decisions.
     Owner follow-up: check foreign-cache expiry after PostgreSQL row-lock waits.
 
