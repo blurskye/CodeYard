@@ -177,7 +177,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     are written with both-engine HTTP and real TLS revocation tests; this follow-up is unchecked.
     Membership pointers and two-cell gh/Git deployment remain unfinished. Member-list/count filters now cover
     organizations and teams on both engines with database and HTTP assertions. Runtime job
-    375fa054f4204225b5c57bb2b02cd059 covers the preceding committed snapshot. Automatic user
+    375fa054f4204225b5c57bb2b02cd059 covers the preceding committed snapshot. Native two-cell GraphQL
+    acceptance now includes one real split repository/node query with foreign home authorization; unchecked. Automatic user
     moves and org regional presence are documented owner decisions.
 
 ## Decisions that settle the open questions

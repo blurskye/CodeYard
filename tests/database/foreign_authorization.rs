@@ -204,6 +204,17 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
         .await
         .unwrap()
         .is_none());
+    // A queued operation retaining the formerly valid identity must fail at the effect too.
+    assert!(codeyard_db_repos::issues::create_issue_with_metadata(
+        pool,
+        repo.id,
+        (user, value.clone()),
+        "stale browser",
+        "",
+        codeyard_db_repos::issues::IssueMetadata::default(),
+    )
+    .await
+    .is_err());
     assert!(
         codeyard_db_identity::users::sessions::get_session_user(pool, &value)
             .await

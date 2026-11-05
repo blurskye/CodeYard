@@ -50,13 +50,41 @@ impl Server {
         format!("http://{}", self.address)
     }
 }
-async fn native(database: &PostgresDatabase, name: &str) -> (Server, i64) {
+async fn native(database: &PostgresDatabase, name: &str) -> (Server, i64, String) {
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
     let user = codeyard_db_identity::users::accounts::create_user(&database.pool, name, None)
         .await
         .unwrap();
+    let session = codeyard_identity::sessions::fresh_id(&database.pool).unwrap();
+    codeyard_db_identity::users::sessions::create_session(
+        &database.pool,
+        &session,
+        user.id,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let token = database
+        .pool
+        .cell_prefix()
+        .token(codeyard_support::tokens::PAT_PREFIX, &"c".repeat(64))
+        .unwrap();
+    codeyard_db_identity::users::tokens::create_token(
+        &database.pool,
+        user.id,
+        &session,
+        "frontend",
+        &codeyard_support::token_hash::token_hash(&token),
+        "write",
+        None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let root = tempfile::tempdir().unwrap();
     let repo = root.path().join("repo.git");
     git2::Repository::init_bare(&repo).unwrap();
@@ -85,7 +113,7 @@ async fn native(database: &PostgresDatabase, name: &str) -> (Server, i64) {
     ));
     // The server task owns the temporary Git directory until its listener drains.
     let app = app.layer(axum::Extension(Arc::new(root)));
-    (Server::start(app).await, user.id)
+    (Server::start(app).await, user.id, token)
 }
 #[tokio::test]
 async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_stops() {
@@ -99,15 +127,16 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
     codeyard_db_core::cells::initialize(&one.pool, Prefix::new(1))
         .await
         .unwrap();
-    let (mut alice, alice_id) = native(&zero, "alice").await;
-    let (mut bob, bob_id) = native(&one, "bob").await;
+    let (mut alice, alice_id, _alice_token) = native(&zero, "alice").await;
+    let (mut bob, bob_id, bob_token) = native(&one, "bob").await;
     let directory_key = NodeKey::generate();
     let router_key = NodeKey::generate();
-    for (prefix, name, id, server) in [
-        (Prefix::ZERO, "alice", alice_id, &alice),
-        (Prefix::new(1), "bob", bob_id, &bob),
+    let zero_key = NodeKey::generate();
+    let one_key = NodeKey::generate();
+    for (prefix, name, id, server, member) in [
+        (Prefix::ZERO, "alice", alice_id, &alice, &zero_key),
+        (Prefix::new(1), "bob", bob_id, &bob, &one_key),
     ] {
-        let member = NodeKey::generate();
         directory
             .register_cell(Cell {
                 id: prefix,
@@ -152,6 +181,50 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
     )
     .await
     .unwrap();
+    let mut homes = Vec::new();
+    for (prefix, server, key, database) in [
+        (Prefix::ZERO, &alice, &zero_key, &zero),
+        (Prefix::new(1), &bob, &one_key, &one),
+    ] {
+        let client = directory::Client::new(
+            key.clone(),
+            listener.address,
+            directory_key.public_key(),
+            Default::default(),
+        )
+        .unwrap();
+        let home = codeyard_cells_router::accounts::listen(
+            client.clone(),
+            Arc::new(codeyard_identity::cells::Local {
+                pool: database.pool.clone(),
+            }),
+            key,
+            "127.0.0.1:0".parse().unwrap(),
+        )
+        .await
+        .unwrap();
+        directory
+            .register_cell(Cell {
+                id: prefix,
+                name: format!("cell-{prefix}"),
+                region: "a".into(),
+                state: State::Open,
+                web_urls: vec![server.url()],
+                ssh_addresses: vec![],
+                rpc_addresses: vec![home.address.to_string()],
+                node_keys: vec![key.public_hex()],
+                database_bytes: 0,
+                write_rate: 0,
+                maximum_database_bytes: 1000,
+                maximum_write_rate: 100,
+            })
+            .await
+            .unwrap();
+        database.pool.set_foreign_authorization(Arc::new(
+            codeyard_cells_router::accounts::Remote::new(key.clone(), client).unwrap(),
+        ));
+        homes.push(home);
+    }
     let routes = Routes::new(
         directory::Client::new(
             router_key.clone(),
@@ -204,6 +277,25 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
         .await
         .unwrap();
     assert_eq!(response.status(), 401);
+    let alice_node = codeyard_model::node_id::encode("U", alice_id);
+    let bob_node = codeyard_model::node_id::encode("U", bob_id);
+    let query = json!({"query": r#"query($a:ID!,$b:ID!){left:repository(owner:"alice",name:"repo"){id name} right:repository(owner:"bob",name:"repo"){id name} a:node(id:$a){id ... on User{login}} b:node(id:$b){id ... on User{login}}}"#,
+        "variables":{"a":alice_node,"b":bob_node}});
+    let response = client
+        .post(format!("{}/api/graphql", router.url()))
+        .bearer_auth(&bob_token)
+        .json(&query)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let body: Value = response.json().await.unwrap();
+    assert!(body.get("errors").is_none(), "{body}");
+    assert_eq!(body["data"]["left"]["name"], "repo");
+    assert_eq!(body["data"]["right"]["name"], "repo");
+    assert_ne!(body["data"]["left"]["id"], body["data"]["right"]["id"]);
+    assert_eq!(body["data"]["a"]["login"], "alice");
+    assert_eq!(body["data"]["b"]["login"], "bob");
     // No idle connection can keep a stopped cell reachable.
     bob.stop().await;
     assert_eq!(
@@ -247,6 +339,9 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
     drop(client);
     router.stop().await;
     alice.stop().await;
+    for home in homes {
+        home.stop().await;
+    }
     transport.shutdown().await;
     listener.stop().await;
     directory.close().await;
