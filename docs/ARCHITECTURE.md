@@ -766,8 +766,9 @@ The current runtime retry passes 334 selected library, 234 cluster, 42 Git and 1
 checks. Two browser-page database tests still fail; their package-session fix is written.
 Computed project-field IDs, GraphQL home organization discovery and numeric foreign invitation
 targets pass source checks. Native home lists now share bounded reads of existing authorized
-page models with original browser sessions; this batch is unchecked. Public two-cell gh/Git
-acceptance remains open; stages 3 to 6 are not built. Range renewal is a deferred owner follow-up.
+page models with original browser sessions; workspace, Clippy and WASM pass, while runtime
+is pending. Public two-cell gh/Git acceptance remains open; stages 3 to 6 are not built.
+Range renewal is a deferred owner follow-up.
 [Cluster readiness](CLUSTER_PLAN.md) records current check jobs and runtime gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.

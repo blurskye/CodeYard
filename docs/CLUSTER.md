@@ -756,7 +756,7 @@ lookup before the invitation transaction; this follow-up passes source checks.
 Rooted numeric node readers and projections pass workspace, Clippy and WASM, including
 GraphQL's nullable databaseId and complete fullDatabaseId output. Review requests share one
 reader and stable row IDs. Computed project fields now carry their owning account and project;
-that follow-up is unchecked.
+that follow-up passes source checks and awaits runtime.
 Range reservations and stopped-cell `cell renew-range
 --directory-address <address> --directory-key <public key>` are source-checked, committed
 owner follow-ups. Renewal preserves stable homes and existing rows. Issuer history keeps
@@ -776,4 +776,6 @@ shared package-session check pass source checks; runtime is pending. Native home
 and org lists now read the resource cells' existing authorized page models with the original
 cookie. They share the bounded collector and row/byte budget, then recheck the home session.
 Both engines exclude stub organizations from private indexes and creation choices. This
-follow-up and its HTML, page-model, revocation-during-read and hostile-limit tests are unchecked.
+follow-up passes workspace, Clippy and WASM; its HTML, page-model, revocation-during-read
+and hostile-limit tests await runtime. The two-cell client round also checks native cell-1
+Git storage through HTTP and SSH pushes/clones and explicit scoped-ID bounds.

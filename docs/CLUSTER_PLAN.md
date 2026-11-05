@@ -196,7 +196,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     both engines. Tests cover HTML/model output and session revocation during a remote wait.
     Native home lists and their shared budgets pass workspace 7b8a449676274b2284d8c67447439d70,
     Clippy 95d21a9f9bb94eb9aa6ff3a8b6a9ae82 and WASM 05c22273aa1e4ad2a864829dcfb7c222.
-    Runtime acceptance remains open.
+    Runtime acceptance remains open. The next cells round explicitly pushes/clones the
+    cell-1 native repository over HTTP and SSH and checks account/repository ID bounds.
     No stage 2 completion is claimed.
     Stages 3 to 6 are not built. Automatic user moves and org regional presence remain
     documented owner decisions.

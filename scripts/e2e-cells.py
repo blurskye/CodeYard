@@ -245,8 +245,10 @@ def acceptance(deployment):
         alice = client.api("user")
         bob = client.api("user", who="bob")
         assert alice["id"] != bob["id"] and bob["id"] > alice["id"]
+        assert 2**37 <= bob["id"] < 2**53, bob["id"]
         client.gh("repo", "create", "alice/shared", "--private")
         client.gh("repo", "create", "bob/other", "--public", who="bob")
+        assert 2**37 <= client.api("repos/bob/other", who="bob")["id"] < 2**53
         client.clone.mkdir()
         client.git("init", "--initial-branch=main")
         client.git("config", "user.name", "Cell acceptance")
@@ -271,6 +273,17 @@ def acceptance(deployment):
             return {"GIT_SSH_COMMAND": shlex.join(["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
                 "-o", "IdentityAgent=none", "-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=accept-new",
                 "-o", "UserKnownHostsFile=" + str(deployment.root / "known_hosts"), "-i", str(deployment.root / (who + "-key"))])}
+        client.git("push", deployment.base + "/bob/other.git", "main", who="bob", git_auth=True)
+        client.git("push", f"ssh://git@127.0.0.1:{deployment.ssh}/bob/other.git", "main:ssh-proof",
+                   who="bob", env=ssh_environment("bob"))
+        for protocol, url in (("http", deployment.base + "/bob/other.git"),
+                              ("ssh", f"ssh://git@127.0.0.1:{deployment.ssh}/bob/other.git")):
+            own_clone = directory / ("cell-one-" + protocol)
+            client.execute(["git", "clone", url, str(own_clone)], who="bob",
+                           git_auth=protocol == "http", env=ssh_environment("bob") if protocol == "ssh" else None)
+            assert (own_clone / "README.md").read_text() == "two cells\n"
+            assert client.execute(["git", "-C", str(own_clone), "rev-parse", "HEAD"]).stdout.strip() == client.git("rev-parse", "main")
+        client.checked("cell one scoped IDs survive gh and native repository pushes and clones over HTTP and SSH")
         client.git("checkout", "-b", "proposed")
         (client.clone / "README.md").write_text("two cells\nforeign SSH push\n")
         client.git("add", "README.md")
