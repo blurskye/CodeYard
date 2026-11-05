@@ -2797,6 +2797,35 @@ t_cluster_quorum_primary_loss() {
     done
 }
 
+t_cluster_storage_loss() {
+    local name=quorum-survival-http source=$RUN/work/quorum-survival-http expected primary pid mode destination
+    for mode in clone push; do
+        "$PYTHON" -I - "$source/loss-$mode.bin" <<'PYDATA'
+import os, sys
+with open(sys.argv[1], 'wb') as output:
+    for _ in range(20):
+        output.write(os.urandom(1024 * 1024))
+PYDATA
+        git_as alice -C "$source" add "loss-$mode.bin"
+        git_as alice -C "$source" commit -qm "Storage loss during $mode"
+        if [[ $mode == clone ]]; then
+            git_with_token write -C "$source" push -q "$BASE/alice/$name.git" main || return 1
+            expected=$(git_as alice -C "$source" rev-parse HEAD)
+        fi
+        primary=$(repo_node alice "$name")
+        [[ $primary == store1 || $primary == store2 ]]
+        pid=${SERVER_PIDS[$primary]}
+        "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" \
+            --storage-loss "$mode" --repository "alice/$name" --primary-pid "$pid" --source "$source" || return 1
+        wait "$pid" 2>/dev/null || true
+        unset "SERVER_PIDS[$primary]"
+        destination=$RUN/clone-after-$mode-loss
+        git_with_token read clone -q "$BASE/alice/$name.git" "$destination" || return 1
+        [[ $(git_as alice -C "$destination" rev-parse HEAD) == "$expected" ]] || return 1
+        start_server "$primary" || return 1
+    done
+}
+
 t_cluster_drain_worker() {
     local sha id deadline=$((SECONDS + 45))
     cluster_cli web1 drain ci1
@@ -3049,6 +3078,7 @@ run_cluster_round() {
     step 'drain: a drained runner takes no new jobs and cancel resumes claims' t_cluster_drain_worker
     step 'cluster pages: drain and scaling save with and without hydration' t_cluster_browser
     step -f -i 'quorum: HTTP and SSH acknowledgements survive immediate primary SIGKILL' t_cluster_quorum_primary_loss
+    step -f -i 'storage loss: interrupted clone and push fail clearly; retries preserve refs' t_cluster_storage_loss
     # Shutdown is still checked after a required step fails.
     ROUND_BLOCKED=0
     step -i 'shutdown: every node exits with status 0 and no log has a panic' t_cluster_shutdown

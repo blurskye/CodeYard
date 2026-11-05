@@ -18,9 +18,11 @@ import os
 from pathlib import Path
 import re
 import secrets
+import select
 import signal
 import shutil
 import socket
+import socketserver
 import ssl
 import subprocess
 import threading
@@ -1075,13 +1077,103 @@ def certificate(directory):
     return cert, key
 
 
+def storage_loss(args):
+    """Pause one real smart-HTTP stream while its storage process is killed."""
+    assert args.primary_pid and args.primary_pid > 1 and args.repository and args.source
+    upstream = urllib.parse.urlsplit(args.base)
+    assert upstream.scheme == "http" and upstream.hostname == "127.0.0.1"
+    fired, resume = threading.Event(), threading.Event()
+    lock = threading.Lock()
+    class Proxy(socketserver.BaseRequestHandler):
+        def handle(self):
+            try:
+                self.request.settimeout(10)
+                with socket.create_connection((upstream.hostname, upstream.port), timeout=10) as remote:
+                    header = b""
+                    while b"\r\n\r\n" not in header:
+                        assert len(header) < 16384, "oversized test HTTP header"
+                        part = self.request.recv(8192)
+                        if not part:
+                            return
+                        header += part
+                    header, body = header.split(b"\r\n\r\n", 1)
+                    first = header.split(b"\r\n", 1)[0].split(b" ")
+                    operation = b"git-upload-pack" if args.storage_loss == "clone" else b"git-receive-pack"
+                    target = len(first) == 3 and first[0] == b"POST" and first[1].endswith(operation)
+                    # One request per connection makes the gate independent of curl reuse.
+                    header = b"\r\n".join(line for line in header.split(b"\r\n")
+                                             if not line.lower().startswith(b"connection:"))
+                    remote.sendall(header + b"\r\nConnection: close\r\n\r\n" + body)
+                    def gate():
+                        with lock:
+                            if fired.is_set():
+                                return
+                            fired.set()
+                        assert resume.wait(timeout=45), "storage loss was not released"
+                    tail = body[-3:] if args.storage_loss == "push" else b""
+                    if target and args.storage_loss == "push" and b"PACK" in body:
+                        gate()
+                    deadline = time.monotonic() + 150
+                    while time.monotonic() < deadline:
+                        ready, _, _ = select.select([self.request, remote], [], [], 1)
+                        for sender in ready:
+                            data = sender.recv(8192)
+                            if not data:
+                                return
+                            receiver = remote if sender is self.request else self.request
+                            receiver.sendall(data)
+                            if target and ((args.storage_loss == "push" and sender is self.request)
+                                           or (args.storage_loss == "clone" and sender is remote)):
+                                if b"PACK" in tail + data:
+                                    gate()
+                                tail = data[-3:]
+                    raise AssertionError("test proxy connection exceeded its deadline")
+            except (ConnectionError, TimeoutError, OSError):
+                # A truncated stream is the intended client-visible failure after SIGKILL.
+                return
+    proxy = socketserver.ThreadingTCPServer(("127.0.0.1", 0), Proxy)
+    directory = args.run / ("storage-loss-" + args.storage_loss)
+    directory.mkdir(mode=0o700)
+    token = (args.run / "state-files/write_token").read_text().strip()
+    encoded = base64.b64encode(("alice:" + token).encode()).decode()
+    env = {name: value for name, value in os.environ.items() if not name.startswith("GIT_")}
+    env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="http.extraHeader",
+               GIT_CONFIG_VALUE_0="Authorization: Basic " + encoded,
+               GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL="/dev/null", GIT_TERMINAL_PROMPT="0")
+    url = f"http://127.0.0.1:{proxy.server_address[1]}/{args.repository}.git"
+    command = (["git", "clone", "--quiet", url, str(directory / "clone")] if args.storage_loss == "clone"
+               else ["git", "-C", str(args.source), "push", "--quiet", url, "main"])
+    with serving(proxy), (directory / "client.log").open("w+b") as log:
+        child = subprocess.Popen(command, env=env, stdout=log, stderr=log, start_new_session=True)
+        try:
+            assert fired.wait(timeout=40), "Git did not start its smart-HTTP transfer"
+            os.kill(args.primary_pid, signal.SIGKILL)
+            resume.set()
+            assert child.wait(timeout=120) != 0, "Git accepted a truncated transfer"
+            log.seek(0)
+            assert log.read(4096), "Git returned no failure reason"
+        finally:
+            resume.set()
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+            child.wait(timeout=10)
+    print(f"PASS cluster {args.storage_loss}: storage SIGKILL returns a client error", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True)
     parser.add_argument("--run", type=Path, required=True)
     parser.add_argument("--skip-runs", metavar="REASON", default="",
                         help="skip the checks that need a finished workflow run, for this reason")
+    parser.add_argument("--storage-loss", choices=("clone", "push"))
+    parser.add_argument("--primary-pid", type=int)
+    parser.add_argument("--repository")
+    parser.add_argument("--source", type=Path)
     args = parser.parse_args()
+    if args.storage_loss:
+        storage_loss(args)
+        return
     assert shutil.which("gh") and shutil.which("openssl"), "gh and OpenSSL are required"
     directory = args.run / "github-client"
     directory.mkdir(mode=0o700)
