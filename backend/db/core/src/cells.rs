@@ -33,7 +33,7 @@ pub async fn load(pool: &DbPool) -> Result<()> {
 /// Cell zero retains every ID and sequence position; a nonzero prefix needs an empty cell.
 pub async fn initialize(pool: &DbPool, prefix: Prefix) -> Result<()> {
     let cell = match pool {
-        DbPool::Postgres(pool) => initialize_postgres(pool, prefix).await?,
+        DbPool::Postgres(pool) => initialize_postgres(pool, prefix, None).await?,
         DbPool::Sqlite(_) => {
             ensure!(prefix == Prefix::ZERO, "multiple cells require PostgreSQL");
             Prefix::ZERO
@@ -43,7 +43,44 @@ pub async fn initialize(pool: &DbPool, prefix: Prefix) -> Result<()> {
     Ok(())
 }
 
-async fn initialize_postgres(pool: &PgPool, prefix: Prefix) -> Result<Prefix> {
+/// The caller holds state/maintenance locks and obtains `prefix` from the pinned
+/// directory using its live node key. Existing rows and stable ownership stay intact.
+pub async fn renew(pool: &DbPool, previous: Prefix, prefix: Prefix) -> Result<()> {
+    let DbPool::Postgres(postgres) = pool else {
+        anyhow::bail!("multiple cells require PostgreSQL")
+    };
+    let cell = initialize_postgres(postgres, prefix, Some(previous)).await?;
+    pool.set_cell_identity(cell, prefix);
+    Ok(())
+}
+
+/// Read only the bounded sequence catalog, before reserving a successor externally.
+pub async fn highest_id(pool: &DbPool) -> Result<i64> {
+    let DbPool::Postgres(pool) = pool else {
+        anyhow::bail!("multiple cells require PostgreSQL")
+    };
+    let mut connection = pool.acquire().await?;
+    let mut maximum = 0;
+    for (table, column) in serial_columns(&mut connection).await? {
+        let sequence = sequence_name(&mut connection, &table, &column)
+            .await?
+            .context("cell IDs require an owned sequence")?;
+        let (last, called): (i64, bool) =
+            sqlx::query_as(&format!("SELECT last_value,is_called FROM {sequence}"))
+                .fetch_one(&mut *connection)
+                .await?;
+        if called {
+            maximum = maximum.max(last);
+        }
+    }
+    Ok(maximum)
+}
+
+async fn initialize_postgres(
+    pool: &PgPool,
+    prefix: Prefix,
+    renewal: Option<Prefix>,
+) -> Result<Prefix> {
     let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO node_configuration(id) VALUES(1) ON CONFLICT(id) DO NOTHING")
         .execute(&mut *tx)
@@ -54,10 +91,18 @@ async fn initialize_postgres(pool: &PgPool, prefix: Prefix) -> Result<Prefix> {
             .await?;
     let cell = Prefix::try_from(i64::from(cell))?;
     let previous = Prefix::try_from(i64::from(previous))?;
-    ensure!(
-        previous == Prefix::ZERO || previous == prefix,
-        "a cell's prefix cannot be replaced"
-    );
+    if let Some(expected) = renewal {
+        ensure!(
+            previous == expected && previous != prefix,
+            "cell issuer changed during renewal"
+        );
+    } else {
+        ensure!(
+            previous == Prefix::ZERO || previous == prefix,
+            "a cell's prefix cannot be replaced"
+        );
+    }
+    let mut needs_prefix = false;
     let fresh = previous != prefix;
     let columns = serial_columns(&mut tx).await?;
     let bounds = prefix.ids();
@@ -74,7 +119,7 @@ async fn initialize_postgres(pool: &PgPool, prefix: Prefix) -> Result<Prefix> {
         sqlx::query(&format!("LOCK TABLE {quoted} IN ACCESS EXCLUSIVE MODE"))
             .execute(&mut *tx)
             .await?;
-        if fresh {
+        if fresh && renewal.is_none() {
             let populated: bool =
                 sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM {quoted} LIMIT 1)"))
                     .fetch_one(&mut *tx)
@@ -88,6 +133,13 @@ async fn initialize_postgres(pool: &PgPool, prefix: Prefix) -> Result<Prefix> {
             sqlx::query_as(&format!("SELECT last_value,is_called FROM {name}"))
                 .fetch_one(&mut *tx)
                 .await?;
+        if renewal.is_some() {
+            ensure!(
+                previous.ids().contains(&last),
+                "sequence {table}.{column} is outside its cell range"
+            );
+            needs_prefix |= called && previous.needs_next_prefix(last);
+        }
         if !fresh {
             ensure!(
                 bounds.contains(&last),
@@ -108,12 +160,16 @@ async fn initialize_postgres(pool: &PgPool, prefix: Prefix) -> Result<Prefix> {
             bounds.start(), bounds.end(), bounds.start()))
             .execute(&mut *tx).await?;
     }
-    sqlx::query("UPDATE node_configuration SET cell_id=CASE WHEN cell_prefix=0 THEN $1 ELSE cell_id END,cell_prefix=$1,setup_completed=CASE WHEN $1<>0 THEN true ELSE setup_completed END WHERE id=1")
-        .bind(i32::from(prefix.get()))
+    ensure!(
+        renewal.is_none() || needs_prefix,
+        "no cell sequence has reached 80% use"
+    );
+    sqlx::query("UPDATE node_configuration SET cell_id=CASE WHEN $2 AND cell_prefix=0 THEN $1 ELSE cell_id END,cell_prefix=$1,setup_completed=CASE WHEN $1<>0 THEN true ELSE setup_completed END WHERE id=1")
+        .bind(i32::from(prefix.get())).bind(renewal.is_none())
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(if previous == Prefix::ZERO {
+    Ok(if renewal.is_none() && previous == Prefix::ZERO {
         prefix
     } else {
         cell

@@ -71,9 +71,7 @@ impl Directory {
     pub async fn next_prefix(&self, peer: &str, previous: Prefix, last_id: i64) -> Result<Prefix> {
         self.run(async {
             ensure!(Prefix::for_id(last_id).ok() == Some(previous), Refusal::Invalid);
-            let capacity = codeyard_support::cells::IDS_PER_PREFIX - 1;
-            let used = last_id - *previous.ids().start() + 1;
-            ensure!(used >= capacity - capacity / 5, Refusal::Invalid);
+            ensure!(previous.needs_next_prefix(last_id), Refusal::Invalid);
             let mut tx = self.begin().await?;
             let cell = super::owner(&mut tx, peer, false).await?;
             let owned: Option<i32> = sqlx::query_scalar("SELECT cell_id FROM directory_cell_prefixes WHERE prefix=$1 FOR UPDATE")

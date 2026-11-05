@@ -758,7 +758,8 @@ Clippy and WASM. Their runtime tests are pending; upload cleanup and Git/ref rou
 role and foreign authorization are not built. Stub schema, metadata upserts and local
 credential/storage/listing guards pass source checks, as do common rooted node IDs.
 Metadata-only root validation also passes checks. Successor-prefix reservations are
-written but unchecked; native renewal and stages 3 to 6 are not built.
+source-checked; stopped-cell renewal is written but unchecked. Automatic renewal and
+stages 3 to 6 are not built.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.
 

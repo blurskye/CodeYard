@@ -12,6 +12,13 @@ pub enum Command {
         #[command(subcommand)]
         action: DirectoryCommand,
     },
+    /// Renew an 80%-used range through its pinned directory; stop cell servers first.
+    RenewRange {
+        #[arg(long)]
+        directory_address: std::net::SocketAddr,
+        #[arg(long)]
+        directory_key: String,
+    },
     /// Reserve this cell's ID range before adding it to the directory; stop its servers first.
     Initialize {
         #[arg(long)]
@@ -24,11 +31,50 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path) -> Result<()> {
     let maintenance = codeyard_db_cluster::cluster::maintenance_lock(pool).await?;
     let result = match command {
         Command::Initialize { prefix } => codeyard_db_core::cells::initialize(pool, *prefix).await,
+        Command::RenewRange {
+            directory_address,
+            directory_key,
+        } => {
+            async {
+                let previous = pool.cell_prefix();
+                let last_id = codeyard_db_core::cells::highest_id(pool).await?;
+                anyhow::ensure!(
+                    previous.needs_next_prefix(last_id),
+                    "no cell sequence has reached 80% use"
+                );
+                let key = codeyard_support::node_identity::load_or_create(state)?;
+                let directory = codeyard_cells_router::directory::Client::new(
+                    key,
+                    *directory_address,
+                    codeyard_support::node_identity::parse_public_key(directory_key)?,
+                    Default::default(),
+                )?;
+                let reply = directory
+                    .request(&codeyard_cells_router::directory::Request::NextPrefix {
+                        previous,
+                        last_id,
+                    })
+                    .await?;
+                let codeyard_cells_router::directory::Reply::Prefix(prefix) = reply else {
+                    anyhow::bail!("directory returned an invalid prefix reservation");
+                };
+                codeyard_db_core::cells::renew(pool, previous, prefix).await
+            }
+            .await
+        }
         Command::Directory { .. } => anyhow::bail!("Directory commands use their own database"),
     };
     maintenance.release().await;
     result?;
-    println!("Cell {} initialized.", pool.cell_prefix());
+    if matches!(command, Command::RenewRange { .. }) {
+        println!(
+            "Cell {} now issues prefix {}.",
+            pool.cell_id(),
+            pool.cell_prefix()
+        );
+    } else {
+        println!("Cell {} initialized.", pool.cell_prefix());
+    }
     Ok(())
 }
 

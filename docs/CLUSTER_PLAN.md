@@ -150,44 +150,26 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
 12. **Production controls.** Per-account and per-IP rate limits, SAML or OIDC login for
     organizations, an audit log for organization and site actions, and the abuse controls
     in [ABUSE_PREVENTION.md](ABUSE_PREVENTION.md), all checked in the cluster round.
-13. **Cells.** Stages 0 to 6 in architecture order; the owner lifted A16 on 2026-11-05.
-    Stage 0 is committed and checked; hard-reset acceptance is runtime pending, needs a
-    disposable VM. Stage 1 source checks pass for scoped locks, object-store CI logs,
-    current-copy clones and issue/PR replica routing. PgBouncer and quorum e2e previously
-    passed. Acceptance job 7f62166ed6354862b69d40473edba91b passes CI (220, 19 existing
-    ignored) and all 51 PgBouncer, replica and quorum e2e checks without skips. Quorum,
-    SSO, upload cleanup and old token-format integration assertions need reruns. Finished-CI
-    shutdown and load measurements are runtime pending, need a writable delegated cgroup.
-    Other content read families remain on primary; bulk retention remains open.
-    Stage 2 ranges, credential framing, directory registry/claims, pinned TLS exchanges,
-    read-only router keys and bounded route caches pass source checks. Route declarations,
-    router-owned GraphQL preflight and full scoped session storage pass workspace, Clippy
-    and WASM after removing the HTTP extraction's unused import.
-    Generated GraphQL remains unchanged. Catalogue selection and bounded GraphQL dispatch,
-    including mixed-cell nodes and ordered mutations, pass all three checks. Git/ref/composite
-    routing hints and upload cleanup pass workspace 53188113fc0f4d4aa1a760d067f3d97a,
-    Clippy e9247e79663843cbb6fe5cee24024561 and WASM a65f391359894621b5b10e48a84d1c9a.
-    Two real HTTP cells and TLS-directory tests cover the dispatch source; the outage fixture
-    needs a connection-shutdown fix before its rerun can pass.
-    Token tests that pinned the former unprefixed length now assert the scoped format; the
-    directory CLI fixture now supplies the capacity it asserts. Runtime rechecks are pending.
-    Acceptance rerun 049f16eeb8324596b898b230885a66d3 runs the compiled snapshot. A new
-    unchecked batch adds stable cell identity, stub storage/metadata, credential/storage
-    guards and native list filters, with SQLite/PostgreSQL HTTP and storage tests. Exact
-    lookups retain stubs for references. Workspace a01f0a8780954bbbba9f9d985affa50e,
-    Clippy 49b15ab6972445e1bcf022d3c31cb9f3 and WASM a192af85af5945458deaa483d93431f4
-    pass. The next batch also passes source checks for native rooted-ID decoding,
-    owner verification for reads and mutation inputs, common repository/team ID issuance in
-    REST/webhooks/GraphQL, and forged-root HTTP tests. Object and job-token assertions
-    that pinned prefix-only output now assert rooted output. Workspace
-    9b48ed0ede81492a983d778bf7f0685f, Clippy e7e52deddcfb4410ab8cdd9a026b3491
-    and WASM db4415d3a44047e9b8efe007bc3521d7 pass. Metadata-only owner validation
-    and separate hostile-device-code fixtures pass workspace 8ebdc01a8f004f7894327a8349a9ec23,
-    Clippy 1479f7b8de6947bca79da2c9d9033dd2 and WASM 20f40e535815478e9883094602057fd0.
-    Idempotent successor-prefix reservations, CLI/TLS operations and their tests are written
-    but unchecked. Native range activation and automatic renewal remain open.
-    The public proxy role, foreign authorization and stages 3 to 6 remain unimplemented.
-    Automatic individual moves and org regional presence are documented owner decisions.
+13. **Cells.** The owner lifted A16 on 2026-11-05. Stage 0 is committed and checked;
+    hard-reset acceptance is runtime pending, needs a disposable VM. It reuses items 3 and
+    11. Stage 1 source checks pass for scoped locks, object-store CI logs, current-copy
+    clones and issue/PR replica reads. The prior round passes all 51 PgBouncer/replica/quorum
+    e2e checks without skips. Finished-CI shutdown and load measurements are runtime pending,
+    need a writable delegated cgroup. Other content read families and bulk retention remain open.
+    Stage 2 ranges, framed credentials/sessions, directory claims/TLS/cache, bounded HTTP and
+    GraphQL dispatch, stub metadata/storage/credential/list guards and common rooted IDs pass
+    source checks. Generated GraphQL is unchanged. Successor reservations pass workspace
+    27b7d9690c524daa95c0e71b98de882c, Clippy 12da351fea0f41e69e2a1a5f949c6b4a and
+    WASM 63d1cd1a38504fdc804e3c7dc2495fcf. Stopped-cell range activation and CLI rollback/
+    retry tests are written but unchecked; automatic renewal remains open.
+    Acceptance 049f16eeb8324596b898b230885a66d3 runs the earlier compiled snapshot. Libraries,
+    CI 220 (19 existing ignored) and database 174 pass. Cluster 227 pass, with the new fake-cell
+    outage fixture failing because listener abort left connections alive; its fix is compiled.
+    Git and token tests that pinned old output now assert the scoped format. New hostile
+    device-code cases use separate fixtures to preserve the long OAuth contract's rate budget.
+    These fixes await rerun. The public HTTP/SSH role, foreign authorization, remote membership
+    pointers, remaining node families and stages 3 to 6 remain unimplemented. Automatic user
+    moves and org regional presence are documented owner decisions.
 
 ## Decisions that settle the open questions
 

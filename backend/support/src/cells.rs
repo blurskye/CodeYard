@@ -40,6 +40,15 @@ impl Prefix {
         base + 1..=base + IDS_PER_PREFIX - 1
     }
 
+    /// A cell reserves its next range once any sequence has used at least 80%.
+    pub fn needs_next_prefix(self, last_id: i64) -> bool {
+        if Self::for_id(last_id).ok() != Some(self) {
+            return false;
+        }
+        let capacity = IDS_PER_PREFIX - 1;
+        last_id - *self.ids().start() + 1 >= capacity - capacity / 5
+    }
+
     pub fn for_id(id: i64) -> Result<Self, Invalid> {
         if !(1..=MAX_ID).contains(&id) {
             return Err(Invalid::Id);

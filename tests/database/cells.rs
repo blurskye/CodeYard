@@ -172,3 +172,149 @@ async fn pending_account_insert_prevents_a_range_switch_and_all_sequence_changes
     );
     database.finish().await;
 }
+
+async fn renew(root: &Path, url: &str, address: std::net::SocketAddr, key: &str) -> Output {
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(env!("CARGO_BIN_EXE_codeyard"))
+            .args([
+                "cell",
+                "renew-range",
+                "--directory-address",
+                &address.to_string(),
+                "--directory-key",
+                key,
+            ])
+            .current_dir(root)
+            .env_clear()
+            .env("DATABASE_URL", url)
+            .env("GITSERV_STATE_DIR", root.join("state"))
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap()
+}
+
+#[tokio::test]
+async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_partial_activation() {
+    use codeyard_model::cells::{Cell, State};
+    use codeyard_support::node_identity::{load_or_create, NodeKey};
+    let mut database = PostgresDatabase::new().await;
+    let mut registry = PostgresDatabase::unmigrated().await;
+    let root = root();
+    let url = database.connection_url();
+    assert!(initialize(root.path(), &url, "1").await.status.success());
+    codeyard_db_core::cells::load(&database.pool).await.unwrap();
+    let first = codeyard_db_identity::users::accounts::create_user(&database.pool, "before", None)
+        .await
+        .unwrap();
+    let member = load_or_create(&root.path().join("state")).unwrap();
+    let server = NodeKey::generate();
+    let directory =
+        codeyard_db_directory::Directory::connect(&registry.connection_url(), Default::default())
+            .await
+            .unwrap();
+    directory.migrate().await.unwrap();
+    directory
+        .register_cell(Cell {
+            id: Prefix::new(1),
+            name: "first".into(),
+            region: "a".into(),
+            state: State::Open,
+            web_urls: vec!["http://127.0.0.1:3000/".into()],
+            ssh_addresses: vec![],
+            node_keys: vec![member.public_hex()],
+            database_bytes: 0,
+            write_rate: 0,
+            maximum_database_bytes: 1000,
+            maximum_write_rate: 100,
+        })
+        .await
+        .unwrap();
+    let listener = codeyard_cells_router::directory::Listener::bind(
+        directory.clone(),
+        &server,
+        "127.0.0.1:0".parse().unwrap(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    assert!(
+        !renew(root.path(), &url, listener.address, &server.public_hex())
+            .await
+            .status
+            .success()
+    );
+    let capacity = IDS_PER_PREFIX - 1;
+    let threshold = *Prefix::new(1).ids().start() + capacity - capacity / 5 - 1;
+    sqlx::query("SELECT setval('users_id_seq',$1,true)")
+        .bind(threshold)
+        .execute(&database.raw)
+        .await
+        .unwrap();
+    assert!(!renew(
+        root.path(),
+        &url,
+        listener.address,
+        &NodeKey::generate().public_hex()
+    )
+    .await
+    .status
+    .success());
+    sqlx::query("CREATE FUNCTION reject_range_update() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected range activation failure'; END $$")
+        .execute(&database.raw).await.unwrap();
+    sqlx::query("CREATE TRIGGER reject_range_update BEFORE UPDATE OF cell_prefix ON node_configuration FOR EACH ROW WHEN(NEW.cell_prefix<>OLD.cell_prefix) EXECUTE FUNCTION reject_range_update()")
+        .execute(&database.raw).await.unwrap();
+    let output = renew(root.path(), &url, listener.address, &server.public_hex()).await;
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("injected range activation failure"));
+    codeyard_db_core::cells::load(&database.pool).await.unwrap();
+    assert_eq!(database.pool.cell_prefix(), Prefix::new(1));
+    let bounds: (i64, i64) = sqlx::query_as("SELECT min_value,max_value FROM pg_sequences WHERE schemaname=current_schema() AND sequencename='users_id_seq'")
+        .fetch_one(&database.raw).await.unwrap();
+    assert_eq!(
+        bounds,
+        (*Prefix::new(1).ids().start(), *Prefix::new(1).ids().end())
+    );
+    assert_eq!(
+        directory.cell(Prefix::new(2)).await.unwrap().unwrap().id,
+        Prefix::new(1)
+    );
+    sqlx::query("DROP TRIGGER reject_range_update ON node_configuration")
+        .execute(&database.raw)
+        .await
+        .unwrap();
+    let output = renew(root.path(), &url, listener.address, &server.public_hex()).await;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    codeyard_db_core::cells::load(&database.pool).await.unwrap();
+    assert_eq!(database.pool.cell_id(), Prefix::new(1));
+    assert_eq!(database.pool.cell_prefix(), Prefix::new(2));
+    let second = codeyard_db_identity::users::accounts::create_user(&database.pool, "after", None)
+        .await
+        .unwrap();
+    assert_eq!(second.id, *Prefix::new(2).ids().start());
+    assert_eq!(second.home_cell, 1);
+    assert_eq!(
+        codeyard_db_identity::users::accounts::get_user_by_id(&database.pool, first.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .home_cell,
+        1
+    );
+    let reserved: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM directory_cell_prefixes")
+        .fetch_one(&registry.raw)
+        .await
+        .unwrap();
+    assert_eq!(reserved, 2);
+    listener.stop().await;
+    directory.close().await;
+    registry.finish().await;
+    database.finish().await;
+}
