@@ -288,21 +288,22 @@ Cluster files use two checksum-checked storage-node copies, or shared S3 when co
 Cluster backup reuses replica snapshots and object placement. Restore imports a fenced
 database, installs each original storage identity, and completes through offline verification;
 `restore_pending` blocks core startup until the required copies are installed.
-The storage backend passes source checks; runtime acceptance is pending. Backup and
-restore are in their first check rounds. Single node remains supported.
+Storage-node HTTP acceptance passes on both engines. Cluster backup and restore pass
+CLI acceptance, including interrupted import and per-node recovery. Single node remains supported.
 
 Node membership (`pending`, `active`, `revoked`) is separate from allocation state
 (`active`, `draining`, `drained`). Drain admission reserves complete fork families and
 15% free space in one transaction; the existing copier and promoter advance the work.
-The panel, REST and CLI use `cluster::drain::change`. Initialization and drain source checks pass; runtime acceptance is pending.
+The panel, REST and CLI use `cluster::drain::change`. Initialization, REST drain and
+promotion acceptance pass; native and hydrated browser acceptance remain pending.
 Application database queries share `db::pool` acquisition tracking; metrics count yielded
 acquisitions until they complete, time out or are cancelled. Streaming keeps one queued
-row and releases the query and connection together when cancelled. Its source checks pass;
-runtime acceptance is pending. New clusters choose majority by default; existing asynchronous
-installations explicitly choose `cluster enable --write-quorum 1`. That transition is offline
-and preserves existing repositories. The default-policy batch awaits checks.
-Provisioning, lease-led scaling, rebalancing and pool configuration pass source checks;
-their runtime acceptance is pending. [Cluster readiness](CLUSTER_PLAN.md) tracks acceptance.
+row and releases the query and connection together when cancelled. Acquisition, cancellation
+and HTTP waiter metrics pass acceptance. New clusters choose majority by default; existing
+asynchronous installations explicitly choose `cluster enable --write-quorum 1`. That
+offline transition preserves existing repositories and passes acceptance.
+Provisioning, lease-led scaling, rebalancing and pool configuration pass library and
+HTTP checks on both engines. [Cluster readiness](CLUSTER_PLAN.md) tracks acceptance.
 
 ### Roles and shared state
 
@@ -784,9 +785,10 @@ Stage 0 needs no cells or router. It closes every gap where acknowledged data ca
   acceptance items 5, 8 and 9 on SQLite and PostgreSQL and item 7 on PostgreSQL. Item 4
   needs a VM hard reset and is checked by hand. Operations are described in
   [Storage architecture](STORAGE_ARCHITECTURE.md#backups).
-- **Cluster part, later:** ref quorum with the `reference-transaction` hook and
-  `write_quorum`, Patroni, failover repair, and items 1, 2, 3 and 6. Until then
-  `codeyard backup` refuses an installation in cluster mode.
+- **Cluster part, experimental:** two-voter ref quorum, PostgreSQL arbitration and
+  ref journals, snapshot backups and fenced offline restore are implemented. Operators
+  provide PostgreSQL HA. Process-loss acceptance and measured limits remain pending;
+  [Cluster readiness](CLUSTER_PLAN.md) is the current acceptance list.
 
 | Store | Decision | RPO | RTO |
 |---|---|---|---|
@@ -796,33 +798,17 @@ Stage 0 needs no cells or router. It closes every gap where acknowledged data ca
 | PostgreSQL | Patroni with `synchronous_mode_strict` and a synchronous standby in another zone; WAL archive and daily base backups with pgBackRest or WAL-G; 14 days of point-in-time recovery | 0 on node or zone loss; under a minute on cluster loss | about 30 s failover; about 2 h to restore 4 TB |
 | SQLite | already WAL with `synchronous=FULL`; `codeyard backup` copies it online with `VACUUM INTO`; Litestream optional | 0 on a crash; the last backup on disk loss | minutes |
 | CI logs | database rows until stage 1, then chunks in object storage; a job completes only after its last chunk is stored | the unstored tail of a running job | none |
-| Artifacts, caches, uploads | S3 with versioning in a cluster; local disk on one machine, copied by `codeyard backup` | 0 on S3; the last backup on local disk | restore time |
+| Artifacts, caches, uploads | Two checked storage-node copies, or optional versioned S3; local disk on one machine | last completed cluster backup, or the operator's S3 recovery point | restore time |
 | Node keys, membership | membership is in the database; a lost node pairs again with a new key; `SECRETS_MASTER_KEY` and `CLUSTER_*` are kept offline, apart from the backups | none | minutes |
 
-**Ref quorum.** A repository has up to three voting members, its primary and two copies in
-different zones; further copies stay asynchronous and serve reads. `write_quorum` is
-`majority` (the default), a number, or `1`, today's asynchronous behaviour.
-
-1. Receive-pack gets a `reference-transaction` hook, written by the broker beside its
-   `pre-receive` and `post-receive`. In the `prepared` state refs are locked and objects
-   in place, but nothing is visible; the hook calls `replicate_ref_change`. In-process
-   writes call it through the guard from `begin_ref_change`, before `update-ref`.
-2. It counts the change in `write_version`, as today, and sends each voting copy a pack of
-   the new objects and the ref updates with their old values. The copy applies them with
-   `git update-ref --stdin`, which checks each old value, and answers once on disk.
-3. With a quorum, the primary records `acked_version` and the copies' `applied_version` in
-   one transaction; then Git commits and the client hears success.
-4. Without a quorum in 10 seconds the hook fails, Git aborts and the client sees the push
-   refused with the reason. A copy that applied it is behind by version, so the sync loop
-   resets it.
-
-Take-over and `promote` then accept any copy at or above `acked_version`, so a crash during
-an unacknowledged write no longer needs `--force`. If the primary dies between refusing a
-push and that reset, the refused change can survive on the new primary; nothing
-acknowledged is lost. Why: Spokes' majority rule through Gitaly's hook, with the database
-choosing the current copy, as it already does, instead of a new consensus protocol. Cost:
-each write waits for one copy, a few milliseconds in a region, and a repository with two of
-three members down refuses writes.
+**Ref quorum.** Current clusters have two fixed storage voters and PostgreSQL decides
+which ref changes commit. Both voters must prepare durable objects and ref journals
+before acknowledgement. Canonical refs and term fencing recover a committed change after
+a primary dies; an uncertain outcome tells the client to fetch before retrying. Further
+replicas remain asynchronous. `majority` is the new-cluster default; explicit `1` retains
+the legacy asynchronous path. Initialization, copy and promotion share this coordinator.
+See [Quorum push preparation](CLUSTER.md#quorum-push-preparation) for limits and recovery.
+A future increase in voter count is outside the current acceptance list.
 
 **Backup and restore.** `codeyard backup <dir>` runs while the installation serves: the
 database first (`VACUUM INTO`, `pg_dump`, or only the restore time when pgBackRest or WAL-G
@@ -836,9 +822,10 @@ and extra commits are harmless.
 `git fsck --connectivity-only` and compares each pull request with `refs/pull/N/head`:
 an open pull request follows a ref that moved, a missing ref is made again, refs of pull
 requests the database lacks are removed, and a commit the database names but Git lacks is
-reported. Later, for the cluster: verify also raises `write_version` so copies resync, and
-after a region failover, when the database can be seconds newer than Git, repairs the
-repositories whose `write_version` is above their copy's `applied_version`.
+reported. Cluster restore instead installs each original storage identity while startup
+is fenced, reconstructs canonical voter terms through offline `repo verify --repair`,
+and permits serving only after the required Git and object copies are ready. Region
+failover from a database newer than Git remains future work.
 
 Deleted repositories move to `<REPOS_PATH>/deleted/`, and uploads keep their pending
 deletion, for 7 days (`RESTORE_WINDOW_SECONDS`), after which the expiry sweep removes them.

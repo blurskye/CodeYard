@@ -41,7 +41,8 @@ and the rest) open the node connection in either mode; they do not change the mo
   packages, Actions artifacts and caches use checked, durable copies on two storage nodes.
   Their immutable address includes the declared SHA256. A web node keeps only staging/cache
   bytes; reads can use either storage copy. Every core must select the same backend.
-  Single-node mode still defaults to local disk. This backend awaits builder verification.
+  Single-node mode still defaults to local disk. Both database engines pass the
+  storage-node HTTP acceptance checks.
 - **Public clone URLs on every core node.** Set `PUBLIC_HTTP_CLONE_BASE` and
   `PUBLIC_SSH_CLONE_BASE` to the public web and SSH frontends, including on storage
   nodes. Signed webhook payloads use these addresses even when that node does not
@@ -70,7 +71,8 @@ existing push path.
 Empty repositories initialize a canonical HEAD on both voters before serving starts.
 Fork and template objects are staged privately; their refs publish through the same
 quorum coordinator as pushes, after live source and destination authority checks.
-A missing voter refuses creation. Source checks pass for initialization; runtime acceptance is still pending.
+A missing voter refuses creation. Initialization, copy and voter-replacement acceptance
+checks pass on both database engines.
 
 ## Monitoring
 
@@ -223,7 +225,8 @@ A failed upload stays pending and can be retried. Drain reserves file and Git re
 space together, then retires old file bytes after two active replacements are ready.
 Immutable-key tombstones remain through the restore window to refuse late uploads.
 Objects are bounded to 100 MiB; each store and node listener admits two transfers at once.
-The object backend and its HTTP acceptance tests await builder verification.
+The object backend passes HTTP checks for capacity, access, loss, retry and drain on
+both database engines.
 
 ## Drain a node
 
@@ -244,7 +247,8 @@ Storage with write quorum needs two active replacement voters. An offline node u
 Each node resumes its drain during heartbeats. Core nodes also finish idle runner drains;
 running jobs retain their normal timeout, and the drain cancels remaining jobs after
 `CI_RUN_TIMEOUT_SECONDS`. `CLUSTER_DRAIN_MAX_REPOSITORIES` bounds a preflight (default
-10,000, maximum 1,000,000); node lists support at most 1,000 nodes. Source checks pass for drain and its metrics. Runtime acceptance is still pending.
+10,000, maximum 1,000,000); node lists support at most 1,000 nodes. REST drain, authority,
+promotion and metrics checks pass. Browser acceptance remains pending.
 
 ## Provisioning and automatic scaling
 
@@ -270,7 +274,8 @@ Outstanding bounded invitations count toward the maximum. Dry runs record decisi
 without adding or draining; pausing prevents new decisions. Provisioning needs the
 operator command to create machines. Operators or their provider automation stop and
 revoke drained machines; drained memberships still count toward the maximum.
-These provisioning and scaling changes await builder and runtime verification.
+Provisioning and policy admission checks pass on both database engines, including
+lease leadership, pause, dry run and the storage scale-down prohibition.
 
 ## Rebalancing
 
@@ -283,7 +288,8 @@ both new terms reconstruct. Busy readers leave retirement pending for another pa
 
 `REPLICA_BANDWIDTH_BYTES_PER_SECOND` limits all replica streams in one process (default
 50 MiB/s, range 1 KiB/s–1 GiB/s). `replicas=all` disables rebalancing because every disk
-must retain every repository. These mover changes await builder and runtime verification.
+must retain every repository. Reservations, bandwidth limits and busy-reader retirement
+retry pass acceptance checks.
 
 ## Storage nodes
 
@@ -538,7 +544,8 @@ restore mode. It does not inspect a running cluster through a stale archive.
 `BACKUP_COMMAND_TIMEOUT_SECONDS` bounds each database tool (default 3,600, max 86,400).
 `BACKUP_MAX_DATABASE_BYTES` bounds restore SQL on disk (default 10 GiB, max 10 TiB).
 `REPLICA_MAX_PACK_BYTES` bounds each repository transfer (default 4 GiB, max 1 TiB).
-The new cluster backup and CLI restore acceptance tests await builder verification.
+Cluster backup and CLI restore acceptance pass, including interrupted import, restored
+Git and object copies, fencing and completion.
 
 ## Watching it
 
@@ -641,7 +648,7 @@ Password and token login remain available.
 Successful organization logins and their session insert share an `org.sso_login` audit
 transaction. Revoked membership, a restricted account, suspended organization governance
 or an unavailable audit table refuses the login. The cross-node HTTP acceptance for this
-flow is written and awaits its builder run.
+flow passes on both database engines and across web processes with five-minute clock skew.
 
 ## Limits
 
