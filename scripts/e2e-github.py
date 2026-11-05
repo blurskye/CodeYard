@@ -1146,7 +1146,13 @@ def storage_loss(args):
     with serving(proxy), (directory / "client.log").open("w+b") as log:
         child = subprocess.Popen(command, env=env, stdout=log, stderr=log, start_new_session=True)
         try:
-            assert fired.wait(timeout=40), "Git did not start its smart-HTTP transfer"
+            deadline = time.monotonic() + 40
+            while not fired.wait(timeout=0.05):
+                status = child.poll()
+                if status is not None or time.monotonic() >= deadline:
+                    log.seek(0)
+                    diagnostic = log.read(4096).decode(errors="replace")
+                    raise AssertionError(f"Git did not start its smart-HTTP transfer (exit {status}): {diagnostic}")
             stopping = args.storage_loss == "shutdown"
             if stopping:
                 assert args.runner_pid and args.runner_pid > 1

@@ -583,8 +583,9 @@ rounds crash that owned database during `gh issue create`, check `/ready` goes 5
 200 without restarting Codeyard, and verify every acknowledged issue remains. They never
 restart an external database. `E2E_REQUIRE_PG_RESTART=1` makes a missing owned fixture a
 failure. Helm lint and render checks pass, including the pool-size setting and credential
-isolation. The session-pool round passes all 17 Git and HTTP checks. PostgreSQL crash acceptance
-still needs the complete cluster round.
+isolation. The session-pool round passes all 17 Git and HTTP checks. Owned PostgreSQL
+crash checks pass during `gh issue create`, including readiness recovery and retained
+acknowledged writes, both on one server and across cluster web nodes.
 
 ## One-cell benchmark
 

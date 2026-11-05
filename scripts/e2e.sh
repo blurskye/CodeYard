@@ -565,7 +565,11 @@ start_server() { # inline: starts a node and waits for its actual services
         SSH_URL=ssh://git@127.0.0.1:$SSH_PORT
     fi
     configure_node "$node" || return 1
-    local dir=$NODE_DIR pid waited=0 ready=0 first_line
+    local dir=$NODE_DIR pid waited=0 ready=0 first_line reported_after publish_deadline
+    if [[ $node == store1 || $node == store2 ]]; then
+        reported_after=$(pg_query "SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint") || return 1
+        [[ $reported_after =~ ^[0-9]+$ ]] || return 1
+    fi
     touch "$dir/server.log"
     first_line=$(( $(wc -l <"$dir/server.log") + 1 ))
     echo "starting $node: HTTP ${HTTP_PORTS[$node]}, SSH ${SSH_PORTS[$node]}, iroh ${IROH_PORTS[$node]:-off}"
@@ -602,6 +606,19 @@ start_server() { # inline: starts a node and waits for its actual services
         sleep 0.5
     done
     ((ready)) || { echo "$node did not start after 60 s" >&2; tail -n 40 "$dir/server.log" >&2; return 1; }
+    if [[ $node == store1 || $node == store2 ]]; then
+        # /ready can answer before publication finishes reconciliation. A pre-crash
+        # heartbeat must not admit an operation against a process still starting.
+        publish_deadline=$((SECONDS + 60))
+        until [[ $(pg_query "SELECT last_seen>=to_timestamp($reported_after::double precision/1000) FROM nodes WHERE name='$node'") == t ]]; do
+            if ! kill -0 "$pid" 2>/dev/null || ((SECONDS >= publish_deadline)); then
+                echo "$node did not publish a fresh heartbeat after startup" >&2
+                tail -n 40 "$dir/server.log" >&2
+                return 1
+            fi
+            sleep 0.5
+        done
+    fi
     if [[ $node == server || $node == web1 ]]; then
         waited=0
         until (exec 3<>"/dev/tcp/127.0.0.1/$SSH_PORT") 2>/dev/null; do
@@ -2767,7 +2784,7 @@ t_cluster_github_clients() {
 # Run last: existing legacy repositories keep their fixtures; these new repositories
 # exercise the two-voter path with real pushes and process death immediately after ack.
 t_cluster_quorum_primary_loss() {
-    local transport name source primary pid expected destination deadline restart_millis
+    local transport name source primary pid expected destination deadline
     pg_query "UPDATE node_configuration SET write_quorum='majority',replicas='2' WHERE id=1" >/dev/null || return 1
     for transport in http ssh; do
         name=quorum-survival-$transport
@@ -2802,16 +2819,7 @@ t_cluster_quorum_primary_loss() {
         [[ $(git_as alice -C "$destination" rev-parse HEAD) == "$expected" ]] || return 1
         git_as alice clone -q "$SSH_URL/alice/$name.git" "$destination-ssh" || return 1
         [[ $(git_as alice -C "$destination-ssh" rev-parse HEAD) == "$expected" ]] || return 1
-        # /ready can answer before startup publishes the node. A pre-crash heartbeat
-        # must not admit the next operation against a process that is still reconciling.
-        restart_millis=$(pg_query "SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint") || return 1
-        [[ $restart_millis =~ ^[0-9]+$ ]] || return 1
         start_server "$primary" || return 1
-        deadline=$((SECONDS + 60))
-        until [[ $(pg_query "SELECT last_seen>=to_timestamp($restart_millis::double precision/1000) FROM nodes WHERE name='$primary'") == t ]]; do
-            ((SECONDS < deadline)) || { echo 'Storage did not report after restart' >&2; return 1; }
-            sleep 1
-        done
     done
 }
 
