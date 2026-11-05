@@ -773,7 +773,8 @@ Runtime 3c645 passes 300 selected library tests and the selected membership, bro
 gist, reviewer and CI contracts. Cluster passes 233 with one GraphQL discovery failure;
 project tests expose a mutation preflight bypass on both engines. Their collected fix
 moves discovery into its actual list owner and runs root validation before every mutation
-family; source checks are next. The cells fixture now isolates its UDP listeners.
+family; workspace, Clippy and WASM pass. The cells fixture now isolates
+its UDP listeners.
 [Cluster readiness](CLUSTER_PLAN.md) records current check jobs and runtime gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.
