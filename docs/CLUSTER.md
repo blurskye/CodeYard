@@ -35,8 +35,9 @@ and the rest) open the node connection in either mode; they do not change the mo
   signed push webhooks are sent on storage nodes too. Core startup requires a valid
   64-hex-character key and checks it against an existing signed hook when one exists.
   Database-free workers do not need it.
-- **Two active storage nodes with free disk space**, or shared S3-compatible storage
-  (`S3_*`, see the [README](../README.md)). Without S3, uploads, avatars, release assets,
+- **Two active storage nodes with free disk space** for quorum Git writes. Shared
+  S3-compatible storage (`S3_*`, see the [README](../README.md)) is optional for files.
+  Without S3, uploads, avatars, release assets,
   packages, Actions artifacts and caches use checked, durable copies on two storage nodes.
   Their immutable address includes the declared SHA256. A web node keeps only staging/cache
   bytes; reads can use either storage copy. Every core must select the same backend.
@@ -646,12 +647,13 @@ connections reconnect through `DATABASE_URL`; writes with an uncertain result ar
 not automatically replayed. The cluster
 has not been load tested, so size it from your own measurements.
 
-Replicas are asynchronous: there are no synchronous writes across nodes and no
-geo-routing. Reads fail over to a copy as soon as the primary cannot be reached, and are
-not spread across copies. Writes wait for the take-over, which needs a current copy of
-every member of the fork family; a copy that is behind is promoted only with
-`cluster promote --force`. A
-comparison between two repositories (a fork's compare page) is not served by a copy.
+Majority writes require both fixed storage voters before acknowledgement. Additional
+copies and the explicit `--write-quorum 1` policy are asynchronous; there is no
+geo-routing. Reads fail over to an eligible copy when the primary cannot be reached,
+and are not spread across copies. Take-over requires a current copy of every member of
+the fork family. Legacy copies that are behind require `cluster promote --force`;
+quorum promotion must retain every committed ref. A comparison between two repositories
+(a fork's compare page) is not served by a copy.
 Re-check the iroh and russh versions in [Architecture](ARCHITECTURE.md) when you upgrade
 either. Cores and CI workers must run the same release, because a worker only claims from
 cores on the same events protocol.

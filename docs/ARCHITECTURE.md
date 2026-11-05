@@ -262,7 +262,8 @@ only after rechecking active membership. Private nodes enroll an existing member
 - `repository_merge_epochs` is one hot row per repository, bumped by every write that can
   change a merge decision; on PostgreSQL its triggers are deferred, so a transaction takes
   it only at commit and never holds it across Git, network or file waits.
-- Uploads live in `<state_dir>/objects` or the S3 bucket from `S3_*`.
+- Single-node uploads live in `<state_dir>/objects`. Cluster uploads require two
+  storage-node copies or the S3 bucket from `S3_*`; Git repositories stay on storage disks.
 
 ## 2. Clustering
 

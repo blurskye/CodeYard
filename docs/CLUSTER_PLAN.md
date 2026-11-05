@@ -12,7 +12,7 @@ waiter tracking passes source checks and awaits runtime acceptance. Majority def
 and the final primary-loss e2e step pass source checks. Private organization OIDC
 enrollment through the operator CLI passes source checks. One runtime job passed 1,013 library
 tests and Helm render checks; its single CI fixture failure is corrected. The next runtime job found a quorum-copy lock deadlock and was cancelled. Its fix
-and fixture corrections await checks; cluster, storage, identity, backup/restore and
+and fixture corrections pass all three source checks; cluster, storage, identity, backup/restore and
 end-to-end acceptance remain pending. Rolling upgrades
 and measured load limits are not complete.
 Cluster mode stays hidden behind
