@@ -41,7 +41,7 @@ Current acceptance status:
 - 6: bounded invitations and environment-only provisioning pass library and REST checks.
 - 7: policy forms, lease leader, pause, dry run and storage rules pass on both database engines.
 - 8: mover reservations, bandwidth limits and busy-reader retirement retry pass.
-- 9: pool, Helm and the 17-check PgBouncer session round pass. The 500-reader debug benchmark failed and finished-CI load needs a delegated cgroup.
+- 9: pool, Helm and the 17-check PgBouncer session round pass. The debug workload completes 500-reader traffic and 50 simultaneous invitations; CI jobs fail without a delegated cgroup, so no completed load measurement is recorded.
 - 10: previous-release target needs confirmation before compatibility work.
 - 11: primary snapshots, object copies, interrupted fenced import and per-node restore pass CLI acceptance.
 - 12: cross-node REST account/IP, audit, OIDC membership and private enrollment CLI checks pass; OIDC also passes across web processes with five-minute skew.
@@ -69,7 +69,7 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 | A13 | Old and new release side by side | refused with a clear message, or both work | older protocol refused; B10 pending |
 | A14 | Join token: reuse, expiry, cancel, wrong role | each behaves as `CLUSTER.md` says | invitation and role checks pass |
 | A15 | Clock skew of 5 minutes on one node | tokens, leases and take-over still behave | cross-node OIDC passes five-minute skew; full e2e skew checks await acceptance |
-| A16 | Load test on stated hardware: pushes, clones, API reads, CI jobs, 50 organizations inviting at once | numbers recorded in `CLUSTER.md` limits | benchmark written; no measurements yet |
+| A16 | Load test on stated hardware: pushes, clones, API reads, CI jobs, 50 organizations inviting at once | numbers recorded in `CLUSTER.md` limits | 500-reader traffic and 50 simultaneous invitations complete; CI jobs need a delegated cgroup before measurements are valid |
 
 Each of A2 to A10, A12 and A15 becomes a test in `tests/`, driven through HTTP, SSH and
 Git, or an `e2e.sh` step when it needs several processes. A check that cannot be automated
