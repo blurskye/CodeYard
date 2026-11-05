@@ -91,7 +91,10 @@ async fn prepare_application(
     if let Some(config) = s3.as_ref().filter(|_| serves_web) {
         config.validate_browser_cookie_scope_from_env()?;
     }
-    let storage = Arc::new(match (s3, cluster.as_ref()) {
+    // Single-node installations also open node transport for remote runners.
+    // Only persisted cluster mode moves acknowledged objects off the local disk.
+    let clustered = codeyard_db_cluster::cluster::cluster_enabled(&pool).await?;
+    let storage = Arc::new(match (s3, cluster.as_ref().filter(|_| clustered)) {
         (None, Some(context)) => {
             ObjectStore::on_nodes(
                 state_dir,

@@ -2246,6 +2246,12 @@ readme_matches() { # readme_matches FILE: FILE is alice/proj's README as backed 
     [[ $sha == "$(get readme_sha)" ]] || { echo "$1 has sha256 $sha, not the backed-up README" >&2; return 1; }
 }
 
+t_local_files_with_runners() {
+    # This is a single-node installation with node transport open for runner pairing.
+    # Existing local uploads must not become storage-node objects when it restarts.
+    as alice req GET "/api/files/$(get note_id)/download" --accept any --body-sha256 "$(get note_sha)"
+}
+
 t_restored_works() {
     server_cli repo verify | tee "$RUN/verify.out"
     grep -q 'No problems found.' "$RUN/verify.out"
@@ -3055,6 +3061,7 @@ run_round() {
     step 'restart: sessions, repositories, CI history and SSH host key survive' t_after_restart
     if [[ $db == postgres ]]; then
         step -f -i 'runners: the server restarts with the node connection and no runner of its own' runners_restart_server
+        step 'files: single-node runner transport keeps local uploads readable' t_local_files_with_runners
         step -f 'runners: single-node mode invites runners only; one reusable runner invite' t_runner_token
         step -f -i 'runners: r1 joins with the invite' start_server r1
         step -f -i 'runners: r2 joins with the same invite' start_server r2

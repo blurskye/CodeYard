@@ -218,6 +218,9 @@ refused on its next request.
 
 ## Files on storage nodes
 
+Opening the node connection for remote runners keeps a single-node installation
+on its local object backend. Only persisted cluster mode selects storage-node copies.
+
 Without `S3_*`, cluster files use the ordinary authenticated upload and download URLs.
 The web node checks file policy and user credentials; runner keys grant no arbitrary
 object reads. Storage peers check live membership again before recording durable bytes.

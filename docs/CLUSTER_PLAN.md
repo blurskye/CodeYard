@@ -10,8 +10,8 @@ Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspa
 Clippy and WASM checks pass, including the fault-test source and full-disk placement fix.
 Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed, 19 ignored) and Helm rendering pass.
 Storage checks pass (99 passed, 3 ignored). All 221 cluster integration checks pass,
-including full-disk failure/retry and interrupted cluster backup/restore. The browser app builds; asset replacement and debug-symbol size
-corrections await runtime verification. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
+including full-disk failure/retry and interrupted cluster backup/restore. Browser bundle publication and HTTP delivery pass; hydrated cluster pages remain
+pending. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
 Cluster mode stays hidden behind
 `CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.
@@ -34,7 +34,7 @@ and measured load limits.
 Current acceptance status:
 
 - 1: hiding-switch CLI refusal checks pass.
-- 2: storage-node copies, capacity, loss, retry, drain and private access pass HTTP checks on both engines; native startup without S3 passes.
+- 2: storage-node copies, capacity, loss, retry, drain and private access pass HTTP checks on both engines; native startup without S3 passes. A single-node runner-transport backend correction awaits checks.
 - 3: quorum initialization, copy, default selection, voter replacement, primary loss and full-disk retry pass.
 - 4: drain REST, authority and promotion checks pass; native and hydrated browser checks await execution.
 - 5: quorum, drain, bounded scraping and acquisition waiter metrics pass HTTP acceptance.
