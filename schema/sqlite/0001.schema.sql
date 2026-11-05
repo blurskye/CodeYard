@@ -25,6 +25,7 @@ CREATE TABLE files (
 -- Object keys whose stored bytes can be deleted once delete_after has passed.
 CREATE TABLE pending_object_deletions (
     object_key TEXT PRIMARY KEY,
+    reservation_key TEXT UNIQUE CHECK (reservation_key IS NULL OR length(reservation_key)<=200),
     delete_after TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );

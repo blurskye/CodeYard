@@ -31,6 +31,7 @@ CREATE INDEX IF NOT EXISTS idx_files_reason ON files(reason);
 -- Object keys whose stored bytes can be deleted once delete_after has passed.
 CREATE TABLE IF NOT EXISTS pending_object_deletions (
     object_key TEXT PRIMARY KEY,
+    reservation_key TEXT UNIQUE CHECK (reservation_key IS NULL OR length(reservation_key)<=200),
     delete_after TIMESTAMPTZ NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

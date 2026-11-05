@@ -637,6 +637,7 @@ async fn postgres_expiry() {
 enum ObjectFault {
     Put,
     Revoke,
+    Deleted,
     Corrupt,
 }
 struct FaultingObjects {
@@ -657,19 +658,18 @@ impl codeyard_db_core::ci_logs::LogObjects for FaultingObjects {
                 anyhow::bail!("owned object failure");
             }
             self.inner.put(key, digest, bytes).await?;
-            if matches!(self.fault, ObjectFault::Revoke) {
+            if matches!(self.fault, ObjectFault::Revoke | ObjectFault::Deleted) {
+                let statement = if matches!(self.fault, ObjectFault::Revoke) {
+                    "UPDATE ci_runs SET status='failed' WHERE id=$1"
+                } else {
+                    "UPDATE ci_runs SET log_version=log_version+1 WHERE id=$1"
+                };
                 match &self.pool {
                     codeyard_db_core::DbPool::Postgres(pool) => {
-                        sqlx::query("UPDATE ci_runs SET status='failed' WHERE id=$1")
-                            .bind(self.run)
-                            .execute(pool)
-                            .await?;
+                        sqlx::query(statement).bind(self.run).execute(pool).await?;
                     }
                     codeyard_db_core::DbPool::Sqlite(pool) => {
-                        sqlx::query("UPDATE ci_runs SET status='failed' WHERE id=$1")
-                            .bind(self.run)
-                            .execute(pool)
-                            .await?;
+                        sqlx::query(statement).bind(self.run).execute(pool).await?;
                     }
                 }
             }
@@ -709,6 +709,27 @@ async fn object_failure(pg: bool, fault: ObjectFault) {
         &[fixture.line(1)],
     )
     .await;
+    if matches!(fault, ObjectFault::Put) {
+        // Retries cannot grow the pending queue or replace an unacknowledged batch.
+        assert!(codeyard_db_actions::ci::append_ci_logs(
+            fixture.db.pool(),
+            fixture.run.id,
+            WORKER,
+            0,
+            &[fixture.line(1)]
+        )
+        .await
+        .is_err());
+        assert!(codeyard_db_actions::ci::append_ci_logs(
+            fixture.db.pool(),
+            fixture.run.id,
+            WORKER,
+            0,
+            &[fixture.line(2)]
+        )
+        .await
+        .is_err());
+    }
     if matches!(fault, ObjectFault::Corrupt) {
         assert!(result.unwrap());
         assert!(
@@ -732,7 +753,12 @@ async fn object_failure(pg: bool, fault: ObjectFault) {
             )
             .await;
     } else {
-        assert!(result.is_err());
+        if matches!(fault, ObjectFault::Deleted) {
+            assert!(!result.unwrap());
+            assert!(!fixture.append(0, &[fixture.line(1)]).await);
+        } else {
+            assert!(result.is_err());
+        }
         assert_eq!(
             fixture
                 .db
@@ -791,4 +817,13 @@ async fn sqlite_corrupt_log_objects_are_refused_and_deleted_chunks_schedule_clea
 #[tokio::test]
 async fn postgres_corrupt_log_objects_are_refused_and_deleted_chunks_schedule_cleanup() {
     object_failure(true, ObjectFault::Corrupt).await;
+}
+
+#[tokio::test]
+async fn sqlite_logs_deleted_during_object_upload_stay_closed() {
+    object_failure(false, ObjectFault::Deleted).await;
+}
+#[tokio::test]
+async fn postgres_logs_deleted_during_object_upload_stay_closed() {
+    object_failure(true, ObjectFault::Deleted).await;
 }

@@ -222,17 +222,19 @@ async fn append_within_deadline(
     // Contention can only come from another upload to this same run. Leave reserved
     // objects for the ordinary expiry sweep if authority or allocation changes during I/O.
     for _ in 0..3 {
-        let key = format!("ci-logs/{}", uuid::Uuid::new_v4());
+        let key = format!("ci-logs/{run}/{sequence}/{hash}");
         let prepared = match pool {
             DbPool::Postgres(native) => {
                 crate::postgres::ci::prepare_ci_log_upload(
-                    native, run, worker, sequence, &hash, &key,
+                    native, run, worker, sequence, &hash, &key, &lines,
                 )
                 .await?
             }
             DbPool::Sqlite(native) => {
-                crate::sqlite::ci::prepare_ci_log_upload(native, run, worker, sequence, &hash, &key)
-                    .await?
+                crate::sqlite::ci::prepare_ci_log_upload(
+                    native, run, worker, sequence, &hash, &key, &lines,
+                )
+                .await?
             }
         };
         let (stored_lines, stored_bytes) = match prepared {

@@ -197,7 +197,8 @@ Logs use compressed incremental objects with keys, checksums and line ranges in
 stores log payloads. The existing 100,000-line and 32 MiB limits and retention settings
 still apply. Uploads reserve cleanup before storing bytes and recheck the worker and
 active jobs before committing a pointer. A failed upload leaves totals unchanged;
-retries use the upload sequence to prevent duplicate lines. Deleting a chunk schedules
+retries reuse one reservation per upload sequence and reject changed contents before
+storing bytes. Deleted logs remain closed if an upload was already in flight. Deleting a chunk schedules
 its object for deletion after the seven-day restore window.
 ZIP and text downloads are generated from those chunks. `CI_LOG_IO_TIMEOUT_SECONDS`
 bounds the entire log read or batch write (default 30, range 1–300), including object I/O. A job's final log batch is

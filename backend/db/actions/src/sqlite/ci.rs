@@ -1192,6 +1192,38 @@ pub async fn list_ci_runs_for_user(
     .fetch_all(pool)
     .await?)
 }
+async fn validate_log_jobs(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    run_id: i64,
+    lines: &[codeyard_model::ci::LogLine],
+) -> Result<()> {
+    let jobs: std::collections::BTreeSet<i64> =
+        lines.iter().filter_map(|line| line.job_id).collect();
+    if !jobs.is_empty() {
+        let ids: Vec<_> = jobs.iter().copied().collect();
+        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM actions_jobs j JOIN actions_runtime_tokens t ON t.run_id=j.run_id AND t.token_hash=j.generation WHERE j.run_id=$1 AND j.id IN(SELECT value FROM json_each($2))").bind(run_id).bind(sqlx::types::Json(&ids)).fetch_one(&mut **tx).await?;
+        ensure!(
+            count == ids.len() as i64,
+            "log job is outside the active claim"
+        );
+        let steps: std::collections::BTreeSet<_> = lines
+            .iter()
+            .filter_map(|line| Some((line.job_id?, line.step_number?)))
+            .collect();
+        for (job, number) in steps {
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM actions_steps WHERE job_id=$1 AND number=$2)",
+            )
+            .bind(job)
+            .bind(number)
+            .fetch_one(&mut **tx)
+            .await?;
+            ensure!(exists, "log step is outside its job");
+        }
+    }
+    Ok(())
+}
+
 pub(crate) async fn prepare_ci_log_upload(
     pool: &SqlitePool,
     run: i64,
@@ -1199,18 +1231,23 @@ pub(crate) async fn prepare_ci_log_upload(
     sequence: i64,
     hash: &str,
     key: &str,
+    lines: &[codeyard_model::ci::LogLine],
 ) -> Result<crate::ci::log_chunks::Preparation> {
     use crate::ci::log_chunks::Preparation;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let totals: Option<(i64, i64)> = sqlx::query_as(
-        "SELECT log_lines,log_bytes FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running'",
+    let totals: Option<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT log_lines,log_bytes,log_version FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running'",
     )
     .bind(run)
     .bind(worker)
     .fetch_optional(&mut *tx)
     .await?;
-    let (lines, bytes) =
+    let (stored_lines, bytes, version) =
         totals.ok_or_else(|| anyhow::anyhow!("CI run is not owned by this worker"))?;
+    validate_log_jobs(&mut tx, run, lines).await?;
+    if version != 0 {
+        return Ok(Preparation::Complete(false));
+    }
     let previous: Option<String> = sqlx::query_scalar(
         "SELECT request_hash FROM ci_log_chunks WHERE run_id=$1 AND sequence=$2",
     )
@@ -1224,10 +1261,10 @@ pub(crate) async fn prepare_ci_log_upload(
             "CI upload sequence has different contents"
         );
         return Ok(Preparation::Complete(
-            lines < codeyard_model::ci::MAX_RUN_LOG_LINES,
+            stored_lines < codeyard_model::ci::MAX_RUN_LOG_LINES,
         ));
     }
-    if lines >= codeyard_model::ci::MAX_RUN_LOG_LINES {
+    if stored_lines >= codeyard_model::ci::MAX_RUN_LOG_LINES {
         return Ok(Preparation::Complete(false));
     }
     let next: i64 =
@@ -1236,11 +1273,20 @@ pub(crate) async fn prepare_ci_log_upload(
             .fetch_one(&mut *tx)
             .await?;
     ensure!(sequence == next, "CI upload sequence is out of order");
-    // Reserve cleanup before I/O; a crash or rejected commit leaves no unowned bytes.
-    sqlx::query("INSERT INTO pending_object_deletions(object_key,delete_after) VALUES($1,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+7 days'))")
-        .bind(key).execute(&mut *tx).await?;
+    // A run/sequence has one upload reservation even when storage is unavailable.
+    // Changed retries are refused before storing bytes; identical retries reuse the key.
+    let reservation = format!("ci-log/{run}/{sequence}");
+    let reserved: Option<bool> = sqlx::query_scalar("INSERT INTO pending_object_deletions(object_key,reservation_key,delete_after) VALUES($1,$2,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+7 days')) ON CONFLICT(reservation_key) DO UPDATE SET delete_after=excluded.delete_after WHERE pending_object_deletions.object_key=excluded.object_key RETURNING object_key=$1")
+        .bind(key).bind(reservation).fetch_optional(&mut *tx).await?;
+    ensure!(
+        reserved == Some(true),
+        "CI upload sequence has different contents"
+    );
     tx.commit().await?;
-    Ok(Preparation::Upload { lines, bytes })
+    Ok(Preparation::Upload {
+        lines: stored_lines,
+        bytes,
+    })
 }
 
 pub(crate) async fn commit_ci_logs(
@@ -1258,39 +1304,19 @@ pub(crate) async fn commit_ci_logs(
     let lines = codeyard_db_core::ci_logs::prepare_logs(lines)?;
     let hash = crate::ci::log_chunks::request_hash(&lines)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let totals: Option<(i64, i64)> = sqlx::query_as(
-        "SELECT log_lines, log_bytes FROM ci_runs WHERE id = ?1 AND worker = ?2 AND status = 'running'",
+    let totals: Option<(i64, i64, i64)> = sqlx::query_as(
+        "SELECT log_lines, log_bytes, log_version FROM ci_runs WHERE id = ?1 AND worker = ?2 AND status = 'running'",
     )
     .bind(run_id)
     .bind(worker)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((stored_lines, stored_bytes)) = totals else {
+    let Some((stored_lines, stored_bytes, version)) = totals else {
         bail!("CI run is not owned by this worker");
     };
-    let jobs: std::collections::BTreeSet<i64> =
-        lines.iter().filter_map(|line| line.job_id).collect();
-    if !jobs.is_empty() {
-        let ids: Vec<_> = jobs.iter().copied().collect();
-        let count:i64=sqlx::query_scalar("SELECT COUNT(*) FROM actions_jobs j JOIN actions_runtime_tokens t ON t.run_id=j.run_id AND t.token_hash=j.generation WHERE j.run_id=$1 AND j.id IN(SELECT value FROM json_each($2))").bind(run_id).bind(sqlx::types::Json(&ids)).fetch_one(&mut *tx).await?;
-        ensure!(
-            count == ids.len() as i64,
-            "log job is outside the active claim"
-        );
-        let steps: std::collections::BTreeSet<_> = lines
-            .iter()
-            .filter_map(|line| Some((line.job_id?, line.step_number?)))
-            .collect();
-        for (job, number) in steps {
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM actions_steps WHERE job_id=$1 AND number=$2)",
-            )
-            .bind(job)
-            .bind(number)
-            .fetch_one(&mut *tx)
-            .await?;
-            ensure!(exists, "log step is outside its job");
-        }
+    validate_log_jobs(&mut tx, run_id, &lines).await?;
+    if version != 0 {
+        return Ok(Some(false));
     }
     let previous: Option<String> = sqlx::query_scalar(
         "SELECT request_hash FROM ci_log_chunks WHERE run_id=$1 AND sequence=$2",

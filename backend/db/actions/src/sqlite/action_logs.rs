@@ -47,7 +47,7 @@ pub async fn issue(
     let Some(version) = version else {
         return Ok(false);
     };
-    if version > 0 {
+    if version != 0 {
         return Ok(false);
     }
     let jobs:Vec<Job>=sqlx::query_as("SELECT id,name FROM actions_jobs WHERE run_id=$1 AND started_at IS NOT NULL AND ($2 IS NULL OR id=$2) ORDER BY id").bind(target.run).bind(target.job).fetch_all(&mut *tx).await?;
