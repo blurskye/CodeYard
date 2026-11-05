@@ -6,6 +6,7 @@ use codeyard_model::cells::{Key, KeyKind, Object};
 use serde::{Deserialize, Serialize};
 
 const TOPIC: &str = "directory.cleanup";
+const MEMBERSHIP_TOPIC: &str = "membership";
 const MAXIMUM_BYTES: usize = 524288;
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
@@ -107,11 +108,18 @@ pub async fn deliver_one(pool: &DbPool) -> Result<bool> {
     config.validate()?;
     tokio::time::timeout(std::time::Duration::from_secs(config.request_seconds * 2 + 1), async {
         let mut tx = native.begin().await?;
-        let row: Option<(i64, String, String, i64)> = sqlx::query_as("SELECT id,substr(payload,1,524289),root_kind,root_id FROM cell_outbox WHERE topic=$1 AND delivered_at IS NULL AND next_attempt_at<=clock_timestamp() ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED")
-            .bind(TOPIC).fetch_optional(&mut *tx).await?;
-        let Some((id, payload, kind, root)) = row else { return Ok(false); };
+        let row: Option<(i64, String, String, i64, String)> = sqlx::query_as("SELECT id,substr(payload,1,524289),root_kind,root_id,topic FROM cell_outbox WHERE topic IN ($1,$2) AND delivered_at IS NULL AND next_attempt_at<=clock_timestamp() ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED")
+            .bind(TOPIC).bind(MEMBERSHIP_TOPIC).fetch_optional(&mut *tx).await?;
+        let Some((id, payload, kind, root, topic)) = row else { return Ok(false); };
         let result: Result<()> = async {
             ensure!(payload.len() <= MAXIMUM_BYTES, Refusal::Unavailable);
+            if topic == MEMBERSHIP_TOPIC {
+                let change: super::memberships::Change = serde_json::from_str(&payload)?;
+                change.validate()?;
+                ensure!(change.object.kind.as_str() == kind && change.object.id == root, Refusal::Denied);
+                let home = native.foreign_authorization().ok_or(Refusal::Unavailable)?;
+                return home.send_membership(&super::memberships::Event {id,change}).await;
+            }
             let delivery: Delivery = serde_json::from_str(&payload)?;
             delivery.validate()?;
             ensure!(delivery.object().kind.as_str() == kind && delivery.object().id == root, Refusal::Denied);
@@ -127,7 +135,7 @@ pub async fn deliver_one(pool: &DbPool) -> Result<bool> {
             Err(_) => {
                 sqlx::query("UPDATE cell_outbox SET next_attempt_at=clock_timestamp()+$2::bigint*INTERVAL '1 second' WHERE id=$1")
                     .bind(id).bind(config.request_seconds as i64).execute(&mut *tx).await?;
-                tracing::warn!(event_id=id, "Directory cleanup remains queued");
+                tracing::warn!(event_id=id, "Cell event remains queued");
             }
         }
         tx.commit().await?;

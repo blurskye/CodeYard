@@ -754,8 +754,9 @@ checks pass. Cold collaborator targets have directory-verified home metadata
 lookup before the invitation transaction; this follow-up passes source checks.
 
 Rooted node readers and common repository/team projections pass source checks. Project,
-workflow, environment, App, gist and review-request issuance is written but unchecked;
-synthetic node families remain open. Review requests share one reader and stable row IDs.
+workflow, environment, App, gist and review-request issuance passes workspace and WASM;
+its sole Clippy comment is corrected for recheck.
+Synthetic node families remain open. Review requests share one reader and stable row IDs.
 Range reservations and stopped-cell `cell renew-range
 --directory-address <address> --directory-key <public key>` are source-checked, committed
 owner follow-ups. Renewal preserves stable homes and existing rows. Issuer history keeps
@@ -763,3 +764,11 @@ pending OAuth/device codes usable. Automatic renewal is deferred.
 
 [Cluster readiness](CLUSTER_PLAN.md) records exact source checks, the combined runtime job
 and remaining two-cell gh/Git acceptance. No stage 2 completion is claimed.
+
+Remote membership grants/deletes now queue home pointers in their own transaction. Pointers
+carry ordered event IDs and never grant resource access. The receiving home rechecks the live
+cell key and both directory homes at commit; duplicate and older deliveries are harmless.
+Home REST repository/org listings fetch bounded pages through the resource cell's existing
+HTTP handlers with the original token, then recheck that token before answering. This batch
+and its HTTP/TLS, rollback, replay and gh pagination tests are unchecked. Native and GraphQL
+home listings still need this integration.

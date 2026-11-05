@@ -252,6 +252,13 @@ def acceptance(deployment):
         invitation = client.api("repos/alice/shared/collaborators/bob", "--method", "PUT", "-f", "permission=push")
         client.api(f"user/repository_invitations/{invitation['id']}", "--method", "PATCH", who="bob")
         client.checked("cell one collaborator accepts the cell zero repository invitation")
+        deadline = time.monotonic() + 30
+        while not any(repo["full_name"] == "alice/shared" for repo in client.api("user/repos", who="bob")):
+            assert time.monotonic() < deadline, "the home repository list did not receive the remote membership"
+            threading.Event().wait(0.1)
+        assert client.api("user/repos?per_page=1&page=1", who="bob")[0]["full_name"] == "alice/shared"
+        assert client.api("user/repos?per_page=1&page=2", who="bob")[0]["full_name"] == "bob/other"
+        client.checked("gh api user/repos discovers the remote collaborator repository through its home pointer")
 
         def ssh_environment(who):
             return {"GIT_SSH_COMMAND": shlex.join(["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",

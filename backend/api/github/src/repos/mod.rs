@@ -643,11 +643,54 @@ async fn list(
         per_page: if public { Some(100) } else { query.per_page },
     };
     let (offset, limit) = page.window()?;
-    let mut repos = Vec::with_capacity(limit + 1);
+    let remote = if authenticated {
+        if let Some(auth) = &auth {
+            let mut parameters = vec![
+                ("sort".into(), sort.to_owned()),
+                (
+                    "direction".into(),
+                    if descending { "desc" } else { "asc" }.into(),
+                ),
+            ];
+            for (name, value) in [
+                ("type", query.kind.as_ref()),
+                ("visibility", query.visibility.as_ref()),
+                ("affiliation", query.affiliation.as_ref()),
+            ] {
+                if let Some(value) = value {
+                    parameters.push((name.into(), value.clone()));
+                }
+            }
+            if let Some(since) = query.since {
+                parameters.push(("since".into(), since.to_string()));
+            }
+            codeyard_app::api_shared::github::memberships::remote(
+                &state.pool,
+                auth,
+                &headers,
+                codeyard_db_core::cells::memberships::List::Repositories,
+                parameters,
+                offset.saturating_add(limit).saturating_add(1),
+            )
+            .await?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let native_offset = if remote.is_some() { 0 } else { offset };
+    let native_limit = if remote.is_some() {
+        offset.saturating_add(limit)
+    } else {
+        limit
+    };
+
+    let mut repos = Vec::with_capacity(native_limit + 1);
     // The query already applies anonymous visibility, so anonymous listings start at the page.
     // Token restrictions are applied below, so authenticated listings count from the start.
     let (mut scanned, mut accepted) = if auth.is_none() {
-        (offset as i64, offset)
+        (native_offset as i64, native_offset)
     } else {
         (0, 0)
     };
@@ -682,21 +725,45 @@ async fn list(
             if !readable.contains(&repo.id) {
                 continue;
             }
-            if accepted < offset {
+            if accepted < native_offset {
                 accepted += 1;
                 continue;
             }
             repos.push(repo);
-            if repos.len() > limit {
+            if repos.len() > native_limit {
                 break 'pages;
             }
         }
         if done {
             break;
         }
+        if remote.is_some()
+            && scanned
+                >= codeyard_db_core::cells::memberships::Config::default().maximum_scan as i64
+        {
+            return Err(Error::unavailable(anyhow::anyhow!(
+                "Membership scan exceeds its limit"
+            )));
+        }
     }
     let next = repos.len() > limit;
-    let mut values = documents(&state, &repos[..repos.len().min(limit)], auth.as_ref()).await?;
+    let mut values = documents(
+        &state,
+        &repos[..repos.len().min(if remote.is_some() {
+            native_limit + 1
+        } else {
+            limit
+        })],
+        auth.as_ref(),
+    )
+    .await?;
+    if let Some(mut remote) = remote {
+        remote.extend(values);
+        let (values, next) = codeyard_app::api_shared::github::memberships::page(
+            remote, sort, descending, offset, limit,
+        )?;
+        return page.response(&uri, values, next);
+    }
     if auth.is_none() {
         let ids: Vec<_> = values
             .iter()

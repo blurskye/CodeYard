@@ -1,7 +1,7 @@
 //! Home answers travel over node-key TLS; directory enrollment grants no resource authority.
 use crate::support::native_database::PostgresDatabase;
 use codeyard_cells_router::{accounts, directory, rpc};
-use codeyard_db_core::cells::authorization::{self, Proof};
+use codeyard_db_core::cells::authorization::{self, Home, Proof};
 use codeyard_db_directory::Directory;
 use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use codeyard_support::{cells::Prefix, node_identity::NodeKey, token_hash::token_hash};
@@ -179,18 +179,34 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .unwrap()
     .unwrap();
     let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("private.git");
-    git2::Repository::init_bare(&path).unwrap();
-    let repository = codeyard_db_repos::repositories::records::create_repository(
-        &zero.pool,
-        alice.id,
+    let repository = codeyard_repos_core::repositories::lifecycle::provision(
+        (&zero.pool, None),
+        root.path(),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice.id),
         "private",
         None,
         true,
-        path.to_str().unwrap(),
+        None,
     )
     .await
     .unwrap();
+    let organization = codeyard_db_orgs::organizations::profiles::create_organization(
+        &zero.pool,
+        alice.id,
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
+            "pointer-org",
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
+        )
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+    let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(organization) =
+        organization
+    else {
+        panic!("native organization creation refused");
+    };
     let storage = Arc::new(
         codeyard_storage::ObjectStore::open(root.path(), None)
             .await
@@ -246,6 +262,184 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap();
     assert_eq!(response.status(), 204);
+    zero.pool
+        .set_directory(Arc::new(directory_client(zero_key.clone())))
+        .unwrap();
+    let bob_root = tempfile::tempdir().unwrap();
+    codeyard_db_cluster::node_config::upsert_node_configuration(&one.pool, "public", true)
+        .await
+        .unwrap();
+    let mut bob_http = super::cells_frontend::Server::start(
+        crate::support::database::router(&one.pool, bob_root.path()).await,
+    )
+    .await;
+    let mut zero_record = cell(Prefix::ZERO, &zero_key, vec![]);
+    zero_record.web_urls = vec![http.url()];
+    directory.register_cell(zero_record).await.unwrap();
+    let native_repository = codeyard_repos_core::repositories::lifecycle::provision(
+        (&one.pool, None),
+        bob_root.path(),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),
+        "native",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let mut one_record = cell(Prefix::new(1), &one_key, vec![home.address.to_string()]);
+    one_record.web_urls = vec![bob_http.url()];
+    directory.register_cell(one_record).await.unwrap();
+    one.pool.set_foreign_authorization(Arc::new(
+        accounts::Remote::new(one_key.clone(), directory_client(one_key.clone())).unwrap(),
+    ));
+    let pointer_event: i64 = sqlx::query_scalar(
+        "SELECT id FROM cell_outbox WHERE topic='membership' ORDER BY id LIMIT 1",
+    )
+    .fetch_one(&zero.raw)
+    .await
+    .unwrap();
+    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+        .await
+        .unwrap());
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM remote_memberships WHERE user_id=$1 AND resource_id=$2 AND active")
+        .bind(user.id).bind(repository.id).fetch_one(&one.raw).await.unwrap(),1);
+    let response = client
+        .get(format!("{}/api/v3/user/repos", bob_http.url()))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let listed: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, 200, "{listed}");
+    assert!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|repo| repo["id"] == repository.id),
+        "{listed}"
+    );
+    let response = client
+        .put(format!(
+            "{}/api/v3/orgs/pointer-org/memberships/bob",
+            http.url()
+        ))
+        .bearer_auth(&alice_token)
+        .json(&serde_json::json!({"role":"member"}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, 200, "{body}");
+    let response = client
+        .patch(format!(
+            "{}/api/v3/user/memberships/orgs/pointer-org",
+            http.url()
+        ))
+        .bearer_auth(&value)
+        .json(&serde_json::json!({"state":"active"}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, 200, "{body}");
+    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+        .await
+        .unwrap());
+    let response = client
+        .get(format!("{}/api/v3/user/orgs", bob_http.url()))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let orgs: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, 200, "{orgs}");
+    assert!(
+        orgs.as_array()
+            .unwrap()
+            .iter()
+            .any(|org| org["id"] == organization.id),
+        "{orgs}"
+    );
+    let members: serde_json::Value = client
+        .get(format!("{}/api/v3/orgs/pointer-org/members", http.url()))
+        .bearer_auth(&alice_token)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(members.as_array().unwrap().len(), 1, "{members}");
+    assert_eq!(members[0]["login"], "alice");
+    let response = client
+        .delete(format!(
+            "{}/api/v3/orgs/pointer-org/memberships/bob",
+            http.url()
+        ))
+        .bearer_auth(&alice_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+        .await
+        .unwrap());
+    let orgs: serde_json::Value = client
+        .get(format!("{}/api/v3/user/orgs", bob_http.url()))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        orgs.as_array()
+            .unwrap()
+            .iter()
+            .all(|org| org["id"] != organization.id),
+        "{orgs}"
+    );
+    for (page, expected) in [(1, repository.id), (2, native_repository.id)] {
+        let response = client
+            .get(format!(
+                "{}/api/v3/user/repos?per_page=1&page={page}",
+                bob_http.url()
+            ))
+            .bearer_auth(&value)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let rows: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(status, 200, "{rows}");
+        assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
+        assert_eq!(rows[0]["id"], expected, "{rows}");
+    }
+    let mut replay = codeyard_db_core::cells::memberships::Event {
+        id: pointer_event,
+        change: codeyard_db_core::cells::memberships::Change {
+            user_id: user.id,
+            object: Object {
+                kind: ObjectKind::Repository,
+                id: repository.id,
+            },
+            active: true,
+        },
+    };
+    assert!(
+        accounts::Remote::new(router_key.clone(), directory_client(router_key.clone()))
+            .unwrap()
+            .send_membership(&replay)
+            .await
+            .is_err()
+    );
     let proof = Proof::Token {
         home: Prefix::new(1),
         hash: token_hash(&value),
@@ -371,6 +565,35 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap();
     assert_eq!(response.status(), 404);
+    // A stale home pointer cannot disclose the revoked resource while cleanup waits.
+    let listed: serde_json::Value = client
+        .get(format!("{}/api/v3/user/repos", bob_http.url()))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|repo| repo["id"] != repository.id),
+        "{listed}"
+    );
+    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+        .await
+        .unwrap());
+    zero.pool
+        .foreign_authorization()
+        .unwrap()
+        .send_membership(&replay)
+        .await
+        .unwrap();
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM remote_memberships WHERE user_id=$1 AND resource_id=$2 AND active")
+        .bind(user.id).bind(repository.id).fetch_one(&one.raw).await.unwrap(),0);
     codeyard_db_repos::repositories::access::grant_repo_access(
         &zero.pool,
         user.id,
@@ -448,6 +671,15 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .user("bob")
         .await
         .is_err());
+    replay.id += 100;
+    assert!(zero
+        .pool
+        .foreign_authorization()
+        .unwrap()
+        .send_membership(&replay)
+        .await
+        .is_err());
+    bob_http.stop().await;
     home.stop().await;
     directory_listener.stop().await;
     directory.close().await;

@@ -28,6 +28,7 @@ pub const ALPN: &[u8] = b"codeyard/cells/1";
 enum Request {
     Authorize(Proof),
     User(String),
+    Membership(codeyard_db_core::cells::memberships::Event),
 }
 #[derive(Serialize, Deserialize)]
 #[serde(
@@ -39,6 +40,7 @@ enum Request {
 enum Reply {
     Account(Option<Box<Answer>>),
     User(Option<Box<User>>),
+    Done,
     Unavailable,
 }
 pub struct Remote {
@@ -46,6 +48,7 @@ pub struct Remote {
     routes: Routes,
     directory: Directory,
     slots: Arc<Semaphore>,
+    http: crate::http::Transport,
 }
 impl Remote {
     pub fn new(key: NodeKey, directory: Directory) -> Result<Self> {
@@ -54,6 +57,14 @@ impl Remote {
             routes: Routes::new(directory.clone(), Default::default())?,
             directory,
             slots: Arc::new(Semaphore::new(64)),
+            http: crate::http::Transport::new(crate::http::Config {
+                maximum_connections: 64,
+                maximum_request_bytes: 65536,
+                maximum_response_bytes: 8 * 1024 * 1024,
+                exchange_seconds: 10,
+                stall_seconds: 10,
+                minimum_rate: 1024,
+            })?,
         })
     }
 }
@@ -88,6 +99,99 @@ impl Remote {
     }
 }
 impl Home for Remote {
+    fn membership_page<'a>(
+        &'a self,
+        cell: codeyard_support::cells::Prefix,
+        page: &'a codeyard_db_core::cells::memberships::Page,
+        credential: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<serde_json::Value>>> {
+        Box::pin(async move {
+            use codeyard_db_core::cells::memberships::List;
+            page.validate()?;
+            ensure!(credential.len() <= 4096, "Invalid membership credential");
+            let cell = self
+                .routes
+                .cell(cell)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("The resource cell is unavailable"))?;
+            let (path, kind) = match page.list {
+                List::Organizations => ("/api/v3/user/orgs", ObjectKind::Organization),
+                List::Repositories => ("/api/v3/user/repos", ObjectKind::Repository),
+            };
+            let mut query = url::form_urlencoded::Serializer::new(String::new());
+            query.extend_pairs(
+                page.query
+                    .iter()
+                    .map(|(key, value)| (key.as_str(), value.as_str())),
+            );
+            query
+                .append_pair("page", &page.number.to_string())
+                .append_pair("per_page", &page.size.to_string());
+            let request = axum::http::Request::builder()
+                .method("GET")
+                .uri(format!("{path}?{}", query.finish()))
+                .header(
+                    axum::http::header::AUTHORIZATION,
+                    format!("Bearer {credential}"),
+                )
+                .body(axum::body::Body::empty())?;
+            ensure!(
+                crate::selection::Credential::from_headers(request.headers(), "session_id")?
+                    .is_some(),
+                "Invalid membership credential"
+            );
+            let response = self.http.forward(&cell, credential, request).await?;
+            ensure!(
+                response.status().is_success(),
+                "Remote membership read is unavailable"
+            );
+            let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024).await?;
+            let rows: Vec<serde_json::Value> = serde_json::from_slice(&bytes)?;
+            ensure!(
+                rows.len() <= usize::from(page.size),
+                "Remote membership page exceeds its limit"
+            );
+            let mut seen = std::collections::HashSet::new();
+            for row in &rows {
+                let id = row["id"]
+                    .as_i64()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid membership document"))?;
+                ensure!(seen.insert(id), "Duplicate membership document");
+                let home = self.routes.by_object(Object { kind, id }).await?;
+                ensure!(
+                    home.is_some_and(|home| home.id == cell.id),
+                    "Membership document has another home"
+                );
+            }
+            Ok(rows)
+        })
+    }
+    fn send_membership<'a>(
+        &'a self,
+        event: &'a codeyard_db_core::cells::memberships::Event,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            event.validate()?;
+            let _slot = self.slots.clone().try_acquire_owned()?;
+            let cell = self
+                .routes
+                .by_object(Object {
+                    kind: ObjectKind::User,
+                    id: event.change.user_id,
+                })
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("The account home is unavailable"))?;
+            ensure!(
+                matches!(
+                    self.exchange(&cell, &Request::Membership(event.clone()))
+                        .await?,
+                    Reply::Done
+                ),
+                "Membership delivery is unavailable"
+            );
+            Ok(())
+        })
+    }
     fn user<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Option<User>>> {
         Box::pin(async move {
             let key = Key::new(KeyKind::Name, name)?;
@@ -168,24 +272,67 @@ impl Home for Remote {
         })
     }
 }
+async fn enrolled(
+    directory: &Directory,
+    peer: PublicKey,
+) -> Result<codeyard_support::cells::Prefix> {
+    match directory
+        .request(&DirectoryRequest::NodeCell {
+            public_key: peer.to_string(),
+        })
+        .await?
+    {
+        DirectoryReply::Prefix(cell) => Ok(cell),
+        _ => anyhow::bail!("Caller is not an enrolled cell"),
+    }
+}
+struct MembershipAdmission {
+    directory: Directory,
+    peer: PublicKey,
+    recipient: codeyard_support::cells::Prefix,
+}
+impl codeyard_db_core::cells::memberships::Admission for MembershipAdmission {
+    fn check<'a>(
+        &'a self,
+        event: &'a codeyard_db_core::cells::memberships::Event,
+    ) -> BoxFuture<'a, Result<codeyard_support::cells::Prefix>> {
+        Box::pin(async move {
+            event.validate()?;
+            let resource_request = DirectoryRequest::Home {
+                object: event.change.object,
+            };
+            let recipient_request = DirectoryRequest::Home {
+                object: Object {
+                    kind: ObjectKind::User,
+                    id: event.change.user_id,
+                },
+            };
+            let issuer_request = DirectoryRequest::Cell {
+                prefix: codeyard_support::cells::Prefix::for_id(event.id)?,
+            };
+            let (source, resource, recipient, issuer) = tokio::try_join!(
+                enrolled(&self.directory, self.peer),
+                self.directory.request(&resource_request),
+                self.directory.request(&recipient_request),
+                self.directory.request(&issuer_request)
+            )?;
+            ensure!(
+                matches!(resource,DirectoryReply::Home(Some(home)) if home == source)
+                    && matches!(recipient,DirectoryReply::Home(Some(home)) if home == self.recipient)
+                    && matches!(issuer,DirectoryReply::Cell(Some(cell)) if cell.id == source),
+                "Membership source or recipient has another home"
+            );
+            Ok(source)
+        })
+    }
+}
 struct Accounts {
     directory: Directory,
     home: Arc<dyn Home>,
 }
 impl Accounts {
     async fn admitted(&self, peer: PublicKey) -> Result<()> {
-        ensure!(
-            matches!(
-                self.directory
-                    .request(&DirectoryRequest::NodeCell {
-                        public_key: peer.to_string()
-                    })
-                    .await?,
-                DirectoryReply::Prefix(_)
-            ),
-            "Caller is not an enrolled cell"
-        );
-        Ok(())
+        enrolled(&self.directory, peer).await.map(|_| ())
     }
 }
 impl rpc::Service for Accounts {
@@ -197,6 +344,20 @@ impl rpc::Service for Accounts {
             self.admitted(peer).await?;
             let request: Request = serde_json::from_slice(bytes)?;
             let reply = match request {
+                Request::Membership(event) => {
+                    let admission = MembershipAdmission {
+                        directory: self.directory.clone(),
+                        peer,
+                        recipient: self
+                            .home
+                            .cell()
+                            .ok_or_else(|| anyhow::anyhow!("No native home"))?,
+                    };
+                    match self.home.receive_membership(&event, &admission).await {
+                        Ok(()) => Reply::Done,
+                        Err(_) => Reply::Unavailable,
+                    }
+                }
                 Request::Authorize(proof) => {
                     proof.validate()?;
                     match self.home.authorize(&proof).await {

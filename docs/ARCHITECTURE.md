@@ -1001,6 +1001,11 @@ listing that forgets the filter shows a stub as an account.
   the fork goes to the fork's cell, which asks the base cell for permission.
 - A mention resolves through the directory and creates a stub. Home cells keep pointers to
   remote memberships for "my orgs" and "my repositories".
+  Grant and delete triggers queue pointer events in the granting transaction. The home
+  applies ordered events idempotently after checking the live sending key and directory
+  ownership. Pointers discover cells only: private REST lists call those cells' existing
+  handlers with the original credential and merge bounded, sorted pages. A stale pointer
+  never supplies permission; a resource-cell outage gives a service-unavailable error.
 
 ### Global features
 

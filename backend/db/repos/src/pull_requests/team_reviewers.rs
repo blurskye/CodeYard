@@ -60,7 +60,7 @@ native_operation!(crate::postgres::pull_requests::team_reviewers::change,
     crate::sqlite::pull_requests::team_reviewers::change,
     fn change(pool: &DbPool, actor: i64, pull: i64, slugs: &[String], action: ReviewTeamAction, expected: Option<&codeyard_db_core::models::PullRequest>) -> Result<Vec<Team>>);
 
-/// Locate a request by its stable row identity before applying the existing live pull policy.
+// Locate a request by its stable row identity before applying the existing live pull policy.
 native_operation!(crate::postgres::pull_requests::team_reviewers::request_key,
     crate::sqlite::pull_requests::team_reviewers::request_key,
     fn request_key(pool: &DbPool, team: bool, id: i64) -> Result<Option<(i64, i64)>>);

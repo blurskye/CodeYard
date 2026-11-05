@@ -164,14 +164,22 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     cgroup-dependent ignores, and all nine selected repository contracts. Cluster is 230/one
     and database 179/two; their quota and browser-fixture fixes pass source checks.
     Runtime eb1c71056db64586b3b41c713e7bf631 covers those fixes, native publication,
-    cleanup/restart, capacity and the new public two-cell gh/Git round; it is building.
+    cleanup/restart, capacity and the new public two-cell gh/Git round. All 334 selected
+    library tests pass without skips, including real foreign SSH push/clone and revocation;
+    integration targets are building.
     Numeric child IDs for projects, issue types/fields, workflows, environments, Apps, gists
-    and review requests now carry their actual account or repository root in unchecked source.
+    and review requests pass workspace 1487b9f424a84502bb0bcd2ff3ec9244 and WASM
+    edf39cc90ba646dbaf46f5036a524f2b. Clippy 38de16140bea48e1b8aee3ea92462455 found
+    only a macro documentation comment, now corrected for the next batch.
     Review-request projections share one reader; both baseline schemas retain stable request
     row IDs and protection-rule App owners. Project output assertions now expect rooted IDs;
     former input IDs remain accepted as the architecture requires. New HTTP tests reject
-    forged project, draft, gist and team-review roots. Remote membership pointers and synthetic
-    node-family completion remain open. No stage 2 completion is claimed.
+    forged project, draft, gist and team-review roots. The next unchecked batch queues remote
+    membership changes with grants, checks live cell keys and directory homes at pointer commit,
+    and reads remote repositories/orgs through their existing HTTP handlers. Home REST lists
+    merge bounded pages and retain original token checks; HTTP/TLS, rollback, replay and gh
+    pagination tests are written. Native/GraphQL home listing integration and synthetic node
+    families remain open. No stage 2 completion is claimed.
     Stages 3 to 6 are not built. Automatic user moves and org regional presence remain
     documented owner decisions.
     Owner follow-ups: foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded

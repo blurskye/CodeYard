@@ -10,6 +10,18 @@ pub struct Local {
     pub pool: DbPool,
 }
 impl Home for Local {
+    fn cell(&self) -> Option<codeyard_support::cells::Prefix> {
+        Some(self.pool.cell_id())
+    }
+    fn receive_membership<'a>(
+        &'a self,
+        event: &'a codeyard_db_core::cells::memberships::Event,
+        admission: &'a dyn codeyard_db_core::cells::memberships::Admission,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
+        Box::pin(async move {
+            codeyard_db_core::cells::memberships::apply(&self.pool, event, admission).await
+        })
+    }
     fn user<'a>(
         &'a self,
         name: &'a str,

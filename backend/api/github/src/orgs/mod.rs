@@ -321,6 +321,34 @@ async fn own_orgs(
     let actor = codeyard_identity::github_auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?;
+    let (offset, limit) = page.window()?;
+    if let Some(mut remote) = codeyard_app::api_shared::github::memberships::remote(
+        &state.pool,
+        &actor,
+        &headers,
+        codeyard_db_core::cells::memberships::List::Organizations,
+        Vec::new(),
+        offset.saturating_add(limit).saturating_add(1),
+    )
+    .await?
+    {
+        let native = codeyard_db_orgs::organizations::discovery::list_organizations(
+            &state.pool,
+            Some(actor.user.id),
+            true,
+            0,
+            0,
+            offset.saturating_add(limit).saturating_add(1) as i64,
+        )
+        .await
+        .map_err(Error::unavailable)?;
+        remote.extend(native.iter().map(codeyard_webhooks::payloads::organization));
+        let (values, next) = codeyard_app::api_shared::github::memberships::page(
+            remote, "id", false, offset, limit,
+        )?;
+        codeyard_app::api_shared::github::memberships::recheck(&state.pool, &actor).await?;
+        return page.response(&uri, values, next);
+    }
     organization_list(&state, actor.user.id, true, page, uri).await
 }
 async fn user_orgs(

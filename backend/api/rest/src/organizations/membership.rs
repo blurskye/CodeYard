@@ -205,7 +205,7 @@ impl Command {
     }
 }
 pub(super) async fn target(ctx: &PageContext, username: &str) -> Result<Option<i64>, Response> {
-    codeyard_db_identity::users::accounts::get_user_by_username(&ctx.state.pool, username)
+    codeyard_identity::cells::resolve_user(&ctx.state.pool, username)
         .await
         .map(|user| user.map(|user| user.id))
         .map_err(|_| unavailable(ctx))

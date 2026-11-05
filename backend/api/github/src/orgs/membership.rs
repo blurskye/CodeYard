@@ -56,7 +56,7 @@ async fn set(
         _ => return Err(Error::validation("Membership", "role", "invalid")),
     };
     let org = target(&state, &name).await?;
-    let user = codeyard_db_identity::users::accounts::get_user_by_username(&state.pool, &username)
+    let user = codeyard_identity::cells::resolve_user(&state.pool, &username)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(|| Error::validation("Membership", "user", "invalid"))?;

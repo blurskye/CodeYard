@@ -4174,3 +4174,87 @@ CREATE TABLE foreign_credentials (
     expires_at TEXT NOT NULL
 );
 CREATE INDEX foreign_credentials_identity ON foreign_credentials(kind,credential_id,expires_at);
+
+-- A user's home keeps discovery pointers; the resource cell still checks every read.
+CREATE TABLE remote_memberships (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK(typeof(user_id)='integer'),
+    resource_kind TEXT NOT NULL CHECK(resource_kind IN ('organization','repository')),
+    resource_id INTEGER NOT NULL CHECK(typeof(resource_id)='integer' AND resource_id>0),
+    source_cell INTEGER NOT NULL CHECK(typeof(source_cell)='integer' AND source_cell BETWEEN 0 AND 65535),
+    source_event INTEGER NOT NULL CHECK(typeof(source_event)='integer' AND source_event>0),
+    active INTEGER NOT NULL CHECK(active IN (0,1)),
+    PRIMARY KEY(user_id,resource_kind,resource_id)
+);
+CREATE INDEX remote_memberships_active ON remote_memberships(user_id,resource_kind,resource_id) WHERE active;
+
+-- Membership changes and pointer events commit together on both engines.
+CREATE TRIGGER remote_repository_membership_insert AFTER INSERT ON repo_access
+BEGIN
+    INSERT INTO cell_outbox(root_kind,root_id,topic,payload)
+        SELECT 'repository',NEW.repo_id,'membership',json_object('user_id',NEW.user_id,
+            'object',json_object('kind','repository','id',NEW.repo_id),
+            'active',json(CASE WHEN NEW.access_level BETWEEN 1 AND 5 THEN 'true' ELSE 'false' END))
+        WHERE EXISTS(SELECT 1 FROM users u WHERE u.id=NEW.user_id AND u.is_stub
+            AND u.home_cell<>COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0))
+        AND EXISTS(SELECT 1 FROM repositories r WHERE r.id=NEW.repo_id AND NOT r.is_stub AND r.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0));
+END;
+CREATE TRIGGER remote_repository_membership_update AFTER UPDATE ON repo_access
+BEGIN
+    INSERT INTO cell_outbox(root_kind,root_id,topic,payload)
+        SELECT 'repository',OLD.repo_id,'membership',json_object('user_id',OLD.user_id,
+            'object',json_object('kind','repository','id',OLD.repo_id),
+            'active',json(CASE WHEN 0 THEN 'true' ELSE 'false' END))
+        WHERE EXISTS(SELECT 1 FROM users u WHERE u.id=OLD.user_id AND u.is_stub
+            AND u.home_cell<>COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0));
+    INSERT INTO cell_outbox(root_kind,root_id,topic,payload)
+        SELECT 'repository',NEW.repo_id,'membership',json_object('user_id',NEW.user_id,
+            'object',json_object('kind','repository','id',NEW.repo_id),
+            'active',json(CASE WHEN NEW.access_level BETWEEN 1 AND 5 THEN 'true' ELSE 'false' END))
+        WHERE EXISTS(SELECT 1 FROM users u WHERE u.id=NEW.user_id AND u.is_stub
+            AND u.home_cell<>COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0))
+        AND EXISTS(SELECT 1 FROM repositories r WHERE r.id=NEW.repo_id AND NOT r.is_stub AND r.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0));
+END;
+CREATE TRIGGER remote_repository_membership_delete AFTER DELETE ON repo_access
+BEGIN
+    INSERT INTO cell_outbox(root_kind,root_id,topic,payload)
+        SELECT 'repository',OLD.repo_id,'membership',json_object('user_id',OLD.user_id,
+            'object',json_object('kind','repository','id',OLD.repo_id),
+            'active',json(CASE WHEN 0 THEN 'true' ELSE 'false' END))
+        WHERE EXISTS(SELECT 1 FROM users u WHERE u.id=OLD.user_id AND u.is_stub
+            AND u.home_cell<>COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0));
+END;
+CREATE TRIGGER remote_organization_membership_insert AFTER INSERT ON org_memberships
+BEGIN
+    INSERT INTO cell_outbox(root_kind,root_id,topic,payload)
+        SELECT 'organization',NEW.org_id,'membership',json_object('user_id',NEW.user_id,
+            'object',json_object('kind','organization','id',NEW.org_id),
+            'active',json(CASE WHEN NEW.role IN ('owner','admin','member') THEN 'true' ELSE 'false' END))
+        WHERE EXISTS(SELECT 1 FROM users u WHERE u.id=NEW.user_id AND u.is_stub
+            AND u.home_cell<>COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0))
+        AND EXISTS(SELECT 1 FROM organizations r WHERE r.id=NEW.org_id AND NOT r.is_stub AND r.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0));
+END;
+CREATE TRIGGER remote_organization_membership_update AFTER UPDATE ON org_memberships
+BEGIN
+    INSERT INTO cell_outbox(root_kind,root_id,topic,payload)
+        SELECT 'organization',OLD.org_id,'membership',json_object('user_id',OLD.user_id,
+            'object',json_object('kind','organization','id',OLD.org_id),
+            'active',json(CASE WHEN 0 THEN 'true' ELSE 'false' END))
+        WHERE EXISTS(SELECT 1 FROM users u WHERE u.id=OLD.user_id AND u.is_stub
+            AND u.home_cell<>COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0));
+    INSERT INTO cell_outbox(root_kind,root_id,topic,payload)
+        SELECT 'organization',NEW.org_id,'membership',json_object('user_id',NEW.user_id,
+            'object',json_object('kind','organization','id',NEW.org_id),
+            'active',json(CASE WHEN NEW.role IN ('owner','admin','member') THEN 'true' ELSE 'false' END))
+        WHERE EXISTS(SELECT 1 FROM users u WHERE u.id=NEW.user_id AND u.is_stub
+            AND u.home_cell<>COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0))
+        AND EXISTS(SELECT 1 FROM organizations r WHERE r.id=NEW.org_id AND NOT r.is_stub AND r.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0));
+END;
+CREATE TRIGGER remote_organization_membership_delete AFTER DELETE ON org_memberships
+BEGIN
+    INSERT INTO cell_outbox(root_kind,root_id,topic,payload)
+        SELECT 'organization',OLD.org_id,'membership',json_object('user_id',OLD.user_id,
+            'object',json_object('kind','organization','id',OLD.org_id),
+            'active',json(CASE WHEN 0 THEN 'true' ELSE 'false' END))
+        WHERE EXISTS(SELECT 1 FROM users u WHERE u.id=OLD.user_id AND u.is_stub
+            AND u.home_cell<>COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0));
+END;

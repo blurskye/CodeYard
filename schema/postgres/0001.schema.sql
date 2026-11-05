@@ -4297,3 +4297,60 @@ CREATE TABLE foreign_credentials (
     expires_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX foreign_credentials_identity ON foreign_credentials(kind,credential_id,expires_at);
+
+-- A user's home keeps discovery pointers; the resource cell still checks every read.
+CREATE TABLE remote_memberships (
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    resource_kind TEXT NOT NULL CHECK(resource_kind IN ('organization','repository')),
+    resource_id BIGINT NOT NULL CHECK(resource_id>0),
+    source_cell INTEGER NOT NULL CHECK(source_cell BETWEEN 0 AND 65535),
+    source_event BIGINT NOT NULL CHECK(source_event>0),
+    active BOOLEAN NOT NULL,
+    PRIMARY KEY(user_id,resource_kind,resource_id)
+);
+CREATE INDEX remote_memberships_active ON remote_memberships(user_id,resource_kind,resource_id) WHERE active;
+
+-- Every membership writer, including cascading deletes, shares the transactional outbox.
+CREATE FUNCTION queue_remote_membership() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    row_data JSONB;
+    recipient BIGINT;
+    resource BIGINT;
+    resource_kind TEXT := TG_ARGV[0];
+    active BOOLEAN;
+    side INTEGER;
+BEGIN
+    FOR side IN 0..1 LOOP
+        IF side=0 THEN
+            IF TG_OP='INSERT' THEN CONTINUE; END IF;
+            row_data := to_jsonb(OLD);
+            active := FALSE;
+        ELSE
+            IF TG_OP='DELETE' THEN CONTINUE; END IF;
+            row_data := to_jsonb(NEW);
+            active := CASE WHEN resource_kind='repository' THEN (row_data->>'access_level')::INTEGER BETWEEN 1 AND 5
+                ELSE row_data->>'role' IN ('owner','admin','member') END;
+        END IF;
+        recipient := (row_data->>'user_id')::BIGINT;
+        resource := (row_data->>(CASE WHEN resource_kind='repository' THEN 'repo_id' ELSE 'org_id' END))::BIGINT;
+        IF EXISTS(SELECT 1 FROM users u WHERE u.id=recipient AND u.is_stub
+            AND u.home_cell<>COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0)) THEN
+            IF side=1 AND NOT (CASE WHEN resource_kind='repository' THEN
+                EXISTS(SELECT 1 FROM repositories r WHERE r.id=resource AND NOT r.is_stub
+                    AND r.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0)) ELSE
+                EXISTS(SELECT 1 FROM organizations o WHERE o.id=resource AND NOT o.is_stub
+                    AND o.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0)) END) THEN
+                CONTINUE;
+            END IF;
+            INSERT INTO cell_outbox(root_kind,root_id,topic,payload)
+                VALUES(resource_kind,resource,'membership',jsonb_build_object('user_id',recipient,
+                    'object',jsonb_build_object('kind',resource_kind,'id',resource),'active',active)::TEXT);
+        END IF;
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER remote_repository_membership AFTER INSERT OR UPDATE OR DELETE ON repo_access
+    FOR EACH ROW EXECUTE FUNCTION queue_remote_membership('repository');
+CREATE TRIGGER remote_organization_membership AFTER INSERT OR UPDATE OR DELETE ON org_memberships
+    FOR EACH ROW EXECUTE FUNCTION queue_remote_membership('organization');

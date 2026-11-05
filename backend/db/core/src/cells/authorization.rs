@@ -293,6 +293,31 @@ pub fn validate_public_user(user: &User) -> Result<()> {
 /// The provider authenticates the answering node and verifies its directory ownership.
 /// It never grants resource membership or repository authority.
 pub trait Home: Send + Sync {
+    fn cell(&self) -> Option<Prefix> {
+        None
+    }
+    fn membership_page<'a>(
+        &'a self,
+        _cell: Prefix,
+        _page: &'a super::memberships::Page,
+        _credential: &'a str,
+    ) -> BoxFuture<'a, Result<Vec<Value>>> {
+        Box::pin(async { anyhow::bail!("Remote membership reads are unavailable") })
+    }
+
+    fn send_membership<'a>(
+        &'a self,
+        _event: &'a super::memberships::Event,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { anyhow::bail!("Membership delivery is unavailable") })
+    }
+    fn receive_membership<'a>(
+        &'a self,
+        _event: &'a super::memberships::Event,
+        _admission: &'a dyn super::memberships::Admission,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { anyhow::bail!("Membership admission is unavailable") })
+    }
     fn authorize<'a>(&'a self, proof: &'a Proof) -> BoxFuture<'a, Result<Option<Answer>>>;
     fn user<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Option<User>>>;
 }
