@@ -54,15 +54,14 @@ impl Fixture {
         )
         .await
         .unwrap();
-        let path = root.path().join("repo.git");
-        git2::Repository::init_bare(&path).unwrap();
-        codeyard_db_repos::repositories::records::create_repository(
-            &pool,
-            user.id,
+        codeyard_repos_core::repositories::lifecycle::provision(
+            (&pool, None),
+            root.path(),
+            codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(user.id),
             "repo",
             None,
             false,
-            path.to_str().unwrap(),
+            None,
         )
         .await
         .unwrap();

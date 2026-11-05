@@ -167,6 +167,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     round passes workspace b518ddaa51694fb6925a9d3d408cb19a, Clippy
     161ffaa2e0e6470480f700dc80aa81d5 and WASM aa012bf0486f481db20c53d7dde25835. Runtime job 375fa054f4204225b5c57bb2b02cd059 runs the
     earlier snapshot, including the cluster/Git/OAuth fixture fixes from failed job 049.
+    Its libraries report 533 passed, two failed, no ignores. Missing HTTP home/stub fixture
+    fields and the SSH fixture's non-UUID storage path are fixed in unchecked source;
+    integration targets are still compiling.
     Native signup/key claim publication, remote membership pointers, remaining node families
     and the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
     Check suites/runs, artifacts and pull-request stacks now issue rooted IDs, with HTTP resolution/forged-root and projection assertions on both engines.

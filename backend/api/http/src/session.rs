@@ -238,6 +238,8 @@ mod tests {
     fn optional_identity_rejects_banned_accounts_including_admins() {
         let mut user: codeyard_db_core::models::User = serde_json::from_value(serde_json::json!({
             "id": 1,
+            "home_cell": 0,
+            "is_stub": false,
             "username": "fixture",
             "is_admin": false,
             "is_banned": false,
