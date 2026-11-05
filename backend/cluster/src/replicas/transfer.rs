@@ -511,7 +511,6 @@ async fn download(
         ) => downloaded?,
     };
     ensure!(status.success(), "the primary could not make a pack");
-    drop(bounded);
     drop(limited);
     output.flush().await?;
     drop(output);

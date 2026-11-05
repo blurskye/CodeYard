@@ -530,8 +530,9 @@ paths; `BENCH_SECONDS` sets the measurement duration (10–300, default 30).
 The script starts one disposable server with four local CI slots, creates 50 organizations
 via the native form (there is no REST creation endpoint), and creates public repositories
 and issues through REST. During Git and reader traffic all 50 organizations issue an
-invitation at once. It runs 500 concurrent anonymous reader slots against issue pages
-and REST issue lists alongside 1 MiB clones and small pushes, each scheduling a CI job.
+invitation at once. It runs 500 concurrent anonymous page-reader slots and 50 initial REST issue-list reads
+alongside 1 MiB clones and small pushes, each scheduling a CI job. The API sample stays
+inside the real anonymous 60/hour IP budget; later reader batches contain only pages.
 Every job must finish successfully; missing or queued runs fail the benchmark.
 It prints p50/p95/p99 latencies, operation rates and clone object throughput, not wire throughput.
 CI latency includes admission and queue time. `CODEYARD_ACTIONS_BIN` overrides the runner path. These are

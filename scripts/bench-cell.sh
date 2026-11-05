@@ -187,14 +187,18 @@ try:
     remote = base + '/bench-org-0/bench.git'
     git('-C', source, 'push', '-q', remote, 'main')
 
-    # Curl owns at most 500 simultaneous transfers; each response is discarded and bounded.
+    # Page readers keep 500 slots busy. Fifty anonymous API reads share GitHub's
+    # real 60/hour IP budget; replaying them every batch would benchmark refusals.
     reads = work / 'read.curl'
+    initial_reads = work / 'initial-read.curl'
     with reads.open('w') as config:
         for index in range(500):
             org = f'bench-org-{index % 50}'
-            for kind, path in [('api', f'/api/v3/repos/{org}/bench/issues?per_page=10'),
-                               ('page', f'/{org}/bench/issues')]:
-                config.write(f'url = "{base}{path}"\noutput = "/dev/null"\n')
+            config.write(f'url = "{base}/{org}/bench/issues"\noutput = "/dev/null"\n')
+    initial_reads.write_text(reads.read_text())
+    with initial_reads.open('a') as config:
+        for index in range(50):
+            config.write(f'url = "{base}/api/v3/repos/bench-org-{index}/bench/issues?per_page=10"\noutput = "/dev/null"\n')
     samples = {'push': [], 'clone': [], 'api': [], 'page': [], 'invitation': [], 'ci': []}
     clone_bytes = 0
     started = time.monotonic()
@@ -209,7 +213,7 @@ try:
                 read_process = subprocess.Popen(['curl', '-q', '--noproxy', '*', '-fsS', '--parallel',
                     '--parallel-immediate', '--parallel-max', '500', '--max-time', '30',
                     '--max-filesize', '2097152', '--write-out', '%{url_effective} %{http_code} %{time_total}\\n',
-                    '--config', str(reads)], stdout=output, stderr=errors)
+                    '--config', str(initial_reads if batch == 0 else reads)], stdout=output, stderr=errors)
                 try:
                     code = read_process.wait(timeout=45)
                 except subprocess.TimeoutExpired:
@@ -218,7 +222,7 @@ try:
             if code != 0:
                 raise RuntimeError('A reader failed; inspect curl.log')
             lines = (work / 'read-times').read_text().splitlines()
-            if len(lines) != 1000:
+            if len(lines) != (550 if batch == 0 else 500):
                 raise RuntimeError('Incomplete reader batch')
             for line in lines:
                 read_url, status, seconds = line.split()
