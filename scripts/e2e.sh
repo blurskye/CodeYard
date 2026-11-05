@@ -2788,6 +2788,19 @@ t_cluster_github_clients() {
 
 # Existing asynchronous repositories keep their fixtures. New repositories use three
 # voters, with real client publications and process death immediately after ack.
+wait_quorum_ready() {
+    local name=$1 ready earliest=$((SECONDS + 10)) deadline=$((SECONDS + 120))
+    # Each fault starts from three current voters. HTTP readiness alone does not
+    # mean a restarted storage process has caught up, or that failed-dial caches expired.
+    while ((SECONDS < deadline)); do
+        ready=$(pg_query "SELECT COUNT(*) FROM repositories r JOIN users u ON u.id=r.owner_user_id JOIN repository_write_control c ON c.repository_id=r.id WHERE u.username='alice' AND r.name='$name' AND c.serving=1 AND (SELECT COUNT(*) FROM repository_voters v WHERE v.repository_id=r.id)=3 AND NOT EXISTS(SELECT 1 FROM repository_voters v WHERE v.repository_id=r.id AND (v.term<>c.term OR v.applied_version<>c.committed_version)) AND NOT EXISTS(SELECT 1 FROM repository_writes w WHERE w.repository_id=r.id AND w.finished=0)") || return 1
+        [[ $ready != 1 || $SECONDS -lt $earliest ]] || return 0
+        sleep 1
+    done
+    echo 'Three voting copies did not become current before the next fault' >&2
+    return 1
+}
+
 t_cluster_quorum_primary_loss() {
     local transport name source primary pid expected destination deadline ticket
     local -a ports
@@ -2833,6 +2846,7 @@ t_cluster_quorum_primary_loss() {
         git_as alice clone -q "$SSH_URL/alice/$name.git" "$destination-ssh" || return 1
         [[ $(git_as alice -C "$destination-ssh" rev-parse HEAD) == "$expected" ]] || return 1
         start_server "$primary" || return 1
+        wait_quorum_ready "$name" || return 1
     done
 }
 
@@ -2853,6 +2867,7 @@ t_cluster_quorum_other_publishers() {
         wait "$pid" 2>/dev/null || true
         unset "SERVER_PIDS[$primary]"
         start_server "$primary" || return 1
+        wait_quorum_ready "$name" || return 1
     done
 }
 

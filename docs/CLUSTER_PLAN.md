@@ -12,10 +12,11 @@ Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed
 19 ignored), focused runner isolation and Helm rendering pass.
 Storage checks pass (99 passed, 3 ignored). Before cell work, all 221 cluster integration
 checks passed, including full-disk failure/retry and interrupted cluster backup/restore.
-The first stage 0 extension ran 225: 223 passed and two missed-voter checks exposed
-dangling symbolic aliases. The alias fix passes workspace, Clippy and WASM checks; its
-runtime retest has passed 307 focused library and repository-store checks; cluster and
-client checks are still running. Browser bundle publication, delivery, native and hydrated cluster forms, and live
+Stage 0's alias fix passes workspace, Clippy and WASM checks, 307 focused library/store
+tests and all 225 cluster tests. Its client round passed HTTP/SSH push and editor-save
+survival after primary SIGKILL. A branch write hit the failed-dial cache just after restart;
+the client fixture now waits for three current voters before the next fault and is being
+retested. Browser bundle publication, delivery, native and hydrated cluster forms, and live
 cross-node issue updates pass. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
 Cluster mode stays hidden behind
