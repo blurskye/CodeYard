@@ -4,6 +4,7 @@ mod admin_pages;
 mod administration_regressions;
 mod authority_regressions;
 mod avatars;
+mod cells;
 mod cli_identity;
 mod csrf;
 mod email_links;

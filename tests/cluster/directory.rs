@@ -147,10 +147,23 @@ async fn directory_transport_pins_keys_and_read_only_routers_cannot_claim_names(
 
     assert!(bytes.is_empty());
     assert!(matches!(
-        connect(unknown).request(&cell).await.unwrap(),
+        connect(unknown.clone()).request(&cell).await.unwrap(),
         Reply::Cell(Some(_))
     ));
+    let routes =
+        codeyard_cells_router::routes::Routes::new(connect(unknown.clone()), Default::default())
+            .unwrap();
+    assert_eq!(
+        routes.by_name("alice").await.unwrap().unwrap().id,
+        Prefix::new(1)
+    );
     listener.stop().await;
+    assert_eq!(
+        routes.by_name("ALICE").await.unwrap().unwrap().id,
+        Prefix::new(1),
+        "a cached route survives a directory outage within its TTL"
+    );
+    assert!(routes.by_name("uncached").await.is_err());
     directory.close().await;
     database.finish().await;
 }

@@ -69,7 +69,8 @@ pub(crate) async fn sign_in_post(
             StatusCode::BAD_REQUEST,
         );
     }
-    let session_request = crate::auth::session::LoginSessionRequest::from_headers(&ctx.headers);
+    let session_request =
+        crate::auth::session::LoginSessionRequest::from_headers(&ctx.state.pool, &ctx.headers);
     let result = codeyard_identity::login::second_factor_login(
         &ctx.state.pool,
         ctx.state.secret_encryptor.as_deref(),

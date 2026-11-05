@@ -107,6 +107,19 @@ async fn contract(pg: bool) {
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;
     let user = Client::login(&router, f.pool(), actor).await;
+    let entry = user
+        .exchange(
+            "GET",
+            "/login/device",
+            "application/x-www-form-urlencoded",
+            Vec::new(),
+        )
+        .await;
+    assert_eq!(entry.status, StatusCode::OK);
+    assert!(
+        entry.text().contains("maxlength=\"15\""),
+        "native device form must accept every cell prefix"
+    );
     let code = device(&router, "repo read:org gist").await;
     assert_eq!(code["interval"], 5);
     assert_eq!(code["expires_in"], 900);

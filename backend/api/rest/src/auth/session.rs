@@ -1,7 +1,7 @@
 use axum::http::HeaderMap;
 use chrono::Duration;
 use chrono::Utc;
-use codeyard_api_http::session::extract_session_id;
+use codeyard_api_http::session::extract_local_session_id;
 use codeyard_api_http::session::extract_user_agent;
 use codeyard_api_http::session::generate_session_id;
 
@@ -14,8 +14,8 @@ pub(crate) struct LoginSessionRequest {
 }
 
 impl LoginSessionRequest {
-    pub(crate) fn from_headers(headers: &HeaderMap) -> Self {
-        let old = extract_session_id(headers);
+    pub(crate) fn from_headers(pool: &codeyard_db_core::DbPool, headers: &HeaderMap) -> Self {
+        let old = extract_local_session_id(pool, headers);
         let invalid_initiator =
             old.is_none() && codeyard_api_http::session::has_session_cookie(headers);
         Self {

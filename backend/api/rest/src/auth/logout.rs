@@ -41,7 +41,7 @@ pub(crate) async fn logout_post(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    let id = codeyard_api_http::session::extract_session_id(&ctx.headers);
+    let id = codeyard_api_http::session::extract_local_session_id(&ctx.state.pool, &ctx.headers);
     if codeyard_identity::sessions::end_session(&ctx.state.pool, id.as_deref())
         .await
         .is_err()

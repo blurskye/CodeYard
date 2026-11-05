@@ -4,16 +4,17 @@ use codeyard_app::app::AppState;
 use codeyard_db_core::read_routing::{self, Credential};
 use std::sync::Arc;
 
-fn credential(headers: &axum::http::HeaderMap) -> Option<(bool, String)> {
+fn credential(
+    pool: &codeyard_db_core::DbPool,
+    headers: &axum::http::HeaderMap,
+) -> Option<(bool, String)> {
     let token = codeyard_identity::github_auth::credential(headers)
         .map(str::to_owned)
         .or_else(|| crate::credentials::basic(headers).map(|(_, password)| password));
     if let Some(token) = token {
         return Some((true, codeyard_support::token_hash::token_hash(&token)));
     }
-    crate::session::extract_session_id(headers)
-        .filter(|value| codeyard_support::crypto::is_hex_token(value, 64))
-        .map(|value| (false, value))
+    crate::session::extract_local_session_id(pool, headers).map(|value| (false, value))
 }
 fn borrowed(credential: &(bool, String)) -> Credential<'_> {
     if credential.0 {
@@ -46,7 +47,7 @@ pub async fn respond(
     if !read_routing::has_replica(&state.pool) {
         return work.await;
     }
-    let credential = credential(headers);
+    let credential = credential(&state.pool, headers);
     let pinned = if let Some(credential) = &credential {
         // A failed routing hint chooses primary. The handler still authenticates normally.
         read_routing::primary_required(&state.pool, borrowed(credential), !read)

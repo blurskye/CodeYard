@@ -189,7 +189,8 @@ pub(crate) async fn auth_post(
     }
     // Preserve the initiating anonymous identifier: identity rotates it and
     // invalidates its CSRF atomically.
-    let session_request = crate::auth::session::LoginSessionRequest::from_headers(&ctx.headers);
+    let session_request =
+        crate::auth::session::LoginSessionRequest::from_headers(&ctx.state.pool, &ctx.headers);
     let email = optional_field(&form, "email");
     let account = PasswordAccount {
         username: field(&form, "username"),

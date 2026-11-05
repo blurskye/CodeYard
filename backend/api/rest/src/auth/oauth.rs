@@ -234,7 +234,7 @@ pub async fn oauth_callback(
         );
     };
     let redirect = format!("{origin}/login/oauth/{provider}/callback");
-    let initiating = LoginSessionRequest::from_headers(&headers);
+    let initiating = LoginSessionRequest::from_headers(&state.pool, &headers);
     match codeyard_identity::oauth::complete(
         &state.pool,
         codeyard_identity::oauth::Callback {

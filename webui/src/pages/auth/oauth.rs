@@ -23,7 +23,7 @@ pub fn device(
                 button { r#type: "submit", name: "decision", value: "deny", class: "btn btn-secondary", "Cancel" }
             } else {
                 label { r#for: "user_code", "Enter the code displayed on your device" }
-                input { id: "user_code", name: "user_code", required: true, maxlength: "9", autocomplete: "off", class: FIELD }
+                input { id: "user_code", name: "user_code", required: true, maxlength: "15", autocomplete: "off", class: FIELD }
                 button { r#type: "submit", class: SUBMIT, "Continue" }
             }
         }
