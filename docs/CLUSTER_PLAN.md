@@ -8,7 +8,7 @@ keeps the longer plan for cells; this file comes first and does not repeat it.
 
 Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspace,
 Clippy and WASM checks pass, including the fault tests and full-disk placement fix.
-Library checks (1,058 tests), identity checks (161 tests) and Helm rendering pass.
+Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed, 19 ignored) and Helm rendering pass.
 The cluster run has failures in restore and test fixtures; fixes await verification.
 Drain, metrics, provisioning, scaling and mover runtime checks pass. The end-to-end build
 found native dependencies in the app binary’s browser graph; that boundary is corrected

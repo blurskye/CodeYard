@@ -69,16 +69,14 @@ fi
 [[ $MODE != check ]] || exit 0
 [[ -x $DX ]] || { echo "Dioxus CLI not found: set DX (version 0.7.10 is required)" >&2; exit 1; }
 [[ $OUT == /* && $OUT != / ]] || { echo "WEBUI_DIST must be an absolute directory, not /" >&2; exit 1; }
-PUBLIC=$(realpath -m -- "$TARGET_DIR/dx/codeyard/$MODE/web/public")
+DX_PUBLIC=$(realpath -m -- "$TARGET_DIR/dx/codeyard/$MODE/web/public")
 OUT=$(realpath -m -- "$OUT")
-for directory in "$OUT" "$PUBLIC"; do
-    [[ $directory != "$ROOT" && $ROOT != "$directory/"* && $directory != / ]] || {
-        echo "Bundle output must not be the checkout or its ancestor" >&2
-        exit 1
-    }
-done
-[[ $OUT != / && ( $OUT == "$PUBLIC" || ( $PUBLIC != "$OUT/"* && $OUT != "$PUBLIC/"* ) ) ]] || {
-    echo "WEBUI_DIST must not overlap the Dioxus output directory unless identical" >&2
+[[ $OUT != "$ROOT" && $ROOT != "$OUT/"* && $OUT != / ]] || {
+    echo "Bundle output must not be the checkout or its ancestor" >&2
+    exit 1
+}
+[[ $DX_PUBLIC != "$OUT" && $DX_PUBLIC != "$OUT/"* && $OUT != "$DX_PUBLIC/"* ]] || {
+    echo "WEBUI_DIST must not overlap the Dioxus build cache" >&2
     exit 1
 }
 # Only replace directories this script has published, never arbitrary existing data.
@@ -91,15 +89,15 @@ require_bundle() {
         exit 1
     }
 }
-# Acquire in path order, including when debug/release share a publication path.
+# The CLI owns its build cache, including partial output after a failed build.
+# Lock it while building and copying; only the published output needs our marker.
 lock_fds=()
 while IFS= read -r directory; do
     mkdir -p "$(dirname "$directory")"
     exec {lock_fd}>"$directory.lock"
     flock "$lock_fd"
     lock_fds+=("$lock_fd")
-done < <(printf '%s\n' "$PUBLIC" "$OUT" | LC_ALL=C sort -u)
-require_bundle "$PUBLIC"
+done < <(printf '%s\n' "$DX_PUBLIC" "$OUT" | LC_ALL=C sort -u)
 require_bundle "$OUT"
 dx_version=$("$DX" --version)
 [[ $dx_version == *0.7.10* ]] || { echo "Dioxus CLI 0.7.10 is required, found: $dx_version" >&2; exit 1; }
@@ -111,7 +109,8 @@ cargo tree --locked -p codeyard --target wasm32-unknown-unknown --no-default-fea
     --features web --edges normal --prefix none --format '{p}' | python3 scripts/check-web-dependencies.py
 
 echo "== dx build ($MODE)"
-staging=$(mktemp -d "$(dirname "$PUBLIC")/.webui.XXXXXX")
+staging=$(mktemp -d "$(dirname "$OUT")/.webui.XXXXXX")
+PUBLIC=$staging/bundle
 args=(build --platform web --package codeyard --bin codeyard --no-default-features --features web
     --cargo-args=--locked --force-sequential)
 if [[ $MODE == release ]]; then
@@ -119,23 +118,30 @@ if [[ $MODE == release ]]; then
 fi
 "$DX" "${args[@]}" &
 dx_pid=$!
-wait "$dx_pid"
-dx_pid=
-[[ -f $PUBLIC/index.html ]] || { echo "dx did not produce $PUBLIC/index.html" >&2; exit 1; }
-# dx writes into its own output directory; take a copy to publish from.
-touch "$PUBLIC/.codeyard-webui-bundle"
-mkdir "$staging/bundle"
-cp -R "$PUBLIC/." "$staging/bundle/"
-
+if wait "$dx_pid"; then
+    dx_pid=
+else
+    status=$?
+    dx_pid=
+    exit "$status"
+fi
+[[ -f $DX_PUBLIC/index.html ]] || { echo "dx did not produce $DX_PUBLIC/index.html" >&2; exit 1; }
+mkdir "$PUBLIC"
+cp -R "$DX_PUBLIC/." "$PUBLIC/"
 # Retain immutable hashed assets: a serving process may still have cached the old loader.
 # Publish assets first and replace only the index atomically, never move into a directory.
-while IFS= read -r directory; do
-    require_bundle "$directory"
-    mkdir -p "$directory"
-    touch "$directory/.codeyard-webui-bundle"
-    cp -R "$staging/bundle/." "$directory/" --no-clobber
-    index=$(mktemp "$directory/.index.XXXXXX")
-    cp "$staging/bundle/index.html" "$index"
-    mv -T -- "$index" "$directory/index.html"
-done < <(printf '%s\n' "$PUBLIC" "$OUT" | LC_ALL=C sort -u)
+touch "$PUBLIC/.codeyard-webui-bundle"
+if [[ ! -e $OUT && ! -L $OUT ]]; then
+    # The first publication installs its ownership marker with the directory.
+    mv -T --no-clobber "$PUBLIC" "$OUT"
+    if [[ ! -e $PUBLIC ]]; then
+        find "$OUT" -type f -printf '%10s  %P\n' | sort -k2
+        exit 0
+    fi
+fi
+require_bundle "$OUT"
+cp -R "$PUBLIC/." "$OUT/" --no-clobber
+index=$(mktemp "$OUT/.index.XXXXXX")
+cp "$PUBLIC/index.html" "$index"
+mv -T -- "$index" "$OUT/index.html"
 find "$OUT" -type f -printf '%10s  %P\n' | sort -k2
