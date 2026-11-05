@@ -91,3 +91,12 @@ pub fn prepare_logs(lines: &[LogLine]) -> Result<Vec<LogLine>> {
     );
     Ok(lines)
 }
+
+/// Durable log bytes supplied by the application's local, S3 or storage-node backend.
+/// Database transactions contain only their bounded metadata.
+pub trait LogObjects: Send + Sync {
+    fn put<'a>(&'a self, key: &'a str, digest: &'a str, bytes: Vec<u8>)
+        -> futures_util::future::BoxFuture<'a, Result<()>>;
+    fn get<'a>(&'a self, key: &'a str, length: usize)
+        -> futures_util::future::BoxFuture<'a, Result<Vec<u8>>>;
+}

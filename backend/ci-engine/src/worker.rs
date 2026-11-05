@@ -2359,6 +2359,8 @@ mod tests {
                 .await
                 .unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
+        let log_objects = Arc::new(codeyard_storage::ObjectStore::open(root, None).await.unwrap());
+        pool.set_log_objects(log_objects.clone());
         let owner = codeyard_db_identity::users::accounts::create_user(&pool, "worker_owner", None)
             .await
             .unwrap();

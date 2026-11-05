@@ -13,6 +13,7 @@ pub struct NativeDatabase {
     pub raw: codeyard_db_core::pool::SqlitePool,
     pub url: String,
     _directory: tempfile::TempDir,
+    _log_objects: std::sync::Arc<codeyard_storage::ObjectStore>,
 }
 
 impl NativeDatabase {
@@ -36,6 +37,10 @@ impl NativeDatabase {
         let pool = codeyard_db_core::init_db(&url)
             .await
             .expect("native SQLite open");
+        let log_objects = std::sync::Arc::new(
+            codeyard_storage::ObjectStore::open(directory.path(), None).await.unwrap(),
+        );
+        pool.set_log_objects(log_objects.clone());
         let options = SqliteConnectOptions::from_str(&url)
             .unwrap()
             .with_regexp()
@@ -54,21 +59,26 @@ impl NativeDatabase {
             raw,
             url,
             _directory: directory,
+            _log_objects: log_objects,
         }
     }
 
     pub async fn second_handle(&self) -> codeyard_db_core::DbPool {
-        codeyard_db_core::init_db(&self.url)
+        let pool = codeyard_db_core::init_db(&self.url)
             .await
-            .expect("independent selected database handle")
+            .expect("independent selected database handle");
+        pool.set_log_objects(self.pool.log_objects().unwrap());
+        pool
     }
 
     pub async fn reopen(&mut self) {
+        let objects = self.pool.log_objects().unwrap();
         self.pool.close().await;
         self.raw.close().await;
         self.pool = codeyard_db_core::init_db(&self.url)
             .await
             .expect("reopen persistent application database");
+        self.pool.set_log_objects(objects);
         codeyard_db_core::run_migrations(&self.pool)
             .await
             .expect("verify independent SQLite history");
@@ -98,6 +108,8 @@ pub struct PostgresDatabase {
     pub url: String,
     pub schema: String,
     removed: bool,
+    _objects: tempfile::TempDir,
+    _log_objects: std::sync::Arc<codeyard_storage::ObjectStore>,
 }
 
 impl PostgresDatabase {
@@ -141,12 +153,18 @@ impl PostgresDatabase {
             .execute(&admin)
             .await
             .unwrap();
+        let objects = tempfile::tempdir().unwrap();
+        let log_objects = std::sync::Arc::new(
+            codeyard_storage::ObjectStore::open(objects.path(), None).await.unwrap(),
+        );
         let mut fixture = Self {
             pool: admin.clone().into(),
             raw: admin.clone(),
             url,
             schema,
             removed: false,
+            _objects: objects,
+            _log_objects: log_objects.clone(),
         };
         admin.close().await;
         let options = sqlx::postgres::PgConnectOptions::from_str(&fixture.url)
@@ -161,6 +179,7 @@ impl PostgresDatabase {
             .map(codeyard_db_core::pool::Pool::from)
             .unwrap();
         fixture.pool = fixture.raw.clone().into();
+        fixture.pool.set_log_objects(log_objects);
         fixture
     }
 

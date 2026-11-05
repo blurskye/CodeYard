@@ -345,28 +345,23 @@ native_operation!(crate::postgres::ci::list_ci_runs_for_user,
     crate::sqlite::ci::list_ci_runs_for_user,
     fn list_ci_runs_for_user(pool: &DbPool, user_id: i64, limit: i64) -> Result<Vec<CiRun>>);
 
-native_operation!(crate::postgres::ci::append_ci_logs,
-    crate::sqlite::ci::append_ci_logs,
-    fn append_ci_logs(
-    pool: &DbPool,
-    run_id: i64,
-    worker: &str,
-    sequence: i64,
-    lines: &[codeyard_model::ci::LogLine],
-) -> Result<bool>);
+pub async fn append_ci_logs(
+    pool: &DbPool, run_id: i64, worker: &str, sequence: i64, lines: &[codeyard_model::ci::LogLine],
+) -> Result<bool> {
+    log_chunks::append(pool, run_id, worker, sequence, lines).await
+}
 
-native_operation!(crate::postgres::ci::list_ci_logs,
-    crate::sqlite::ci::list_ci_logs,
-    fn list_ci_logs(pool: &DbPool, run_id: i64, limit: i64) -> Result<Vec<CiLogLine>>);
+pub async fn list_ci_logs(pool: &DbPool, run_id: i64, limit: i64) -> Result<Vec<CiLogLine>> {
+    anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
+    let mut lines = log_chunks::read_range(pool, run_id, 0, 100_000, limit.min(100_000), true).await?;
+    lines.reverse();
+    Ok(lines)
+}
 
-native_operation!(crate::postgres::ci::list_ci_log_history,
-    crate::sqlite::ci::list_ci_log_history,
-    fn list_ci_log_history(
-    pool: &DbPool,
-    run_id: i64,
-    after: i64,
-    limit: i64,
-) -> Result<Vec<CiLogLine>>);
+pub async fn list_ci_log_history(pool: &DbPool, run_id: i64, after: i64, limit: i64) -> Result<Vec<CiLogLine>> {
+    anyhow::ensure!(after >= 0 && (1..=5000).contains(&limit), "invalid CI history cursor/window");
+    log_chunks::read_range(pool, run_id, after, 100_000, limit, false).await
+}
 
 native_operation!(crate::postgres::ci::get_ci_deployment_by_run_id,
     crate::sqlite::ci::get_ci_deployment_by_run_id,

@@ -154,7 +154,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
 13. **Cells.** Stages 0 to 6 of the architecture document, in order, each with its own
     acceptance list. The owner lifted the A16 gate on 2026-11-05. Stage 0 automated
     durability checks pass; its VM hard-reset check remains open. Stage 1 reuses scoped authority and package locks, notification polling,
-    configurable pools and compressed database log chunks; its acceptance is incomplete.
+    configurable pools. Object-store log chunks and clone distribution are in progress;
+    their source checks and acceptance are pending.
     Stages 2 to 6 are not built. Individual users may move automatically to
     their working region in stage 6. Organizations retain one write home and gain read
     presence across regions in stages 5 and 6; see the architecture acceptance lists.

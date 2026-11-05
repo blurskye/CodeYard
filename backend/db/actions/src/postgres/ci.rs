@@ -6,7 +6,6 @@ use anyhow::Result;
 use codeyard_db_core::ci_policy::CiAdmissionRefusal;
 use codeyard_db_core::ci_policy::ACCESS_LOST_MESSAGE;
 use codeyard_db_core::models::CiDeployment;
-use codeyard_db_core::models::CiLogLine;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::pool::PgPool;
 use codeyard_db_core::queries::action_settings::Setting;
@@ -1277,13 +1276,44 @@ pub async fn list_ci_runs_for_user(pool: &PgPool, user_id: i64, limit: i64) -> R
     .await?)
 }
 
-pub async fn append_ci_logs(
+pub(crate) async fn prepare_ci_log_upload(
+    pool: &PgPool, run: i64, worker: &str, sequence: i64, hash: &str, key: &str,
+) -> Result<crate::ci::log_chunks::Preparation> {
+    use crate::ci::log_chunks::Preparation;
+    let mut tx = pool.begin().await?;
+    let totals: Option<(i64, i64)> = sqlx::query_as(
+        "SELECT log_lines,log_bytes FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' FOR UPDATE"
+    ).bind(run).bind(worker).fetch_optional(&mut *tx).await?;
+    let (lines, bytes) = totals.ok_or_else(|| anyhow::anyhow!("CI run is not owned by this worker"))?;
+    let previous: Option<String> = sqlx::query_scalar(
+        "SELECT request_hash FROM ci_log_chunks WHERE run_id=$1 AND sequence=$2"
+    ).bind(run).bind(sequence).fetch_optional(&mut *tx).await?;
+    if let Some(previous) = previous {
+        ensure!(previous == hash, "CI upload sequence has different contents");
+        return Ok(Preparation::Complete(lines < codeyard_model::ci::MAX_RUN_LOG_LINES));
+    }
+    if lines >= codeyard_model::ci::MAX_RUN_LOG_LINES {
+        return Ok(Preparation::Complete(false));
+    }
+    let next: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(sequence)+1,0) FROM ci_log_chunks WHERE run_id=$1"
+    ).bind(run).fetch_one(&mut *tx).await?;
+    ensure!(sequence == next, "CI upload sequence is out of order");
+    // Reserve cleanup before I/O; a crash or rejected commit leaves no unowned bytes.
+    sqlx::query("INSERT INTO pending_object_deletions(object_key,delete_after) VALUES($1,clock_timestamp()+INTERVAL '7 days')")
+        .bind(key).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Preparation::Upload { lines, bytes })
+}
+
+pub(crate) async fn commit_ci_logs(
     pool: &PgPool,
     run_id: i64,
     worker: &str,
     sequence: i64,
     lines: &[codeyard_model::ci::LogLine],
-) -> Result<bool> {
+    upload: &crate::ci::log_chunks::StoredChunk,
+) -> Result<Option<bool>> {
     ensure!(
         (0..100_000).contains(&sequence),
         "invalid CI upload sequence"
@@ -1338,10 +1368,13 @@ pub async fn append_ci_logs(
             previous == hash,
             "CI upload sequence has different contents"
         );
-        return Ok(stored_lines < codeyard_model::ci::MAX_RUN_LOG_LINES);
+        return Ok(Some(stored_lines < codeyard_model::ci::MAX_RUN_LOG_LINES));
     }
     if stored_lines >= codeyard_model::ci::MAX_RUN_LOG_LINES {
-        return Ok(false);
+        return Ok(Some(false));
+    }
+    if upload.stored_lines != stored_lines || upload.stored_bytes != stored_bytes {
+        return Ok(None);
     }
     let next: i64 =
         sqlx::query_scalar("SELECT COALESCE(MAX(sequence)+1,0) FROM ci_log_chunks WHERE run_id=$1")
@@ -1351,12 +1384,14 @@ pub async fn append_ci_logs(
     ensure!(sequence == next, "CI upload sequence is out of order");
     let (kept, lines_total, bytes_total) =
         codeyard_db_core::ci_logs::admit_log_lines(stored_lines, stored_bytes, &lines);
-    let (data, size) = crate::ci::log_chunks::encode(&kept)?;
+    let size = kept.iter().map(|line| (line.stage.len() + line.line.len()) as i64).sum::<i64>();
     // Mixed-job batches keep their job and step tags in the compressed payload.
     let job = crate::ci::log_chunks::batch_job(&kept);
-    sqlx::query("INSERT INTO ci_log_chunks(run_id,job_id,sequence,request_hash,first_line,line_count,byte_size,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+    sqlx::query("INSERT INTO ci_log_chunks(run_id,job_id,sequence,request_hash,first_line,line_count,byte_size,object_key,object_bytes,object_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
         .bind(run_id).bind(job).bind(sequence).bind(&hash).bind(stored_lines + 1)
-        .bind(kept.len() as i64).bind(size).bind(data).execute(&mut *tx).await?;
+        .bind(kept.len() as i64).bind(size).bind(&upload.key).bind(upload.length).bind(&upload.digest).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM pending_object_deletions WHERE object_key=$1")
+        .bind(&upload.key).execute(&mut *tx).await?;
     if lines_total != stored_lines || bytes_total != stored_bytes {
         sqlx::query("UPDATE ci_runs SET log_lines = $2, log_bytes = $3 WHERE id = $1")
             .bind(run_id)
@@ -1366,23 +1401,7 @@ pub async fn append_ci_logs(
             .await?;
     }
     tx.commit().await?;
-    Ok(lines_total < codeyard_model::ci::MAX_RUN_LOG_LINES)
-}
-
-pub async fn list_ci_logs(pool: &PgPool, run_id: i64, limit: i64) -> Result<Vec<CiLogLine>> {
-    ensure!(limit >= 0, "Result limit must be nonnegative");
-    let mut connection = pool.acquire().await?;
-    let mut lines = read_log_range(
-        &mut connection,
-        run_id,
-        0,
-        100_000,
-        limit.min(100_000),
-        true,
-    )
-    .await?;
-    lines.reverse();
-    Ok(lines)
+    Ok(Some(lines_total < codeyard_model::ci::MAX_RUN_LOG_LINES))
 }
 
 pub async fn ci_repository_owner(pool: &PgPool, repo_id: i64) -> Result<Option<String>> {
@@ -1422,41 +1441,13 @@ pub async fn has_ci_accepted_push(
         .bind(repo_id).bind(actor_id).bind(reference).bind(sha.to_ascii_lowercase()).fetch_one(pool).await?)
 }
 
-pub async fn list_ci_log_history(
-    pool: &PgPool,
-    run_id: i64,
-    after: i64,
-    limit: i64,
-) -> Result<Vec<CiLogLine>> {
-    ensure!(
-        after >= 0 && (1..=5000).contains(&limit),
-        "invalid CI history cursor/window"
-    );
-    let mut connection = pool.acquire().await?;
-    read_log_range(&mut connection, run_id, after, 100_000, limit, false).await
-}
-
-/// Read bounded pages of compressed chunks, including a cursor inside a chunk.
-pub(super) async fn read_log_range(
-    connection: &mut sqlx::PgConnection,
-    run: i64,
-    after: i64,
-    before: i64,
-    limit: i64,
-    reverse: bool,
-) -> Result<Vec<CiLogLine>> {
-    let mut range = crate::ci::log_chunks::LogRange::new(after, before, limit, reverse)?;
-    while !range.complete() {
-        let order = if reverse { "DESC" } else { "ASC" };
-        let chunks = sqlx::query_as::<_, crate::ci::log_chunks::Chunk>(&format!(
-            "SELECT l.* FROM ci_log_chunks l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=$1 AND l.first_line+l.line_count-1>$2 AND l.first_line<=$3 AND (r.log_expires_at IS NULL OR r.log_expires_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) ORDER BY l.sequence {order} LIMIT 64"
-        )).bind(run).bind(range.after).bind(range.before).fetch_all(&mut *connection).await?;
-        if chunks.is_empty() {
-            break;
-        }
-        range.extend(chunks)?;
-    }
-    Ok(range.finish())
+pub(crate) async fn read_log_chunks(
+    pool: &PgPool, run: i64, after: i64, before: i64, reverse: bool,
+) -> Result<Vec<crate::ci::log_chunks::Chunk>> {
+    let order = if reverse { "DESC" } else { "ASC" };
+    Ok(sqlx::query_as(&format!(
+        "SELECT l.* FROM ci_log_chunks l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=$1 AND l.first_line+l.line_count-1>$2 AND l.first_line<=$3 AND (r.log_expires_at IS NULL OR r.log_expires_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) ORDER BY l.sequence {order} LIMIT 64"
+    )).bind(run).bind(after).bind(before).fetch_all(pool).await?)
 }
 
 pub async fn get_ci_deployment_by_run_id(

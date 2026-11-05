@@ -147,6 +147,18 @@ fn secure_sqlite_files(path: &Path, create_main: bool) -> std::io::Result<()> {
 }
 
 impl DbPool {
+    pub fn set_log_objects(&self, store: std::sync::Arc<dyn crate::ci_logs::LogObjects>) {
+        match self {
+            Self::Postgres(pool) => pool.set_log_objects(store),
+            Self::Sqlite(pool) => pool.set_log_objects(store),
+        }
+    }
+    pub fn log_objects(&self) -> Result<std::sync::Arc<dyn crate::ci_logs::LogObjects>> {
+        match self {
+            Self::Postgres(pool) => pool.log_objects(),
+            Self::Sqlite(pool) => pool.log_objects(),
+        }
+    }
     /// Whether the database answers a trivial query.
     pub async fn ping(&self) -> Result<()> {
         match self {

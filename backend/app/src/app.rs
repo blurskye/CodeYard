@@ -56,6 +56,9 @@ impl AppState {
                 &repos_path,
             );
         }
+        if pool.log_objects().is_err() {
+            pool.set_log_objects(storage.clone());
+        }
         let notification_broadcaster = Arc::new(NotificationBroadcaster::new(&pool));
         let ci_runs = Arc::new(CiRuns::new(
             pool.clone(),

@@ -47,67 +47,63 @@ impl NodeContext {
         use std::os::unix::process::ExitStatusExt;
         let receive = matches!(&request.operation, Operation::GitSession(session) if session.service == GitService::ReceivePack);
         let deadline = tokio::time::Instant::now() + TIMEOUT;
-        let mut opened = self
-            .open_session(
-                node_id,
-                &request,
-                if request.operation.is_read_only() {
-                    attempt_deadline(deadline)
-                } else {
-                    deadline
-                },
-            )
-            .await;
-        if request.operation.is_read_only()
-            && cannot_serve(opened.as_ref().ok().map(|(_, reply)| reply), true)
-        {
-            let copies =
+        let read_only = request.operation.is_read_only();
+        let mut candidates = vec![(node_id, true)];
+        if read_only {
+            candidates.extend(
                 tokio::time::timeout_at(deadline, self.read_copies(request.repository, node_id))
                     .await
-                    .map_err(|_| unavailable())?;
-            let mut copies = copies.into_iter().peekable();
-            while let Some((copy, moved)) = copies.next() {
-                let candidate_deadline = if copies.peek().is_none() {
-                    deadline
-                } else {
-                    attempt_deadline(deadline)
-                };
-                if tokio::time::Instant::now() >= deadline {
-                    break;
-                }
-                if copy == self.node_id {
-                    // The permit comes before admission, so a key revoked while this waited
-                    // is refused. Admission comes before the streams are touched, so a copy
-                    // this node cannot serve leaves them for the next one.
-                    let Ok(permit) =
-                        tokio::time::timeout_at(candidate_deadline, git_process::session_permit())
-                            .await
-                    else {
-                        continue;
-                    };
-                    let Ok(_permit) = permit else {
-                        continue;
-                    };
-                    if let Ok(Ok((store, checkout, _read_guard))) =
-                        tokio::time::timeout_at(candidate_deadline, self.own_copy(&request)).await
-                    {
-                        let Operation::GitSession(mut session) = request.operation else {
-                            return Err(unavailable().into());
-                        };
-                        session.allow_unreachable = checkout;
-                        // Boxed: the store's remote variant leads back to this function.
-                        let status = Box::pin(store.git_session(session, None, streams)).await?;
-                        return Ok((Value::Null, status));
-                    }
-                    continue;
-                }
-                let answer = self.open_session(copy, &request, candidate_deadline).await;
-                if !cannot_serve(answer.as_ref().ok().map(|(_, reply)| reply), moved) {
-                    log_failover(request.repository, node_id, copy);
-                    opened = answer;
-                    break;
-                }
+                    .map_err(|_| unavailable())?,
+            );
+            // User clones share the primary and current copies. Snapshot and CI transfers
+            // retain their primary-first order and pinned-commit admission.
+            if request.ci_run.is_none()
+                && matches!(&request.operation, Operation::GitSession(session) if session.service == GitService::UploadPack)
+            {
+                let offset = (uuid::Uuid::new_v4().as_u128() % candidates.len() as u128) as usize;
+                candidates.rotate_left(offset);
             }
+        }
+        let mut opened = Err(unavailable());
+        let mut candidates = candidates.into_iter().peekable();
+        while let Some((candidate, primary)) = candidates.next() {
+            let candidate_deadline = if candidates.peek().is_none() {
+                deadline
+            } else {
+                attempt_deadline(deadline)
+            };
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            if candidate == self.node_id && read_only {
+                // Admission repeats current-copy and live credential checks after waiting
+                // for the permit, before touching the client's streams.
+                let Ok(Ok(_permit)) =
+                    tokio::time::timeout_at(candidate_deadline, git_process::session_permit()).await
+                else {
+                    continue;
+                };
+                if let Ok(Ok((store, checkout, _read_guard))) =
+                    tokio::time::timeout_at(candidate_deadline, self.own_copy(&request)).await
+                {
+                    let Operation::GitSession(mut session) = request.operation else {
+                        return Err(unavailable().into());
+                    };
+                    session.allow_unreachable = checkout;
+                    let status = Box::pin(store.git_session(session, None, streams)).await?;
+                    return Ok((Value::Null, status));
+                }
+                continue;
+            }
+            let answer = self.open_session(candidate, &request, candidate_deadline).await;
+            if !read_only || !cannot_serve(answer.as_ref().ok().map(|(_, reply)| reply), primary) {
+                if candidate != node_id {
+                    log_failover(request.repository, node_id, candidate);
+                }
+                opened = answer;
+                break;
+            }
+            opened = answer;
         }
         let (mut link, reply) = opened?;
         let value = reply.result.map_err(|failure| match failure {

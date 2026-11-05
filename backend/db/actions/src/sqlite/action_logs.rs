@@ -1,9 +1,7 @@
 use crate::action_logs::Grant;
 use crate::action_logs::Job;
-use crate::action_logs::Line;
 use crate::action_logs::Manifest;
 use crate::action_logs::ObservedStep;
-use crate::action_logs::Snapshot;
 use crate::action_logs::Target;
 use anyhow::ensure;
 use anyhow::Result;
@@ -80,32 +78,11 @@ pub async fn issue(
     Ok(true)
 }
 
-pub async fn read(pool: &SqlitePool, hash: &str, resource: &str) -> Result<Option<Snapshot>> {
+pub(crate) async fn grant(pool: &SqlitePool, hash: &str, resource: &str) -> Result<Option<Grant>> {
     let mut tx = pool.begin().await?;
     let grant:Option<Grant>=sqlx::query_as("SELECT g.* FROM actions_log_downloads g JOIN ci_runs c ON c.id=g.run_id AND c.repo_id=g.repo_id AND c.log_version=g.log_version AND (c.log_expires_at IS NULL OR c.log_expires_at>CAST(strftime('%s','now') AS INTEGER)) WHERE g.token_hash=$1 AND g.resource=$2 AND g.expires_at>CAST(strftime('%s','now') AS INTEGER)").bind(hash).bind(resource).fetch_optional(&mut *tx).await?;
-    let Some(grant) = grant else {
-        return Ok(None);
-    };
-    let lines = crate::sqlite::ci::read_log_range(
-        &mut tx,
-        grant.run_id,
-        0,
-        grant.max_log_id,
-        100_000,
-        false,
-    )
-    .await?
-    .into_iter()
-    .filter(|line| {
-        grant.job_id.is_none_or(|job| line.job_id == Some(job))
-            && grant
-                .step_number
-                .is_none_or(|step| line.step_number == Some(step))
-    })
-    .map(Line::from)
-    .collect();
     tx.commit().await?;
-    Ok(Some(Snapshot { grant, lines }))
+    Ok(grant)
 }
 
 /// Manual deletion and retention invalidate the same frozen download manifests.

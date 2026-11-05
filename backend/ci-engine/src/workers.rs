@@ -30,6 +30,7 @@ pub struct CiWorkers {
     run_workers: bool,
     configuration_error: Option<String>,
     workers: Arc<Workers>,
+    _log_objects: Option<Arc<dyn codeyard_db_core::ci_logs::LogObjects>>,
 }
 
 struct Workers {
@@ -65,7 +66,12 @@ impl CiWorkers {
             Ok(root) => (root, None),
             Err(error) => (state_dir.to_owned(), Some(error.to_string())),
         };
+        let log_objects = match &queue {
+            RunQueue::Database { pool, .. } => pool.log_objects().ok(),
+            RunQueue::Remote { .. } => None,
+        };
         Self {
+            _log_objects: log_objects,
             queue,
             config,
             run_workers,

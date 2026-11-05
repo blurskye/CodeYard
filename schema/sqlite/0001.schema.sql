@@ -853,11 +853,19 @@ CREATE TABLE ci_log_chunks (
     first_line INTEGER NOT NULL CHECK (first_line > 0),
     line_count INTEGER NOT NULL CHECK (line_count BETWEEN 1 AND 64),
     byte_size INTEGER NOT NULL CHECK (byte_size BETWEEN 0 AND 262656),
-    data BLOB NOT NULL CHECK (length(data) <= 2097152),
+    object_key TEXT NOT NULL UNIQUE,
+    object_bytes BIGINT NOT NULL CHECK (object_bytes BETWEEN 1 AND 2097152),
+    object_digest TEXT NOT NULL CHECK (length(object_digest) = 64),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     PRIMARY KEY (run_id, sequence),
     UNIQUE (job_id, sequence)
 );
+CREATE TRIGGER ci_log_chunk_cleanup AFTER DELETE ON ci_log_chunks
+BEGIN
+    INSERT INTO pending_object_deletions(object_key,delete_after)
+    VALUES(OLD.object_key,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+7 days')) ON CONFLICT(object_key) DO NOTHING;
+END;
+
 
 CREATE TABLE ci_deployments (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),

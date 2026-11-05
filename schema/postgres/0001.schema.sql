@@ -1147,11 +1147,23 @@ CREATE TABLE ci_log_chunks (
     first_line BIGINT NOT NULL CHECK (first_line > 0),
     line_count BIGINT NOT NULL CHECK (line_count BETWEEN 1 AND 64),
     byte_size BIGINT NOT NULL CHECK (byte_size BETWEEN 0 AND 262656),
-    data BYTEA NOT NULL CHECK (octet_length(data) <= 2097152),
+    object_key TEXT NOT NULL UNIQUE,
+    object_bytes BIGINT NOT NULL CHECK (object_bytes BETWEEN 1 AND 2097152),
+    object_digest TEXT NOT NULL CHECK (length(object_digest) = 64),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (run_id, sequence),
     UNIQUE (job_id, sequence)
 );
+CREATE FUNCTION ci_log_chunk_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO pending_object_deletions(object_key,delete_after)
+    VALUES(OLD.object_key,clock_timestamp()+INTERVAL '7 days') ON CONFLICT(object_key) DO NOTHING;
+    RETURN OLD;
+END;
+$$;
+CREATE TRIGGER ci_log_chunk_cleanup AFTER DELETE ON ci_log_chunks
+    FOR EACH ROW EXECUTE FUNCTION ci_log_chunk_cleanup();
+
 
 CREATE INDEX ci_log_chunks_range ON ci_log_chunks(run_id, first_line);
 

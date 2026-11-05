@@ -185,11 +185,7 @@ async fn idempotent_append(pg: bool) {
             .await,
         64
     );
-    let compressed_size = if pg {
-        "SELECT octet_length(data) FROM ci_log_chunks WHERE run_id=$1"
-    } else {
-        "SELECT length(data) FROM ci_log_chunks WHERE run_id=$1"
-    };
+    let compressed_size = "SELECT object_bytes FROM ci_log_chunks WHERE run_id=$1";
     let size: i64 = batch
         .iter()
         .map(|line| (line.line.len() + line.stage.len()) as i64)
@@ -636,3 +632,79 @@ async fn sqlite_expiry() {
 async fn postgres_expiry() {
     expiry(true).await;
 }
+
+#[derive(Clone, Copy)]
+enum ObjectFault { Put, Revoke, Corrupt }
+struct FaultingObjects {
+    inner: std::sync::Arc<dyn codeyard_db_core::ci_logs::LogObjects>,
+    pool: codeyard_db_core::DbPool,
+    run: i64,
+    fault: ObjectFault,
+}
+impl codeyard_db_core::ci_logs::LogObjects for FaultingObjects {
+    fn put<'a>(&'a self, key: &'a str, digest: &'a str, bytes: Vec<u8>)
+        -> futures_util::future::BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            if matches!(self.fault, ObjectFault::Put) { anyhow::bail!("owned object failure"); }
+            self.inner.put(key, digest, bytes).await?;
+            if matches!(self.fault, ObjectFault::Revoke) {
+                match &self.pool {
+                    codeyard_db_core::DbPool::Postgres(pool) => {
+                        sqlx::query("UPDATE ci_runs SET status='failed' WHERE id=$1").bind(self.run).execute(pool).await?;
+                    }
+                    codeyard_db_core::DbPool::Sqlite(pool) => {
+                        sqlx::query("UPDATE ci_runs SET status='failed' WHERE id=$1").bind(self.run).execute(pool).await?;
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+    fn get<'a>(&'a self, key: &'a str, length: usize)
+        -> futures_util::future::BoxFuture<'a, anyhow::Result<Vec<u8>>> {
+        Box::pin(async move {
+            let mut bytes = self.inner.get(key, length).await?;
+            if matches!(self.fault, ObjectFault::Corrupt) { bytes[0] ^= 1; }
+            Ok(bytes)
+        })
+    }
+}
+
+async fn object_failure(pg: bool, fault: ObjectFault) {
+    let mut fixture = Fixture::new(pg).await;
+    let original = fixture.db.pool().log_objects().unwrap();
+    let objects = std::sync::Arc::new(FaultingObjects {
+        inner: original.clone(), pool: fixture.db.pool().clone(), run: fixture.run.id, fault,
+    });
+    fixture.db.pool().set_log_objects(objects.clone());
+    let result = codeyard_db_actions::ci::append_ci_logs(
+        fixture.db.pool(), fixture.run.id, WORKER, 0, &[fixture.line(1)],
+    ).await;
+    if matches!(fault, ObjectFault::Corrupt) {
+        assert!(result.unwrap());
+        assert!(codeyard_db_actions::ci::list_ci_logs(fixture.db.pool(), fixture.run.id, 100).await.is_err());
+        fixture.db.pool().set_log_objects(original.clone());
+        assert_eq!(codeyard_db_actions::ci::list_ci_logs(fixture.db.pool(), fixture.run.id, 100).await.unwrap().len(), 1);
+        fixture.db.execute("DELETE FROM ci_log_chunks WHERE run_id=$1", &[fixture.run.id]).await;
+    } else {
+        assert!(result.is_err());
+        assert_eq!(fixture.db.scalar("SELECT log_lines FROM ci_runs WHERE id=$1", &[fixture.run.id]).await, 0);
+    }
+    assert_eq!(fixture.db.scalar("SELECT COUNT(*) FROM ci_log_chunks WHERE run_id=$1", &[fixture.run.id]).await, 0);
+    assert_eq!(fixture.db.scalar("SELECT COUNT(*) FROM pending_object_deletions WHERE object_key LIKE 'ci-logs/%'", &[]).await, 1);
+    fixture.db.pool().set_log_objects(original);
+    fixture.db.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_log_object_failure_never_acknowledges_or_increments_totals() { object_failure(false, ObjectFault::Put).await; }
+#[tokio::test]
+async fn postgres_log_object_failure_never_acknowledges_or_increments_totals() { object_failure(true, ObjectFault::Put).await; }
+#[tokio::test]
+async fn sqlite_worker_revoked_during_object_upload_cannot_commit() { object_failure(false, ObjectFault::Revoke).await; }
+#[tokio::test]
+async fn postgres_worker_revoked_during_object_upload_cannot_commit() { object_failure(true, ObjectFault::Revoke).await; }
+#[tokio::test]
+async fn sqlite_corrupt_log_objects_are_refused_and_deleted_chunks_schedule_cleanup() { object_failure(false, ObjectFault::Corrupt).await; }
+#[tokio::test]
+async fn postgres_corrupt_log_objects_are_refused_and_deleted_chunks_schedule_cleanup() { object_failure(true, ObjectFault::Corrupt).await; }
