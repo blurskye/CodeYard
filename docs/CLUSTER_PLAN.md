@@ -172,7 +172,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     directory CLI fixture now supplies the capacity it asserts. Runtime rechecks are pending.
     Acceptance rerun 049f16eeb8324596b898b230885a66d3 runs the compiled snapshot. A new
     unchecked batch adds stable cell identity, stub storage/metadata, credential/storage
-    guards and initial list filters; remaining guards, filters and tests are in progress.
+    guards and native list filters, with SQLite/PostgreSQL HTTP and storage tests. Exact
+    lookups retain stubs for references. Its first source check round is next.
     The public proxy role, foreign authorization and stages 3 to 6 remain unimplemented.
     Automatic individual moves and org regional presence are documented owner decisions.
 

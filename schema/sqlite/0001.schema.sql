@@ -54,7 +54,7 @@ CREATE TABLE users (
     email_notifications INTEGER NOT NULL DEFAULT 1 CHECK (email_notifications IN (0,1)),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
-    CONSTRAINT users_stub_data CHECK (NOT is_stub OR (password_hash IS NULL AND email IS NULL AND avatar_file_id IS NULL AND NOT is_admin AND NOT must_change_password AND NOT two_factor_enabled))
+    CONSTRAINT users_stub_data CHECK (NOT is_stub OR (password_hash IS NULL AND email IS NULL AND avatar_file_id IS NULL AND NOT is_admin))
 );
 
 CREATE UNIQUE INDEX users_username_folded ON users(lower(username));
@@ -4134,3 +4134,7 @@ BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
 CREATE TRIGGER two_factor_recovery_codes_cell_home_update BEFORE UPDATE OF user_id ON two_factor_recovery_codes
 WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
 BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+
+CREATE TRIGGER users_stub_credentials BEFORE UPDATE OF is_stub ON users
+WHEN NOT OLD.is_stub AND NEW.is_stub AND (EXISTS(SELECT 1 FROM sessions WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM personal_access_tokens WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM ssh_keys WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM oauth_accounts WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM two_factor_auth WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM two_factor_recovery_codes WHERE user_id=NEW.id))
+BEGIN SELECT RAISE(ABORT,'Remote account retains credentials'); END;

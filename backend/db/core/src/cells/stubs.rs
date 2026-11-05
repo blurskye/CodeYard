@@ -4,6 +4,7 @@ use crate::{
     DbPool,
 };
 use anyhow::{ensure, Result};
+use codeyard_model::cells::{Key, KeyKind, ObjectKind};
 use codeyard_support::cells::Prefix;
 
 fn home(pool: &DbPool, source: Prefix, id: i64) -> Result<()> {
@@ -33,14 +34,14 @@ fn website(value: Option<&str>) -> Result<()> {
     );
     Ok(())
 }
-fn name(value: &str) -> Result<()> {
-    let value = value.strip_suffix("[bot]").unwrap_or(value);
-    codeyard_model::account_input::validate_namespace(value, 1)
-        .map_err(|_| anyhow::anyhow!("Invalid stub name"))
+fn name(value: &str, kind: ObjectKind) -> Result<()> {
+    let key = Key::new(KeyKind::Name, value)?;
+    ensure!(key.belongs_to(kind), "Invalid stub name");
+    Ok(())
 }
-const USER: &str = "INSERT INTO users(id,username,display_name,bio,location,website,is_banned,home_cell,is_stub,created_at,updated_at)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,TRUE,$9,$10)
-ON CONFLICT(id) DO UPDATE SET username=excluded.username,display_name=excluded.display_name,bio=excluded.bio,location=excluded.location,website=excluded.website,is_banned=excluded.is_banned,updated_at=excluded.updated_at
+const USER: &str = "INSERT INTO users(id,username,display_name,bio,location,website,is_banned,must_change_password,two_factor_enabled,home_cell,is_stub,created_at,updated_at)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE,$11,$12)
+ON CONFLICT(id) DO UPDATE SET username=excluded.username,display_name=excluded.display_name,bio=excluded.bio,location=excluded.location,website=excluded.website,is_banned=excluded.is_banned,must_change_password=excluded.must_change_password,two_factor_enabled=excluded.two_factor_enabled,updated_at=excluded.updated_at
 WHERE users.is_stub AND users.home_cell=excluded.home_cell AND users.updated_at<=excluded.updated_at";
 const ORGANIZATION: &str = "INSERT INTO organizations(id,name,display_name,description,is_verified,home_cell,is_stub,created_at,updated_at)
 VALUES($1,$2,$3,$4,$5,$6,TRUE,$7,$8)
@@ -60,7 +61,7 @@ pub async fn user(pool: &DbPool, source: Prefix, value: &User) -> Result<bool> {
         !value.is_stub && value.home_cell == i32::from(source.get()),
         "Stub source is not authoritative"
     );
-    name(&value.username)?;
+    name(&value.username, ObjectKind::User)?;
     text(value.display_name.as_deref(), 255)?;
     text(value.bio.as_deref(), 4096)?;
     text(value.location.as_deref(), 255)?;
@@ -74,6 +75,8 @@ pub async fn user(pool: &DbPool, source: Prefix, value: &User) -> Result<bool> {
             .bind(&value.location)
             .bind(&value.website)
             .bind(value.is_banned)
+            .bind(value.must_change_password)
+            .bind(value.two_factor_enabled)
             .bind(i32::from(source.get()))
             .bind(value.created_at)
             .bind(value.updated_at)
@@ -88,6 +91,8 @@ pub async fn user(pool: &DbPool, source: Prefix, value: &User) -> Result<bool> {
             .bind(&value.location)
             .bind(&value.website)
             .bind(value.is_banned)
+            .bind(value.must_change_password)
+            .bind(value.two_factor_enabled)
             .bind(i32::from(source.get()))
             .bind(
                 value
@@ -111,7 +116,7 @@ pub async fn organization(pool: &DbPool, source: Prefix, value: &Organization) -
         !value.is_stub && value.home_cell == i32::from(source.get()),
         "Stub source is not authoritative"
     );
-    name(&value.name)?;
+    name(&value.name, ObjectKind::Organization)?;
     text(value.display_name.as_deref(), 255)?;
     text(value.description.as_deref(), 4096)?;
     let changed = match pool {

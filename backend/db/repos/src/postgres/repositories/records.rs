@@ -123,7 +123,7 @@ pub async fn repository_owner_name(pool: &PgPool, repo_id: i64) -> Result<Option
 
 pub async fn list_user_repositories(pool: &PgPool, user_id: i64) -> Result<Vec<Repository>> {
     let repos = sqlx::query_as::<_, Repository>(
-        "SELECT * FROM repositories WHERE owner_kind = 'user' AND owner_user_id = $1 AND NOT is_gist ORDER BY name",
+        "SELECT * FROM repositories WHERE owner_kind = 'user' AND owner_user_id = $1 AND NOT is_stub AND NOT is_gist ORDER BY name",
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -133,7 +133,7 @@ pub async fn list_user_repositories(pool: &PgPool, user_id: i64) -> Result<Vec<R
 }
 
 fn personal_repository_condition() -> &'static str {
-    "NOT is_gist AND owner_kind='user' AND owner_user_id=$1 AND (NOT is_private OR EXISTS(
+    "NOT is_stub AND NOT is_gist AND owner_kind='user' AND owner_user_id=$1 AND (NOT is_private OR EXISTS(
         SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.id=$1 AND s.id=$2
         AND s.expires_at>NOW() AND NOT u.is_banned AND NOT u.must_change_password))"
 }
@@ -162,16 +162,16 @@ pub async fn list_public_repositories(
     // The order is part of the query, so the limit keeps the top rows of that order.
     let sql: std::borrow::Cow<'_, str> = match sort {
         RepositorySort::Recent => {
-            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY created_at DESC, id DESC LIMIT $1".into()
+            "SELECT * FROM repositories WHERE is_private = false AND NOT is_stub AND NOT is_gist ORDER BY created_at DESC, id DESC LIMIT $1".into()
         }
         RepositorySort::Stars => {
-            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT $1".into()
+            "SELECT * FROM repositories WHERE is_private = false AND NOT is_stub AND NOT is_gist ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT $1".into()
         }
         RepositorySort::Forks => {
-            format!("SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY {} DESC, created_at DESC, id DESC LIMIT $1", public_fork_count_sql("repositories")).into()
+            format!("SELECT * FROM repositories WHERE is_private = false AND NOT is_stub AND NOT is_gist ORDER BY {} DESC, created_at DESC, id DESC LIMIT $1", public_fork_count_sql("repositories")).into()
         }
         RepositorySort::Updated => {
-            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY updated_at DESC, id DESC LIMIT $1".into()
+            "SELECT * FROM repositories WHERE is_private = false AND NOT is_stub AND NOT is_gist ORDER BY updated_at DESC, id DESC LIMIT $1".into()
         }
     };
     let repos = sqlx::query_as::<_, Repository>(&sql)
@@ -193,7 +193,7 @@ pub async fn list_trending_repositories(
     // instead of vanishing from Trending as a NULL comparison would make it.
     Ok(sqlx::query_as::<_, Repository>(
         "SELECT * FROM repositories \
-         WHERE is_private = false AND NOT is_gist AND NOT (owner_kind='user' AND owner_user_id IS NOT DISTINCT FROM $1) \
+         WHERE is_private = false AND NOT is_stub AND NOT is_gist AND NOT (owner_kind='user' AND owner_user_id IS NOT DISTINCT FROM $1) \
          AND (name ILIKE $2 ESCAPE '\\' OR COALESCE(description,'') ILIKE $2 ESCAPE '\\') \
          ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT $3",
     )
@@ -205,7 +205,7 @@ pub async fn list_trending_repositories(
 }
 
 fn shared_repository_condition() -> String {
-    format!("NOT r.is_gist AND NOT (r.owner_kind='user' AND r.owner_user_id=u.id) AND ({})>=1 AND (EXISTS(SELECT 1 FROM org_memberships m JOIN organization_settings s ON s.org_id=m.org_id AND s.default_repository_permission IN (1,3,5) WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) OR EXISTS(SELECT 1 FROM org_memberships m JOIN organization_role_assignments assigned ON assigned.org_id=m.org_id JOIN organization_roles role ON role.id=assigned.role_id AND role.base_level BETWEEN 1 AND 5 WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member') AND ((assigned.user_id=u.id AND assigned.team_id IS NULL) OR (assigned.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') WHERE t.id=assigned.team_id AND t.org_id=assigned.org_id AND t.privacy IN ('visible','secret'))))) OR EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5 WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret'))))))", codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL)
+    format!("NOT r.is_stub AND NOT r.is_gist AND NOT (r.owner_kind='user' AND r.owner_user_id=u.id) AND ({})>=1 AND (EXISTS(SELECT 1 FROM org_memberships m JOIN organization_settings s ON s.org_id=m.org_id AND s.default_repository_permission IN (1,3,5) WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) OR EXISTS(SELECT 1 FROM org_memberships m JOIN organization_role_assignments assigned ON assigned.org_id=m.org_id JOIN organization_roles role ON role.id=assigned.role_id AND role.base_level BETWEEN 1 AND 5 WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member') AND ((assigned.user_id=u.id AND assigned.team_id IS NULL) OR (assigned.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') WHERE t.id=assigned.team_id AND t.org_id=assigned.org_id AND t.privacy IN ('visible','secret'))))) OR EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') JOIN team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 1 AND 5 WHERE t.org_id=m.org_id AND t.privacy IN ('visible','secret'))))))", codeyard_db_core::queries::postgres::repositories::access::USER_REPO_ACCESS_SQL)
 }
 
 /// Repositories shared directly or through organization and team authority.
@@ -313,7 +313,7 @@ pub async fn search_public_repositories(
     };
     let kind = filter.kind.condition();
     Ok(sqlx::query_as::<_, Repository>(&format!(
-        r#"SELECT * FROM repositories WHERE is_private = false AND NOT is_gist
+        r#"SELECT * FROM repositories WHERE is_private = false AND NOT is_stub AND NOT is_gist
             AND (name ILIKE $2 ESCAPE '\' OR description ILIKE $2 ESCAPE '\')
             AND ($4::TEXT = '' OR id IN (SELECT repo_id FROM repo_languages WHERE language = $4::TEXT))
             AND ($5::TEXT = '' OR id IN (SELECT repo_id FROM repository_topics WHERE topic = $5::TEXT))
@@ -333,7 +333,7 @@ pub async fn search_public_repositories(
 pub async fn public_languages(pool: &PgPool, limit: i64) -> Result<Vec<String>> {
     Ok(sqlx::query_scalar(
         r#"SELECT l.language FROM repo_languages l JOIN repositories r ON r.id = l.repo_id
-            WHERE r.is_private = false AND NOT r.is_gist GROUP BY l.language
+            WHERE r.is_private = false AND NOT r.is_stub AND NOT r.is_gist GROUP BY l.language
             ORDER BY COUNT(*) DESC, l.language LIMIT $1"#,
     )
     .bind(limit)

@@ -722,4 +722,5 @@ multiple cells are not yet a usable deployment.
 
 Router source now includes bounded HTTP streaming and GraphQL field dispatch using the
 application route catalogue. These paths are not exposed by a public router role yet;
-foreign credentials and stubs remain unfinished. The generated schema crate is unchanged.
+foreign credentials and stub transport remain unfinished. Stub storage and local access/listing
+guards are written but unchecked. The generated schema crate is unchanged.

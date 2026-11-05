@@ -55,6 +55,10 @@ pub async fn save_profile(
         .bind(user)
         .fetch_one(&mut *tx)
         .await?;
+    anyhow::ensure!(
+        !current.is_stub,
+        codeyard_support::credentials::AccountRestricted
+    );
     if let Some(email) = input.email.filter(|email| !email.is_empty()) {
         let secondary: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_emails WHERE user_id=$1 AND lower(email)=lower($2) AND verified)").bind(user).bind(email).fetch_one(&mut *tx).await?;
         anyhow::ensure!(

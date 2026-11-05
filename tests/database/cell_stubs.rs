@@ -1,0 +1,290 @@
+//! Remote metadata keeps references without creating local accounts or credentials.
+use crate::support::database::Database;
+use axum::{
+    body::{to_bytes, Body},
+    http::{Request, StatusCode},
+};
+use codeyard_db_core::{cells::stubs, models::Organization, DbPool};
+use codeyard_support::cells::Prefix;
+use serde_json::Value;
+use tower::ServiceExt;
+
+async fn credentials(pool: &DbPool, user: i64, session: &str) -> bool {
+    let expiry = chrono::Utc::now() + chrono::Duration::hours(1);
+    match pool {
+        DbPool::Postgres(pool) => {
+            sqlx::query("INSERT INTO sessions(id,user_id,expires_at) VALUES($1,$2,$3)")
+                .bind(session)
+                .bind(user)
+                .bind(expiry)
+                .execute(pool)
+                .await
+                .is_ok()
+        }
+        DbPool::Sqlite(pool) => {
+            sqlx::query("INSERT INTO sessions(id,user_id,expires_at) VALUES($1,$2,$3)")
+                .bind(session)
+                .bind(user)
+                .bind(expiry.to_rfc3339_opts(chrono::SecondsFormat::Micros, true))
+                .execute(pool)
+                .await
+                .is_ok()
+        }
+    }
+}
+async fn mutate(pool: &DbPool, statement: &str, id: i64) -> bool {
+    match pool {
+        DbPool::Postgres(pool) => sqlx::query(statement).bind(id).execute(pool).await.is_ok(),
+        DbPool::Sqlite(pool) => sqlx::query(statement).bind(id).execute(pool).await.is_ok(),
+    }
+}
+async fn contract(pg: bool) {
+    let mut database = Database::empty(pg).await;
+    database.complete_setup().await;
+    let pool = database.pool();
+    let native = codeyard_db_identity::users::accounts::create_user_with_password(
+        pool,
+        "native",
+        Some("local@example.test"),
+        "local-password-hash",
+    )
+    .await
+    .unwrap();
+    let before = codeyard_db_identity::users::accounts::count_users(pool)
+        .await
+        .unwrap();
+    let source = Prefix::new(1);
+    let mut remote = native.clone();
+    remote.id = *source.ids().start();
+    remote.username = "remote".into();
+    remote.home_cell = 1;
+    remote.email = Some("private@example.test".into());
+    remote.password_hash = Some("secret-hash".into());
+    remote.avatar_file_id = Some(uuid::Uuid::new_v4());
+    remote.is_admin = true;
+    remote.two_factor_enabled = true;
+    remote.display_name = Some("Remote person".into());
+    assert!(stubs::user(pool, source, &remote).await.unwrap());
+    let stub = codeyard_db_identity::users::accounts::get_user_by_id(pool, remote.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stub.is_stub);
+    assert_eq!(stub.home_cell, 1);
+    assert_eq!(stub.display_name, remote.display_name);
+    assert!(stub.email.is_none() && stub.password_hash.is_none() && stub.avatar_file_id.is_none());
+    assert!(!stub.is_admin && stub.two_factor_enabled);
+    assert_eq!(
+        codeyard_db_identity::users::accounts::count_users(pool)
+            .await
+            .unwrap(),
+        before
+    );
+    assert!(!codeyard_db_identity::users::accounts::list_users(pool)
+        .await
+        .unwrap()
+        .iter()
+        .any(|user| user.id == stub.id));
+    let mut update = remote.clone();
+    update.updated_at += chrono::Duration::seconds(1);
+    update.display_name = Some("Newer metadata".into());
+    assert!(stubs::user(pool, source, &update).await.unwrap());
+    assert!(!stubs::user(pool, source, &remote).await.unwrap());
+    let current = codeyard_db_identity::users::accounts::get_user_by_id(pool, remote.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(current.display_name, update.display_name);
+    update.website = Some("javascript:alert(1)".into());
+    assert!(stubs::user(pool, source, &update).await.is_err());
+    let mut forged = remote.clone();
+    forged.id = native.id;
+    forged.username = "replacement".into();
+    assert!(!stubs::user(pool, source, &forged).await.unwrap());
+    assert_eq!(
+        codeyard_db_identity::users::accounts::get_user_by_id(pool, native.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .username,
+        native.username
+    );
+    assert!(stubs::user(pool, Prefix::ZERO, &remote).await.is_err());
+    assert!(!credentials(pool, remote.id, &format!("1.{}", "a".repeat(64))).await);
+    assert!(credentials(pool, native.id, &"b".repeat(64)).await);
+    assert!(
+        !mutate(
+            pool,
+            &format!(
+                "UPDATE sessions SET user_id=$1 WHERE id='{}'",
+                "b".repeat(64)
+            ),
+            remote.id
+        )
+        .await
+    );
+    assert_eq!(
+        database
+            .scalar(
+                "SELECT COUNT(*) FROM sessions WHERE user_id=$1",
+                &[native.id]
+            )
+            .await,
+        1
+    );
+    let convertible = codeyard_db_identity::users::accounts::create_user(pool, "convertible", None)
+        .await
+        .unwrap();
+    assert!(credentials(pool, convertible.id, &"c".repeat(64)).await);
+    assert!(
+        !mutate(
+            pool,
+            "UPDATE users SET is_stub=TRUE,home_cell=1 WHERE id=$1",
+            convertible.id
+        )
+        .await
+    );
+    assert!(
+        mutate(
+            pool,
+            "DELETE FROM sessions WHERE user_id=$1",
+            convertible.id
+        )
+        .await
+    );
+    assert!(
+        mutate(
+            pool,
+            "UPDATE users SET is_stub=TRUE,home_cell=1 WHERE id=$1",
+            convertible.id
+        )
+        .await
+    );
+
+    let now = chrono::Utc::now();
+    let organization = Organization {
+        id: remote.id,
+        home_cell: 1,
+        is_stub: false,
+        name: "remote-org".into(),
+        display_name: Some("Remote org".into()),
+        description: None,
+        avatar_file_id: Some(uuid::Uuid::new_v4()),
+        billing_email: Some("billing@example.test".into()),
+        is_verified: true,
+        created_at: now,
+        updated_at: now,
+    };
+    assert!(stubs::organization(pool, source, &organization)
+        .await
+        .unwrap());
+    assert!(
+        codeyard_db_orgs::organizations::discovery::list_organizations(
+            pool, None, false, 0, 0, 100
+        )
+        .await
+        .unwrap()
+        .iter()
+        .all(|org| org.id != organization.id)
+    );
+
+    let root = tempfile::tempdir().unwrap();
+    let git_path = root.path().join("actual.git");
+    let git = git2::Repository::init_bare(&git_path).unwrap();
+    let original_head = git
+        .find_reference("HEAD")
+        .unwrap()
+        .symbolic_target()
+        .unwrap()
+        .to_owned();
+    let local = codeyard_db_repos::repositories::records::create_repository(
+        pool,
+        native.id,
+        "local",
+        None,
+        false,
+        git_path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    let mut metadata = local.clone();
+    metadata.id = remote.id + 1;
+    metadata.name = "remote.repo".into();
+    metadata.home_cell = 1;
+    metadata.owner_user_id = Some(remote.id);
+    assert!(stubs::repository(pool, source, &metadata).await.unwrap());
+    let repository = database.repository(metadata.id).await;
+    assert!(
+        repository.is_stub
+            && repository.disk_path.is_empty()
+            && repository.storage_node_id.is_none()
+    );
+    assert!(
+        !codeyard_identity::repository_access::can_read(pool, None, &repository)
+            .await
+            .unwrap()
+    );
+    let mut hostile_path = repository.clone();
+    hostile_path.disk_path = git_path.to_str().unwrap().into();
+    let store = codeyard_repos_core::repositories::store::repo_store(&hostile_path, None);
+    assert!(store.info().await.is_err());
+    assert!(store
+        .set_default_branch_as(pool, repository.id, native.id, "changed")
+        .await
+        .is_err());
+    assert_eq!(
+        git.find_reference("HEAD").unwrap().symbolic_target(),
+        Some(original_head.as_str())
+    );
+    metadata.id += 1;
+    metadata.owner_user_id = Some(remote.id + 100);
+    assert!(stubs::repository(pool, source, &metadata).await.is_err());
+    assert_eq!(
+        database
+            .scalar(
+                "SELECT COUNT(*) FROM repositories WHERE id=$1",
+                &[metadata.id]
+            )
+            .await,
+        0
+    );
+
+    let router = database.router(root.path()).await;
+    for path in [
+        "/api/v3/users?per_page=100",
+        "/api/v3/search/users?q=remote",
+        "/api/v3/search/repositories?q=remote.repo",
+    ] {
+        let response = router
+            .clone()
+            .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1048576).await.unwrap())
+                .unwrap();
+        assert!(
+            !body.to_string().contains("Remote person")
+                && !body.to_string().contains("remote.repo"),
+            "{path}: {body}"
+        );
+        let items = body
+            .get("items")
+            .and_then(Value::as_array)
+            .or_else(|| body.as_array())
+            .unwrap();
+        assert!(items
+            .iter()
+            .all(|item| item["id"].as_i64() != Some(remote.id)));
+    }
+    database.finish().await;
+}
+#[tokio::test]
+async fn sqlite_remote_stubs_are_metadata_only() {
+    contract(false).await;
+}
+#[tokio::test]
+async fn postgres_remote_stubs_are_metadata_only() {
+    contract(true).await;
+}

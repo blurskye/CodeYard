@@ -62,7 +62,7 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     email_notifications BOOLEAN NOT NULL DEFAULT TRUE,
-    CONSTRAINT users_stub_data CHECK (NOT is_stub OR (password_hash IS NULL AND email IS NULL AND avatar_file_id IS NULL AND NOT is_admin AND NOT must_change_password AND NOT two_factor_enabled))
+    CONSTRAINT users_stub_data CHECK (NOT is_stub OR (password_hash IS NULL AND email IS NULL AND avatar_file_id IS NULL AND NOT is_admin))
 );
 
 -- files is created before users, so its user foreign key is added here.
@@ -4252,3 +4252,12 @@ CREATE TRIGGER ssh_keys_cell_home BEFORE INSERT OR UPDATE OF user_id ON ssh_keys
 CREATE TRIGGER oauth_accounts_cell_home BEFORE INSERT OR UPDATE OF user_id ON oauth_accounts FOR EACH ROW EXECUTE FUNCTION cell_credential_home();
 CREATE TRIGGER two_factor_auth_cell_home BEFORE INSERT OR UPDATE OF user_id ON two_factor_auth FOR EACH ROW EXECUTE FUNCTION cell_credential_home();
 CREATE TRIGGER two_factor_recovery_codes_cell_home BEFORE INSERT OR UPDATE OF user_id ON two_factor_recovery_codes FOR EACH ROW EXECUTE FUNCTION cell_credential_home();
+
+CREATE FUNCTION cell_stub_credentials() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF EXISTS(SELECT 1 FROM sessions WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM personal_access_tokens WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM ssh_keys WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM oauth_accounts WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM two_factor_auth WHERE user_id=NEW.id) OR EXISTS(SELECT 1 FROM two_factor_recovery_codes WHERE user_id=NEW.id) THEN RAISE EXCEPTION 'Remote account retains credentials'; END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER users_stub_credentials BEFORE UPDATE OF is_stub ON users FOR EACH ROW
+WHEN (NOT OLD.is_stub AND NEW.is_stub) EXECUTE FUNCTION cell_stub_credentials();

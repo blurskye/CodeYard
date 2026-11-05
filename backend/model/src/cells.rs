@@ -93,9 +93,14 @@ impl Key {
     pub fn new(kind: KeyKind, value: &str) -> Result<Self> {
         let value = match kind {
             KeyKind::Name => {
-                validate_namespace(value, 1)
+                let value = value.to_ascii_lowercase();
+                ensure!(
+                    value.len() <= 1024 && value.chars().count() <= 255,
+                    "Invalid account name"
+                );
+                validate_namespace(value.strip_suffix("[bot]").unwrap_or(&value), 1)
                     .map_err(|_| anyhow::anyhow!("Invalid account name"))?;
-                value.to_ascii_lowercase()
+                value
             }
             KeyKind::Email => {
                 validate_email(value).map_err(|_| anyhow::anyhow!("Invalid email address"))?;
@@ -133,6 +138,9 @@ impl Key {
         i16::from(self.hash()[0])
     }
     pub fn belongs_to(&self, object: ObjectKind) -> bool {
+        if self.kind == KeyKind::Name && self.value.ends_with("[bot]") {
+            return object == ObjectKind::User;
+        }
         matches!(
             (self.kind, object),
             (KeyKind::Name, ObjectKind::User | ObjectKind::Organization)
@@ -267,4 +275,18 @@ impl Cell {
 pub struct Location {
     pub cell: Prefix,
     pub object: Object,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn bot_names_share_the_directory_validator_and_only_name_users() {
+        let bot = Key::new(KeyKind::Name, "Actions[BoT]").unwrap();
+        assert_eq!(bot.value(), "actions[bot]");
+        assert!(bot.belongs_to(ObjectKind::User));
+        assert!(!bot.belongs_to(ObjectKind::Organization));
+        assert!(Key::new(KeyKind::Name, "[bot]").is_err());
+        assert!(Key::new(KeyKind::Name, &format!("{}[bot]", "a".repeat(251))).is_err());
+    }
 }

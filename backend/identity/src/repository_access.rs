@@ -33,7 +33,7 @@ pub async fn user_access(
     user: &User,
     repository: &Repository,
 ) -> Result<codeyard_db_core::models::AccessLevel> {
-    if repository.is_gist || user.is_banned || user.must_change_password {
+    if repository.is_stub || repository.is_gist || user.is_banned || user.must_change_password {
         return Ok(codeyard_db_core::models::AccessLevel::None);
     }
     if repository.owner_kind == "user" && user.is_admin {
@@ -49,6 +49,9 @@ pub async fn user_git_access(
     user: &User,
     repository: &Repository,
 ) -> Result<codeyard_db_core::models::AccessLevel> {
+    if repository.is_stub {
+        return Ok(codeyard_db_core::models::AccessLevel::None);
+    }
     if !repository.is_gist {
         return user_access(pool, user, repository).await;
     }
@@ -70,6 +73,9 @@ pub async fn can_read_git(
     user: Option<&User>,
     repository: &Repository,
 ) -> Result<bool> {
+    if repository.is_stub {
+        return Ok(false);
+    }
     if !repository.is_gist {
         return can_read(pool, user, repository).await;
     }
@@ -86,7 +92,7 @@ pub async fn can_read(
     user: Option<&User>,
     repository: &Repository,
 ) -> Result<bool> {
-    if repository.is_gist {
+    if repository.is_stub || repository.is_gist {
         return Ok(false);
     }
     if !repository.is_private {
@@ -141,7 +147,7 @@ pub async fn can_admin(
     user: &User,
     repository: &Repository,
 ) -> Result<bool> {
-    if repository.is_gist || user.is_banned || user.must_change_password {
+    if repository.is_stub || repository.is_gist || user.is_banned || user.must_change_password {
         return Ok(false);
     }
     if repository.owner_kind == "user" && (user.is_admin || repository.is_personal_owner(user.id)) {
@@ -161,7 +167,8 @@ pub async fn can_write(
     user: &User,
     repository: &Repository,
 ) -> Result<bool> {
-    if repository.is_gist
+    if repository.is_stub
+        || repository.is_gist
         || repository.is_archived
         || user.is_banned
         || user.must_change_password
@@ -185,7 +192,8 @@ pub async fn can_triage(
     user: &User,
     repository: &Repository,
 ) -> Result<bool> {
-    if repository.is_gist
+    if repository.is_stub
+        || repository.is_gist
         || repository.is_archived
         || user.is_banned
         || user.must_change_password
@@ -210,7 +218,8 @@ pub async fn can_maintain(
     user: &User,
     repository: &Repository,
 ) -> Result<bool> {
-    if repository.is_gist
+    if repository.is_stub
+        || repository.is_gist
         || repository.is_archived
         || user.is_banned
         || user.must_change_password
@@ -267,7 +276,7 @@ pub async fn check_read(
     actor: Option<i64>,
 ) -> std::result::Result<Repository, AccessError> {
     let repository = current_repository(pool, repo_id).await?;
-    if repository.is_gist {
+    if repository.is_stub || repository.is_gist {
         return Err(AccessError::NotFound);
     }
     if !repository.is_private {

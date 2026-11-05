@@ -316,7 +316,7 @@ pub async fn change_ban(
     if actor.user_id == target {
         return Ok(BanChange::SelfBan);
     }
-    let Some(user) = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id=?1")
+    let Some(user) = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id=?1 AND NOT is_stub")
         .bind(target)
         .fetch_optional(&mut *tx)
         .await?
@@ -426,7 +426,7 @@ pub async fn change_admin_role(
         return Ok(RoleChange::SelfChange);
     }
     let user = sqlx::query_as::<_, User>(
-        "UPDATE users SET is_admin=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING *",
+        "UPDATE users SET is_admin=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND NOT is_stub RETURNING *",
     )
     .bind(target)
     .bind(admin)
