@@ -17,6 +17,7 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
 use codeyard_app::gists as domain;
@@ -74,7 +75,7 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 }
 // gh uses POST for edits even though the published REST operation is PATCH.
 pub(super) fn aliases() -> Router<Arc<AppState>> {
-    Router::new().route(
+    Router::new().cell_route(
         "/gists/:gist_id",
         post(update)
             .layer(DefaultBodyLimit::max(MAX_GIST_REQUEST_BYTES))

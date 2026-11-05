@@ -16,6 +16,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use std::sync::Arc;
@@ -23,11 +24,11 @@ use std::sync::Arc;
 pub(super) fn router() -> Router<Arc<AppState>> {
     // Axum 0.7.9 uses :id, not the 0.8 {id} syntax.
     Router::new()
-        .route(
+        .cell_route(
             "/settings/organizations/:id/avatar",
             post(upload).layer(DefaultBodyLimit::max(crate::pictures::BODY_LIMIT)),
         )
-        .route(
+        .cell_route(
             "/settings/organizations/:id/avatar/remove",
             post(remove).layer(DefaultBodyLimit::max(16 * 1024)),
         )

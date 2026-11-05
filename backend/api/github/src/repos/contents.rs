@@ -1,6 +1,7 @@
 //! Contents API preconditions use blob IDs; publication still leases the entire branch tip.
 use axum::response::IntoResponse;
 use base64::Engine;
+use codeyard_api_http::cell_routes::CellRoutes;
 
 use axum::extract::Path;
 use axum::extract::Query;
@@ -521,7 +522,7 @@ pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 
 /// The repository root, which GitHub serves as `contents` with no path.
 pub(crate) fn aliases() -> Router<Arc<AppState>> {
-    Router::new().route("/repos/:owner/:repo/contents", get(read))
+    Router::new().cell_route("/repos/:owner/:repo/contents", get(read))
 }
 
 use codeyard_repos_core::api_shared::github::contents::store_error;

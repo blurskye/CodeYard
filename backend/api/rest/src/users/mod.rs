@@ -1,5 +1,6 @@
 //! Public account profiles and follow forms.
 
+use codeyard_api_http::cell_routes::CellRoutes;
 pub mod activity;
 pub mod avatar;
 pub mod follow;
@@ -14,20 +15,20 @@ pub fn router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
     Router::new()
         .merge(
             Router::new()
-                .route("/avatars/:name", get(crate::users::avatar::avatar_get))
+                .cell_route("/avatars/:name", get(crate::users::avatar::avatar_get))
                 .route_layer(from_fn(codeyard_api_http::middleware::require_node_access))
                 .layer(from_fn(codeyard_api_http::middleware::private_api_response)),
         )
-        .route("/:username", get(crate::users::profile::profile_get))
-        .route(
+        .cell_route("/:username", get(crate::users::profile::profile_get))
+        .cell_route(
             "/gists/@users/:username",
             get(crate::users::profile::profile_get),
         )
-        .route(
+        .cell_route(
             "/gists/@users/:username/_forms/follow",
             post(crate::users::follow::follow_post),
         )
-        .route(
+        .cell_route(
             "/:username/_forms/follow",
             post(crate::users::follow::follow_post),
         )

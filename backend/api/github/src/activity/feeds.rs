@@ -9,6 +9,7 @@ use axum::routing::get;
 use axum::routing::MethodRouter;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::events::EventScope;
 use codeyard_db_repos::events::EventViewer;
@@ -292,8 +293,8 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 }
 pub(crate) fn resources() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/activity-feeds/public.atom", get(feed))
-        .route("/api/activity-feeds/users/:username", get(feed))
-        .route("/api/activity-feeds/private/:username/:kind", get(feed))
-        .route("/api/activity-feeds/private/:username/orgs/:org", get(feed))
+        .cell_route("/api/activity-feeds/public.atom", get(feed))
+        .cell_route("/api/activity-feeds/users/:username", get(feed))
+        .cell_route("/api/activity-feeds/private/:username/:kind", get(feed))
+        .cell_route("/api/activity-feeds/private/:username/orgs/:org", get(feed))
 }

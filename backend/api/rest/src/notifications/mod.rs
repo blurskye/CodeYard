@@ -1,3 +1,4 @@
+use codeyard_api_http::cell_routes::CellRoutes;
 pub mod done;
 pub mod done_all;
 pub mod inbox;
@@ -12,31 +13,31 @@ pub fn router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
         Router,
     };
     let json = Router::new()
-        .route(
+        .cell_route(
             "/api/notifications",
             get(crate::notifications::inbox::list_notifications),
         )
-        .route(
+        .cell_route(
             "/api/notifications/:notification_id/read",
             patch(crate::notifications::read::mark_notification_read),
         )
-        .route(
+        .cell_route(
             "/api/notifications/:notification_id/save",
             patch(crate::notifications::save::set_notification_saved),
         )
-        .route(
+        .cell_route(
             "/api/notifications/:notification_id/done",
             patch(crate::notifications::done::set_notification_done),
         )
-        .route(
+        .cell_route(
             "/api/notifications/read-all",
             post(crate::notifications::read_all::mark_all_notifications_read),
         )
-        .route(
+        .cell_route(
             "/api/notifications/done-all",
             post(crate::notifications::done_all::mark_all_notifications_done),
         )
-        .route(
+        .cell_route(
             "/api/v3/notifications/ws",
             get(crate::notifications::ws::notifications_ws_handler),
         )
@@ -48,27 +49,27 @@ pub fn router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
         ));
     Router::new()
         .merge(json)
-        .route(
+        .cell_route(
             "/notifications",
             get(crate::notifications::inbox::notification_list),
         )
-        .route(
+        .cell_route(
             "/notifications/:notification_id/read",
             post(crate::notifications::read::notification_read),
         )
-        .route(
+        .cell_route(
             "/notifications/:notification_id/save",
             post(crate::notifications::save::notification_save),
         )
-        .route(
+        .cell_route(
             "/notifications/:notification_id/done",
             post(crate::notifications::done::notification_done),
         )
-        .route(
+        .cell_route(
             "/notifications/read-all",
             post(crate::notifications::read_all::notification_read_all),
         )
-        .route(
+        .cell_route(
             "/notifications/done-all",
             post(crate::notifications::done_all::notification_done_all),
         )

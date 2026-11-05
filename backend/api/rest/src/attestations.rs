@@ -11,6 +11,7 @@ use axum::routing::get;
 use axum::Form;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_security::attestations::Filter;
@@ -26,10 +27,10 @@ type Params = HashMap<String, String>;
 
 pub(crate) fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/orgs/:org/attestations", get(show).post(remove))
-        .route("/users/:username/attestations", get(show).post(remove))
-        .route("/:owner/:repo/attestations", get(show).post(remove))
-        .route(
+        .cell_route("/orgs/:org/attestations", get(show).post(remove))
+        .cell_route("/users/:username/attestations", get(show).post(remove))
+        .cell_route("/:owner/:repo/attestations", get(show).post(remove))
+        .cell_route(
             "/:owner/:repo/attestations/:attestation_id/bundle",
             get(bundle),
         )

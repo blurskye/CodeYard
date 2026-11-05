@@ -235,22 +235,7 @@ pub fn required() -> Error {
     Error::new(StatusCode::UNAUTHORIZED, "Requires authentication")
 }
 
-pub fn credential(headers: &HeaderMap) -> Option<&str> {
-    let mut values = headers.get_all(header::AUTHORIZATION).iter();
-    let value = values.next()?.to_str().ok()?;
-    if values.next().is_some() {
-        return None;
-    }
-    let (scheme, token) = value.split_once(' ')?;
-    if !(scheme.eq_ignore_ascii_case("token") || scheme.eq_ignore_ascii_case("bearer"))
-        || token.is_empty()
-        || token.len() > 2048
-        || token.bytes().any(|byte| byte.is_ascii_whitespace())
-    {
-        return None;
-    }
-    Some(token)
-}
+pub use codeyard_support::http_credentials::token as credential;
 
 pub async fn authenticate(
     state: &dyn DatabaseContext,

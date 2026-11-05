@@ -20,6 +20,7 @@ use axum::Json;
 use axum::Router;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::packages::Package;
 use codeyard_db_repos::packages::Publish;
@@ -36,7 +37,7 @@ use std::time::Duration;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/packages/:owner/nuget/*path", any(handle))
+        .cell_route("/api/packages/:owner/nuget/*path", any(handle))
         .layer(DefaultBodyLimit::max(MAX_OBJECT_BYTES as usize + 65536))
 }
 async fn handle(

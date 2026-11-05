@@ -5,6 +5,7 @@ mod blob_preview;
 mod branch_protection_settings;
 mod branch_tabs;
 mod browsing_regressions;
+mod cell_routes;
 mod dashboard_repositories;
 mod deploy_keys;
 mod discovery_pages;

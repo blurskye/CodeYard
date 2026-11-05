@@ -11,6 +11,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_api_http::shared::user::responses::Fields;
@@ -25,8 +26,8 @@ use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/admin/email", get(show).post(save_form))
-        .route("/admin/email/test", post(test_form))
+        .cell_route("/admin/email", get(show).post(save_form))
+        .cell_route("/admin/email/test", post(test_form))
         .layer(DefaultBodyLimit::max(16 * 1024))
 }
 

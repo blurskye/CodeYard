@@ -6,6 +6,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::issues::IssueRelation;
@@ -22,9 +23,9 @@ use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/issues", get(issues_page))
-        .route("/issues/new", get(new_issue_page))
-        .route("/pulls", get(pulls_page))
+        .cell_route("/issues", get(issues_page))
+        .cell_route("/issues/new", get(new_issue_page))
+        .cell_route("/pulls", get(pulls_page))
 }
 
 /// `/issues/new`: the repositories the signed-in user can open an issue in, their own and the ones

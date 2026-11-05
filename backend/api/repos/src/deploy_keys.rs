@@ -14,6 +14,7 @@ use axum::Json;
 use axum::Router;
 use chrono::DateTime;
 use chrono::Utc;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::extract_session_id;
@@ -160,11 +161,11 @@ pub async fn delete_key(
 
 pub fn json_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/keys",
             get(list_keys).post(create_key),
         )
-        .route("/api/repos/:owner/:repo/keys/:key_id", delete(delete_key))
+        .cell_route("/api/repos/:owner/:repo/keys/:key_id", delete(delete_key))
 }
 
 /// The settings section's panel, built for the viewer. Its forms post back to the repository.

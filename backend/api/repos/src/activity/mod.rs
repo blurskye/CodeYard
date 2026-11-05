@@ -1,6 +1,7 @@
 //! Activity on a repository: stars, watchers, stargazers and forks.
 use axum::routing::get;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use std::sync::Arc;
 
@@ -10,27 +11,27 @@ pub mod stargazers;
 
 pub fn json_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/star",
             get(crate::activity::engagement::check_star)
                 .put(crate::activity::engagement::star_repo)
                 .delete(crate::activity::engagement::unstar_repo),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/watch",
             get(crate::activity::engagement::check_watch)
                 .put(crate::activity::engagement::watch_repo)
                 .delete(crate::activity::engagement::unwatch_repo),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/stargazers",
             get(crate::activity::stargazers::list_stargazers),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/forks",
             get(crate::activity::forks::list_forks).post(crate::activity::forks::fork_repo),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/fork",
             get(crate::activity::forks::check_fork),
         )

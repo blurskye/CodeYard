@@ -5,6 +5,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use codeyard_support::cells::{Prefix, Secret};
 use codeyard_support::crypto::is_hex_token;
+use codeyard_support::http_credentials::cookie as named_cookie;
 
 fn cookie_domain() -> Option<String> {
     std::env::var("COOKIE_DOMAIN")
@@ -95,25 +96,6 @@ pub fn build_logout_cookie() -> String {
     }
 
     cookie
-}
-
-fn named_cookie(headers: &HeaderMap, name: &str, limit: usize) -> Option<String> {
-    let mut found = None;
-    for cookies in headers.get_all(header::COOKIE).iter() {
-        for cookie in cookies.to_str().ok()?.split(';') {
-            let Some((key, value)) = cookie.trim().split_once('=') else {
-                continue;
-            };
-            if key != name {
-                continue;
-            }
-            if found.is_some() || value.len() > limit {
-                return None;
-            }
-            found = Some(value);
-        }
-    }
-    found.map(str::to_owned)
 }
 
 pub fn random_cookie(headers: &HeaderMap, name: &str) -> Option<String> {

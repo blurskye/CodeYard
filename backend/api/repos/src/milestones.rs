@@ -23,6 +23,7 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::error::ApiFailure;
@@ -714,27 +715,27 @@ pub fn page_router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>
         Router,
     };
     Router::new()
-        .route("/:owner/:repo/milestones", get(native_index))
-        .route(
+        .cell_route("/:owner/:repo/milestones", get(native_index))
+        .cell_route(
             "/:owner/:repo/milestones/new",
             get(native_new_page).post(native_create),
         )
-        .route("/:owner/:repo/milestones/:number", get(native_detail))
-        .route("/:owner/:repo/milestones/:number/edit", post(native_update))
-        .route("/:owner/:repo/milestones/:number/close", post(native_close))
-        .route(
+        .cell_route("/:owner/:repo/milestones/:number", get(native_detail))
+        .cell_route("/:owner/:repo/milestones/:number/edit", post(native_update))
+        .cell_route("/:owner/:repo/milestones/:number/close", post(native_close))
+        .cell_route(
             "/:owner/:repo/milestones/:number/reopen",
             post(native_reopen),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/milestones/:number/delete",
             post(native_delete),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/milestone",
             post(native_set_item_milestone),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/milestone",
             post(native_set_item_milestone),
         )

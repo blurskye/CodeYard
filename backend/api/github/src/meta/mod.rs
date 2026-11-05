@@ -14,6 +14,7 @@ use axum::Json;
 use axum::Router;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
@@ -428,7 +429,7 @@ async fn emoji(Path(name): Path<String>) -> Result<Response> {
     Ok(([(header::CONTENT_TYPE,"image/svg+xml")],format!("<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><text x=\"2\" y=\"52\" font-size=\"52\">{emoji}</text></svg>")).into_response())
 }
 pub(super) fn aliases() -> Router<Arc<AppState>> {
-    Router::new().route("/emojis/:name", get(emoji))
+    Router::new().cell_route("/emojis/:name", get(emoji))
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

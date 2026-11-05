@@ -15,6 +15,7 @@ use axum::Json;
 use axum::Router;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
@@ -36,9 +37,9 @@ use std::sync::Arc;
 type Fields = HashMap<String, String>;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/settings/actions/runners", get(show).post(save))
-        .route("/api/actions/runners/:id/remove", post(remove))
-        .route("/api/actions/runners/download", get(download))
+        .cell_route("/settings/actions/runners", get(show).post(save))
+        .cell_route("/api/actions/runners/:id/remove", post(remove))
+        .cell_route("/api/actions/runners/download", get(download))
         .layer(DefaultBodyLimit::max(512 * 1024))
 }
 async fn scope(ctx: &PageContext) -> Result<Scope, Response> {

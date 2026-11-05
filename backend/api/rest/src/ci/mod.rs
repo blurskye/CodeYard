@@ -3,6 +3,7 @@ use axum::middleware::from_fn;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use std::sync::Arc;
 pub mod actions_page;
@@ -18,12 +19,12 @@ pub mod workflows;
 
 pub fn router() -> Router<Arc<AppState>> {
     let json = Router::new()
-        .route(
+        .cell_route(
             "/api/ci/trigger",
             post(crate::ci::trigger::trigger_ci)
                 .layer(from_fn(codeyard_api_http::csrf::cookie_api_submission)),
         )
-        .route(
+        .cell_route(
             "/api/ci/workflows",
             get(crate::ci::workflows::list_ci_workflows),
         )
@@ -35,8 +36,8 @@ pub fn router() -> Router<Arc<AppState>> {
     repository_router()
         .merge(json)
         .merge(crate::ci::runners::router())
-        .route("/ci", get(crate::ci::actions_page::global_actions))
-        .route("/ci/dispatch", post(crate::ci::trigger::global_dispatch))
+        .cell_route("/ci", get(crate::ci::actions_page::global_actions))
+        .cell_route("/ci/dispatch", post(crate::ci::trigger::global_dispatch))
 }
 
 use codeyard_api_http::shared::ci::repository_router;

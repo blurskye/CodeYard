@@ -3,6 +3,7 @@ use axum::routing::delete;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use std::sync::Arc;
 mod collection;
@@ -16,40 +17,40 @@ mod stats;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
         // Axum's previous nested collection accepted both spellings.
-        .route(
+        .cell_route(
             "/api/files",
             post(crate::files::collection::create_upload_url),
         )
-        .route(
+        .cell_route(
             "/api/files/",
             post(crate::files::collection::create_upload_url),
         )
-        .route(
+        .cell_route(
             "/api/files/confirm",
             post(crate::files::confirm::confirm_upload),
         )
-        .route(
+        .cell_route(
             "/api/files/stats",
             get(crate::files::stats::get_my_file_stats),
         )
-        .route(
+        .cell_route(
             "/api/files/:file_id/dl",
             get(crate::files::download::get_download_url),
         )
-        .route(
+        .cell_route(
             "/api/files/:file_id/download",
             get(crate::files::public::public_file_redirect),
         )
-        .route(
+        .cell_route(
             "/api/files/public/:file_id",
             get(crate::files::public::get_public_download_url),
         )
-        .route(
+        .cell_route(
             CONTENT_ROUTE,
             get(crate::files::public::public_file_redirect)
                 .put(crate::files::content::put_upload_content),
         )
-        .route(
+        .cell_route(
             "/api/files/:file_id",
             delete(crate::files::file::delete_file),
         )

@@ -1,5 +1,6 @@
 //! Browser sign-in, account creation and native authentication forms.
 
+use codeyard_api_http::cell_routes::CellRoutes;
 pub mod change_password;
 pub mod email_links;
 pub(crate) mod errors;
@@ -21,21 +22,21 @@ pub fn router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
         .merge(crate::auth::github_apps::router())
         .merge(
             Router::new()
-                .route(
+                .cell_route(
                     "/enter",
                     get(crate::auth::login::auth_get).post(crate::auth::login::auth_post),
                 )
-                .route(
+                .cell_route(
                     "/login",
                     get(crate::auth::login::auth_get).post(crate::auth::login::auth_post),
                 )
                 .merge(
                     Router::new()
-                        .route(
+                        .cell_route(
                             "/login/oauth/:provider",
                             get(crate::auth::oauth::oauth_redirect),
                         )
-                        .route(
+                        .cell_route(
                             "/login/oauth/:provider/callback",
                             get(crate::auth::oauth::oauth_callback),
                         )
@@ -43,42 +44,42 @@ pub fn router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
                             codeyard_api_http::middleware::private_sensitive_response,
                         )),
                 )
-                .route(
+                .cell_route(
                     "/login/two-factor",
                     get(crate::auth::two_factor::sign_in_get)
                         .post(crate::auth::two_factor::sign_in_post),
                 )
-                .route(
+                .cell_route(
                     "/register",
                     get(crate::auth::login::auth_get).post(crate::auth::login::auth_post),
                 )
-                .route(
+                .cell_route(
                     "/setup",
                     get(crate::auth::login::auth_get).post(crate::auth::login::auth_post),
                 )
-                .route(
+                .cell_route(
                     "/forgot-password",
                     get(crate::auth::email_links::forgot_get)
                         .post(crate::auth::email_links::forgot_post),
                 )
-                .route(
+                .cell_route(
                     "/logout",
                     get(crate::auth::logout::logout_get).post(crate::auth::logout::logout_post),
                 )
                 .merge(
                     // These addresses carry a token, so no cache keeps them.
                     Router::new()
-                        .route(
+                        .cell_route(
                             "/reset-password",
                             get(crate::auth::email_links::reset_get)
                                 .post(crate::auth::email_links::reset_post),
                         )
-                        .route(
+                        .cell_route(
                             "/reset-password/code",
                             get(crate::auth::email_links::reset_code_get)
                                 .post(crate::auth::email_links::reset_code_post),
                         )
-                        .route(
+                        .cell_route(
                             "/verify-email",
                             get(crate::auth::email_links::verify_get)
                                 .post(crate::auth::email_links::verify_post),

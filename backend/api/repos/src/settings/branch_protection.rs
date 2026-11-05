@@ -6,6 +6,7 @@ use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::Json;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::error::protection_write_error;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
@@ -495,11 +496,11 @@ pub fn router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
         Router,
     };
     Router::new()
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/branch-protection",
             get(list_branch_protection_rules).put(upsert_branch_protection_rule),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/branch-protection/:pattern",
             delete(delete_branch_protection_rule),
         )

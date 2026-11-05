@@ -16,6 +16,7 @@ use axum::response::Response;
 use axum::routing::post;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_model::graphql_error::error;
 use serde_json::json;
@@ -644,7 +645,7 @@ async fn execute(
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/api/graphql", post(execute))
+        .cell_route("/api/graphql", post(execute))
         .layer(axum::middleware::from_fn(
             codeyard_api_http::middleware::bounded_form_body,
         ))

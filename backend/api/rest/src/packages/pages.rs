@@ -8,6 +8,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::Form;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::packages::Credential;
@@ -23,28 +24,28 @@ use std::sync::Arc;
 
 pub(crate) fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/users/:username/packages", get(show))
-        .route("/orgs/:org/packages", get(show))
-        .route("/users/:username/packages/:kind/:name", get(show))
-        .route("/orgs/:org/packages/:kind/:name", get(show))
-        .route(
+        .cell_route("/users/:username/packages", get(show))
+        .cell_route("/orgs/:org/packages", get(show))
+        .cell_route("/users/:username/packages/:kind/:name", get(show))
+        .cell_route("/orgs/:org/packages/:kind/:name", get(show))
+        .cell_route(
             "/users/:username/packages/:kind/:name/versions/:version",
             get(show),
         )
-        .route(
+        .cell_route(
             "/orgs/:org/packages/:kind/:name/versions/:version",
             get(show),
         )
-        .route(
+        .cell_route(
             "/users/:username/packages/:kind/:name/settings",
             get(show).post(change),
         )
-        .route(
+        .cell_route(
             "/orgs/:org/packages/:kind/:name/settings",
             get(show).post(change),
         )
-        .route("/:owner/:repo/packages", get(show))
-        .route("/explore/packages", get(show))
+        .cell_route("/:owner/:repo/packages", get(show))
+        .cell_route("/explore/packages", get(show))
         .layer(DefaultBodyLimit::max(16 * 1024))
 }
 

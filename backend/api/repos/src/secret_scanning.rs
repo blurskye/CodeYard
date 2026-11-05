@@ -1,5 +1,6 @@
 //! Native secret scanning pages use the same transactions as REST.
 use axum::response::IntoResponse;
+use codeyard_api_http::cell_routes::CellRoutes;
 
 use axum::extract::Path;
 use axum::extract::State;
@@ -24,12 +25,12 @@ const MAX_PAGE: i64 = 10000;
 
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/security/secret-scanning", get(list))
-        .route(
+        .cell_route("/:owner/:repo/security/secret-scanning", get(list))
+        .cell_route(
             "/:owner/:repo/security/secret-scanning/:number",
             get(alert).post(resolve),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/security/secret-scanning/unblock-secret/:id",
             get(bypass_page).post(bypass_form),
         )

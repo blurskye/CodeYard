@@ -13,25 +13,9 @@ pub fn user_code(cell: codeyard_support::cells::Prefix) -> String {
     format!("{cell}-{}-{}", &value[..4], &value[4..8]).to_uppercase()
 }
 
-pub fn user_code_cell(value: &str) -> Option<codeyard_support::cells::Prefix> {
-    let value = normalize_code(value);
-    if value.len() > 15 {
-        return None;
-    }
-    let parts: Vec<_> = value.split('-').collect();
-    let (cell, code) = match parts.as_slice() {
-        [first, second] => (codeyard_support::cells::Prefix::ZERO, [*first, *second]),
-        [prefix, first, second] => (prefix.parse().ok()?, [*first, *second]),
-        _ => return None,
-    };
-    code.iter()
-        .all(|part| part.len() == 4 && part.bytes().all(|byte| byte.is_ascii_alphanumeric()))
-        .then_some(cell)
-}
-
-pub fn normalize_code(code: &str) -> String {
-    code.trim().to_ascii_uppercase()
-}
+pub use codeyard_support::cells::{
+    device_code_prefix as user_code_cell, normalize_device_code as normalize_code,
+};
 
 pub async fn client(pool: &DbPool, id: &str) -> anyhow::Result<Option<Application>> {
     if id == CLI_CLIENT {

@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_model::node_roles::NodeRole;
 use std::io::Write;
@@ -14,12 +15,12 @@ use std::time::Duration;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             "/health",
             get(|| async { Json(serde_json::json!({ "status": "ok" })) }),
         )
-        .route("/ready", get(ready))
-        .route("/metrics", get(crate::metrics::metrics))
+        .cell_route("/ready", get(ready))
+        .cell_route("/metrics", get(crate::metrics::metrics))
 }
 
 /// Storage-only nodes expose probes and metrics, never the web application.

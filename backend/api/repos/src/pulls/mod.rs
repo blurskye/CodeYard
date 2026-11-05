@@ -1,3 +1,4 @@
+use codeyard_api_http::cell_routes::CellRoutes;
 pub mod checks;
 pub mod collection;
 pub mod comments;
@@ -19,67 +20,67 @@ pub fn json_router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>
         Router,
     };
     Router::new()
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls",
             get(crate::pulls::collection::list_pull_requests)
                 .post(crate::pulls::collection::create_pull_request),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number",
             get(crate::pulls::pull::get_pull_request).put(crate::pulls::pull::update_pull_request),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/workflows",
             post(crate::pulls::workflows::run_pull_request_workflows),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/ready",
             post(crate::pulls::ready::mark_pull_request_ready),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/merge",
             post(crate::pulls::merge::merge_pull_request),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/comments",
             get(crate::pulls::comments::list_pull_request_comments)
                 .post(crate::pulls::comments::create_pull_request_comment),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/comments/:comment_id/resolve",
             post(crate::pulls::comments::resolve_pull_request_comment),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/comments/:comment_id/unresolve",
             post(crate::pulls::comments::unresolve_pull_request_comment),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/reviews",
             get(crate::pulls::reviews::list_pull_request_reviews)
                 .post(crate::pulls::reviews::create_pull_request_review),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/reviews/:review_id/dismiss",
             post(crate::pulls::reviews::dismiss_pull_request_review),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/requested_reviewers",
             get(crate::pulls::requested_reviewers::list_requested_reviewers)
                 .post(crate::pulls::requested_reviewers::request_reviewer),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/requested_reviewers/:username",
             delete(crate::pulls::requested_reviewers::remove_requested_reviewer),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/diff",
             get(crate::pulls::diff::get_pull_request_diff),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/stack",
             post(crate::pulls::stack::post_stack).delete(crate::pulls::stack::delete_stack),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/pulls/:number/stack/rebase",
             post(crate::pulls::stack::post_rebase),
         )
@@ -196,143 +197,143 @@ pub fn page_router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>
         Router,
     };
     Router::new()
-        .route("/:owner/:repo/pull/:number", get(pull_alias))
-        .route("/:owner/:repo/pull/:number/*rest", get(pull_alias_with_tab))
-        .route(
+        .cell_route("/:owner/:repo/pull/:number", get(pull_alias))
+        .cell_route("/:owner/:repo/pull/:number/*rest", get(pull_alias_with_tab))
+        .cell_route(
             "/:owner/:repo/pulls",
             get(crate::issues::collection::native_index),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/new",
             get(crate::issues::collection::native_new_page)
                 .post(crate::issues::collection::native_create),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number",
             get(crate::issues::issue::native_detail),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/edit",
             post(crate::issues::issue::native_edit),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/state",
             post(crate::issues::issue::native_change_state),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/tasks",
             post(crate::issues::tasks::native_toggle_task),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/comments",
             post(crate::pulls::review_forms::native_pull_comment),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/lock",
             post(crate::issues::locking::native_lock),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/comments/:comment/pin",
             post(crate::issues::pins::native_pin),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/react",
             post(crate::issues::reactions::native_react),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/comments/:comment_id/edit",
             post(crate::pulls::review_forms::native_edit_conversation_comment),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/comments/:comment_id/delete",
             post(crate::pulls::review_forms::native_delete_conversation_comment),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/comments/:comment_id/resolve",
             post(crate::pulls::review_forms::native_resolve_comment),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/comments/:comment_id/unresolve",
             post(crate::pulls::review_forms::native_unresolve_comment),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/reviews",
             post(crate::pulls::review_forms::native_review),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/reviews/pending/discard",
             post(crate::pulls::review_forms::native_discard_review),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/reviews/:review_id/dismiss",
             post(crate::pulls::review_forms::native_dismiss_review),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/requested_reviewers",
             post(crate::pulls::review_forms::native_request_reviewer),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/requested_reviewers/:username/remove",
             post(crate::pulls::review_forms::native_remove_requested_reviewer),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/commits",
             get(crate::pulls::commits::native_commits),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/checks",
             get(crate::pulls::checks::native_checks),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/diff",
             get(crate::pulls::diff::native_diff),
         )
         // GitHub's address for the same page, so shared links to it open the Files changed view.
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/files",
             get(crate::pulls::diff::native_diff),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/viewed",
             post(crate::pulls::review_forms::native_set_viewed),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/ready",
             post(crate::pulls::ready::native_ready),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/workflows",
             post(crate::pulls::workflows::native_run_workflows),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/merge",
             post(crate::pulls::merge::native_merge),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/stack",
             post(crate::pulls::stack::native_join),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/unstack",
             post(crate::pulls::stack::native_unstack),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/stack/rebase",
             post(crate::pulls::stack::native_rebase),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/labels",
             post(crate::issues::labels::native_add_label),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/labels/:label_id/remove",
             post(crate::issues::labels::native_remove_label),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/assignees",
             post(crate::issues::assignees::native_assign),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/pulls/:number/assignees/:username/remove",
             post(crate::issues::assignees::native_unassign),
         )

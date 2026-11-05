@@ -14,6 +14,7 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
@@ -32,15 +33,15 @@ type Fields = HashMap<String, String>;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/login/device/code", post(device_code))
-        .route("/login/oauth/access_token", post(access_token))
-        .route("/login/device", get(device_get).post(device_post))
-        .route(
+        .cell_route("/login/device/code", post(device_code))
+        .cell_route("/login/oauth/access_token", post(access_token))
+        .cell_route("/login/device", get(device_get).post(device_post))
+        .cell_route(
             "/login/oauth/authorize",
             get(authorize_get).post(authorize_post),
         )
-        .route("/settings/applications", get(applications))
-        .route(
+        .cell_route("/settings/applications", get(applications))
+        .cell_route(
             "/settings/applications/new",
             get(register_get).post(register_post),
         )
@@ -307,6 +308,15 @@ fn device_page(
     )
 }
 
+fn invalid_device(ctx: &PageContext) -> Response {
+    device_page(
+        ctx,
+        "",
+        None,
+        Some("This code is invalid, expired or already used."),
+    )
+}
+
 async fn device_get(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
@@ -334,20 +344,18 @@ async fn device_post(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    let code = codeyard_identity::oauth_apps::normalize_code(field(&form, "user_code"));
     if let Err(response) = admit(&ctx.state, &ctx.headers, "oauth-user-code").await {
         return response;
     }
+    if codeyard_identity::oauth_apps::user_code_cell(field(&form, "user_code"))
+        != Some(ctx.state.pool.cell_prefix())
+    {
+        return invalid_device(&ctx);
+    }
+    let code = codeyard_identity::oauth_apps::normalize_code(field(&form, "user_code"));
     let grant = match codeyard_db_identity::oauth_apps::device_grant(&ctx.state.pool, &code).await {
         Ok(Some(grant)) => grant,
-        Ok(None) => {
-            return device_page(
-                &ctx,
-                "",
-                None,
-                Some("This code is invalid, expired or already used."),
-            )
-        }
+        Ok(None) => return invalid_device(&ctx),
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Authorization unavailable"),
     };
     let app = match codeyard_identity::oauth_apps::client(&ctx.state.pool, &grant.client_id).await {

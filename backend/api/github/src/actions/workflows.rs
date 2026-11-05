@@ -1,5 +1,6 @@
 //! Workflows are discovered from the default branch; IDs and disabled state are durable.
 use axum::response::IntoResponse;
+use codeyard_api_http::cell_routes::CellRoutes;
 
 use axum::extract::rejection::JsonRejection;
 use axum::extract::OriginalUri;
@@ -293,7 +294,7 @@ async fn badge(
 }
 
 pub(super) fn aliases() -> Router<Arc<AppState>> {
-    Router::new().route(
+    Router::new().cell_route(
         "/repos/:owner/:repo/actions/workflows/:workflow_id/badge.svg",
         get(badge),
     )

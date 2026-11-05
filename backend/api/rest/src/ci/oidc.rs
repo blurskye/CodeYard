@@ -7,6 +7,7 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use serde::Deserialize;
 use serde_json::json;
@@ -15,9 +16,9 @@ use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/.well-known/openid-configuration", get(discovery))
-        .route("/.well-known/jwks", get(jwks))
-        .route("/api/ci/oidc/token", get(token))
+        .cell_route("/.well-known/openid-configuration", get(discovery))
+        .cell_route("/.well-known/jwks", get(jwks))
+        .cell_route("/api/ci/oidc/token", get(token))
 }
 
 async fn discovery() -> Json<Value> {

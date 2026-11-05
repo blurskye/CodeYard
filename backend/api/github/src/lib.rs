@@ -19,6 +19,7 @@ use axum::routing::on;
 use axum::routing::MethodFilter;
 use axum::routing::MethodRouter;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::shared::github::code_scanning::databases::HOST_UPLOAD_ROUTE as CODEQL_HOST_UPLOAD_ROUTE;
 use codeyard_api_http::shared::github::code_scanning::databases::UPLOAD_ROUTE as CODEQL_UPLOAD_ROUTE;
 use codeyard_app::app::AppState;
@@ -243,7 +244,7 @@ fn operations() -> Router<Arc<AppState>> {
             Some(_) => panic!("{} is not supported but has a handler", operation.id),
             None => placeholder(operation),
         };
-        router = router.route(operation.path, route);
+        router = router.cell_route(operation.path, route);
     }
     let unknown: Vec<_> = handlers.keys().collect();
     assert!(
@@ -254,31 +255,33 @@ fn operations() -> Router<Arc<AppState>> {
 }
 
 pub fn router() -> Router<Arc<AppState>> {
-    let api = operations()
-        .merge(crate::repos::archives::aliases())
-        .route(
-            "/advisories",
-            axum::routing::post(crate::dependabot::dependabot_alerts::import),
-        )
-        .merge(crate::code_scanning::aliases())
-        .merge(crate::actions::aliases())
-        .merge(crate::repos::contents::aliases())
-        .merge(crate::actions::environment_values::aliases())
-        .merge(crate::gists::aliases())
-        .merge(crate::repos::repository_attestations::aliases())
-        .merge(crate::git::refs::aliases())
-        .merge(crate::migrations::aliases())
-        .merge(crate::meta::aliases())
-        .fallback(missing);
+    let api = || {
+        operations()
+            .merge(crate::repos::archives::aliases())
+            .cell_route(
+                "/advisories",
+                axum::routing::post(crate::dependabot::dependabot_alerts::import),
+            )
+            .merge(crate::code_scanning::aliases())
+            .merge(crate::actions::aliases())
+            .merge(crate::repos::contents::aliases())
+            .merge(crate::actions::environment_values::aliases())
+            .merge(crate::gists::aliases())
+            .merge(crate::repos::repository_attestations::aliases())
+            .merge(crate::git::refs::aliases())
+            .merge(crate::migrations::aliases())
+            .merge(crate::meta::aliases())
+            .fallback(missing)
+    };
     Router::new()
-        .nest("/api/v3", api)
-        .route("/api/v3/", get(crate::meta::root))
-        .route(
+        .cell_nest("/api/v3", api)
+        .cell_route("/api/v3/", get(crate::meta::root))
+        .cell_route(
             CODEQL_UPLOAD_ROUTE,
             axum::routing::post(crate::code_scanning::databases::upload)
                 .layer(axum::extract::DefaultBodyLimit::disable()),
         )
-        .route(
+        .cell_route(
             CODEQL_HOST_UPLOAD_ROUTE,
             axum::routing::post(crate::code_scanning::databases::upload)
                 .layer(axum::extract::DefaultBodyLimit::disable()),

@@ -1,5 +1,6 @@
 //! Native recipient workflow, backed by the same invitation transactions as the REST adapters.
 use axum::response::IntoResponse;
+use codeyard_api_http::cell_routes::CellRoutes;
 
 use axum::extract::Path;
 use axum::extract::State;
@@ -123,8 +124,8 @@ async fn alias() -> Response {
 }
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/settings/invitations", get(list))
-        .route("/settings/invitations/:id/:action", post(respond))
-        .route("/:owner/:repo/invitations", get(alias))
+        .cell_route("/settings/invitations", get(list))
+        .cell_route("/settings/invitations/:id/:action", post(respond))
+        .cell_route("/:owner/:repo/invitations", get(alias))
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
 }

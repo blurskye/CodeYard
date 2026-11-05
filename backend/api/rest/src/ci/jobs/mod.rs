@@ -3,6 +3,7 @@ use axum::http::StatusCode;
 use axum::routing::get;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
@@ -44,11 +45,11 @@ async fn authorized_run(
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             "/api/ci/jobs",
             get(crate::ci::jobs::collection::list_ci_jobs),
         )
-        .route(
+        .cell_route(
             "/api/ci/jobs/:job_id",
             get(crate::ci::jobs::job::get_ci_job),
         )

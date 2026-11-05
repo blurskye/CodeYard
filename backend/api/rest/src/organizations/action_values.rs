@@ -8,6 +8,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
@@ -21,7 +22,7 @@ use std::sync::Arc;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/settings/organizations/:id/actions/:action", post(change))
+        .cell_route("/settings/organizations/:id/actions/:action", post(change))
         .layer(DefaultBodyLimit::max(256 * 1024))
 }
 

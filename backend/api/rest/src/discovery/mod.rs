@@ -4,6 +4,7 @@ use axum::http::StatusCode;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_webui::components::languages::LanguageShare;
@@ -19,10 +20,10 @@ pub(crate) mod stars;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/", get(crate::discovery::home::home))
-        .route("/explore", get(crate::discovery::explore::explore_page))
-        .route("/search", get(crate::discovery::search::search_page))
-        .route("/stars", get(crate::discovery::stars::stars_page))
+        .cell_route("/", get(crate::discovery::home::home))
+        .cell_route("/explore", get(crate::discovery::explore::explore_page))
+        .cell_route("/search", get(crate::discovery::search::search_page))
+        .cell_route("/stars", get(crate::discovery::stars::stars_page))
         .layer(DefaultBodyLimit::max(16 * 1024))
 }
 

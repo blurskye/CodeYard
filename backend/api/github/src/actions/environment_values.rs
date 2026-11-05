@@ -16,6 +16,7 @@ use axum::routing::put;
 use axum::routing::MethodRouter;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::app::AppState;
 use codeyard_db_actions::environment_values as values;
@@ -54,11 +55,11 @@ pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 
 pub(crate) fn aliases() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             "/repositories/:repository_id/environments/:environment_name/variables",
             post(create_variable),
         )
-        .route(
+        .cell_route(
             "/repositories/:repository_id/environments/:environment_name/variables/:name",
             patch(update_variable),
         )

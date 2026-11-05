@@ -9,6 +9,7 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::Form;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_repos_core::repositories::store::repo_store;
@@ -23,8 +24,8 @@ use std::sync::Arc;
 
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/settings/pages", get(page))
-        .route("/:owner/:repo/_forms/pages", post(submit))
+        .cell_route("/:owner/:repo/settings/pages", get(page))
+        .cell_route("/:owner/:repo/_forms/pages", post(submit))
 }
 async fn render(
     ctx: &PageContext,

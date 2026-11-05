@@ -11,6 +11,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::session;
 use codeyard_app::app::AppState;
@@ -33,29 +34,29 @@ const EDITOR_BYTES: usize = 1024 * 1024;
 struct InvalidInput(&'static str);
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/gists", get(crate::gists::pages::list))
-        .route(
+        .cell_route("/gists", get(crate::gists::pages::list))
+        .cell_route(
             "/gists/new",
             get(crate::gists::pages::new).post(crate::gists::forms::create),
         )
-        .route("/gists/:id", get(crate::gists::pages::read))
-        .route(
+        .cell_route("/gists/:id", get(crate::gists::pages::read))
+        .cell_route(
             "/gists/:id/edit",
             get(crate::gists::pages::edit).post(crate::gists::forms::edit),
         )
-        .route(
+        .cell_route(
             "/gists/:id/raw/:sha/:filename",
             get(crate::gists::pages::raw),
         )
-        .route("/gists/:id/star", post(crate::gists::forms::star))
-        .route("/gists/:id/fork", post(crate::gists::forms::fork))
-        .route("/gists/:id/delete", post(crate::gists::forms::delete))
-        .route("/gists/:id/comments", post(crate::gists::forms::comment))
-        .route(
+        .cell_route("/gists/:id/star", post(crate::gists::forms::star))
+        .cell_route("/gists/:id/fork", post(crate::gists::forms::fork))
+        .cell_route("/gists/:id/delete", post(crate::gists::forms::delete))
+        .cell_route("/gists/:id/comments", post(crate::gists::forms::comment))
+        .cell_route(
             "/gists/:id/comments/:comment/edit",
             post(crate::gists::forms::edit_comment),
         )
-        .route(
+        .cell_route(
             "/gists/:id/comments/:comment/delete",
             post(crate::gists::forms::delete_comment),
         )

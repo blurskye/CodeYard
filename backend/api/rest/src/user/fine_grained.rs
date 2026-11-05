@@ -16,6 +16,7 @@ use chrono::DateTime;
 use chrono::Duration;
 use chrono::NaiveDate;
 use chrono::Utc;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::session::extract_session_id;
 use codeyard_api_http::shared::user::responses::field;
@@ -50,14 +51,14 @@ use std::sync::Arc;
 pub(super) fn router() -> Router<Arc<AppState>> {
     let back = || get(|| async { codeyard_api_http::render::redirect_response(BASE) });
     Router::new()
-        .route(BASE, get(list).post(create))
-        .route("/settings/personal-access-tokens/new", get(new))
-        .route("/settings/personal-access-tokens/:id", get(show))
-        .route(
+        .cell_route(BASE, get(list).post(create))
+        .cell_route("/settings/personal-access-tokens/new", get(new))
+        .cell_route("/settings/personal-access-tokens/:id", get(show))
+        .cell_route(
             "/settings/personal-access-tokens/:id/regenerate",
             back().post(regenerate),
         )
-        .route(
+        .cell_route(
             "/settings/personal-access-tokens/:id/delete",
             back().post(delete),
         )

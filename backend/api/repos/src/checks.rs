@@ -9,6 +9,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_actions::checks::Credential;
@@ -22,9 +23,9 @@ use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/runs/:id", get(page))
-        .route("/:owner/:repo/runs/:id/rerequest", post(submit))
-        .route("/:owner/:repo/runs/:id/action", post(submit))
+        .cell_route("/:owner/:repo/runs/:id", get(page))
+        .cell_route("/:owner/:repo/runs/:id/rerequest", post(submit))
+        .cell_route("/:owner/:repo/runs/:id/action", post(submit))
         .layer(axum::extract::DefaultBodyLimit::max(16 * 1024))
 }
 

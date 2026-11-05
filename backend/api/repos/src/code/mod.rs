@@ -4,6 +4,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::routing::get;
 use axum::routing::put;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use std::sync::Arc;
 
@@ -60,27 +61,27 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for GitPathParams {
 
 pub fn json_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/tree/:ref",
             get(crate::code::tree::get_tree_root),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/tree/:ref/*path",
             get(crate::code::tree::get_tree),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/blob/:ref/*path",
             get(crate::code::blob::get_blob),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/raw/:ref/*path",
             get(crate::code::raw::get_raw_blob),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/archive",
             get(crate::code::archive::download_archive),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/contents/*path",
             put(crate::code::contents::update_file_content)
                 .post(crate::code::contents::create_file)
@@ -89,11 +90,11 @@ pub fn json_router() -> Router<Arc<AppState>> {
                     codeyard_api_http::middleware::private_sensitive_response,
                 )),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/languages",
             get(crate::code::languages::get_repo_languages),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/contributors",
             get(crate::code::contributors::get_repo_contributors),
         )
@@ -103,23 +104,23 @@ pub fn json_router() -> Router<Arc<AppState>> {
 /// limit; none of these GET pages reads a body.
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo", get(crate::code::tree::page))
-        .route("/:owner/:repo/tree/*ref_path", get(crate::code::tree::page))
-        .route("/:owner/:repo/blob/*ref_path", get(crate::code::blob::page))
-        .route(
+        .cell_route("/:owner/:repo", get(crate::code::tree::page))
+        .cell_route("/:owner/:repo/tree/*ref_path", get(crate::code::tree::page))
+        .cell_route("/:owner/:repo/blob/*ref_path", get(crate::code::blob::page))
+        .cell_route(
             "/:owner/:repo/blame/*ref_path",
             get(crate::code::blame::page),
         )
-        .route("/:owner/:repo/find/*ref_path", get(crate::code::find::page))
-        .route(
+        .cell_route("/:owner/:repo/find/*ref_path", get(crate::code::find::page))
+        .cell_route(
             "/:owner/:repo/new/*ref_path",
             get(crate::code::contents::page),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/edit/*ref_path",
             get(crate::code::contents::page),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/delete/*ref_path",
             get(crate::code::contents::page),
         )
@@ -128,11 +129,11 @@ pub fn page_router() -> Router<Arc<AppState>> {
 /// Raw and archive downloads sit outside the form body limit, as they always have.
 pub fn download_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             "/:owner/:repo/raw/*ref_path",
             get(crate::code::raw::raw_page),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/archive/*archive",
             get(crate::code::archive::page),
         )
@@ -141,7 +142,7 @@ pub fn download_router() -> Router<Arc<AppState>> {
 /// Uploads carry whole files, so this router has its own, larger body limit.
 pub fn upload_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             codeyard_api_http::shared::repos::code::upload::ROUTE,
             get(crate::code::upload::page).post(crate::code::upload::post),
         )

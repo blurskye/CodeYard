@@ -9,6 +9,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_webui::app::Page;
@@ -19,8 +20,8 @@ use std::sync::Arc;
 
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/discussions", get(index))
-        .route("/:owner/:repo/discussions/:number", get(detail))
+        .cell_route("/:owner/:repo/discussions", get(index))
+        .cell_route("/:owner/:repo/discussions/:number", get(detail))
 }
 async fn names(ctx: &PageContext, mut ids: Vec<i64>) -> ResultPage<HashMap<i64, String>> {
     ids.sort_unstable();

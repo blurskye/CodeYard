@@ -14,6 +14,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::Form;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_app::app::AppState;
@@ -30,23 +31,23 @@ mod manifests;
 type Fields = HashMap<String, String>;
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/settings/apps", get(list))
-        .route("/settings/apps/installations", get(managed_installations))
-        .route(
+        .cell_route("/settings/apps", get(list))
+        .cell_route("/settings/apps/installations", get(managed_installations))
+        .cell_route(
             "/settings/apps/installations/:id/delete",
             axum::routing::post(uninstall),
         )
-        .route("/settings/apps/new", get(new).post(register))
-        .route(
+        .cell_route("/settings/apps/new", get(new).post(register))
+        .cell_route(
             "/settings/apps/:id/delete",
             axum::routing::post(delete_registration),
         )
-        .route(
+        .cell_route(
             "/settings/apps/:slug/regenerate",
             axum::routing::post(regenerate),
         )
-        .route("/apps/:slug", get(install_get))
-        .route(
+        .cell_route("/apps/:slug", get(install_get))
+        .cell_route(
             "/apps/:slug/installations/new",
             get(install_get).post(install_post),
         )

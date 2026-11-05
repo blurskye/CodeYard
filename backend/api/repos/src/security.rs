@@ -9,6 +9,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::Form;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::render::redirect_response;
 use codeyard_api_http::shared::repos::chrome::Loaded;
@@ -26,9 +27,9 @@ use std::sync::Arc;
 
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/security/code-scanning", get(list))
-        .route("/:owner/:repo/security/code-scanning/:number", get(detail))
-        .route(
+        .cell_route("/:owner/:repo/security/code-scanning", get(list))
+        .cell_route("/:owner/:repo/security/code-scanning/:number", get(detail))
+        .cell_route(
             "/:owner/:repo/security/code-scanning/:number/dismiss",
             axum::routing::post(dismiss),
         )

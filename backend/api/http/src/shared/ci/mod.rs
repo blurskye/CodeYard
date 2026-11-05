@@ -1,3 +1,4 @@
+use crate::cell_routes::CellRoutes;
 use crate::error::ApiError;
 use axum::http::StatusCode;
 use axum::routing::get;
@@ -9,33 +10,33 @@ use codeyard_db_core::ci_admission::AdmissionError;
 use std::sync::Arc;
 pub fn repository_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             "/:owner/:repo/actions/runs/:run_id/artifacts/:artifact/download",
             get(crate::shared::ci::run_forms::download_artifact),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/actions/runs/:run_id/artifacts/:artifact/delete",
             post(crate::shared::ci::run_forms::delete_artifact),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/actions",
             get(crate::shared::ci::actions_page::repository_actions),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/actions/dispatch",
             post(crate::shared::ci::trigger::repository_dispatch),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/actions/dispatch-event",
             get(crate::shared::ci::repository_events::form)
                 .post(crate::shared::ci::repository_events::send)
                 .layer(axum::extract::DefaultBodyLimit::max(256 * 1024)),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/actions/runs/:run_id/cancel",
             post(crate::shared::ci::run_forms::cancel_run),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/actions/runs/:run_id/rerun",
             post(crate::shared::ci::run_forms::rerun_run),
         )

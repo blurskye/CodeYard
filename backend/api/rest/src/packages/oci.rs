@@ -15,6 +15,7 @@ use axum::response::Response;
 use axum::routing::any;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::packages::Blob;
 use codeyard_db_repos::packages::Publish;
@@ -31,8 +32,8 @@ use tokio::io::AsyncSeekExt;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/v2/", any(handle))
-        .route("/v2/*path", any(handle))
+        .cell_route("/v2/", any(handle))
+        .cell_route("/v2/*path", any(handle))
 }
 
 async fn handle(State(state): State<Arc<AppState>>, request: Request) -> Response {

@@ -11,6 +11,7 @@ use axum::http::Method;
 use axum::routing::get;
 use axum::Extension;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -86,39 +87,7 @@ pub fn create_router(state: AppState) -> Router {
         ])
         .allow_credentials(true);
 
-    Router::new()
-        .merge(crate::health::router())
-        .merge(crate::crawlers::router())
-        .merge(crate::auth::router())
-        .merge(crate::user::router())
-        .merge(crate::users::router())
-        .merge(crate::admin::router())
-        .merge(crate::organizations::router())
-        .merge(crate::projects::router())
-        .merge(crate::discovery::router())
-        .merge(crate::gists::router())
-        .merge(crate::help::router())
-        .merge(codeyard_api_repos::router())
-        .merge(crate::ci::router())
-        .merge(crate::files::router())
-        .merge(crate::notifications::router())
-        .merge(crate::dashboard::router())
-        .merge(crate::attestations::router())
-        .merge(crate::packages::pages::router())
-        .layer(axum::middleware::from_fn(
-            codeyard_api_http::middleware::bounded_form_body,
-        ))
-        // Git owns token-only auth, outside browser/session/CSRF and request-body layers.
-        .merge(crate::git_http::router())
-        .merge(codeyard_api_github::router())
-        .merge(crate::packages::router())
-        .merge(crate::artifact_metadata_pages::router())
-        .merge(crate::ci::results::router())
-        .merge(crate::ci::oidc::router())
-        .merge(codeyard_api_graphql::router())
-        .route("/assets/*path", get(codeyard_api_http::static_files::asset))
-        .route("/wasm/*path", get(codeyard_api_http::static_files::asset))
-        .fallback(codeyard_api_http::render::not_found)
+    resources()
         // GitHub-style Maven URLs share the repository prefix; only repository-layout artifacts intercept it.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
@@ -241,5 +210,46 @@ async fn wait_for_stop(stop: &mut tokio::sync::watch::Receiver<bool>) {
 }
 
 pub mod avatar_ops;
+/// The public router uses exactly the paths installed by these constructors.
+pub fn routing_catalog() -> Result<Vec<codeyard_model::cell_routes::Route>, String> {
+    codeyard_model::cell_routes::collect(resources).map(|(_, routes)| routes)
+}
+
+fn resources() -> Router<Arc<AppState>> {
+    Router::new()
+        .merge(crate::health::router())
+        .merge(crate::crawlers::router())
+        .merge(crate::auth::router())
+        .merge(crate::user::router())
+        .merge(crate::users::router())
+        .merge(crate::admin::router())
+        .merge(crate::organizations::router())
+        .merge(crate::projects::router())
+        .merge(crate::discovery::router())
+        .merge(crate::gists::router())
+        .merge(crate::help::router())
+        .merge(codeyard_api_repos::router())
+        .merge(crate::ci::router())
+        .merge(crate::files::router())
+        .merge(crate::notifications::router())
+        .merge(crate::dashboard::router())
+        .merge(crate::attestations::router())
+        .merge(crate::packages::pages::router())
+        .layer(axum::middleware::from_fn(
+            codeyard_api_http::middleware::bounded_form_body,
+        ))
+        // Git owns token-only auth, outside browser/session/CSRF and request-body layers.
+        .merge(crate::git_http::router())
+        .merge(codeyard_api_github::router())
+        .merge(crate::packages::router())
+        .merge(crate::artifact_metadata_pages::router())
+        .merge(crate::ci::results::router())
+        .merge(crate::ci::oidc::router())
+        .merge(codeyard_api_graphql::router())
+        .cell_route("/assets/*path", get(codeyard_api_http::static_files::asset))
+        .cell_route("/wasm/*path", get(codeyard_api_http::static_files::asset))
+        .fallback(codeyard_api_http::render::not_found)
+}
+
 #[cfg(test)]
 pub mod tests;

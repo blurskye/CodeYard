@@ -3,6 +3,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use std::sync::Arc;
 pub(crate) mod actions;
@@ -17,31 +18,31 @@ pub(crate) mod users;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/admin", get(crate::admin::overview::admin_get))
-        .route(
+        .cell_route("/admin", get(crate::admin::overview::admin_get))
+        .cell_route(
             "/admin/users",
             get(crate::admin::users::users_get).post(crate::admin::users::managed_user_post),
         )
-        .route("/admin/users/new", get(crate::admin::users::new_user_get))
-        .route(
+        .cell_route("/admin/users/new", get(crate::admin::users::new_user_get))
+        .cell_route(
             "/admin/users/requests/:request_id/resolve",
             post(crate::admin::users::signup_post),
         )
-        .route("/admin/audit", get(crate::admin::audit::audit_get))
-        .route(
+        .cell_route("/admin/audit", get(crate::admin::audit::audit_get))
+        .cell_route(
             "/admin/settings",
             get(crate::admin::ai_crawlers::settings_get)
                 .post(crate::admin::ai_crawlers::settings_post),
         )
-        .route(
+        .cell_route(
             "/admin/accounts/:user_id/ban",
             post(crate::admin::users::ban_post),
         )
-        .route(
+        .cell_route(
             "/admin/accounts/:user_id/role",
             post(crate::admin::users::role_post),
         )
-        .route(
+        .cell_route(
             "/admin/accounts/:user_id/two-factor/reset",
             post(crate::admin::users::two_factor_reset_post),
         )

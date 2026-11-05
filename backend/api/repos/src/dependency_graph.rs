@@ -8,6 +8,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_git::error::ErrorKind;
@@ -20,8 +21,8 @@ use std::sync::Arc;
 
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/dependency-graph", get(page))
-        .route(
+        .cell_route("/:owner/:repo/dependency-graph", get(page))
+        .cell_route(
             "/:owner/:repo/dependency-graph/sbom",
             get(download).layer(axum::middleware::from_fn(
                 codeyard_api_http::middleware::private_api_response,

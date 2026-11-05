@@ -19,6 +19,7 @@ use axum::Json;
 use axum::Router;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
@@ -76,11 +77,11 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 // Both transports persist exactly the same upload and expose the documented polling response.
 pub(super) fn aliases() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             SARIF_ACTION_ROUTE.trim_start_matches("/api/v3"),
             put(upload).layer(DefaultBodyLimit::max(BODY_LIMIT)),
         )
-        .route(
+        .cell_route(
             codeyard_api_http::shared::github::code_scanning::databases::API_UPLOAD_ROUTE
                 .trim_start_matches("/api/v3"),
             post(crate::code_scanning::databases::upload).layer(DefaultBodyLimit::disable()),

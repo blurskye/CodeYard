@@ -7,6 +7,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::artifact_metadata::Record;
@@ -22,8 +23,8 @@ type Params = HashMap<String, String>;
 
 pub(crate) fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/orgs/:org/artifacts", get(show))
-        .route("/orgs/:org/artifacts/:subject_digest", get(show))
+        .cell_route("/orgs/:org/artifacts", get(show))
+        .cell_route("/orgs/:org/artifacts/:subject_digest", get(show))
 }
 
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {

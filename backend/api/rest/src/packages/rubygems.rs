@@ -17,6 +17,7 @@ use axum::routing::any;
 use axum::Router;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_db_repos::packages::Publish;
 use codeyard_support::object_limits::MAX_OBJECT_BYTES;
@@ -29,7 +30,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
-    Router::new().route("/api/packages/:owner/rubygems/*path", any(handle))
+    Router::new().cell_route("/api/packages/:owner/rubygems/*path", any(handle))
 }
 async fn handle(
     State(state): State<Arc<AppState>>,

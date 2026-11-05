@@ -44,3 +44,6 @@ pub mod outbound;
 pub mod cluster;
 
 pub mod cells;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub mod http_credentials;

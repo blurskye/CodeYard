@@ -7,6 +7,7 @@ use axum::response::IntoResponse;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use std::sync::Arc;
 
@@ -42,8 +43,8 @@ const BLOCKED_AI_TXT: &str = include_str!("../../../../ai.txt");
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/robots.txt", get(robots_txt))
-        .route("/ai.txt", get(ai_txt))
+        .cell_route("/robots.txt", get(robots_txt))
+        .cell_route("/ai.txt", get(ai_txt))
 }
 
 /// The stored value for a submitted setting, or None when it is neither `allow` nor `block`.

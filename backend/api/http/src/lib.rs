@@ -23,3 +23,5 @@ pub mod traffic;
 pub mod shared;
 
 pub mod read_routing;
+
+pub mod cell_routes;

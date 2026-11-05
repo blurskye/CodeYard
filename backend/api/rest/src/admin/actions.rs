@@ -11,6 +11,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_api_http::shared::user::responses::Fields;
@@ -22,7 +23,7 @@ use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/admin/actions", get(show).post(save_form))
+        .cell_route("/admin/actions", get(show).post(save_form))
         .layer(DefaultBodyLimit::max(16 * 1024))
 }
 

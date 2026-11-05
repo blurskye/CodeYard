@@ -9,6 +9,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::field;
 use codeyard_api_http::shared::user::responses::Fields;
@@ -24,26 +25,26 @@ use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/users/:username/projects", get(show).post(mutate))
-        .route(
+        .cell_route("/users/:username/projects", get(show).post(mutate))
+        .cell_route(
             "/users/:username/projects/:project_number",
             get(show).post(mutate),
         )
-        .route(
+        .cell_route(
             "/users/:username/projects/:project_number/settings",
             get(show),
         )
-        .route(
+        .cell_route(
             "/users/:username/projects/:project_number/views/:view_number",
             get(show),
         )
-        .route("/orgs/:org/projects", get(show).post(mutate))
-        .route(
+        .cell_route("/orgs/:org/projects", get(show).post(mutate))
+        .cell_route(
             "/orgs/:org/projects/:project_number",
             get(show).post(mutate),
         )
-        .route("/orgs/:org/projects/:project_number/settings", get(show))
-        .route(
+        .cell_route("/orgs/:org/projects/:project_number/settings", get(show))
+        .cell_route(
             "/orgs/:org/projects/:project_number/views/:view_number",
             get(show),
         )

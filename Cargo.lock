@@ -1585,11 +1585,13 @@ version = "0.1.5"
 dependencies = [
  "aes-gcm 0.10.3",
  "anyhow",
+ "base64 0.22.1",
  "chrono",
  "clap",
  "crypto_box",
  "hex",
  "hmac 0.12.1",
+ "http 1.4.0",
  "iroh",
  "libc",
  "rand 0.8.8",

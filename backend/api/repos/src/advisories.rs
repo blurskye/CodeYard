@@ -10,6 +10,7 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::Form;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_security::advisories::Listing;
@@ -29,9 +30,9 @@ use std::sync::Arc;
 
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/security/advisories", get(index))
-        .route("/:owner/:repo/security/advisories/:ghsa", get(detail))
-        .route("/:owner/:repo/_forms/advisory", post(submit))
+        .cell_route("/:owner/:repo/security/advisories", get(index))
+        .cell_route("/:owner/:repo/security/advisories/:ghsa", get(detail))
+        .cell_route("/:owner/:repo/_forms/advisory", post(submit))
 }
 fn row(record: &Advisory, data: &Data) -> Row {
     Row {

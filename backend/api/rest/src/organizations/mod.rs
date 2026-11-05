@@ -1,5 +1,6 @@
 //! Organization browser resources; authorization remains in named DB transactions.
 
+use codeyard_api_http::cell_routes::CellRoutes;
 mod action_values;
 mod avatar;
 mod code_security;
@@ -27,36 +28,36 @@ pub fn router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
         Router,
     };
     Router::new()
-        .route(
+        .cell_route(
             INDEX,
             get(crate::organizations::collection::show)
                 .post(crate::organizations::organization::mutate),
         )
-        .route(
+        .cell_route(
             crate::organizations::governance::RECOVERY,
             post(crate::organizations::governance::recover),
         )
-        .route(
+        .cell_route(
             "/settings/organizations/invitations/:org/accept",
             post(crate::organizations::invitations::accept),
         )
-        .route(
+        .cell_route(
             "/settings/organizations/invitations/:org/decline",
             post(crate::organizations::invitations::decline),
         )
-        .route(
+        .cell_route(
             "/orgs/:org/teams/:team",
             get(crate::organizations::teams::public_show),
         )
-        .route(
+        .cell_route(
             "/settings/organizations/:id/dependabot",
             post(crate::organizations::dependabot::post),
         )
-        .route(
+        .cell_route(
             "/settings/organizations/:id/webhooks/:action",
             post(crate::organizations::webhooks::post),
         )
-        .route(
+        .cell_route(
             "/settings/organizations/:id",
             get(crate::organizations::organization::show)
                 .post(crate::organizations::organization::mutate),
@@ -66,7 +67,7 @@ pub fn router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
         .layer(DefaultBodyLimit::max(
             crate::organizations::organization::BODY_LIMIT,
         ))
-        .route(
+        .cell_route(
             "/settings/organizations/:id/private-registries",
             post(crate::organizations::private_registries::post).layer(DefaultBodyLimit::max(
                 crate::organizations::private_registries::BODY_LIMIT,

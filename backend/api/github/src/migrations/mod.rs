@@ -1,5 +1,6 @@
 //! Source-import status and retry use the same durable attempt as the background Git transfer.
 use axum::response::IntoResponse;
+use codeyard_api_http::cell_routes::CellRoutes;
 
 use axum::body::to_bytes;
 use axum::extract::Path;
@@ -33,7 +34,7 @@ mod export_worker;
 mod exports;
 
 pub(super) fn aliases() -> axum::Router<Arc<AppState>> {
-    axum::Router::new().route(
+    axum::Router::new().cell_route(
         "/migration-archives/:guid",
         get(crate::migrations::exports::archive),
     )

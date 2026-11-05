@@ -14,6 +14,7 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::extract_session_id;
@@ -230,7 +231,7 @@ pub(crate) async fn native_index(
 }
 
 pub fn page_router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
-    axum::Router::new().route("/:owner/:repo/labels", axum::routing::get(native_index))
+    axum::Router::new().cell_route("/:owner/:repo/labels", axum::routing::get(native_index))
 }
 
 pub fn router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
@@ -239,11 +240,11 @@ pub fn router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>> {
         Router,
     };
     Router::new()
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/labels",
             get(list_labels).post(create_label),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/labels/:label_id",
             delete(delete_label),
         )

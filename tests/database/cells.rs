@@ -41,6 +41,15 @@ async fn cell_one_issues_exact_bounded_ids_and_initialization_never_rewinds_them
     );
     codeyard_db_core::cells::load(&database.pool).await.unwrap();
     assert_eq!(database.pool.cell_prefix(), Prefix::new(1));
+    let initialized: bool =
+        sqlx::query_scalar("SELECT setup_completed FROM node_configuration WHERE id=1")
+            .fetch_one(&database.raw)
+            .await
+            .unwrap();
+    assert!(
+        initialized,
+        "a new cell must not offer a second public first-admin setup"
+    );
     let a = codeyard_db_identity::users::accounts::create_user(&database.pool, "first", None)
         .await
         .unwrap();

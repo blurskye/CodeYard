@@ -12,6 +12,7 @@ use axum::routing::post;
 use axum::Form;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
@@ -263,10 +264,10 @@ async fn submit(
 
 pub(super) fn pages() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/merge", get(page).post(submit))
+        .cell_route("/:owner/:repo/merge", get(page).post(submit))
         .layer(DefaultBodyLimit::max(1024 * 1024))
 }
 
 pub(super) fn json_routes() -> Router<Arc<AppState>> {
-    Router::new().route("/api/repos/:owner/:repo/merge", post(merge_json))
+    Router::new().cell_route("/api/repos/:owner/:repo/merge", post(merge_json))
 }

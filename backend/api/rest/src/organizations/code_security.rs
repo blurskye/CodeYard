@@ -7,6 +7,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::Form;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::render::redirect_response;
 use codeyard_app::app::AppState;
@@ -18,8 +19,8 @@ use std::sync::Arc;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/settings/organizations/:org/security", get(show))
-        .route(
+        .cell_route("/settings/organizations/:org/security", get(show))
+        .cell_route(
             "/settings/organizations/:org/security/:action",
             axum::routing::post(post),
         )

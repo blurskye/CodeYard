@@ -10,6 +10,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::routing::MethodRouter;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::middleware::wait_for_slot;
 use codeyard_api_http::shared::repos::code::archive::archive_response;
 use codeyard_app::api_shared::github::repository;
@@ -105,6 +106,6 @@ pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 }
 pub(crate) fn aliases() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/repos/:owner/:repo/zipball", get(zip))
-        .route("/repos/:owner/:repo/tarball", get(tar))
+        .cell_route("/repos/:owner/:repo/zipball", get(zip))
+        .cell_route("/repos/:owner/:repo/tarball", get(tar))
 }

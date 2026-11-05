@@ -18,6 +18,7 @@ use axum::Json;
 use axum::Router;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_db_core::queries::attestation_validation::AttestationError;
 use codeyard_db_security::attestation_validation as store;
@@ -36,7 +37,7 @@ pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 pub(crate) fn aliases() -> Router<Arc<AppState>> {
-    Router::new().route(
+    Router::new().cell_route(
         "/repos/:owner/:repo/attestations/bundles/:attestation_id",
         get(bundle),
     )

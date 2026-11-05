@@ -4,6 +4,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use std::sync::Arc;
 mod attestation;
@@ -16,15 +17,15 @@ const UPLOAD_BODY_LIMIT: usize = codeyard_model::release_integrity::MAX_ASSET_BY
 
 pub fn json_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/releases",
             get(crate::releases::json::list).post(crate::releases::json::create),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/releases/tags/*tag",
             get(crate::releases::json::get_by_tag),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/releases/:id",
             get(crate::releases::json::get_one)
                 .patch(crate::releases::json::update)
@@ -35,40 +36,40 @@ pub fn json_router() -> Router<Arc<AppState>> {
 /// Release pages, forms and downloads. The caller applies the form body limit.
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/releases", get(crate::releases::pages::list))
-        .route(
+        .cell_route("/:owner/:repo/releases", get(crate::releases::pages::list))
+        .cell_route(
             "/:owner/:repo/releases/new",
             get(crate::releases::pages::new_page).post(crate::releases::pages::create),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/releases/tag/*tag",
             get(crate::releases::pages::detail),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/releases/edit/:id",
             get(crate::releases::pages::edit_page).post(crate::releases::pages::update),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/releases/:id/delete",
             post(crate::releases::pages::delete),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/releases/:id/react",
             post(crate::releases::reactions::react),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/releases/:id/attestation",
             get(crate::releases::attestation::download),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/releases/:id/assets/:asset/edit",
             post(crate::releases::pages::update_asset),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/releases/:id/assets/:asset/delete",
             post(crate::releases::pages::delete_asset),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/releases/download/*asset",
             get(crate::releases::pages::download),
         )
@@ -77,7 +78,7 @@ pub fn page_router() -> Router<Arc<AppState>> {
 /// Asset uploads carry whole files, so they have their own, larger body limit.
 pub fn upload_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(ASSET_ROUTE, post(crate::releases::pages::upload_asset))
+        .cell_route(ASSET_ROUTE, post(crate::releases::pages::upload_asset))
         .layer(DefaultBodyLimit::max(UPLOAD_BODY_LIMIT))
 }
 

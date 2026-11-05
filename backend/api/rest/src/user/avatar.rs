@@ -13,6 +13,7 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::user::responses::Fields;
 use codeyard_app::app::AppState;
@@ -34,13 +35,13 @@ pub fn avatar_status(error: &AvatarError) -> (StatusCode, &'static str) {
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route(
+        .cell_route(
             "/settings/avatar",
             crate::user::back_to_settings("profile")
                 .post(upload)
                 .layer(DefaultBodyLimit::max(crate::pictures::BODY_LIMIT)),
         )
-        .route(
+        .cell_route(
             "/settings/avatar/remove",
             crate::user::back_to_settings("profile")
                 .post(remove_form)

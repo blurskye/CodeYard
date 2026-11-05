@@ -9,6 +9,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_api_http::shared::repos::code::contributors::contributor_accounts;
@@ -31,18 +32,18 @@ mod traffic;
 
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/insights", get(pulse))
-        .route("/:owner/:repo/insights/activity", get(ref_activity))
-        .route(
+        .cell_route("/:owner/:repo/insights", get(pulse))
+        .cell_route("/:owner/:repo/insights/activity", get(ref_activity))
+        .cell_route(
             "/:owner/:repo/insights/traffic",
             get(crate::insights::traffic::page),
         )
-        .route("/:owner/:repo/insights/contributors", get(contributors))
-        .route("/:owner/:repo/insights/code-frequency", get(code_frequency))
-        .route("/:owner/:repo/insights/actions", get(actions))
-        .route("/:owner/:repo/insights/forks", get(forks))
-        .route("/:owner/:repo/insights/dependencies", get(dependencies))
-        .route("/:owner/:repo/insights/community", get(community))
+        .cell_route("/:owner/:repo/insights/contributors", get(contributors))
+        .cell_route("/:owner/:repo/insights/code-frequency", get(code_frequency))
+        .cell_route("/:owner/:repo/insights/actions", get(actions))
+        .cell_route("/:owner/:repo/insights/forks", get(forks))
+        .cell_route("/:owner/:repo/insights/dependencies", get(dependencies))
+        .cell_route("/:owner/:repo/insights/community", get(community))
 }
 
 async fn show(ctx: &PageContext, loaded: Loaded, title: &str, page: InsightsPage) -> Response {

@@ -159,6 +159,26 @@ impl<'a> Secret<'a> {
     }
 }
 
+pub fn device_code_prefix(value: &str) -> Option<Prefix> {
+    let value = value.trim();
+    if value.len() > 15 {
+        return None;
+    }
+    let parts: Vec<_> = value.split('-').collect();
+    let (cell, code) = match parts.as_slice() {
+        [first, second] => (Prefix::ZERO, [*first, *second]),
+        [prefix, first, second] => (prefix.parse().ok()?, [*first, *second]),
+        _ => return None,
+    };
+    code.iter()
+        .all(|part| part.len() == 4 && part.bytes().all(|byte| byte.is_ascii_alphanumeric()))
+        .then_some(cell)
+}
+
+pub fn normalize_device_code(code: &str) -> String {
+    code.trim().to_ascii_uppercase()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

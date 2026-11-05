@@ -120,6 +120,15 @@ async fn contract(pg: bool) {
         entry.text().contains("maxlength=\"15\""),
         "native device form must accept every cell prefix"
     );
+    for code in ["1-ABCD-EFGH", "65536-ABCD-EFGH", "../ABCD-EFGH"] {
+        let invalid = user
+            .form_reply("/login/device", &[("user_code", code)])
+            .await;
+        assert_eq!(invalid.status, StatusCode::OK);
+        assert!(invalid
+            .text()
+            .contains("This code is invalid, expired or already used."));
+    }
     let code = device(&router, "repo read:org gist").await;
     assert_eq!(code["interval"], 5);
     assert_eq!(code["expires_in"], 900);

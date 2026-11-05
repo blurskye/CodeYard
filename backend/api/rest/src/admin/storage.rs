@@ -7,6 +7,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_webui::app::Page;
@@ -14,7 +15,7 @@ use codeyard_webui::pages::admin::storage as view;
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
-    Router::new().route("/admin/storage", get(show))
+    Router::new().cell_route("/admin/storage", get(show))
 }
 
 /// The name of the database engine in use.

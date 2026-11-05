@@ -10,6 +10,7 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::Form;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::render::redirect_response;
 use codeyard_api_http::shared::repos::chrome::Loaded;
@@ -26,12 +27,12 @@ use std::sync::Arc;
 
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/security/dependabot", get(list))
-        .route(
+        .cell_route("/:owner/:repo/security/dependabot", get(list))
+        .cell_route(
             "/:owner/:repo/security/dependabot/:number/dismiss",
             post(dismiss),
         )
-        .route("/:owner/:repo/security/dependabot/import", post(import))
+        .cell_route("/:owner/:repo/security/dependabot/import", post(import))
 }
 async fn open(
     state: Arc<AppState>,

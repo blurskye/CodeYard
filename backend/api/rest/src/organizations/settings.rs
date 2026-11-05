@@ -1,5 +1,6 @@
 //! Session-bound, bounded owner controls for the same organization policies used by REST.
 use axum::response::IntoResponse;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 
 use crate::organizations::organization::Fields;
@@ -26,7 +27,7 @@ use OrganizationOutcome::Missing;
 use OrganizationOutcome::Suspended;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
-    Router::new().route("/settings/organizations/:id/settings", post(mutate))
+    Router::new().cell_route("/settings/organizations/:id/settings", post(mutate))
 }
 pub(super) async fn panel(
     ctx: &PageContext,

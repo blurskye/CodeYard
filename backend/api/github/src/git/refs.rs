@@ -13,6 +13,7 @@ use axum::routing::post;
 use axum::routing::MethodRouter;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::shared::github::pagination::Pagination;
 use codeyard_app::api_shared::github::repository;
 use codeyard_app::app::AppState;
@@ -286,7 +287,7 @@ pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 /// Reads GitHub serves without documenting them.
 pub(crate) fn aliases() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/repos/:owner/:repo/git/refs", get(list))
-        .route("/repos/:owner/:repo/git/refs/*ref", get(read))
-        .route("/repos/:owner/:repo/git/matching-refs", get(list))
+        .cell_route("/repos/:owner/:repo/git/refs", get(list))
+        .cell_route("/repos/:owner/:repo/git/refs/*ref", get(read))
+        .cell_route("/repos/:owner/:repo/git/matching-refs", get(list))
 }

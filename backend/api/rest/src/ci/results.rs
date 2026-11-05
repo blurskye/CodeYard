@@ -12,6 +12,7 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::Json;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_db_actions::action_objects as objects;
 use codeyard_db_actions::action_objects::ActionObject;
@@ -31,11 +32,11 @@ use std::time::Duration;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/twirp/:service/:method", post(twirp))
+        .cell_route("/twirp/:service/:method", post(twirp))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .merge(
             Router::new()
-                .route("/twirp/blobs/:id", get(get_blob).put(put_blob))
+                .cell_route("/twirp/blobs/:id", get(get_blob).put(put_blob))
                 .layer(DefaultBodyLimit::max(MAX_OBJECT_BYTES as usize)),
         )
 }

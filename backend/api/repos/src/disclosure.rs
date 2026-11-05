@@ -12,6 +12,7 @@ use axum::response::Response;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_api_http::shared::repos::chrome::Loaded;
 use codeyard_api_http::shared::repos::forms::authorize_post;
@@ -28,12 +29,12 @@ use std::sync::Arc;
 
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/security", get(index).post(create))
-        .route(
+        .cell_route("/:owner/:repo/security", get(index).post(create))
+        .cell_route(
             "/:owner/:repo/security/reports/:report_id",
             get(thread).post(change),
         )
-        .route("/:owner/:repo/_forms/private-reporting", post(toggle))
+        .cell_route("/:owner/:repo/_forms/private-reporting", post(toggle))
         .layer(DefaultBodyLimit::max(256 * 1024))
 }
 async fn toggle(

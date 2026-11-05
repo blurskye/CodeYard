@@ -1,5 +1,6 @@
 //! Session-bound property controls. The larger body budget is isolated from other organization forms.
 use axum::response::IntoResponse;
+use codeyard_api_http::cell_routes::CellRoutes;
 
 use crate::organizations::organization::Fields;
 use anyhow::ensure;
@@ -28,7 +29,7 @@ use OrganizationOutcome::Suspended;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/settings/organizations/:id/properties", post(mutate))
+        .cell_route("/settings/organizations/:id/properties", post(mutate))
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
 }
 pub(super) async fn panel(

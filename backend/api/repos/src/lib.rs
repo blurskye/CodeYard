@@ -9,6 +9,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use std::sync::Arc;
 
@@ -47,25 +48,25 @@ pub mod settings;
 
 pub fn router() -> Router<Arc<AppState>> {
     let json = Router::new()
-        .route(
+        .cell_route(
             "/api/repos",
             get(crate::collection::list_repos).post(crate::collection::create_repo),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo",
             get(crate::repository::get_repo)
                 .patch(crate::repository::update_repo)
                 .delete(crate::repository::delete_repo),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/rename",
             post(crate::repository::rename_repo),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/transfer",
             post(crate::repository::transfer_repo),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/about",
             post(crate::repository::about_repo),
         )
@@ -91,15 +92,15 @@ pub fn router() -> Router<Arc<AppState>> {
             codeyard_api_http::middleware::private_api_response,
         ));
     let creation = Router::new()
-        .route(
+        .cell_route(
             "/new/migration",
             get(crate::migrations::new).post(crate::migrations::create),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/migration",
             get(crate::migrations::page).post(crate::migrations::submit),
         )
-        .route(
+        .cell_route(
             "/new",
             get(crate::collection::new_repository).post(crate::collection::create_repository),
         )
@@ -109,15 +110,14 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(creation)
         .merge(crate::invitations::router())
         .merge(page_router())
-        .nest(
-            LEGACY_PREFIX,
+        .cell_nest(LEGACY_PREFIX, || {
             page_router()
                 .merge(codeyard_api_http::shared::ci::repository_router())
                 .layer(axum::middleware::from_fn(
                     codeyard_api_http::middleware::bounded_legacy_repository_body,
                 ))
-                .layer(axum::middleware::from_fn(legacy_alias_uri)),
-        )
+                .layer(axum::middleware::from_fn(legacy_alias_uri))
+        })
 }
 
 // Nested handlers need their public URI for native forms and hydrated navigation.
@@ -140,8 +140,8 @@ async fn legacy_alias_uri(
 }
 fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/settings", get(crate::repository::page))
-        .route(
+        .cell_route("/:owner/:repo/settings", get(crate::repository::page))
+        .cell_route(
             "/:owner/:repo/_forms/:action",
             get(crate::repository::get_form).post(crate::repository::post_form),
         )

@@ -1,5 +1,6 @@
 //! Confidential dependency review; the domain and transactional DAL remain authoritative.
 use axum::response::IntoResponse;
+use codeyard_api_http::cell_routes::CellRoutes;
 
 use crate::forms::checkbox;
 use axum::extract::DefaultBodyLimit;
@@ -39,8 +40,8 @@ use std::sync::Arc;
 
 pub fn page_router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/:owner/:repo/security/dependencies", get(index))
-        .route(
+        .cell_route("/:owner/:repo/security/dependencies", get(index))
+        .cell_route(
             "/:owner/:repo/security/dependencies/:feature/:intent",
             post(configure),
         )

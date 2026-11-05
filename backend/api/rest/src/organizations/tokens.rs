@@ -12,6 +12,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::routing::post;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_db_core::models::OrgRole;
@@ -27,7 +28,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 pub(super) fn router() -> Router<Arc<AppState>> {
-    Router::new().route(
+    Router::new().cell_route(
         "/settings/organizations/:id/personal-access-tokens",
         post(mutate),
     )

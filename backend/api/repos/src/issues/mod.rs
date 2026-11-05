@@ -1,3 +1,4 @@
+use codeyard_api_http::cell_routes::CellRoutes;
 pub mod assignees;
 pub mod attributes;
 pub mod collection;
@@ -18,29 +19,29 @@ pub fn json_router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>
         Router,
     };
     Router::new()
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/issues",
             get(crate::issues::collection::list_issues)
                 .post(crate::issues::collection::create_issue),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/issues/:number",
             get(crate::issues::issue::get_issue).put(crate::issues::issue::update_issue),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/issues/:number/comments",
             get(crate::issues::comments::list_issue_comments)
                 .post(crate::issues::comments::create_issue_comment),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/issues/:number/suggestions",
             post(crate::issues::suggestions::agent_propose),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/issues/:number/labels",
             post(crate::issues::labels::add_issue_labels),
         )
-        .route(
+        .cell_route(
             "/api/repos/:owner/:repo/issues/:number/labels/:label_id",
             delete(crate::issues::labels::remove_issue_label),
         )
@@ -52,84 +53,84 @@ pub fn page_router() -> axum::Router<std::sync::Arc<codeyard_app::app::AppState>
         Router,
     };
     Router::new()
-        .route(
+        .cell_route(
             "/:owner/:repo/issues",
             get(crate::issues::collection::native_index),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/new",
             get(crate::issues::collection::native_new_page)
                 .post(crate::issues::collection::native_create),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number",
             get(crate::issues::issue::native_detail),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/manage",
             post(crate::issues::management::native_change),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/edit",
             post(crate::issues::issue::native_edit),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/state",
             post(crate::issues::issue::native_change_state),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/comments",
             post(crate::issues::comments::native_comment),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/comments/:comment_id/edit",
             post(crate::issues::comments::native_edit_comment),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/comments/:comment_id/delete",
             post(crate::issues::comments::native_delete_comment),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/tasks",
             post(crate::issues::tasks::native_toggle_task),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/lock",
             post(crate::issues::locking::native_lock),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/relationships",
             post(crate::issues::relationships::native_change),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/attributes",
             post(crate::issues::attributes::native_change),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/suggestions",
             post(crate::issues::suggestions::native_change),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/comments/:comment/pin",
             post(crate::issues::pins::native_pin),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/react",
             post(crate::issues::reactions::native_react),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/labels",
             post(crate::issues::labels::native_add_label),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/labels/:label_id/remove",
             post(crate::issues::labels::native_remove_label),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/assignees",
             post(crate::issues::assignees::native_assign),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/issues/:number/assignees/:username/remove",
             post(crate::issues::assignees::native_unassign),
         )

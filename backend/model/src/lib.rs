@@ -32,3 +32,5 @@ pub mod workflow_glob;
 pub mod workflow_yaml;
 
 pub mod cells;
+
+pub mod cell_routes;

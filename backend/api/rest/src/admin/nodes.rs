@@ -11,6 +11,7 @@ use axum::routing::get;
 use axum::routing::post;
 use axum::Form;
 use axum::Router;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
 use codeyard_webui::app::Page;
@@ -21,14 +22,14 @@ use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
-        .route("/admin/nodes", get(show))
-        .route("/admin/nodes/add", post(add_nodes))
-        .route("/api/admin/nodes", post(api_add_nodes))
-        .route("/admin/nodes/:name/approve", post(approve))
-        .route("/admin/nodes/:name/revoke", post(revoke))
-        .route("/admin/nodes/:name/drain", post(drain))
-        .route("/admin/nodes/:name/cancel-drain", post(cancel_drain))
-        .route(
+        .cell_route("/admin/nodes", get(show))
+        .cell_route("/admin/nodes/add", post(add_nodes))
+        .cell_route("/api/admin/nodes", post(api_add_nodes))
+        .cell_route("/admin/nodes/:name/approve", post(approve))
+        .cell_route("/admin/nodes/:name/revoke", post(revoke))
+        .cell_route("/admin/nodes/:name/drain", post(drain))
+        .cell_route("/admin/nodes/:name/cancel-drain", post(cancel_drain))
+        .cell_route(
             "/api/admin/nodes/:name/drain",
             post(api_drain).delete(api_cancel_drain),
         )

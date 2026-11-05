@@ -96,7 +96,7 @@ async fn initialize_postgres(pool: &PgPool, prefix: Prefix) -> Result<()> {
             bounds.start(), bounds.end(), bounds.start()))
             .execute(&mut *tx).await?;
     }
-    sqlx::query("UPDATE node_configuration SET cell_prefix=$1 WHERE id=1")
+    sqlx::query("UPDATE node_configuration SET cell_prefix=$1,setup_completed=CASE WHEN $1<>0 THEN true ELSE setup_completed END WHERE id=1")
         .bind(i32::from(prefix.get()))
         .execute(&mut *tx)
         .await?;
