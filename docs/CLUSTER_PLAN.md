@@ -167,7 +167,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     with failure tests pass workspace, Clippy and WASM checks. Their runtime tests are pending.
     The pinned node-key TLS directory listener, read-only router keys and root-bearing node-ID
     codec pass workspace, Clippy and WASM checks. Runtime tests are pending. A bounded route
-    cache and the native cookie/device-form follow-up are written with failure tests but unchecked.
+    cache and the native cookie/device-form follow-up also pass all three checks; their failure
+    tests and the earlier stage 1 fixes are next in the combined runtime job.
     The public router, foreign authorization and stubs are
     not built. Stages 3 to 6 are not built.
     Individual users may move automatically to

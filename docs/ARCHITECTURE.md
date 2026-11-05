@@ -758,8 +758,8 @@ cluster tests, 168 database tests and 100 storage tests; a log-delivery deadline
 replica-client Python fix still await rerun.
 Stage 2 ID initialization, credential framing, directory queries and operator commands pass
 workspace, Clippy and WASM checks. The directory TLS transport and shared root-bearing
-node-ID codec also pass these checks; runtime tests are pending. The route cache and native
-cookie/device-form follow-up are written but unchecked;
+node-ID codec, route cache and native cookie/device-form follow-up also pass these checks;
+runtime tests are pending;
 the public router, foreign authorization and stubs are not built;
 stages 3 to 6 are not built.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
