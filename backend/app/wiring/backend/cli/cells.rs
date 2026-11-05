@@ -36,6 +36,24 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path) -> Result<()> {
 pub enum DirectoryCommand {
     /// Initialize the directory's separate PostgreSQL database.
     Initialize,
+    /// Serve authenticated directory lookups and claims with the node key.
+    Serve {
+        #[arg(long, default_value = "127.0.0.1:7445")]
+        address: std::net::SocketAddr,
+        #[arg(long, default_value_t = 10)]
+        exchange_seconds: u64,
+        #[arg(long, default_value_t = 4194304)]
+        maximum_bytes: usize,
+        #[arg(long, default_value_t = 128)]
+        maximum_connections: usize,
+    },
+    /// Grant or revoke a router's read-only directory key.
+    RouterKey {
+        #[arg(long)]
+        public_key: String,
+        #[arg(long)]
+        revoke: bool,
+    },
     /// Register or replace a cell and its public node keys in the directory.
     Register {
         #[arg(long)]
@@ -68,7 +86,7 @@ pub enum DirectoryCommand {
 }
 
 /// Runs before opening a cell database or touching its state directory.
-pub async fn run_directory(command: &DirectoryCommand) -> Result<()> {
+pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<()> {
     use codeyard_model::cells::{Cell, State};
     let url = std::env::var("DIRECTORY_DATABASE_URL").map_err(|_| {
         anyhow::anyhow!("DIRECTORY_DATABASE_URL is required and must be valid UTF-8")
@@ -78,6 +96,47 @@ pub async fn run_directory(command: &DirectoryCommand) -> Result<()> {
         directory.migrate().await?;
         match command {
             DirectoryCommand::Initialize => println!("Directory initialized."),
+            DirectoryCommand::RouterKey { public_key, revoke } => {
+                directory.set_router_key(public_key, !revoke).await?;
+                println!("Router key updated.");
+            }
+            DirectoryCommand::Serve {
+                address,
+                exchange_seconds,
+                maximum_bytes,
+                maximum_connections,
+            } => {
+                codeyard_support::fs::private_dir(state)?;
+                let _state = codeyard_support::fs::lock_state_dir(state)?;
+                let key = codeyard_support::node_identity::load_or_create(state)?;
+                let config = codeyard_cells_router::directory::Config {
+                    exchange_seconds: *exchange_seconds,
+                    maximum_bytes: *maximum_bytes,
+                    maximum_connections: *maximum_connections,
+                };
+                let mut listener = codeyard_cells_router::directory::Listener::bind(
+                    directory.clone(),
+                    &key,
+                    *address,
+                    config,
+                )
+                .await?;
+                println!(
+                    "Directory listening on {} as {}.",
+                    listener.address,
+                    key.public_hex()
+                );
+                let signal = tokio::select! {
+                    signal = crate::backend::node::runtime::shutdown_signal() => Some(signal),
+                    _ = listener.ended() => None,
+                };
+                if let Some(signal) = signal {
+                    listener.stop().await;
+                    signal?;
+                } else {
+                    anyhow::bail!("Directory listener stopped unexpectedly");
+                }
+            }
             DirectoryCommand::Register {
                 prefix,
                 name,

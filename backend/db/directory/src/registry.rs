@@ -66,9 +66,45 @@ impl Directory {
         }).await
     }
 
+    /// Local operator only, with a transport-authenticated key at use time.
+    pub async fn set_router_key(&self, key: &str, enabled: bool) -> Result<()> {
+        self.run(async {
+            ensure!(codeyard_support::tokens::is_hex_token(key, 64), Refusal::Invalid);
+            let key = key.to_ascii_lowercase();
+            let mut tx = self.begin().await?;
+            if enabled {
+                sqlx::query("INSERT INTO directory_router_keys(public_key) VALUES($1) ON CONFLICT DO NOTHING").bind(key).execute(&mut *tx).await?;
+            } else {
+                sqlx::query("DELETE FROM directory_router_keys WHERE public_key=$1").bind(key).execute(&mut *tx).await?;
+            }
+            tx.commit().await?;
+            Ok(())
+        }).await
+    }
+
+    /// The key is authenticated by node-key TLS, never taken from request JSON.
+    pub async fn authorize_read(&self, peer: &str) -> Result<()> {
+        self.run(async {
+            ensure!(
+                codeyard_support::tokens::is_hex_token(peer, 64),
+                Refusal::Denied
+            );
+            let mut tx = self.begin().await?;
+            super::read_owner(&mut tx, peer).await?;
+            tx.commit().await?;
+            Ok(())
+        })
+        .await
+    }
+
     pub async fn cell(&self, prefix: Prefix) -> Result<Option<Cell>> {
+        self.cell_for(None, prefix).await
+    }
+
+    pub async fn cell_for(&self, peer: Option<&str>, prefix: Prefix) -> Result<Option<Cell>> {
         self.run(async {
             let mut tx = self.begin().await?;
+            if let Some(peer) = peer { super::read_owner(&mut tx, peer).await?; }
             let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLUMNS} FROM directory_cells c JOIN directory_cell_prefixes p ON p.cell_id=c.id WHERE p.prefix=$1"))
                 .bind(i32::from(prefix.get())).fetch_optional(&mut *tx).await?;
             let cell = row.map(Row::cell).transpose()?;
@@ -99,9 +135,14 @@ impl Directory {
     }
 
     pub async fn choose_cell(&self, region: &str) -> Result<Option<Cell>> {
+        self.choose_cell_for(None, region).await
+    }
+
+    pub async fn choose_cell_for(&self, peer: Option<&str>, region: &str) -> Result<Option<Cell>> {
         self.run(async {
             codeyard_model::cells::validate_region(region).map_err(|_| Refusal::Invalid)?;
             let mut tx = self.begin().await?;
+            if let Some(peer) = peer { super::read_owner(&mut tx, peer).await?; }
             let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLUMNS} FROM directory_cells c WHERE region=$1 AND state='open' AND database_bytes::numeric<maximum_database_bytes::numeric/2 AND write_rate::numeric<maximum_write_rate::numeric/2 AND observed_at>clock_timestamp()-$2::bigint*INTERVAL '1 second' ORDER BY database_bytes::numeric/maximum_database_bytes,id LIMIT 1"))
                 .bind(region).bind(self.config.stale_seconds).fetch_optional(&mut *tx).await?;
             let cell = row.map(Row::cell).transpose()?;

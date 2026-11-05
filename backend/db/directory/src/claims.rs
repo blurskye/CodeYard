@@ -137,8 +137,13 @@ impl Directory {
     }
 
     pub async fn lookup(&self, key: &Key) -> Result<Option<Location>> {
+        self.lookup_for(None, key).await
+    }
+
+    pub async fn lookup_for(&self, peer: Option<&str>, key: &Key) -> Result<Option<Location>> {
         self.run(async {
             let mut tx = self.begin().await?;
+            if let Some(peer) = peer { super::read_owner(&mut tx, peer).await?; }
             let row: Option<(i32,String,i64)> = sqlx::query_as("SELECT o.home_cell,o.kind,o.id FROM directory_claims k JOIN directory_objects o ON o.kind=k.object_kind AND o.id=k.object_id WHERE k.shard=$1 AND k.kind=$2 AND k.key_hash=$3 AND k.value=$4 AND k.confirmed AND o.active")
                 .bind(key.shard()).bind(key.kind().as_str()).bind(key.hash().to_vec()).bind(key.value()).fetch_optional(&mut *tx).await?;
             let location = row.map(|(cell,kind,id)| -> Result<_> { Ok(Location { cell: Prefix::try_from(i64::from(cell))?, object: Object { kind: ObjectKind::parse(&kind).ok_or(Refusal::Unavailable)?, id } }) }).transpose()?;
@@ -148,9 +153,20 @@ impl Directory {
     }
 
     pub async fn object_home(&self, object: Object) -> Result<Option<Prefix>> {
+        self.object_home_for(None, object).await
+    }
+
+    pub async fn object_home_for(
+        &self,
+        peer: Option<&str>,
+        object: Object,
+    ) -> Result<Option<Prefix>> {
         self.run(async {
             object.validate().map_err(|_| Refusal::Invalid)?;
             let mut tx = self.begin().await?;
+            if let Some(peer) = peer {
+                super::read_owner(&mut tx, peer).await?;
+            }
             let cell: Option<i32> = sqlx::query_scalar(
                 "SELECT home_cell FROM directory_objects WHERE kind=$1 AND id=$2 AND active",
             )

@@ -63,22 +63,39 @@ pub fn decode(value: &str) -> Option<(&str, i64)> {
     (id > 0).then_some((kind, id))
 }
 
-/// gh constructs comment IDs from MessagePack [0, repository ID, comment ID].
-pub fn discussion_comment(repo: i64, comment: i64) -> String {
-    let mut bytes = vec![0x93, 0, 0xcf];
-    bytes.extend_from_slice(&repo.to_be_bytes());
-    bytes.push(0xcf);
-    bytes.extend_from_slice(&comment.to_be_bytes());
-    format!("DC_{}", URL_SAFE_NO_PAD.encode(bytes))
+/// Root-bearing IDs route through one account or repository after it moves.
+/// The simple root IDs and the former byte form still resolve as documented.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct Routed<'a> {
+    pub kind: &'a str,
+    pub root: i64,
+    pub id: i64,
 }
 
-pub fn decode_discussion_comment(value: &str) -> Option<(i64, i64)> {
-    let bytes = URL_SAFE_NO_PAD.decode(value.strip_prefix("DC_")?).ok()?;
-    let mut bytes = bytes.as_slice();
-    if bytes.first() != Some(&0x93) {
+fn messagepack(root: i64, id: i64) -> Vec<u8> {
+    let mut bytes = vec![0x93, 0, 0xcf];
+    bytes.extend_from_slice(&root.to_be_bytes());
+    bytes.push(0xcf);
+    bytes.extend_from_slice(&id.to_be_bytes());
+    bytes
+}
+
+/// Issue a [0, root ID, ID] value. A caller supplies its repository or owner root,
+/// never an unrelated row ID or an inferred allocation prefix.
+pub fn scoped(kind: &str, root: i64, id: i64) -> Option<String> {
+    codeyard_support::cells::Prefix::for_id(root).ok()?;
+    codeyard_support::cells::Prefix::for_id(id).ok()?;
+    if kind.is_empty() || kind.len() > 8 || !kind.bytes().all(|byte| byte.is_ascii_uppercase()) {
         return None;
     }
-    bytes = &bytes[1..];
+    Some(format!(
+        "{kind}_{}",
+        URL_SAFE_NO_PAD.encode(messagepack(root, id))
+    ))
+}
+
+fn decode_messagepack(bytes: &[u8]) -> Option<(i64, i64)> {
+    let mut bytes = bytes.strip_prefix(&[0x93])?;
     fn integer(bytes: &mut &[u8]) -> Option<i64> {
         let (&tag, rest) = bytes.split_first()?;
         *bytes = rest;
@@ -100,9 +117,42 @@ pub fn decode_discussion_comment(value: &str) -> Option<(i64, i64)> {
     if integer(&mut bytes)? != 0 {
         return None;
     }
-    let repo = integer(&mut bytes)?;
-    let comment = integer(&mut bytes)?;
-    (bytes.is_empty() && repo > 0 && comment > 0).then_some((repo, comment))
+    let root = integer(&mut bytes)?;
+    let id = integer(&mut bytes)?;
+    (bytes.is_empty() && root > 0 && id > 0).then_some((root, id))
+}
+
+/// Decode before routing without querying an object's cell. The resource cell still
+/// checks that the ID belongs to this root; routing hints never grant access.
+pub fn routed(value: &str) -> Option<Routed<'_>> {
+    if value.len() > 128 {
+        return None;
+    }
+    let (kind, encoded) = value.split_once('_')?;
+    if kind.is_empty() || kind.len() > 8 || !kind.bytes().all(|byte| byte.is_ascii_uppercase()) {
+        return None;
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(encoded).ok()?;
+    if let Some((root, id)) = decode_messagepack(&bytes) {
+        codeyard_support::cells::Prefix::for_id(root).ok()?;
+        codeyard_support::cells::Prefix::for_id(id).ok()?;
+        return Some(Routed { kind, root, id });
+    }
+    let (kind, id) = decode(value)?;
+    Some(Routed { kind, root: id, id })
+}
+
+/// gh constructs comment IDs from MessagePack [0, repository ID, comment ID].
+pub fn discussion_comment(repo: i64, comment: i64) -> String {
+    format!("DC_{}", URL_SAFE_NO_PAD.encode(messagepack(repo, comment)))
+}
+
+pub fn decode_discussion_comment(value: &str) -> Option<(i64, i64)> {
+    if value.len() > 128 {
+        return None;
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(value.strip_prefix("DC_")?).ok()?;
+    decode_messagepack(&bytes)
 }
 
 /// Review requests use their actual composite primary key, not a synthesized database row ID.
@@ -142,6 +192,7 @@ mod tests {
     use crate::node_id::decode_review_request;
     use crate::node_id::encode;
     use crate::node_id::review_request;
+    use base64::Engine;
 
     #[test]
     fn node_ids_round_trip_without_changing_rest_ids() {
@@ -172,6 +223,44 @@ mod tests {
         }
         assert_eq!(decode_review_request(&review_request(0, false, 1)), None);
         assert_eq!(decode_review_request(&review_request(1, true, -1)), None);
+    }
+
+    #[test]
+    fn routed_nodes_keep_the_root_when_object_and_root_origins_differ() {
+        use super::{routed, scoped, Routed};
+        let root = *codeyard_support::cells::Prefix::new(1).ids().start();
+        let id = *codeyard_support::cells::Prefix::new(2).ids().start();
+        let value = scoped("IC", root, id).unwrap();
+        assert_eq!(
+            routed(&value),
+            Some(Routed {
+                kind: "IC",
+                root,
+                id
+            })
+        );
+        assert_eq!(
+            routed(&encode("U", root)),
+            Some(Routed {
+                kind: "U",
+                root,
+                id: root
+            })
+        );
+        assert_eq!(
+            super::decode_discussion_comment(&super::discussion_comment(root, id)),
+            Some((root, id))
+        );
+        assert!(scoped("IC", 0, id).is_none());
+        assert!(scoped("IC", root, codeyard_support::cells::MAX_ID + 1).is_none());
+        for raw in [
+            vec![0x93, 0, 1, 2, 3],
+            vec![0x93, 1, 1, 2],
+            vec![0x93, 0, 0, 2],
+            vec![0x93, 0, 0xd3, 0, 0, 0, 0, 0, 0, 0, 1, 2],
+        ] {
+            assert!(routed(&format!("IC_{}", super::URL_SAFE_NO_PAD.encode(raw))).is_none());
+        }
     }
 
     #[test]

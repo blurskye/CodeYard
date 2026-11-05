@@ -226,7 +226,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         action: crate::backend::cli::cells::Command::Directory { action },
     } = &cli.command
     {
-        return crate::backend::cli::cells::run_directory(action).await;
+        return crate::backend::cli::cells::run_directory(action, &cli.state_dir).await;
     }
     let configured_database_url = database_url_from_env()?;
     // Making a key and joining a cluster work on a machine with no database.

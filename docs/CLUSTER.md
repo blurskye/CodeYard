@@ -710,3 +710,12 @@ A CI claim returns at most 128 compatible runs (1 to 1024 in the configuration),
 database may still examine a very large queued backlog to find them, and a claim restarts
 from the oldest run each time. This is not measured. A hard bound needs indexed
 scheduling buckets or a persistent fair cursor, so keep the queue short for now.
+
+
+The cell directory source uses a separate PostgreSQL database. Initialize it with
+`DIRECTORY_DATABASE_URL=... codeyard cell directory initialize`, register cells with
+`cell directory register`, and grant read-only router keys with
+`cell directory router-key --public-key <key>`. `cell directory serve` owns its node-key
+TLS listener; callers pin that public key. Cell mutations recheck live cell enrollment
+in their transaction. This transport is not yet connected to public routing or signup;
+multiple cells are not yet a usable deployment.

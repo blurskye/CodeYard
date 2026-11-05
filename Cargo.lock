@@ -1373,6 +1373,7 @@ dependencies = [
  "codeyard-api-repos",
  "codeyard-api-rest",
  "codeyard-app",
+ "codeyard-cells-router",
  "codeyard-ci",
  "codeyard-ci-engine",
  "codeyard-cluster",
@@ -10338,3 +10339,21 @@ dependencies = [
  "uuid",
 ]
 
+[[package]]
+name = "codeyard-cells-router"
+version = "0.1.5"
+dependencies = [
+ "anyhow",
+ "codeyard-cluster-core",
+ "codeyard-db-directory",
+ "codeyard-model",
+ "codeyard-support",
+ "iroh",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "tracing",
+]

@@ -753,10 +753,13 @@ Stage 0 reuses the durability work from cluster plan items 3 and 11. Stage 1 alr
 has account and package lock scoping, cursor polling and configurable pools. Its new
 object-store log chunks, current-copy clone distribution and issue/PR read routing are
 written and pass workspace, Clippy and WASM checks. Initial CI, database, cluster,
-PgBouncer and quorum acceptance passes; replica startup and a CI-engine lock failure need
-reruns. The capacity-lock, copy-seed and CLI changes pass source checks; acceptance is running.
-Stage 2 has unchecked source for ID initialization, credential framing and directory
-queries. Directory transport, the router, foreign authorization and stubs are not built;
+PgBouncer and quorum acceptance passes. The rerun passes the CI-engine library, all 226
+cluster tests, 168 database tests and 100 storage tests; a log-delivery deadline fix and
+replica-client Python fix still await rerun.
+Stage 2 ID initialization, credential framing, directory queries and operator commands pass
+workspace, Clippy and WASM checks; runtime tests are pending. The directory TLS transport
+and shared root-bearing node-ID codec are written but unchecked;
+the public router, foreign authorization and stubs are not built;
 stages 3 to 6 are not built.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
 numbers remain assumptions until stage 1 measures a real cell.

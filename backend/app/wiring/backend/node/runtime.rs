@@ -128,7 +128,7 @@ async fn prepare_application(
     Ok(state)
 }
 
-async fn shutdown_signal() -> Result<()> {
+pub(crate) async fn shutdown_signal() -> Result<()> {
     #[cfg(unix)]
     {
         use tokio::signal::unix::{signal, SignalKind};

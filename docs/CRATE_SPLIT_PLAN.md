@@ -30,6 +30,7 @@ backend/
     runner/                    the Actions runner
   cluster/                     node startup, replica maintenance and CI request handling
     core/                      membership, settings, transport and quorum writes
+  cells/router/                cross-cell routing and the authenticated directory client
   identity/                    login, tokens, keys
   notifications/               notifications and email
   api/

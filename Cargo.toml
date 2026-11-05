@@ -57,6 +57,7 @@ codeyard-git.workspace = true
 codeyard-model.workspace = true
 codeyard-db-core.workspace = true
 codeyard-db-directory.workspace = true
+codeyard-cells-router.workspace = true
 codeyard-api-rest.workspace = true
 codeyard-api-graphql.workspace = true
 codeyard-api-repos.workspace = true
@@ -155,9 +156,9 @@ debug = false
 
 [workspace]
 resolver = "2"
-members = ["backend/repos-rpc", "backend/ci-engine", "backend/webhooks", "backend/cluster", "backend/cluster/core", "backend/ci", "backend/repos", "backend/storage", "backend/ssh", "backend/test-support", "backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app",
+members = ["backend/cells/router", "backend/repos-rpc", "backend/ci-engine", "backend/webhooks", "backend/cluster", "backend/cluster/core", "backend/ci", "backend/repos", "backend/storage", "backend/ssh", "backend/test-support", "backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app",
     "backend/repos-core", "backend/repos-pulls", "backend/notifications", "backend/identity", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/directory", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
-default-members = [".", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/directory", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
+default-members = [".", "backend/cells/router", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/directory", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
 
 [workspace.package]
 version = "0.1.5"
@@ -192,6 +193,7 @@ codeyard-notifications = { path = "backend/notifications" }
 codeyard-identity = { path = "backend/identity" }
 codeyard-db-cluster = { path = "backend/db/cluster" }
 codeyard-db-directory = { path = "backend/db/directory" }
+codeyard-cells-router = { path = "backend/cells/router" }
 codeyard-db-security = { path = "backend/db/security" }
 codeyard-db-actions = { path = "backend/db/actions" }
 codeyard-db-repos = { path = "backend/db/repos" }

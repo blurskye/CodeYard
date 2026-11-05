@@ -23,6 +23,7 @@ pub enum Refusal {
 #[derive(Clone, Copy)]
 pub struct Config {
     pub request_seconds: u64,
+    pub migration_seconds: u64,
     pub claim_seconds: i64,
     pub stale_seconds: i64,
 }
@@ -30,6 +31,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             request_seconds: 5,
+            migration_seconds: 180,
             claim_seconds: 300,
             stale_seconds: 30,
         }
@@ -45,6 +47,7 @@ impl Directory {
     pub async fn connect(url: &str, config: Config) -> Result<Self> {
         ensure!(
             (1..=60).contains(&config.request_seconds)
+                && (30..=600).contains(&config.migration_seconds)
                 && (30..=3600).contains(&config.claim_seconds)
                 && (5..=300).contains(&config.stale_seconds),
             Refusal::Invalid
@@ -67,11 +70,14 @@ impl Directory {
     }
 
     pub async fn migrate(&self) -> Result<()> {
-        self.run(codeyard_db_core::postgres::migrations::run_baseline(
-            &self.pool,
-            "directory",
-            include_str!("../../../../schema/directory/0001.schema.sql"),
-        ))
+        self.run_for(
+            self.config.migration_seconds,
+            codeyard_db_core::postgres::migrations::run_baseline(
+                &self.pool,
+                "directory",
+                include_str!("../../../../schema/directory/0001.schema.sql"),
+            ),
+        )
         .await
     }
 
@@ -80,7 +86,11 @@ impl Directory {
     }
 
     async fn run<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
-        match tokio::time::timeout(Duration::from_secs(self.config.request_seconds), work).await {
+        self.run_for(self.config.request_seconds, work).await
+    }
+
+    async fn run_for<T>(&self, seconds: u64, work: impl Future<Output = Result<T>>) -> Result<T> {
+        match tokio::time::timeout(Duration::from_secs(seconds), work).await {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(error)) if error.is::<Refusal>() => Err(error),
             Ok(Err(error)) if error.downcast_ref::<sqlx::Error>().is_some_and(|error| matches!(error, sqlx::Error::Database(error) if error.code().as_deref()==Some("23505"))) => Err(Refusal::Conflict.into()),
@@ -140,4 +150,22 @@ async fn owner(
     .await?;
     ensure!(live == Some(cell), Refusal::Denied);
     Ok(Prefix::try_from(i64::from(cell)).map_err(|_| Refusal::Unavailable)?)
+}
+
+/// Retain read enrollment through the statement that returns private directory keys.
+async fn read_owner(tx: &mut Transaction<'_, Postgres>, peer: &str) -> Result<()> {
+    ensure!(
+        codeyard_support::tokens::is_hex_token(peer, 64),
+        Refusal::Denied
+    );
+    let router: Option<String> = sqlx::query_scalar(
+        "SELECT public_key FROM directory_router_keys WHERE public_key=$1 FOR SHARE",
+    )
+    .bind(peer.to_ascii_lowercase())
+    .fetch_optional(&mut **tx)
+    .await?;
+    if router.is_none() {
+        owner(tx, peer, false).await?;
+    }
+    Ok(())
 }

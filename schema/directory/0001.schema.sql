@@ -22,6 +22,10 @@ CREATE TABLE directory_node_keys (
     cell_id INTEGER NOT NULL REFERENCES directory_cells(id)
 );
 CREATE INDEX directory_node_keys_cell ON directory_node_keys(cell_id,public_key);
+-- Routers can read routes but cannot claim names or report a cell's load.
+CREATE TABLE directory_router_keys (
+    public_key TEXT PRIMARY KEY CHECK(length(public_key)=64)
+);
 -- One home mapping stays stable when a name changes and switches atomically during a move.
 CREATE TABLE directory_objects (
     kind TEXT NOT NULL CHECK(kind IN ('user','organization','repository')),

@@ -200,6 +200,19 @@ impl ServerCertVerifier for PinnedNode {
 /// The listener's TLS settings: TLS 1.3 only, this node's key, a client key demanded,
 /// the three protocol names, and no session tickets or early data.
 pub fn server_config(key: &NodeKey) -> Result<Arc<ServerConfig>> {
+    server_config_for(key, &ALPNS)
+}
+
+/// Reuse node-key TLS for a listener that serves only its declared protocols.
+pub fn server_config_for(key: &NodeKey, alpns: &[&[u8]]) -> Result<Arc<ServerConfig>> {
+    anyhow::ensure!(
+        !alpns.is_empty()
+            && alpns.len() <= 16
+            && alpns
+                .iter()
+                .all(|alpn| !alpn.is_empty() && alpn.len() <= 255),
+        "Invalid node protocol list"
+    );
     let provider = Arc::new(aws_lc_rs::default_provider());
     let verifier = AnyNodeKey {
         provider: provider.clone(),
@@ -210,7 +223,7 @@ pub fn server_config(key: &NodeKey) -> Result<Arc<ServerConfig>> {
         .with_cert_resolver(Arc::new(AlwaysResolvesServerRawPublicKeys::new(identity(
             key,
         )?)));
-    config.alpn_protocols = ALPNS.iter().map(|alpn| alpn.to_vec()).collect();
+    config.alpn_protocols = alpns.iter().map(|alpn| alpn.to_vec()).collect();
     config.send_tls13_tickets = 0;
     config.session_storage = Arc::new(NoServerSessionStorage {});
     config.max_early_data_size = 0;

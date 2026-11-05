@@ -164,8 +164,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     measurements are runtime pending, need a writable delegated cgroup. Other content read
     families remain on the primary; bulk retention remains open.
     Stage 2 ID initialization, credential framing, directory CLI and atomic directory claims
-    with failure tests are written
-    but unchecked. The directory transport, router, foreign authorization and stubs are
+    with failure tests pass workspace, Clippy and WASM checks. Their runtime tests are pending.
+    The pinned node-key TLS directory listener, read-only router keys and root-bearing node-ID
+    codec are written with transport and malformed-input tests, but unchecked. The public router, foreign authorization and stubs are
     not built. Stages 3 to 6 are not built.
     Individual users may move automatically to
     their working region in stage 6. Organizations retain one write home and gain read

@@ -1,0 +1,2 @@
+//! Cross-cell routing and the authenticated directory client; no cell database credentials.
+pub mod directory;
