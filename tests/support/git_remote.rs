@@ -48,11 +48,46 @@ impl Server {
         trusted_actor: i64,
         session_limit: Option<usize>,
     ) -> Self {
+        Self::start_configured(
+            root,
+            database,
+            name,
+            roles,
+            trusted_actor,
+            session_limit,
+            true,
+        )
+        .await
+    }
+
+    pub async fn start_without_s3(
+        root: &Path,
+        database: &native::PostgresDatabase,
+        name: &str,
+        roles: &str,
+        trusted_actor: i64,
+    ) -> Self {
+        Self::start_configured(root, database, name, roles, trusted_actor, None, false).await
+    }
+
+    async fn start_configured(
+        root: &Path,
+        database: &native::PostgresDatabase,
+        name: &str,
+        roles: &str,
+        trusted_actor: i64,
+        session_limit: Option<usize>,
+        shared_s3: bool,
+    ) -> Self {
         std::fs::create_dir_all(root).unwrap();
         let log = root.join("server.log");
         let key = NodeKey::generate();
         let client = Client::new();
-        let s3 = FakeS3::for_database(&database.pool).await;
+        let s3 = if shared_s3 {
+            FakeS3::for_database(&database.pool).await
+        } else {
+            None
+        };
         let (child, addresses) = spawn_on_free_ports(
             &log,
             2,

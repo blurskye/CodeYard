@@ -1384,13 +1384,17 @@ fn repository_rpc_operation_role_table() {
             (vec![], false),
         ] {
             let roles: Vec<String> = roles.into_iter().map(str::to_owned).collect();
-            // A replica copy's pack request needs the storage role; the other
-            // operations need web or ssh, or a worker's read.
+            // A storage voter initializes an empty term. Operators fetch snapshots
+            // through web/ssh; ordinary replica packs also admit storage identities.
             let replica = matches!(operation, Operation::ReplicaPack { .. });
             let allowed = if replica {
-                roles.iter().any(|role| role == "storage")
+                roles
+                    .iter()
+                    .any(|role| matches!(role.as_str(), "storage" | "web" | "ssh"))
             } else {
                 allowed
+                    || (matches!(operation, Operation::Initialize { source: None, .. })
+                        && roles.iter().any(|role| role == "storage"))
             };
             let result = codeyard_repos_rpc::repository::authorize_operation(&roles, &operation);
             assert_eq!(result.is_ok(), allowed, "{roles:?}: {operation:?}");

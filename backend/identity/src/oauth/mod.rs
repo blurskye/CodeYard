@@ -215,6 +215,9 @@ async fn admit_profile(
     let session_id =
         crate::sessions::issue_authenticated_session(pool, session, user.id, credential)
             .await
-            .map_err(OAuthError::AccountAdmittedSessionFailed)?;
+            .map_err(|error| match (organization, error) {
+                (Some(_), SessionIssueError::Denied) => OAuthError::Denied,
+                (_, error) => OAuthError::AccountAdmittedSessionFailed(error),
+            })?;
     Ok((AuthenticatedAccount { user, session_id }, return_to))
 }

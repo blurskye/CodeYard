@@ -68,7 +68,7 @@ fn failure(error: OAuthError, provider: &str) -> Response {
         ),
         OAuthError::Denied => (
             StatusCode::FORBIDDEN,
-            "Account is suspended or requires a password change.".to_owned(),
+            "Account or organization access is unavailable.".to_owned(),
         ),
         OAuthError::AccountAdmittedSessionFailed(error) => {
             let (status, _) = crate::auth::errors::session_issue_failure(error);

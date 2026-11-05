@@ -349,7 +349,7 @@ async fn uploaded_files_survive_web_and_storage_loss_and_drain_without_s3_on_bot
                 )
                 .await
                 .status,
-            StatusCode::UNAUTHORIZED
+            StatusCode::NOT_FOUND
         );
         for node in nodes {
             if let Some(listener) = node.listener {

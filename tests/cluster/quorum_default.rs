@@ -4,7 +4,7 @@ use crate::support::database::Database;
 #[tokio::test]
 async fn majority_is_default_and_legacy_is_explicit_on_both_engines() {
     for pg in [false, true] {
-        let mut db = Database::new(pg).await;
+        let mut db = Database::empty(pg).await;
         db.complete_setup().await;
         assert!(codeyard_db_cluster::cluster::enable_cluster(db.pool())
             .await
@@ -37,7 +37,7 @@ async fn majority_is_default_and_legacy_is_explicit_on_both_engines() {
 #[tokio::test]
 async fn enabling_refuses_live_cores_legacy_repositories_invalid_policy_and_failed_commit() {
     for pg in [false, true] {
-        let mut db = Database::new(pg).await;
+        let mut db = Database::empty(pg).await;
         db.complete_setup().await;
         let owner = db.actor("legacy-quorum-owner").await;
         let root = tempfile::tempdir().unwrap();
@@ -130,7 +130,7 @@ async fn enabling_refuses_live_cores_legacy_repositories_invalid_policy_and_fail
 #[tokio::test]
 async fn cli_validates_policy_before_enabling_and_preserves_the_selected_mode() {
     for policy in ["majority", "1"] {
-        let mut db = Database::new(true).await;
+        let mut db = Database::empty(true).await;
         db.complete_setup().await;
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join(".env"), "").unwrap();

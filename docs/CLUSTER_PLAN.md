@@ -9,7 +9,8 @@ keeps the longer plan for cells; this file comes first and does not repeat it.
 Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspace,
 Clippy and WASM checks pass, including the fault tests and full-disk placement fix.
 Library checks (1,058 tests), identity checks (161 tests) and Helm rendering pass.
-Cluster runtime and backup/restore acceptance remain pending. The end-to-end build
+The cluster run has failures in restore and test fixtures; fixes await verification.
+Drain, metrics, provisioning, scaling and mover runtime checks pass. The end-to-end build
 found native dependencies in the app binary’s browser graph; that boundary is corrected
 in source and awaits a bundle build. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
@@ -35,12 +36,12 @@ Current acceptance status (runtime checks are still pending):
 
 - 1: hiding switch built; source checks pass.
 - 2: two-copy storage-node backend, shared drain reservations and HTTP acceptance written; source checks pass, runtime pending.
-- 3: quorum initialization, copy and voter replacement pass source checks; majority defaults and explicit legacy selection pass source checks.
-- 4: drain source checks pass; native and hydrated browser acceptance written, runtime pending.
-- 5: quorum, drain and acquisition waiter metrics pass source checks; runtime acceptance pending.
-- 6: bounded invitations and environment-only provisioning source checks pass; runtime pending.
-- 7: lease leader, policy settings, pause and dry run source checks pass; runtime pending.
-- 8: mover and bandwidth limit source checks pass; runtime pending.
+- 3: quorum initialization, copy, voter replacement and primary-loss checks pass; default-policy and full-disk fixture corrections await rerun.
+- 4: drain REST, authority and promotion checks pass; native and hydrated browser checks await execution.
+- 5: quorum, drain, bounded scraping and acquisition waiter metrics pass HTTP acceptance.
+- 6: bounded invitations and environment-only provisioning pass library and REST checks.
+- 7: policy forms, lease leader, pause, dry run and storage rules pass on both database engines.
+- 8: mover reservations, bandwidth limits and busy-reader retirement retry pass.
 - 9: pool configuration source checks and Helm render checks pass; PostgreSQL failover, PgBouncer and load runs pending.
 - 10: previous-release target needs confirmation before compatibility work.
 - 11: primary snapshots, object copies, fenced import and per-node restore pass source checks; runtime pending.

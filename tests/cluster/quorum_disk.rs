@@ -3,7 +3,12 @@ use crate::support::database::Database;
 use std::{io::Write, time::Duration};
 
 async fn run(mut command: tokio::process::Command) -> std::process::Output {
-    command.stdin(std::process::Stdio::null());
+    command
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .process_group(0)
+        .kill_on_drop(true);
     codeyard_git::repository::process::run(command, &[], 1024 * 1024, Duration::from_secs(90))
         .await
         .unwrap()
@@ -48,7 +53,7 @@ fn full_filesystem_refuses_a_push_and_recovers_after_freeing_space() {
         // the parent's TempDir then removes the empty mount point.
         let original = std::env::var_os("TMPDIR");
         for pg in [false, true] {
-            let mut database = Database::new(pg).await;
+            let mut database = Database::empty(pg).await;
             std::env::set_var("TMPDIR", &root);
             let stores = super::quorum::Stores::new(database.pool()).await;
             super::quorum_sql::set_timeout(database.pool(), 1)
@@ -150,7 +155,7 @@ async fn repository_creation_refuses_full_nodes_through_http_on_both_engines() {
     use axum::http::StatusCode;
     use std::sync::Arc;
     for pg in [false, true] {
-        let mut database = Database::new(pg).await;
+        let mut database = Database::empty(pg).await;
         database.complete_setup().await;
         let stores = super::quorum::Stores::new(database.pool()).await;
         database

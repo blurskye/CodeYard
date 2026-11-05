@@ -25,6 +25,16 @@ impl Database {
             Self::Sqlite(native::NativeDatabase::new().await)
         }
     }
+    /// Empty repository catalogue; the regular PostgreSQL fixture seeds a CI repository.
+    pub async fn empty(pg: bool) -> Self {
+        let database = Self::new(pg).await;
+        if let Self::Postgres(fixture) = &database {
+            database
+                .execute("DELETE FROM repositories WHERE id=$1", &[fixture.repo.id])
+                .await;
+        }
+        database
+    }
     pub fn pool(&self) -> &codeyard_db_core::DbPool {
         match self {
             Self::Postgres(f) => &f.pool,

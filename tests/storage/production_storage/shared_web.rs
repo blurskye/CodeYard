@@ -247,38 +247,80 @@ async fn postgres_files_survive_a_web_node() {
 }
 
 #[tokio::test]
-async fn cluster_startup_refuses_node_local_files() {
-    let mut database = Database::new(true).await;
-    let root = tempfile::tempdir().unwrap();
-    std::fs::write(root.path().join(".env"), "").unwrap();
-    let url = database.connection_url();
-    for arguments in [
-        vec!["serve", "--cluster", "--roles", "web"],
-        vec!["serve", "--roles", "web"],
-        vec!["serve", "--roles", "storage"],
-        vec!["serve", "--roles", "ssh"],
-    ] {
-        let output = tokio::time::timeout(
-            Duration::from_secs(30),
-            tokio::process::Command::new(env!("CARGO_BIN_EXE_codeyard"))
-                .args(&arguments)
-                .env_clear()
-                .env("DATABASE_URL", &url)
-                .env("CODEYARD_EXPERIMENTAL_CLUSTER", "1")
-                .current_dir(root.path())
-                .kill_on_drop(true)
-                .output(),
+async fn cluster_startup_uses_storage_nodes_without_s3() {
+    use crate::support::{git_remote::Server, native_database::PostgresDatabase};
+    use sha2::{Digest, Sha256};
+    let mut database = PostgresDatabase::new().await;
+    crate::support::fake_webui_bundle::install();
+    crate::support::native_database::enable_cluster(&database.pool)
+        .await
+        .unwrap();
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+        .await
+        .unwrap();
+    let owner =
+        codeyard_db_identity::users::accounts::create_user(&database.pool, "node-files", None)
+            .await
+            .unwrap();
+    let session = live_session(&database.pool, owner.id).await;
+    let csrf = crate::support::native_database::token();
+    assert_eq!(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
+            &database.pool,
+            &session,
+            Some(owner.id),
+            &csrf,
+            3600
         )
         .await
-        .expect("startup must refuse local files without waiting for a peer")
+        .unwrap(),
+        Some(csrf.clone())
+    );
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join(".env"), "").unwrap();
+    let server =
+        Server::start_without_s3(root.path(), &database, "web-no-s3", "web", owner.id).await;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
         .unwrap();
-        assert!(!output.status.success(), "{arguments:?}");
-        let message = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            message.contains("shared object store"),
-            "{arguments:?}: {message}"
-        );
-        assert!(message.contains("S3_*"), "{arguments:?}: {message}");
-    }
+    let cookie = format!("session_id={session}");
+    let bytes = b"cluster file";
+    let reservation = client
+        .post(format!("{}/api/files", server.base))
+        .header("cookie", &cookie)
+        .header("x-csrf-token", &csrf)
+        .json(
+            &json!({"filename":"shared.txt","content_type":"text/plain","file_size":bytes.len(),
+            "reason":"other","visibility":"owner","sha256_hex":hex::encode(Sha256::digest(bytes))}),
+        )
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(reservation.status(), StatusCode::OK);
+    let reservation: Value = reservation.json().await.unwrap();
+    // With no storage members, the node backend must refuse acknowledgement. A local
+    // backend would accept these bytes on the web node and fail this assertion.
+    let upload = client
+        .put(format!(
+            "{}{}",
+            server.base,
+            reservation["upload_url"].as_str().unwrap()
+        ))
+        .header("cookie", cookie)
+        .header("x-csrf-token", csrf)
+        .header("content-type", "text/plain")
+        .body(bytes.to_vec())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(upload.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let confirmed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM files WHERE confirmed_at IS NOT NULL")
+            .fetch_one(&database.raw)
+            .await
+            .unwrap();
+    assert_eq!(confirmed, 0);
+    drop(server);
     database.finish().await;
 }

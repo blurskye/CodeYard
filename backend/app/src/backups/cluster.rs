@@ -160,7 +160,8 @@ pub(super) async fn restore_postgres(
                 "--if-exists",
                 "--file=-",
             ])
-            .arg(format!("--schema=\"{}\"", schema.replace('"', "\"\"")))
+            // pg_restore matches the literal archive name; pg_dump uses a pattern.
+            .arg(format!("--schema={schema}"))
             .arg("--")
             .arg(archive)
             .stdin(std::process::Stdio::piped())

@@ -1118,6 +1118,13 @@ async fn the_setting_decides_how_many_copies_exist_and_removes_the_rest() {
         )
         .await
         .unwrap());
+        codeyard_db_cluster::drain::record_capacity(
+            pool,
+            &node.endpoint().unwrap().id().to_string(),
+            2 * 1024 * 1024 * 1024,
+        )
+        .await
+        .unwrap();
     }
     assert!(codeyard_db_cluster::cluster::set_replicas(pool, "2")
         .await

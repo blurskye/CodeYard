@@ -302,18 +302,19 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     let held_archive = backup.join("database.pgdump.held");
     std::fs::rename(&archive, &held_archive).unwrap();
     std::fs::write(&archive, b"not a PostgreSQL archive").unwrap();
-    assert!(!cli(
+    let output = cli(
         root.path(),
         &urls[1],
         Some(&key),
         "backup-web",
         &coordinator,
         &state,
-        &["restore", backup.to_str().unwrap()]
+        &["restore", backup.to_str().unwrap()],
     )
-    .await
-    .status
-    .success());
+    .await;
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("pg_restore"), "{error}");
     let empty = codeyard_db_core::init_db(&urls[1]).await.unwrap();
     assert!(codeyard_db_cluster::backups::is_empty(&empty)
         .await
@@ -327,18 +328,19 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     ));
     let held = missing.with_extension("held");
     std::fs::rename(&missing, &held).unwrap();
-    assert!(!cli(
+    let output = cli(
         root.path(),
         &urls[1],
         Some(&key),
         "backup-web",
         &coordinator,
         &state,
-        &["restore", backup.to_str().unwrap()]
+        &["restore", backup.to_str().unwrap()],
     )
-    .await
-    .status
-    .success());
+    .await;
+    assert!(!output.status.success());
+    let error = String::from_utf8_lossy(&output.stderr);
+    assert!(error.contains("repository"), "{error}");
     let interrupted = codeyard_db_core::init_db(&urls[1]).await.unwrap();
     assert!(codeyard_db_cluster::backups::restore_pending(&interrupted)
         .await
