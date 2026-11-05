@@ -188,6 +188,119 @@ async fn contract(pg: bool) {
         .all(|org| org.id != organization.id)
     );
 
+    // References to remote members remain intact, but account listings and their counts agree.
+    use crate::support::organizations::applied;
+    use codeyard_db_orgs::organizations::{membership, profiles, teams, OrganizationPage};
+    let org = applied(
+        profiles::create_organization(
+            pool,
+            native.id,
+            &profiles::NewOrganization::new(
+                "local-org",
+                profiles::OrganizationProfile::new(None, None).unwrap(),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap(),
+    );
+    database.execute(
+        "INSERT INTO org_memberships(org_id,user_id,role,is_public) VALUES($1,$2,'member',TRUE)",
+        &[org.id, remote.id],
+    ).await;
+    database
+        .execute(
+            "UPDATE org_memberships SET is_public=TRUE WHERE org_id=$1",
+            &[org.id],
+        )
+        .await;
+    database.execute(
+        "INSERT INTO teams(org_id,name,slug,privacy) VALUES($1,'Contributors','contributors','visible')",
+        &[org.id],
+    ).await;
+    let team = database
+        .scalar("SELECT id FROM teams WHERE org_id=$1", &[org.id])
+        .await;
+    for user in [native.id, remote.id] {
+        database
+            .execute(
+                "INSERT INTO team_memberships(team_id,user_id,role) VALUES($1,$2,'member')",
+                &[team, user],
+            )
+            .await;
+    }
+    let page = OrganizationPage::new(0, 100).unwrap();
+    assert_eq!(
+        applied(
+            membership::count_organization_members(pool, native.id, org.id)
+                .await
+                .unwrap()
+        ),
+        1
+    );
+    let members = applied(
+        membership::list_organization_members(pool, native.id, org.id, page)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        members
+            .iter()
+            .map(|member| member.user_id)
+            .collect::<Vec<_>>(),
+        vec![native.id]
+    );
+    let members = applied(
+        teams::list_organization_team_members(pool, native.id, org.id, team, page)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(
+        members
+            .iter()
+            .map(|member| member.user_id)
+            .collect::<Vec<_>>(),
+        vec![native.id]
+    );
+    let listing = applied(
+        teams::list_organization_teams(pool, native.id, org.id, page)
+            .await
+            .unwrap(),
+    );
+    assert_eq!(listing[0].member_count, 1);
+    assert_eq!(
+        teams::get_public_team(pool, native.id, org.id, "contributors")
+            .await
+            .unwrap()
+            .unwrap()
+            .member_count,
+        1
+    );
+    assert_eq!(
+        database
+            .scalar(
+                "SELECT COUNT(*) FROM org_memberships WHERE org_id=$1",
+                &[org.id]
+            )
+            .await,
+        2
+    );
+    let token = codeyard_support::cells::Prefix::ZERO
+        .token(codeyard_support::tokens::PAT_PREFIX, &"d".repeat(64))
+        .unwrap();
+    codeyard_db_identity::users::tokens::create_token(
+        pool,
+        native.id,
+        &"b".repeat(64),
+        "members",
+        &codeyard_support::token_hash::token_hash(&token),
+        "write",
+        None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+
     let root = tempfile::tempdir().unwrap();
     let git_path = root.path().join("actual.git");
     let git = git2::Repository::init_bare(&git_path).unwrap();
@@ -277,6 +390,43 @@ async fn contract(pg: bool) {
         assert!(items
             .iter()
             .all(|item| item["id"].as_i64() != Some(remote.id)));
+    }
+    for (path, field, count) in [
+        ("/api/v3/orgs/local-org/members", "login", false),
+        ("/api/v3/orgs/local-org/public_members", "login", false),
+        (
+            "/api/v3/orgs/local-org/teams/contributors/members",
+            "login",
+            false,
+        ),
+        (
+            "/api/v3/orgs/local-org/teams/contributors",
+            "members_count",
+            true,
+        ),
+    ] {
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri(path)
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1048576).await.unwrap())
+                .unwrap();
+        if count {
+            assert_eq!(body[field], 1, "{path}: {body}");
+        } else {
+            let members = body.as_array().unwrap();
+            assert_eq!(members.len(), 1, "{path}: {body}");
+            assert_eq!(members[0][field], "native", "{path}: {body}");
+        }
     }
     database.finish().await;
 }
