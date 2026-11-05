@@ -26,6 +26,7 @@ pub(super) enum Commands {
         /// Roles of this machine: server (web pages, API, Git storage and SSH) and runner
         /// (Actions jobs). A runner may run alone on another machine. In cluster mode the
         /// server's parts are the web, storage and ssh roles, on separate machines.
+        /// A router runs alone with a directory and no application database.
         #[arg(long, env = "GITSERV_NODE_ROLES", default_value = "server,runner")]
         roles: codeyard_model::node_roles::NodeRoles,
 

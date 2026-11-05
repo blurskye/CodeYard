@@ -375,3 +375,28 @@ fn a_storage_only_node_is_refused_in_single_node_mode() {
         text(&output.stderr)
     );
 }
+
+#[test]
+fn router_role_validates_its_directory_without_opening_an_application_database() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join(".env"), "").unwrap();
+    for arguments in [
+        vec!["serve", "--roles", "router"],
+        vec!["serve", "--roles", "router", "--cluster"],
+        vec!["serve", "--roles", "router,server"],
+    ] {
+        let output = run(
+            root.path(),
+            &arguments,
+            &[("DATABASE_URL", "invalid://must-not-open")],
+        );
+        assert!(!output.status.success());
+        let error = text(&output.stderr);
+        assert!(!error.contains("could not open"), "{error}");
+        assert!(
+            error.contains("router") || error.contains("DIRECTORY_ADDRESS"),
+            "{error}"
+        );
+    }
+    assert!(!root.path().join("data/application.sqlite").exists());
+}

@@ -160,12 +160,13 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     GraphQL dispatch, stub metadata/storage/credential/list guards and common rooted IDs pass
     source checks. Generated GraphQL is unchanged. Range renewal is committed as an owner follow-up;
     stop expanding it unless stage 2 acceptance needs it. Issuer-history checks are pending.
-    Acceptance 049f16eeb8324596b898b230885a66d3 runs the earlier compiled snapshot. Libraries,
+    Acceptance 049f16eeb8324596b898b230885a66d3 finished on the earlier compiled snapshot. Libraries,
     CI 220 (19 existing ignored) and database 174 pass. Cluster 227 pass, with the new fake-cell
     outage fixture failing because listener abort left connections alive; its fix is compiled.
     Git and token tests that pinned old output now assert the scoped format. New hostile
     device-code cases use separate fixtures to preserve the long OAuth contract's rate budget.
-    These fixes await rerun. The public HTTP/SSH role, foreign authorization, remote membership
+    These fixes await rerun. The database-free public HTTP/SSH role and native-cell routing,
+    spoofing, router revocation and outage tests are written but unchecked. Foreign authorization, remote membership
     pointers, remaining node families and stages 3 to 6 remain unimplemented. Automatic user
     moves and org regional presence are documented owner decisions.
 

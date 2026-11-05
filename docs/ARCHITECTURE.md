@@ -755,7 +755,7 @@ remain open. Stage 2 range allocation, credential framing, directory registry an
 transport are built and source-checked. Route metadata, shared GraphQL preflight and scoped
 session storage, catalogue selection and bounded HTTP/GraphQL forwarding pass workspace,
 Clippy and WASM. Their runtime tests are pending; upload cleanup and Git/ref routing also pass source checks. The public router
-role and foreign authorization are not built. Stub schema, metadata upserts and local
+role is written but unchecked; foreign authorization is not built. Stub schema, metadata upserts and local
 credential/storage/listing guards pass source checks, as do common rooted node IDs.
 Metadata-only root validation also passes checks. Successor-prefix reservations are
 source-checked, as is stopped-cell renewal. Its local issuer-history/OAuth follow-up is

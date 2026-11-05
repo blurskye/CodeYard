@@ -3,8 +3,8 @@ use super::*;
 use crate::rate_limit::RateLimiter;
 use crate::server::SshServer;
 use russh::client;
-use russh::keys::PrivateKeyWithHashAlg;
 use russh::keys::PublicKeyOrCertificate;
+use russh::keys::{PrivateKeyWithHashAlg, PublicKey};
 use russh::ChannelMsg;
 use std::time::Duration;
 
@@ -27,6 +27,13 @@ struct Fixture {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::with_router("alice", 51, None).await
+    }
+    async fn with_router(
+        name: &str,
+        seed: u8,
+        authorization: Option<Arc<dyn crate::handler::RouterAuthorization>>,
+    ) -> Self {
         let root = tempfile::tempdir().unwrap();
         let pool = codeyard_db_core::init_db(&format!(
             "sqlite://{}",
@@ -35,10 +42,10 @@ impl Fixture {
         .await
         .unwrap();
         codeyard_db_core::run_migrations(&pool).await.unwrap();
-        let user = codeyard_db_identity::users::accounts::create_user(&pool, "alice", None)
+        let user = codeyard_db_identity::users::accounts::create_user(&pool, name, None)
             .await
             .unwrap();
-        let key = Arc::new(PrivateKey::from(Ed25519Keypair::from_seed(&[51; 32])));
+        let key = Arc::new(PrivateKey::from(Ed25519Keypair::from_seed(&[seed; 32])));
         codeyard_db_identity::users::ssh_keys::add_ssh_key(
             &pool,
             user.id,
@@ -72,6 +79,9 @@ impl Fixture {
                 let mut server = SshServer::new(pool.clone(), None, ci.clone())
                     .await
                     .unwrap();
+                if let Some(authorization) = &authorization {
+                    server = server.with_router_authorization(authorization.clone());
+                }
                 let limiter = server.handler.rate_limiter.clone();
                 let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
                 let address = probe.local_addr().unwrap();
@@ -234,4 +244,170 @@ async fn database_authentication_errors_do_not_ban_the_client() {
     }
     assert!(!f.limiter.is_blocked("127.0.0.1".parse().unwrap()).await);
     f.finish().await;
+}
+
+struct RouterAuthorization {
+    key: PublicKey,
+    enabled: Arc<std::sync::atomic::AtomicBool>,
+}
+impl crate::handler::RouterAuthorization for RouterAuthorization {
+    fn authorize<'a>(
+        &'a self,
+        key: &'a PublicKey,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + 'a>> {
+        Box::pin(async move {
+            Ok(key == &self.key && self.enabled.load(std::sync::atomic::Ordering::SeqCst))
+        })
+    }
+}
+struct RouterDirectory {
+    entries: Vec<(String, String, SocketAddr, String)>,
+}
+impl crate::router::Directory for RouterDirectory {
+    fn resolve<'a>(
+        &'a self,
+        owner: Option<&'a str>,
+        fingerprint: &'a str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Option<crate::router::Target>>> + Send + 'a>,
+    > {
+        Box::pin(async move {
+            Ok(self
+                .entries
+                .iter()
+                .find(|(name, key, _, _)| owner.map_or(key == fingerprint, |owner| owner == name))
+                .map(|(_, _, address, pin)| crate::router::Target {
+                    addresses: vec![*address],
+                    pins: vec![pin.clone()],
+                }))
+        })
+    }
+}
+async fn route_entry(name: &str, fixture: &Fixture) -> (String, String, SocketAddr, String) {
+    let key = codeyard_db_cluster::node_config::get_cluster_ssh_host_key(&fixture.pool)
+        .await
+        .unwrap()
+        .unwrap();
+    let key = russh::keys::decode_secret_key(&key, None).unwrap();
+    let pin = key
+        .public_key()
+        .fingerprint(russh::keys::HashAlg::Sha256)
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(
+        &fixture.key.public_key().to_openssh().unwrap(),
+    )
+    .unwrap();
+    (name.into(), fingerprint, fixture.address, pin)
+}
+async fn routed_client(address: SocketAddr, key: Arc<PrivateKey>) -> client::Handle<Client> {
+    let mut client = client::connect(Arc::new(client::Config::default()), address, Client)
+        .await
+        .unwrap();
+    assert!(client
+        .authenticate_publickey("git", PrivateKeyWithHashAlg::new(key, None))
+        .await
+        .unwrap()
+        .success());
+    client
+}
+async fn advertisement(client: &client::Handle<Client>, owner: &str, available: bool) {
+    let mut channel = client.channel_open_session().await.unwrap();
+    // A client cannot replace its signed identity with an environment variable.
+    channel
+        .set_env(true, "CODEYARD_SSH_KEY", "ssh-ed25519 forged")
+        .await
+        .unwrap();
+    assert!(matches!(channel.wait().await, Some(ChannelMsg::Failure)));
+    channel
+        .set_env(true, "GIT_PROTOCOL", "version=2")
+        .await
+        .unwrap();
+    assert!(matches!(channel.wait().await, Some(ChannelMsg::Success)));
+    channel
+        .exec(true, format!("git-upload-pack '{owner}/repo.git'"))
+        .await
+        .unwrap();
+    let mut bytes = Vec::new();
+    tokio::time::timeout(Duration::from_secs(15), async {
+        while let Some(message) = channel.wait().await {
+            match message {
+                ChannelMsg::Data { data } => {
+                    bytes.extend_from_slice(&data);
+                    if available && bytes.windows(9).any(|bytes| bytes == b"version 2") {
+                        break;
+                    }
+                }
+                ChannelMsg::Close => break,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .expect("routed SSH command hung");
+    assert_eq!(
+        bytes.windows(9).any(|bytes| bytes == b"version 2"),
+        available
+    );
+    let _ = channel.eof().await;
+    let _ = channel.close().await;
+}
+#[tokio::test]
+async fn public_ssh_router_pins_native_cells_preserves_identity_and_rechecks_router_revocation() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let root = tempfile::tempdir().unwrap();
+    let identity = PrivateKey::from(Ed25519Keypair::from_seed(&[52; 32]));
+    let enabled = Arc::new(AtomicBool::new(true));
+    let authorization = Arc::new(RouterAuthorization {
+        key: identity.public_key().clone(),
+        enabled: enabled.clone(),
+    });
+    let alice = Fixture::with_router("alice", 53, Some(authorization.clone())).await;
+    let bob = Fixture::with_router("bob", 54, Some(authorization)).await;
+    let directory = Arc::new(RouterDirectory {
+        entries: vec![
+            route_entry("alice", &alice).await,
+            route_entry("bob", &bob).await,
+        ],
+    });
+    let handler = crate::router::Handler::new(directory, identity);
+    let mut router =
+        SshServer::with_handler(root.path().join("host_key").to_str().unwrap(), handler).unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, stopped) = watch::channel(false);
+    let task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+        router.run_listener(listener, stopped).await
+    }));
+    let first = routed_client(address, alice.key.clone()).await;
+    let second = routed_client(address, bob.key.clone()).await;
+    advertisement(&first, "alice", true).await;
+    advertisement(&second, "bob", true).await;
+    // The receiving cell authorizes the original key, never the router's account.
+    advertisement(&first, "bob", false).await;
+    enabled.store(false, Ordering::SeqCst);
+    advertisement(&first, "alice", false).await;
+    enabled.store(true, Ordering::SeqCst);
+    // A stopped cell leaves other owners reachable through the same public listener.
+    advertisement(&first, "alice", true).await;
+    let _ = second
+        .disconnect(russh::Disconnect::ByApplication, "done", "en")
+        .await;
+    drop(second);
+    bob.finish().await;
+    advertisement(&first, "bob", false).await;
+    advertisement(&first, "alice", true).await;
+    let _ = first
+        .disconnect(russh::Disconnect::ByApplication, "done", "en")
+        .await;
+    drop(first);
+    stop.send_replace(true);
+    tokio::time::timeout(Duration::from_secs(15), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    alice.finish().await;
 }

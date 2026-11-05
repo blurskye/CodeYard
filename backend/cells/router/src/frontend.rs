@@ -170,7 +170,11 @@ impl Frontend {
                     .or_else(|| fields.get("login"))
                     .or_else(|| fields.get("email"))
                     .ok_or(Failure::Invalid)?;
-                if login.contains('@') {
+                if request.uri().path() == "/enter"
+                    && fields.get("mode").map(String::as_str) == Some("signup")
+                {
+                    self.routes.place(&self.config.region).await?
+                } else if login.contains('@') {
                     self.routes.by_key(KeyKind::Email, login).await?
                 } else {
                     self.routes.by_name(login).await?

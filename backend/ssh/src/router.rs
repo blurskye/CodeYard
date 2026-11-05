@@ -238,7 +238,7 @@ impl russh::server::Handler for Handler {
                             break;
                         }
                     }
-                    ChannelMsg::Eof | ChannelMsg::Close => break,
+                    ChannelMsg::Data { .. } | ChannelMsg::Eof | ChannelMsg::Close => break,
                     _ => {}
                 }
             }
@@ -283,6 +283,31 @@ impl russh::server::Handler for Handler {
         } else {
             let _ = session.channel_failure(channel);
         }
+        Ok(())
+    }
+    async fn subsystem_request(
+        &mut self,
+        channel: ChannelId,
+        _name: &str,
+        session: &mut Session,
+    ) -> Result<()> {
+        let _ = session.channel_failure(channel);
+        let _ = session.close(channel);
+        Ok(())
+    }
+    async fn pty_request(
+        &mut self,
+        channel: ChannelId,
+        _term: &str,
+        _width: u32,
+        _height: u32,
+        _pixel_width: u32,
+        _pixel_height: u32,
+        _modes: &[(russh::Pty, u32)],
+        session: &mut Session,
+    ) -> Result<()> {
+        let _ = session.channel_failure(channel);
+        let _ = session.close(channel);
         Ok(())
     }
     async fn exec_request(

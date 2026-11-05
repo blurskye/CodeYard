@@ -717,11 +717,19 @@ The cell directory source uses a separate PostgreSQL database. Initialize it wit
 `cell directory register`, and grant read-only router keys with
 `cell directory router-key --public-key <key>`. `cell directory serve` owns its node-key
 TLS listener; callers pin that public key. Cell mutations recheck live cell enrollment
-in their transaction. This transport is not yet connected to public routing or signup;
-multiple cells are not yet a usable deployment.
+in their transaction. Public HTTP/SSH wiring is written but unchecked; signup claims and
+foreign authorization are unfinished, so multiple cells are not yet a usable deployment.
 
 Router source now includes bounded HTTP streaming and GraphQL field dispatch using the
-application route catalogue. These paths are not exposed by a public router role yet;
+application route catalogue. The unchecked public entry point is `serve --roles router`
+with `DIRECTORY_ADDRESS`, `DIRECTORY_PUBLIC_KEY` and `CELL_REGION`. It opens no cell database.
+Enroll its node key with `cell directory router-key` before starting it. HTTP and SSH
+addresses use the existing serve options. Cell SSH listeners use builtin mode with the
+same pinned directory settings; their cell node keys must be registered. Include each
+cell's SSH host key SHA256 wire digest (hex) in its registered key pins. The router
+terminates client SSH and the receiving cell rechecks the original client key and native
+repository access. Router enrollment is checked live by the receiving cell.
+These paths still need acceptance tests;
 foreign credentials and stub transport remain unfinished. Stub storage and local access/listing
 guards are written but unchecked. The generated schema crate is unchanged.
 

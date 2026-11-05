@@ -456,7 +456,8 @@ impl PairingHandler {
         let roles = match body.roles {
             None => None,
             Some(list) => match list.join(",").parse::<NodeRoles>() {
-                Ok(roles) => Some(roles.names()),
+                Ok(roles) if !roles.router_only() => Some(roles.names()),
+                Ok(_) => return refuse("a router is enrolled in the directory, not a cell"),
                 Err(_) => return refuse("unknown role requested"),
             },
         };
