@@ -329,7 +329,15 @@ pub async fn catch_up_voter(
         .voters
         .iter()
         .any(|voter| voter.node_id == context.node_id)
-        || view.unfinished.as_ref().is_some_and(|write| write.decision == "pending")
+        || view.voters.iter().any(|voter| {
+            voter.node_id == context.node_id
+                && voter.term == view.term
+                && voter.applied_version == view.committed_version
+        })
+        || view
+            .unfinished
+            .as_ref()
+            .is_some_and(|write| write.decision == "pending")
     {
         return Ok(());
     }
@@ -338,65 +346,71 @@ pub async fn catch_up_voter(
         .context("repository disappeared during voter catch-up")?;
     let uuid = codeyard_repos_core::wire::repository_uuid(&row.disk_path)?;
     let path = codeyard_repos_core::context::term_path(&context.repos_path, uuid, view.term);
+    tokio::fs::create_dir_all(&path).await?;
+    codeyard_repos_core::context::literal_directory(&context.repos_path, &path).await?;
     let guards = tokio::time::timeout(Duration::from_millis(500), async {
         let publication = codeyard_git::locks::publication(&path).await?;
         let readers = codeyard_git::locks::exclusive(&path).await;
         Ok::<_, anyhow::Error>((publication, readers))
     })
     .await??;
-    let latest = journal::recovery_view(pool, repository).await?;
-    ensure!(
-        latest.term == view.term
-            && latest.committed_version == view.committed_version
-            && latest.unfinished.as_ref().is_none_or(|write| write.decision != "pending"),
-        "canonical refs changed before voter catch-up"
-    );
-    let want: Vec<_> = view
-        .refs
-        .iter()
-        .filter(|value| value.kind == "oid")
-        .map(|value| value.target.clone())
-        .collect();
-    let nodes = codeyard_db_cluster::cluster::list_nodes(pool).await?;
-    for source in view.voters.iter().filter(|voter| {
-        voter.node_id != context.node_id
-            && voter.term == view.term
-            && voter.applied_version == view.committed_version
-            && is_reporting_storage(&nodes, voter.node_id)
-    }) {
-        if super::transfer::snapshot(context, source.node_id, uuid, &path, &want)
-            .await
-            .is_err()
-        {
-            continue;
-        }
-        let store = RepoStore::from_disk_path(path.to_str().context("invalid term path")?);
-        store.restore_refs(&view.refs).await?;
-        let current = journal::recovery_view(pool, repository).await?;
-        ensure!(
-            current.term == view.term
-                && current.committed_version == view.committed_version
-                && current.unfinished.as_ref().is_none_or(|write| write.decision != "pending"),
-            "canonical refs changed during voter catch-up"
-        );
-        ensure!(
-            journal::mark_write_applied(
-                pool,
-                repository,
-                context.node_id,
-                view.term,
-                view.committed_version
-            )
-            .await?,
-            "voter term changed"
-        );
-        if let Some(write) = &view.unfinished {
-            journal::finish_write(pool, &write.id, view.term).await?;
-        }
-        drop(guards);
-        return Ok(());
-    }
-    anyhow::bail!("no current voter could supply canonical objects")
+    guards
+        .0
+        .scope(async {
+            let latest = journal::recovery_view(pool, repository).await?;
+            ensure!(
+                latest.term == view.term
+                    && latest.committed_version == view.committed_version
+                    && latest
+                        .unfinished
+                        .as_ref()
+                        .is_none_or(|write| write.decision != "pending"),
+                "canonical refs changed before voter catch-up"
+            );
+            let nodes = codeyard_db_cluster::cluster::list_nodes(pool).await?;
+            for source in view.voters.iter().filter(|voter| {
+                voter.node_id != context.node_id
+                    && voter.term == view.term
+                    && voter.applied_version == view.committed_version
+                    && is_reporting_storage(&nodes, voter.node_id)
+            }) {
+                if super::transfer::snapshot(context, source.node_id, uuid, &path, &[])
+                    .await
+                    .is_err()
+                {
+                    continue;
+                }
+                let store = RepoStore::from_disk_path(path.to_str().context("invalid term path")?);
+                store.restore_refs(&view.refs).await?;
+                let current = journal::recovery_view(pool, repository).await?;
+                ensure!(
+                    current.term == view.term
+                        && current.committed_version == view.committed_version
+                        && current
+                            .unfinished
+                            .as_ref()
+                            .is_none_or(|write| write.decision != "pending"),
+                    "canonical refs changed during voter catch-up"
+                );
+                ensure!(
+                    journal::mark_write_applied(
+                        pool,
+                        repository,
+                        context.node_id,
+                        view.term,
+                        view.committed_version
+                    )
+                    .await?,
+                    "voter term changed"
+                );
+                if let Some(write) = &view.unfinished {
+                    journal::finish_write(pool, &write.id, view.term).await?;
+                }
+                return Ok(());
+            }
+            anyhow::bail!("no current voter could supply canonical objects")
+        })
+        .await
 }
 
 /// Each voter reconstructs only its own directories. Enabling requires a quorum
@@ -465,7 +479,11 @@ pub async fn take_over(
     let mut taken = Vec::new();
     // The families already decided in this pass, so each one is tried once, from its first row.
     let mut decided = HashSet::new();
-    let held = codeyard_db_cluster::cluster::list_held_replicas(pool, node).await?;
+    let held = if quorum {
+        codeyard_db_cluster::cluster::writes::held_voters(pool, node).await?
+    } else {
+        codeyard_db_cluster::cluster::list_held_replicas(pool, node).await?
+    };
     let versions: HashMap<_, _> = held
         .iter()
         .map(|row| (row.repository_id, row.applied_version))

@@ -54,7 +54,7 @@ pub async fn plan(pool: &SqlitePool, node: i64) -> Result<Option<Move>> {
     let pending = crate::sqlite::objects::pending(&mut tx).await?;
     for repository in candidates {
         let family = crate::sqlite::cluster::FORK_FAMILY;
-        let rows: Vec<Repository> = sqlx::query_as(&format!("WITH family AS ({family}) SELECT r.id,r.forked_from_id AS parent,r.storage_node_id AS primary_id,r.write_version AS version,r.size_bytes AS size FROM repositories r JOIN family f ON f.id=r.id ORDER BY r.id LIMIT $2"))
+        let rows: Vec<Repository> = sqlx::query_as(&format!("WITH family AS ({family}) SELECT r.id,r.forked_from_id AS parent,r.storage_node_id AS primary_id,r.write_version AS version,r.size_bytes AS size,(SELECT COUNT(*) FROM repository_voters v WHERE v.repository_id=r.id) AS voters FROM repositories r JOIN family f ON f.id=r.id ORDER BY r.id LIMIT $2"))
             .bind(repository).bind(limit+1).fetch_all(&mut *tx).await?;
         if rows.len() as i64 > limit || rows.iter().any(|row| row.primary_id != node) {
             continue;
@@ -65,16 +65,7 @@ pub async fn plan(pool: &SqlitePool, node: i64) -> Result<Option<Move>> {
             copies.len() as i64 <= limit.saturating_mul(1000),
             "rebalance copy limit exceeded"
         );
-        let voters: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM repository_voters WHERE repository_id=$1")
-                .bind(repository)
-                .fetch_one(&mut *tx)
-                .await?;
-        let wanted = if quorum {
-            usize::try_from(voters)?
-        } else {
-            setting.parse::<usize>()?
-        };
+        let wanted = if quorum { 2 } else { setting.parse::<usize>()? };
         let planned = match crate::drain::plan(node, &nodes, &rows, &copies, &pending, wanted) {
             Ok(plan) => plan,
             Err(error) if error.is::<crate::drain::Refusal>() => continue,

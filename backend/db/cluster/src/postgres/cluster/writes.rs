@@ -632,3 +632,24 @@ pub async fn enable_write_family(pool: &PgPool, terms: &[(i64, i64)]) -> Result<
     tx.commit().await?;
     Ok(true)
 }
+
+/// Canonical voting copies participate in takeover without an asynchronous copy row.
+pub async fn held_voters(
+    pool: &PgPool,
+    node: i64,
+) -> Result<Vec<codeyard_db_core::models::HeldReplica>> {
+    let limit = crate::drain::repository_limit()?;
+    let rows: Vec<codeyard_db_core::models::HeldReplica> = sqlx::query_as(
+        "SELECT v.repository_id,r.disk_path,r.storage_node_id AS primary_node_id,
+            v.applied_version,c.committed_version AS write_version
+         FROM repository_voters v JOIN repositories r ON r.id=v.repository_id
+         JOIN repository_write_control c ON c.repository_id=r.id
+         WHERE v.node_id=$1 AND v.term=c.term ORDER BY v.repository_id LIMIT $2",
+    )
+    .bind(node)
+    .bind(limit + 1)
+    .fetch_all(pool)
+    .await?;
+    ensure!(rows.len() as i64 <= limit, "voter holding limit exceeded");
+    Ok(rows)
+}

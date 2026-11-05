@@ -25,7 +25,7 @@ asynchronous copies with `cluster promote`, take-over after a node stops reporti
 workers on other machines, live logs and notifications across web nodes, and a four-node
 round in `scripts/e2e.sh`.
 
-The experimental write path uses two storage voters, PostgreSQL decisions and a ref
+The write path selects up to three fixed storage voters, PostgreSQL decisions and a ref
 journal. Cluster files use two storage-node copies or optional shared S3. Repository initialization
 and copy use the same quorum path and pass runtime checks on both database engines.
 

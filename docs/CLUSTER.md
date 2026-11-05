@@ -55,7 +55,8 @@ and the rest) open the node connection in either mode; they do not change the mo
 
 ## Quorum push preparation
 
-New clusters default to `majority`, requiring both fixed storage voters. Choose
+New clusters default to `majority`. Initialization selects up to three fixed storage
+voters, requiring at least two available nodes; three voters tolerate one stopped voter. Choose
 `codeyard cluster enable --write-quorum 1` for the legacy asynchronous policy. Enabling
 a new cluster mode requires every core to be stopped; existing repositories without
 quorum preparation require that explicit legacy choice. The choice is kept on repeated
@@ -244,7 +245,7 @@ Draining nodes receive no new repositories or CI claims. Web readiness becomes 5
 new web and SSH requests ask the client to retry elsewhere. Existing storage operations
 continue until copy-then-promote fences the family. An unavailable copy leaves the node
 `draining`; the page shows progress and the repository waiting for a replacement.
-Storage with write quorum needs two active replacement voters. An offline node uses
+Storage with write quorum preserves its fixed voter count on active replacements. An offline node uses
 `cluster promote --all-from` instead.
 
 Each node resumes its drain during heartbeats. Core nodes also finish idle runner drains;
@@ -437,15 +438,19 @@ The promotion rules above describe asynchronous replication. With experimental
 in new `terms/<uuid>/<term>/<uuid>.git` directories; retired directories are never reused.
 The CLI attempts canonical recovery on its local voter. A pending-recovery error means
 ownership changed but serving is still disabled. Retry on each voter with the same
-`--to` target. Both voters must reconstruct before serving is enabled, so this two-voter
-mode does not yet provide read availability while either voter remains down.
+`--to` target. The primary and a voting majority must reconstruct before serving is
+enabled. A stale voter refills from a current voter using the same authenticated snapshot
+transport as backups; fenced terms only supply snapshots to their assigned voters.
 Editor saves, merges, restacks, imports, gist edits, branch/tag updates, pull heads,
-provenance and retained Git-data refs use the same two-voter journal. Branch renames
+provenance and retained Git-data refs use the same quorum publication path. Branch renames
 journal the old and new refs, provenance and default HEAD together. Default-branch
 settings changes, automatic HEAD selection and imported HEAD changes are journaled.
-Repository initialization and copy remain unavailable: the ref journal requires an
-existing serving term and directories on both voters. Creation is refused before
-reserving a repository row.
+Empty repositories initialize canonical HEAD on the selected voters before serving.
+Fork and template objects are staged privately and publish refs through that same path.
+Stage 0 adds three-voter majority and publisher process-loss checks; their runtime results
+are pending. `E2E_DATABASES=quorum bash scripts/e2e.sh` selects those real-process
+checks without requiring a completed CI job. The single-node fsync, backup, restore, verify and rebuild work and cluster
+plan items 3 and 11 are reused.
 
 ## Runners
 

@@ -77,43 +77,6 @@ impl RpcHandler {
             ensure!(status.success(), "write pack transfer failed");
             pack.sync_all().await?;
             retain_write(path, &write, limits).await?;
-            // A voter returning after a missed write catches up to the pending write's
-            // canonical base before it may vote. The pack includes all base refs.
-            let pool = self.context.database()?;
-            let view =
-                codeyard_db_cluster::cluster::writes::recovery_view(pool, write.repository_id)
-                    .await?;
-            ensure!(
-                view.serving
-                    && view.term == write.term
-                    && view.committed_version == write.base_version
-                    && view.unfinished.as_ref().is_some_and(
-                        |pending| pending.id == write.id && pending.decision == "pending"
-                    ),
-                "write base changed"
-            );
-            let applied = view
-                .voters
-                .iter()
-                .find(|voter| voter.node_id == self.context.node_id)
-                .context("voter disappeared")?
-                .applied_version;
-            if applied < write.base_version {
-                store.restore_refs(&view.refs).await?;
-                // Installing canonical refs removes preparation pins; recreate them before voting.
-                retain_write(path, &write, limits).await?;
-                ensure!(
-                    codeyard_db_cluster::cluster::writes::mark_write_applied(
-                        pool,
-                        write.repository_id,
-                        self.context.node_id,
-                        write.term,
-                        write.base_version,
-                    )
-                    .await?,
-                    "write term changed during catch-up"
-                );
-            }
             self.context.vote_prepared_write(&write).await
         })
         .await
@@ -225,12 +188,7 @@ impl RpcHandler {
                 // refs, so a copy never points a ref at objects it does not have.
                 Operation::WritePack { id } => {
                     let write = codeyard_db_cluster::cluster::writes::load_write(self.context.database()?, id).await.map_err(RepoError::from)?.ok_or_else(unavailable)?;
-                    let view = codeyard_db_cluster::cluster::writes::recovery_view(self.context.database()?, write.repository_id).await.map_err(RepoError::from)?;
-                    let mut targets = write_targets(&write).map_err(RepoError::from)?;
-                    targets.extend(view.refs.into_iter().filter(|value| value.kind == "oid").map(|value| value.target));
-                    targets.sort();
-                    targets.dedup();
-                    (Value::Null, targets)
+                    (Value::Null, write_targets(&write).map_err(RepoError::from)?)
                 }
                 Operation::ReplicaPack { want,.. } => {
                     if want.len()>codeyard_git::repository::MAX_MIRROR_REFS || want.iter().any(|id|!codeyard_git::is_full_commit_id(id)) {

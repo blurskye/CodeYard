@@ -58,7 +58,7 @@ pub async fn change(
         let nodes: Vec<ClusterNode> = sqlx::query_as("SELECT *,clock_timestamp() AS observed_at FROM nodes ORDER BY id LIMIT 1001 FOR UPDATE")
             .fetch_all(&mut *tx).await?;
         ensure!(nodes.len() <= 1000, "drain node limit exceeded");
-        let repos: Vec<Repository> = sqlx::query_as(&format!("{FAMILY} SELECT r.id,r.forked_from_id AS parent,r.storage_node_id AS primary_id,r.write_version AS version,r.size_bytes AS size FROM repositories r JOIN family f ON f.id=r.id ORDER BY r.id LIMIT $2 FOR UPDATE OF r"))
+        let repos: Vec<Repository> = sqlx::query_as(&format!("{FAMILY} SELECT r.id,r.forked_from_id AS parent,r.storage_node_id AS primary_id,r.write_version AS version,r.size_bytes AS size,(SELECT COUNT(*) FROM repository_voters v WHERE v.repository_id=r.id) AS voters FROM repositories r JOIN family f ON f.id=r.id ORDER BY r.id LIMIT $2 FOR UPDATE OF r"))
             .bind(node.id).bind(limit+1).fetch_all(&mut *tx).await?;
         ensure!(
             repos.len() as i64 <= limit,
@@ -76,15 +76,13 @@ pub async fn change(
             .await?
             .write_quorum
             .is_some();
-        let voters: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(voters),2) FROM (SELECT COUNT(*) AS voters FROM repository_voters v JOIN repositories r ON r.id=v.repository_id WHERE r.storage_node_id=$1 OR EXISTS(SELECT 1 FROM repository_voters held WHERE held.repository_id=r.id AND held.node_id=$1) GROUP BY v.repository_id) counts")
-            .bind(node.id).fetch_one(&mut *tx).await?;
         let targets = crate::drain::plan(
             node.id,
             &nodes,
             &repos,
             &copies,
             &pending,
-            if quorum { usize::try_from(voters)? } else { 1 },
+            if quorum { 2 } else { 1 },
         )?;
         for (repo, target) in targets {
             sqlx::query("INSERT INTO node_drain_repositories(node_id,repository_id,target_node_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")

@@ -24,7 +24,7 @@
 # build done, the SQLite round takes a few minutes and the PostgreSQL round about ten.
 #
 # Settings (environment):
-#   E2E_DATABASES   rounds to run, default "sqlite postgres pgbouncer cluster". PostgreSQL
+#   E2E_DATABASES   rounds to run, default "sqlite postgres pgbouncer cluster quorum". PostgreSQL
 #                   rounds need GITSERV_TEST_DATABASE_URL; if it
 #                   is missing the round fails, it is not skipped.
 #   E2E_PROFILE     release (default) or debug, for the server and the bundle.
@@ -55,7 +55,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT" || exit 2
 HELPER=$ROOT/scripts/e2e-web.py
 
-E2E_DATABASES=${E2E_DATABASES:-sqlite postgres pgbouncer cluster}
+E2E_DATABASES=${E2E_DATABASES:-sqlite postgres pgbouncer cluster quorum}
 E2E_PROFILE=${E2E_PROFILE:-release}
 E2E_SKIP_BUILD=${E2E_SKIP_BUILD:-0}
 E2E_BUILD_ONLY=${E2E_BUILD_ONLY:-0}
@@ -317,7 +317,7 @@ prepare_database() {
     DATABASE_URL=''
     case $ROUND in
         sqlite) echo "SQLite database in the state directory (DATABASE_URL unset)" ;;
-        postgres | pgbouncer | cluster)
+        postgres | pgbouncer | cluster | quorum)
             if [[ -z ${GITSERV_TEST_DATABASE_URL:-} ]]; then
                 echo "GITSERV_TEST_DATABASE_URL is not set: point it at a PostgreSQL server" >&2
                 return 1
@@ -441,7 +441,7 @@ configure_node() {
     : >"$RUN/.env"
     case $node in
         web1 | web2) roles=web,ssh ;;
-        store1 | store2) roles=storage ;;
+        store1 | store2 | store3) roles=storage ;;
         ci1 | r1 | r2) roles=runner ;;
     esac
     NODE_ENV=(
@@ -566,7 +566,7 @@ start_server() { # inline: starts a node and waits for its actual services
     fi
     configure_node "$node" || return 1
     local dir=$NODE_DIR pid waited=0 ready=0 first_line reported_after publish_deadline
-    if [[ $node == store1 || $node == store2 ]]; then
+    if [[ $node == store1 || $node == store2 || $node == store3 ]]; then
         reported_after=$(pg_query "SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::bigint") || return 1
         [[ $reported_after =~ ^[0-9]+$ ]] || return 1
     fi
@@ -595,7 +595,7 @@ start_server() { # inline: starts a node and waits for its actual services
                 if curl -q --noproxy '*' -fsS --max-time 2 -o "$dir/health.json" "http://127.0.0.1:${HTTP_PORTS[$node]}/health" 2>/dev/null; then
                     grep -q '"status":"ok"' "$dir/health.json" && ready=1
                 fi ;;
-            store1 | store2)
+            store1 | store2 | store3)
                 if curl -q --noproxy '*' -fsS --max-time 2 -o "$dir/health.json" "http://127.0.0.1:${HTTP_PORTS[$node]}/ready" 2>/dev/null; then
                     grep -q '"status":"ready"' "$dir/health.json" && ready=1
                 fi ;;
@@ -606,7 +606,7 @@ start_server() { # inline: starts a node and waits for its actual services
         sleep 0.5
     done
     ((ready)) || { echo "$node did not start after 60 s" >&2; tail -n 40 "$dir/server.log" >&2; return 1; }
-    if [[ $node == store1 || $node == store2 ]]; then
+    if [[ $node == store1 || $node == store2 || $node == store3 ]]; then
         # /ready can answer before publication finishes reconciliation. A pre-crash
         # heartbeat must not admit an operation against a process still starting.
         publish_deadline=$((SECONDS + 60))
@@ -1821,13 +1821,18 @@ gh_sweep_step() {
 }
 
 # The GHES TLS tunnel and webhook receiver belong to this helper and stop before it returns.
-t_github_clients() {
-    local token id engine rc=0
-    local -a skip=()
+t_github_token() {
+    local token
     token=$(as bob form '/settings?tab=tokens' --action /settings/tokens --has name \
         --set 'name=real gh client' --set scope=write --set expiry=never --status 200 \
         --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})')
     put gh_bob_token "$token"
+}
+
+t_github_clients() {
+    local id engine rc=0
+    local -a skip=()
+    t_github_token
     [[ -z $CI_RUNS_UNAVAILABLE ]] || skip=(--skip-runs "$CI_RUNS_UNAVAILABLE")
     local check_postgres=0
     if [[ $ROUND == postgres || $ROUND == cluster ]]; then check_postgres=1; fi
@@ -2441,7 +2446,7 @@ t_cluster_membership() {
         case $node in web1) roles=web,ssh ;; ci1) roles=runner ;; *) roles=storage ;; esac
         grep -Eq "^$node +active +$roles +" <<<"$listing"
         [[ $(pg_query "SELECT status FROM nodes WHERE name='$node'") == active ]]
-        if [[ $node == store1 || $node == store2 ]]; then
+        if [[ $node == store1 || $node == store2 || $node == store3 ]]; then
             # Storage exposes probes, not the web application or public metrics.
             for path in /health /ready; do
                 [[ $(curl -q --noproxy '*' -sS --max-time 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HTTP_PORTS[$node]}$path") == 200 ]] || return 1
@@ -2781,10 +2786,18 @@ t_cluster_github_clients() {
     ((rc == 0))
 }
 
-# Run last: existing legacy repositories keep their fixtures; these new repositories
-# exercise the two-voter path with real pushes and process death immediately after ack.
+# Existing asynchronous repositories keep their fixtures. New repositories use three
+# voters, with real client publications and process death immediately after ack.
 t_cluster_quorum_primary_loss() {
-    local transport name source primary pid expected destination deadline
+    local transport name source primary pid expected destination deadline ticket
+    local -a ports
+    read -r -a ports < <(free_ports 2)
+    HTTP_PORTS[store3]=${ports[0]} SSH_PORTS[store3]=${ports[1]}
+    IROH_PORTS[store3]=$(free_ports 1 udp)
+    ticket=$(cluster_cli web1 invite --roles storage) || return 1
+    CLUSTER_JOIN_TOKEN=$ticket cluster_cli store3 join --name store3 || return 1
+    CLUSTER_NODES+=(store3)
+    start_server store3 || return 1
     pg_query "UPDATE node_configuration SET write_quorum='majority',replicas='2' WHERE id=1" >/dev/null || return 1
     for transport in http ssh; do
         name=quorum-survival-$transport
@@ -2797,7 +2810,7 @@ t_cluster_quorum_primary_loss() {
         git_as alice -C "$source" commit -qm 'A quorum holds this commit' || return 1
         expected=$(git_as alice -C "$source" rev-parse HEAD) || return 1
         primary=$(repo_node alice "$name") || return 1
-        [[ $primary == store1 || $primary == store2 ]] || return 1
+        [[ $primary == store1 || $primary == store2 || $primary == store3 ]] || return 1
         pid=${SERVER_PIDS[$primary]:-}
         [[ $pid =~ ^[0-9]+$ ]] || { echo 'The storage primary has no owned process' >&2; return 1; }
         if [[ $transport == http ]]; then
@@ -2819,6 +2832,26 @@ t_cluster_quorum_primary_loss() {
         [[ $(git_as alice -C "$destination" rev-parse HEAD) == "$expected" ]] || return 1
         git_as alice clone -q "$SSH_URL/alice/$name.git" "$destination-ssh" || return 1
         [[ $(git_as alice -C "$destination-ssh" rev-parse HEAD) == "$expected" ]] || return 1
+        start_server "$primary" || return 1
+    done
+}
+
+t_cluster_quorum_other_publishers() {
+    local mode primary pid branch name=quorum-survival-http
+    for mode in editor branch merge; do
+        primary=$(repo_node alice "$name") || return 1
+        [[ $primary == store1 || $primary == store2 || $primary == store3 ]] || return 1
+        pid=${SERVER_PIDS[$primary]:-}
+        [[ $pid =~ ^[0-9]+$ ]] || return 1
+        "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" \
+            --durability "$mode" --repository "alice/$name" --primary-pid "$pid" || return 1
+        branch=main
+        [[ $mode != branch ]] || branch=durable
+        git_as alice clone -q --branch "$branch" "$SSH_URL/alice/$name.git" "$RUN/durability-$mode-ssh" || return 1
+        [[ $(git_as alice -C "$RUN/durability-$mode-ssh" rev-parse HEAD) == \
+           $(git_as alice -C "$RUN/durability-$mode/clone" rev-parse HEAD) ]] || return 1
+        wait "$pid" 2>/dev/null || true
+        unset "SERVER_PIDS[$primary]"
         start_server "$primary" || return 1
     done
 }
@@ -2846,7 +2879,7 @@ PYDATA
             sleep 1
         done
         primary=$(repo_node alice "$name") || return 1
-        [[ $primary == store1 || $primary == store2 ]] || return 1
+        [[ $primary == store1 || $primary == store2 || $primary == store3 ]] || return 1
         pid=${SERVER_PIDS[$primary]:-}
         [[ $pid =~ ^[0-9]+$ ]] || return 1
         "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" \
@@ -2891,6 +2924,8 @@ YAML
     done
     [[ $id =~ ^[0-9a-f-]{36}$ && $child =~ ^[0-9]+$ ]]
     as alice req GET "/api/ci/jobs/$id" --accept json --json-eq status=running
+    git_with_token read -C "$publisher" fetch -q "$BASE/alice/$name.git" main || return 1
+    git_as alice -C "$publisher" merge --ff-only -q FETCH_HEAD || return 1
     old=$(git_with_token read ls-remote "$BASE/alice/$name.git" refs/heads/main | cut -f1)
     # A fresh 20 MiB object guarantees the pause occurs before the push is complete.
     "$PYTHON" -I - "$publisher/shutdown.bin" <<'PYDATA' || return 1
@@ -2958,10 +2993,16 @@ t_cluster_browser() {
 
 t_cluster_shutdown() { # inline: attempt every stop even when one fails
     local node failed=0
-    for node in ci1 store1 store2 web1; do
+    local -a nodes=("$@")
+    ((${#nodes[@]})) || nodes=(ci1 store1 store2 web1)
+    for node in "${nodes[@]}"; do
         stop_server "$node" || failed=1
         t_log_clean "$node" || failed=1
     done
+    if [[ -n ${SERVER_PIDS[store3]:-} ]]; then
+        stop_server store3 || failed=1
+        t_log_clean store3 || failed=1
+    fi
     if [[ -n ${SERVER_PIDS[web2]:-} ]]; then
         stop_server web2 || failed=1
         t_log_clean web2 || failed=1
@@ -3185,6 +3226,7 @@ run_cluster_round() {
     step 'cluster pages: drain and scaling save with and without hydration' t_cluster_browser
     step -f -i 'quorum: HTTP and SSH acknowledgements survive immediate primary SIGKILL' t_cluster_quorum_primary_loss
     step -f -i 'storage loss: interrupted clone and push fail clearly; retries preserve refs' t_cluster_storage_loss
+    step -f -i 'quorum: editor save, gh api branch and gh pr merge survive primary SIGKILL' t_cluster_quorum_other_publishers
     step -f -i 'SIGTERM: active CI and push stop within 90 seconds without leaked children or locks' t_cluster_graceful_shutdown
     # Shutdown is still checked after a required step fails.
     ROUND_BLOCKED=0
@@ -3201,6 +3243,40 @@ run_cluster_round() {
 }
 
 # -------------------------------------------------------------------- main --
+
+# Durability has its own real-process round so its storage failures do not depend on
+# finished CI jobs or alter the asynchronous placement fixtures in the cluster round.
+run_quorum_round() {
+    ROUND=quorum
+    ROUND_BLOCKED=0
+    STEP_NO=0
+    RUN=$WORK/quorum
+    STATE=$RUN/state-files
+    HTTP_PORT='' SSH_PORT='' BASE='' SSH_URL='' DATABASE_URL=''
+    CLUSTER_NODES=(web1 store1 store2)
+    mkdir -p "$RUN/home" "$RUN/keys" "$RUN/work" "$STATE"
+    PW_ALICE=Alice-e2e-$(random_hex)
+    PW_BOB=Bob-e2e-$(random_hex)
+    step -f -i 'database is ready' prepare_database
+    step -f -i 'quorum: isolated ports and storage identities' prepare_cluster
+    step -f 'quorum: configure the empty installation' cluster_cli web1 enable --write-quorum 1
+    step -f -i 'quorum: web and SSH start' start_server web1
+    step -f 'quorum: first storage node pairs' t_cluster_join_store
+    step -f -i 'quorum: first storage node starts' start_server store1
+    step -f -i 'quorum: second storage node starts' start_server store2
+    step -f 'quorum: generate client keys' t_keys
+    step -f 'quorum: create administrator' t_setup
+    step -f 'quorum: register second user' t_users
+    step -f 'quorum: register SSH keys' t_ssh_keys
+    step -f 'quorum: issue read and write tokens' t_tokens
+    step -f 'quorum: issue second client token' t_github_token
+    step -f -i 'quorum: three voters keep HTTP and SSH acknowledged pushes after SIGKILL' t_cluster_quorum_primary_loss
+    step -f -i 'quorum: editor, branch and merge publications survive primary SIGKILL' t_cluster_quorum_other_publishers
+    ROUND_BLOCKED=0
+    step -i 'quorum: every owned node stops cleanly' t_cluster_shutdown store1 store2 web1
+    terminate_servers
+    step -i 'quorum: remove disposable database' drop_pg
+}
 
 preflight() {
     local missing=0 name
@@ -3259,7 +3335,9 @@ fi
 
 if [[ $E2E_BUILD_ONLY != 1 && $ROUND_BLOCKED == 0 ]]; then
     for database in $E2E_DATABASES; do
-        if [[ $database == cluster ]]; then
+        if [[ $database == quorum ]]; then
+            run_quorum_round
+        elif [[ $database == cluster ]]; then
             [[ ${E2E_GITHUB_ONLY:-0} == 1 || ${E2E_ACTIONS_ONLY:-0} == 1 ]] || run_cluster_round
         else
             run_round "$database"

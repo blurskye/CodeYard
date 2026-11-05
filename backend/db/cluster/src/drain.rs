@@ -27,6 +27,7 @@ pub(crate) struct Repository {
     pub primary_id: i64,
     pub version: i64,
     pub size: i64,
+    pub voters: i64,
 }
 
 pub(crate) fn repository_limit() -> Result<i64> {
@@ -139,7 +140,9 @@ pub(crate) fn plan(
             candidates.push((node, needed, free));
         }
         candidates.sort_by_key(|(node, needed, free)| (*needed, std::cmp::Reverse(*free), *node));
-        let count = wanted;
+        let count = wanted.max(usize::try_from(
+            members.iter().map(|repo| repo.voters).max().unwrap_or(0),
+        )?);
         let selected: Vec<_> = candidates
             .iter()
             .filter(|(_, needed, free)| needed <= free)

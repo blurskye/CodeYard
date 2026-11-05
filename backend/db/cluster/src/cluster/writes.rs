@@ -69,6 +69,11 @@ native_operation!(crate::postgres::cluster::writes::write_family,
     crate::sqlite::cluster::writes::write_family,
     fn write_family(pool: &DbPool, repo: i64) -> Result<Vec<(i64, Option<i64>, i64)>>);
 
+native_operation!(crate::postgres::cluster::writes::held_voters,
+    crate::sqlite::cluster::writes::held_voters,
+    /// Bounded voting holdings for takeover, independently of asynchronous copy policy.
+    fn held_voters(pool: &DbPool, node: i64) -> Result<Vec<codeyard_db_core::models::HeldReplica>>);
+
 pub fn validate_id(id: &str) -> Result<()> {
     ensure!(
         id.len() == 36 && uuid::Uuid::parse_str(id).is_ok(),

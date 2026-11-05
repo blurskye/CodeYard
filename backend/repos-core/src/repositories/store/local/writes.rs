@@ -322,12 +322,27 @@ impl LocalStore {
             {
                 return Err(RepoError::write_denied());
             }
-            let others: Vec<_> = codeyard_db_core::models::ClusterNode::ranked_storage(&nodes)
-                .into_iter()
-                .filter(|node| node.id != primary)
-                .take(2)
-                .map(|node| node.id)
-                .collect();
+            let others: Vec<_> = if let Some(parent) = row.forked_from_id {
+                let source = journal::recovery_view(pool, parent)
+                    .await
+                    .map_err(RepoError::from)?;
+                if !source.serving || source.primary_id != primary {
+                    return Err(RepoError::storage_node_unavailable());
+                }
+                source
+                    .voters
+                    .iter()
+                    .filter(|voter| voter.node_id != primary)
+                    .map(|voter| voter.node_id)
+                    .collect()
+            } else {
+                codeyard_db_core::models::ClusterNode::ranked_storage(&nodes)
+                    .into_iter()
+                    .filter(|node| node.id != primary)
+                    .take(2)
+                    .map(|node| node.id)
+                    .collect()
+            };
             if others.is_empty() {
                 return Err(RepoError::storage_node_unavailable());
             }

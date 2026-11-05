@@ -382,6 +382,48 @@ class Client:
             self.git("fetch", "origin", "main", git_auth=True)
             assert self.git("show", "origin/main:feature.txt") == "Real gh pull request"
 
+    def durability(self, args):
+        repo = args.repository
+        branch = "main"
+        if args.durability == "editor":
+            self.execute(["python3", "-I", ROOT / "scripts/e2e-web.py", "form",
+                          "--base", self.base, "--jar", self.directory.parent / "jar-alice.json",
+                          "--who", "alice", f"/{repo}/edit/main/README.md",
+                          "--action", f"/{repo}/_forms/write-file", "--has", "expected_revision",
+                          "--set", "content=Editor data survives primary loss\n",
+                          "--set", "message=Durable editor save", "--submit", "intent=save",
+                          "--location", f"/{repo}/blob/refs/heads/main/README.md"])
+            os.kill(args.primary_pid, signal.SIGKILL)
+        elif args.durability == "branch":
+            tip = self.api(f"repos/{repo}/git/ref/heads/main")["object"]["sha"]
+            self.api(f"repos/{repo}/git/refs", "--method", "POST", "-f", "ref=refs/heads/durable",
+                     "-f", "sha=" + tip)
+            os.kill(args.primary_pid, signal.SIGKILL)
+            branch = "durable"
+        else:
+            tip = self.api(f"repos/{repo}/git/ref/heads/main")["object"]["sha"]
+            self.api(f"repos/{repo}/git/refs", "--method", "POST", "-f", "ref=refs/heads/durable-pr",
+                     "-f", "sha=" + tip)
+            self.api(f"repos/{repo}/contents/durable.txt", "--method", "PUT", "-f", "branch=durable-pr",
+                     "-f", "message=Durable pull head", "-f", "content=" + base64.b64encode(b"merge data\n").decode())
+            opened = self.gh("pr", "create", "-R", repo, "--head", "durable-pr", "--base", "main",
+                             "--title", "Durable merge", "--body", "Survives primary loss")
+            number = opened.stdout.strip().rstrip("/").rsplit("/", 1)[1]
+            self.gh("pr", "merge", number, "-R", repo, "--merge")
+            os.kill(args.primary_pid, signal.SIGKILL)
+        acknowledged = time.monotonic()
+        target = self.api(f"repos/{repo}/git/ref/heads/{branch}")["object"]["sha"]
+        self.execute(["git", "clone", "--quiet", "--branch", branch,
+                      f"{self.base}/{repo}.git", self.clone], git_auth=True)
+        assert self.git("rev-parse", "HEAD") == target
+        assert time.monotonic() - acknowledged < 120, "acknowledged publication was not cloneable within two minutes"
+        self.git("fsck", "--full")
+        if args.durability == "editor":
+            assert (self.clone / "README.md").read_text() == "Editor data survives primary loss\n"
+        if args.durability == "merge":
+            assert (self.clone / "durable.txt").read_text() == "merge data\n"
+        print(f"PASS quorum {args.durability}: acknowledged publication survives primary SIGKILL", flush=True)
+
     def releases(self):
         asset = self.directory / "proof.txt"
         asset.write_bytes(b"real gh release asset\x00\xff\n")
@@ -1194,6 +1236,7 @@ def main():
     parser.add_argument("--skip-runs", metavar="REASON", default="",
                         help="skip the checks that need a finished workflow run, for this reason")
     parser.add_argument("--storage-loss", choices=("clone", "push", "shutdown"))
+    parser.add_argument("--durability", choices=("editor", "branch", "merge"))
     parser.add_argument("--primary-pid", type=int)
     parser.add_argument("--runner-pid", type=int)
     parser.add_argument("--repository")
@@ -1203,7 +1246,7 @@ def main():
         storage_loss(args)
         return
     assert shutil.which("gh") and shutil.which("openssl"), "gh and OpenSSL are required"
-    directory = args.run / "github-client"
+    directory = args.run / ("durability-" + args.durability if args.durability else "github-client")
     directory.mkdir(mode=0o700)
     cert, key = certificate(directory)
     proxy = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Tunnel)
@@ -1219,6 +1262,10 @@ def main():
     with serving(proxy), serving(receiver):
         client = Client(args.base, directory, f"http://127.0.0.1:{proxy.server_port}", cert, args.skip_runs)
         client.login()
+        if args.durability:
+            assert args.primary_pid and args.repository
+            client.durability(args)
+            return
         hook = client.api("orgs/e2e-org/hooks", "--method", "POST", "--input", "-", input=json.dumps({
             "name": "web", "active": True, "events": ["*"],
             "config": {"url": f"http://127.0.0.1:{receiver.server_port}/deliveries", "content_type": "json", "secret": secret}}))

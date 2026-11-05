@@ -281,7 +281,7 @@ so a push can be lost if its primary is lost first. Read-only requests fall back
 copy when the primary cannot be reached. A node that holds a current copy of every member
 of a fork family takes the family over once its primary has been offline for a minute; a
 family with a behind or missing copy waits for `codeyard cluster promote --force`.
-The experimental write quorum uses two storage voters and PostgreSQL decisions, with
+The write quorum selects up to three storage voters and uses PostgreSQL decisions, with
 canonical refs and fenced term directories. Empty initialization and repository copies
 use that coordinator too. Read distribution and geo-routing remain future work.
 Cluster files use two checksum-checked storage-node copies, or shared S3 when configured.
@@ -755,15 +755,17 @@ numbers remain assumptions until stage 1 measures a real cell.
 
 Two findings set the order of work:
 
-- **One installation is not yet safe to multiply.** Git's default `core.fsync` hardens
-  packs but not refs or loose objects, Codeyard does not set it, and a push of fewer than
-  100 objects arrives loose. Copies are asynchronous, so an acknowledged push can be lost
-  with its primary. The only documented backup is offline.
+- **Durability comes before cells.** Git processes set `core.fsync=all` and
+  `core.fsyncMethod=batch`, libgit2 fsync is enabled, and cluster plan items 3 and 11
+  provide quorum publication, copies, backups and fenced restore. Stage 0 extends
+  acceptance to three voters and every ref publisher; VM hard-reset acceptance remains
+  an operator check.
 - **One database hits global locks long before its size.** Every authority check takes the
   membership advisory lock (37002) shared; signups, membership changes, blocks and gist
   stars and comments take it exclusively. Every package registry call, reads included,
-  takes one lock (723947120). `NOTIFY` takes a global lock at commit. CI logs are a
-  row per line, and the pool is fixed at 20 connections.
+  takes one lock (723947120). Notification hints already use bounded cursor polling;
+  the pool is configurable. CI logs are still a row per line. Stage 1 replaces the
+  hot-path global locks and log storage and adds replica read routing.
 
 So stages 0 and 1 work inside one installation, and cells come after. "With ease" does not
 hold at 10 billion accounts: every part is well known, but the base case is about 1,000
@@ -786,7 +788,7 @@ Stage 0 needs no cells or router. It closes every gap where acknowledged data ca
   acceptance items 5, 8 and 9 on SQLite and PostgreSQL and item 7 on PostgreSQL. Item 4
   needs a VM hard reset and is checked by hand. Operations are described in
   [Storage architecture](STORAGE_ARCHITECTURE.md#backups).
-- **Cluster part, experimental:** two-voter ref quorum, PostgreSQL arbitration and
+- **Cluster part:** fixed-voter ref quorum, PostgreSQL arbitration and
   ref journals, snapshot backups and fenced offline restore are implemented. Operators
   provide PostgreSQL HA. Process-loss acceptance and measured limits remain pending;
   [Cluster readiness](CLUSTER_PLAN.md) is the current acceptance list.
@@ -802,14 +804,15 @@ Stage 0 needs no cells or router. It closes every gap where acknowledged data ca
 | Artifacts, caches, uploads | Two checked storage-node copies, or optional versioned S3; local disk on one machine | last completed cluster backup, or the operator's S3 recovery point | restore time |
 | Node keys, membership | membership is in the database; a lost node pairs again with a new key; `SECRETS_MASTER_KEY` and `CLUSTER_*` are kept offline, apart from the backups | none | minutes |
 
-**Ref quorum.** Current clusters have two fixed storage voters and PostgreSQL decides
-which ref changes commit. Both voters must prepare durable objects and ref journals
-before acknowledgement. Canonical refs and term fencing recover a committed change after
+**Ref quorum.** Initialization selects up to three fixed storage voters (at least two)
+and PostgreSQL decides which ref changes commit. A majority must prepare durable objects
+and publish refs before acknowledgement. Canonical refs and term fencing recover a committed change after
 a primary dies; an uncertain outcome tells the client to fetch before retrying. Further
 replicas remain asynchronous. `majority` is the new-cluster default; explicit `1` retains
 the legacy asynchronous path. Initialization, copy and promotion share this coordinator.
 See [Quorum push preparation](CLUSTER.md#quorum-push-preparation) for limits and recovery.
-A future increase in voter count is outside the current acceptance list.
+Three-voter preparation, stale-voter recovery and publisher process-loss acceptance are
+being checked in stage 0.
 
 **Backup and restore.** `codeyard backup <dir>` runs while the installation serves: the
 database first (`VACUUM INTO`, `pg_dump`, or only the restore time when pgBackRest or WAL-G
