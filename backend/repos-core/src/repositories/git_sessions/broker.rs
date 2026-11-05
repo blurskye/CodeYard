@@ -687,7 +687,9 @@ impl Gateway {
         ensure!(
             matches!(
                 credential,
-                ReceiveCredential::SshKey(_) | ReceiveCredential::DeployKey(_)
+                ReceiveCredential::SshKey(_)
+                    | ReceiveCredential::DeployKey(_)
+                    | ReceiveCredential::ForeignSsh { .. }
             ),
             "SSH credential required"
         );

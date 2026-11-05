@@ -100,11 +100,26 @@ mod task_tests {
 pub struct PostReceiveFailed;
 
 /// The credential is rechecked by the receive hooks, not just at HTTP/SSH ingress.
-#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, serde::Serialize, serde::Deserialize)]
 pub enum ReceiveCredential {
     SshKey(i64),
     DeployKey(i64),
     Token(i64),
+    ForeignToken { id: i64, hash: [u8; 32] },
+    ForeignSsh { id: i64, fingerprint: [u8; 32] },
+}
+
+impl std::fmt::Debug for ReceiveCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::SshKey(_) => "SshKey",
+            Self::DeployKey(_) => "DeployKey",
+            Self::Token(_) => "Token",
+            Self::ForeignToken { .. } => "ForeignToken",
+            Self::ForeignSsh { .. } => "ForeignSsh",
+        };
+        f.debug_tuple(name).field(&self.id()).finish()
+    }
 }
 
 /// Typed policy refusals let ingress project transport-specific denials without
@@ -132,6 +147,97 @@ pub enum CredentialRefusal {
 }
 
 impl ReceiveCredential {
+    pub fn personal(
+        token: &codeyard_db_core::models::PersonalAccessToken,
+        user: &codeyard_db_core::models::User,
+    ) -> Result<Self> {
+        if user.is_stub {
+            let hash = hex::decode(&token.token_hash)?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!(CredentialRefusal::Credential))?;
+            Ok(Self::ForeignToken { id: token.id, hash })
+        } else {
+            Ok(Self::Token(token.id))
+        }
+    }
+    pub fn foreign_ssh(id: i64, fingerprint: &str) -> Result<Self> {
+        use base64::Engine;
+        let fingerprint = base64::engine::general_purpose::STANDARD_NO_PAD
+            .decode(
+                fingerprint
+                    .strip_prefix("SHA256:")
+                    .ok_or(CredentialRefusal::Credential)?,
+            )?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!(CredentialRefusal::Credential))?;
+        Ok(Self::ForeignSsh { id, fingerprint })
+    }
+    async fn foreign(
+        self,
+        pool: &DbPool,
+    ) -> Result<codeyard_db_core::cells::authorization::Credential> {
+        use base64::Engine;
+        use codeyard_db_core::cells::authorization::{self, Proof, Query};
+        let (id, proof) = match self {
+            Self::ForeignToken { id, hash } => (
+                id,
+                Proof::Token {
+                    home: codeyard_support::cells::Prefix::for_id(id)?,
+                    hash: hex::encode(hash),
+                },
+            ),
+            Self::ForeignSsh { id, fingerprint } => (
+                id,
+                Proof::Ssh {
+                    fingerprint: format!(
+                        "SHA256:{}",
+                        base64::engine::general_purpose::STANDARD_NO_PAD.encode(fingerprint)
+                    ),
+                },
+            ),
+            _ => anyhow::bail!(CredentialRefusal::Credential),
+        };
+        authorization::authorize(pool, &proof)
+            .await?
+            .ok_or(CredentialRefusal::Credential)?;
+        authorization::lookup(
+            pool,
+            &Query {
+                kind: proof.kind(),
+                id: Some(id),
+                hash: Some(&proof.hash()),
+                write: false,
+            },
+        )
+        .await?
+        .ok_or_else(|| CredentialRefusal::Credential.into())
+    }
+    pub async fn allows_workflows(self, pool: &DbPool) -> Result<bool> {
+        use codeyard_db_core::cells::authorization::Authority;
+        match self {
+            Self::Token(id) => codeyard_identity::oauth_apps::allows_workflows(pool, id).await,
+            Self::ForeignToken { .. } => {
+                let credential = self.foreign(pool).await?;
+                Ok(credential.answer.write
+                    && match credential.answer.authority {
+                        Authority::Classic => true,
+                        Authority::OAuth { scopes, .. } => {
+                            codeyard_model::oauth_apps::has_scope(&scopes, "workflow")
+                        }
+                        Authority::FineGrained { permissions, .. } => {
+                            permissions.as_object().is_some_and(|permissions| {
+                                codeyard_model::fine_grained::allows(permissions, "workflows", true)
+                            })
+                        }
+                        Authority::App { permissions, .. } => {
+                            codeyard_model::github_apps::allows(&permissions, "workflows", true)
+                        }
+                        _ => false,
+                    })
+            }
+            _ => Ok(true),
+        }
+    }
     /// Rechecks the live key or token and the repository's current access policy.
     pub async fn authorize(
         self,
@@ -148,6 +254,46 @@ impl ReceiveCredential {
         );
         // A token's App or fine-grained bounds, loaded once for both checks below.
         let (identity, bounds) = match self {
+            Self::ForeignToken { .. } | Self::ForeignSsh { .. } => {
+                let credential = self.foreign(pool).await?;
+                anyhow::ensure!(
+                    !write || credential.answer.write,
+                    CredentialRefusal::ReadOnly
+                );
+                if matches!(self, Self::ForeignToken { .. }) {
+                    let public_read = !write
+                        && !repo.is_private
+                        && codeyard_db_cluster::node_config::get_node_configuration(pool)
+                            .await?
+                            .is_some_and(|configuration| {
+                                configuration.setup_completed && !configuration.is_private()
+                            });
+                    anyhow::ensure!(
+                        public_read
+                            || credential.answer.authority.repository(
+                                credential.user.id,
+                                repo,
+                                "contents",
+                                write
+                            )?,
+                        CredentialRefusal::TokenScope
+                    );
+                    if matches!(
+                        credential.answer.authority,
+                        codeyard_db_core::cells::authorization::Authority::Classic
+                    ) {
+                        if let Some(org) = repo.owner_org_id {
+                            anyhow::ensure!(
+                                codeyard_db_identity::fine_grained_tokens::policy(pool, org)
+                                    .await?
+                                    .classic_allowed,
+                                CredentialRefusal::Classic
+                            );
+                        }
+                    }
+                }
+                (credential.user, None)
+            }
             Self::SshKey(id) => {
                 anyhow::ensure!(id > 0, CredentialRefusal::Credential);
                 let identity =
@@ -203,7 +349,8 @@ impl ReceiveCredential {
             }
         };
         anyhow::ensure!(
-            !identity.username.ends_with("[bot]") || matches!(self, Self::Token(_)),
+            !identity.username.ends_with("[bot]")
+                || matches!(self, Self::Token(_) | Self::ForeignToken { .. }),
             CredentialRefusal::Denied
         );
         if let Self::Token(id) = self {
@@ -239,7 +386,9 @@ impl ReceiveCredential {
             !repo.is_gist || !write || repo.owner_user_id == Some(identity.id),
             CredentialRefusal::Denied
         );
-        if identity.username == codeyard_db_core::queries::ci_tokens::BOT {
+        if identity.username == codeyard_db_core::queries::ci_tokens::BOT
+            && !matches!(self, Self::ForeignToken { .. })
+        {
             let Self::Token(id) = self else {
                 anyhow::bail!(CredentialRefusal::TokenScope);
             };
@@ -279,7 +428,11 @@ impl ReceiveCredential {
 
     pub fn id(self) -> i64 {
         match self {
-            Self::SshKey(id) | Self::DeployKey(id) | Self::Token(id) => id,
+            Self::SshKey(id)
+            | Self::DeployKey(id)
+            | Self::Token(id)
+            | Self::ForeignToken { id, .. }
+            | Self::ForeignSsh { id, .. } => id,
         }
     }
 }

@@ -49,8 +49,40 @@ native_operation!(codeyard_db_core::queries::postgres::fine_grained_tokens::repo
     /// owner domain and readable by `actor`. Only the token's user or an owner of its
     /// organization sees them, through a live `credential`.
     fn repositories(pool: &DbPool, token: i64, actor: i64, credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>) -> Result<Vec<(i64, String)>>);
-native_operation!(codeyard_db_core::queries::postgres::fine_grained_tokens::selected, codeyard_db_core::queries::sqlite::fine_grained_tokens::selected,
-    fn selected(pool: &DbPool, token: i64, repo: i64) -> Result<bool>);
+pub async fn selected(pool: &DbPool, token: i64, repo: i64) -> Result<bool> {
+    let native = match pool {
+        DbPool::Postgres(pool) => {
+            codeyard_db_core::queries::postgres::fine_grained_tokens::selected(pool, token, repo)
+                .await?
+        }
+        DbPool::Sqlite(pool) => {
+            codeyard_db_core::queries::sqlite::fine_grained_tokens::selected(pool, token, repo)
+                .await?
+        }
+    };
+    if native {
+        return Ok(true);
+    }
+    let cached = codeyard_db_core::cells::authorization::lookup(
+        pool,
+        &codeyard_db_core::cells::authorization::Query {
+            kind: "token",
+            id: Some(token),
+            hash: None,
+            write: false,
+        },
+    )
+    .await?;
+    Ok(
+        cached.is_some_and(|credential| match credential.answer.authority {
+            codeyard_db_core::cells::authorization::Authority::FineGrained {
+                repositories: Some(ids),
+                ..
+            } => ids.contains(&repo),
+            _ => false,
+        }),
+    )
+}
 native_operation!(codeyard_db_core::queries::postgres::fine_grained_tokens::policy, codeyard_db_core::queries::sqlite::fine_grained_tokens::policy,
     /// The organization's policy, or the defaults when it has none.
     fn policy(pool: &DbPool, org: i64) -> Result<Policy>);

@@ -108,6 +108,9 @@ pub fn create_router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn(
             codeyard_api_http::traffic::record_views,
         ))
+        .layer(axum::middleware::from_fn(
+            codeyard_api_http::middleware::foreign_authorization,
+        ))
         // Outside every handler, so no request keeps a client address that it sent itself.
         .layer(axum::middleware::from_fn(
             codeyard_api_http::middleware::stamp_client_address,

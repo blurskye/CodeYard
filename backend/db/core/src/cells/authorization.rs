@@ -59,6 +59,7 @@ impl Proof {
 pub enum Authority {
     Classic,
     OAuth {
+        client_id: String,
         scopes: String,
     },
     FineGrained {
@@ -85,7 +86,7 @@ pub enum Authority {
 impl Authority {
     fn validate(&self) -> Result<()> {
         match self {
-            Self::OAuth { scopes } => ensure!(
+            Self::OAuth { scopes, .. } => ensure!(
                 scopes.len() <= 4096 && !scopes.chars().any(char::is_control),
                 "Invalid OAuth scopes"
             ),
@@ -146,9 +147,13 @@ impl Authority {
     ) -> Result<bool> {
         Ok(match self {
             Self::Classic | Self::Session { .. } | Self::Ssh => true,
-            Self::OAuth { scopes } => codeyard_model::oauth_apps::allows(
+            Self::OAuth { scopes, .. } => codeyard_model::oauth_apps::allows(
                 scopes,
-                &crate::queries::credentials::oauth_repository_path(permission),
+                &if repo.is_gist {
+                    "/gists/gist".to_owned()
+                } else {
+                    crate::queries::credentials::oauth_repository_path(permission)
+                },
                 write,
             ),
             Self::FineGrained {
@@ -195,7 +200,7 @@ impl Authority {
     pub fn organization(&self, org: i64, permission: &str, write: bool) -> bool {
         match self {
             Self::Classic | Self::Session { .. } | Self::Ssh => true,
-            Self::OAuth { scopes } => codeyard_model::oauth_apps::allows(
+            Self::OAuth { scopes, .. } => codeyard_model::oauth_apps::allows(
                 scopes,
                 &crate::queries::credentials::oauth_organization_path(permission),
                 write,
@@ -378,4 +383,289 @@ pub async fn authorize(pool: &DbPool, proof: &Proof) -> Result<Option<Answer>> {
         }
     }
     cached(pool, &key).await
+}
+
+/// A cache lookup carries the exact credential hash through native transactions.
+pub struct Query<'a> {
+    pub kind: &'static str,
+    pub id: Option<i64>,
+    pub hash: Option<&'a str>,
+    pub write: bool,
+}
+#[derive(sqlx::FromRow)]
+struct CredentialRow {
+    answer: String,
+    credential_hash: String,
+    #[sqlx(flatten)]
+    user: User,
+}
+pub struct Credential {
+    pub answer: Answer,
+    pub hash: String,
+    pub user: User,
+}
+impl Credential {
+    pub fn token(&self) -> Option<crate::models::PersonalAccessToken> {
+        Some(crate::models::PersonalAccessToken {
+            id: self.answer.credential_id?,
+            token_hash: self.hash.clone(),
+            user_id: self.user.id,
+            name: "Foreign credential".into(),
+            scope: if self.answer.write { "write" } else { "read" }.into(),
+            expires_at: self.answer.expires_at,
+            created_at: self.user.created_at,
+            last_used_at: None,
+            last_used_ip: None,
+        })
+    }
+}
+fn credential(row: Option<CredentialRow>, query: &Query<'_>) -> Result<Option<Credential>> {
+    let Some(row) = row else { return Ok(None) };
+    ensure!(
+        row.answer.len() <= MAXIMUM_ANSWER_BYTES,
+        "Cached account is too large"
+    );
+    let answer: Answer = serde_json::from_str(&row.answer)?;
+    ensure!(
+        answer.user.id == row.user.id
+            && row.user.is_stub
+            && i32::from(answer.home.get()) == row.user.home_cell,
+        "Cached account home changed"
+    );
+    if query.write && !answer.write {
+        return Ok(None);
+    }
+    Ok(Some(Credential {
+        answer,
+        hash: row.credential_hash,
+        user: row.user,
+    }))
+}
+fn credential_query(current: &str, lock: &str) -> String {
+    format!("SELECT f.answer,f.credential_hash,u.* FROM foreign_credentials f JOIN users u ON u.id=f.user_id WHERE f.kind=$1 AND (CAST($2 AS BIGINT) IS NULL OR f.credential_id=$2) AND (CAST($3 AS TEXT) IS NULL OR f.credential_hash=$3) AND f.{current} AND u.is_stub AND NOT u.is_banned AND NOT u.must_change_password ORDER BY f.validated_at DESC LIMIT 1{lock}")
+}
+pub async fn postgres(
+    connection: &mut sqlx::PgConnection,
+    query: &Query<'_>,
+) -> Result<Option<Credential>> {
+    let row = sqlx::query_as(&credential_query(CURRENT_POSTGRES, " FOR SHARE OF f,u"))
+        .bind(query.kind)
+        .bind(query.id)
+        .bind(query.hash)
+        .fetch_optional(connection)
+        .await?;
+    credential(row, query)
+}
+pub async fn sqlite(
+    connection: &mut sqlx::SqliteConnection,
+    query: &Query<'_>,
+) -> Result<Option<Credential>> {
+    let row = sqlx::query_as(&credential_query(CURRENT_SQLITE, ""))
+        .bind(query.kind)
+        .bind(query.id)
+        .bind(query.hash)
+        .fetch_optional(connection)
+        .await?;
+    credential(row, query)
+}
+pub async fn lookup(pool: &DbPool, query: &Query<'_>) -> Result<Option<Credential>> {
+    match pool {
+        DbPool::Postgres(pool) => postgres(&mut *pool.acquire().await?, query).await,
+        DbPool::Sqlite(pool) => sqlite(&mut *pool.acquire().await?, query).await,
+    }
+}
+
+pub struct Permission<'a> {
+    pub repository: Option<i64>,
+    pub organization: Option<i64>,
+    pub name: &'a str,
+    pub write: bool,
+}
+fn permits(
+    credential: &Credential,
+    repository: Option<&crate::models::Repository>,
+    permission: &Permission<'_>,
+    classic_allowed: bool,
+) -> Result<bool> {
+    if permission.write && !credential.answer.write {
+        return Ok(false);
+    }
+    if matches!(credential.answer.authority, Authority::Classic) && !classic_allowed {
+        return Ok(false);
+    }
+    match repository {
+        Some(repo) => credential.answer.authority.repository(
+            credential.user.id,
+            repo,
+            permission.name,
+            permission.write,
+        ),
+        None => Ok(permission.organization.is_some_and(|org| {
+            credential
+                .answer
+                .authority
+                .organization(org, permission.name, permission.write)
+        })),
+    }
+}
+pub async fn permits_postgres(
+    connection: &mut sqlx::PgConnection,
+    actor: i64,
+    query: &Query<'_>,
+    permission: &Permission<'_>,
+) -> Result<bool> {
+    let Some(credential) = postgres(connection, query)
+        .await?
+        .filter(|credential| credential.user.id == actor)
+    else {
+        return Ok(false);
+    };
+    let repository: Option<crate::models::Repository> = match permission.repository {
+        Some(id) => {
+            sqlx::query_as("SELECT * FROM repositories WHERE id=$1 AND NOT is_stub")
+                .bind(id)
+                .fetch_optional(&mut *connection)
+                .await?
+        }
+        None => None,
+    };
+    if permission.repository.is_some() && repository.is_none() {
+        return Ok(false);
+    }
+    let organization = permission
+        .organization
+        .or_else(|| repository.as_ref().and_then(|repo| repo.owner_org_id));
+    let allowed: Option<bool> = sqlx::query_scalar(
+        "SELECT classic_allowed FROM organization_token_policies WHERE org_id=$1 FOR SHARE",
+    )
+    .bind(organization)
+    .fetch_optional(&mut *connection)
+    .await?;
+    permits(
+        &credential,
+        repository.as_ref(),
+        permission,
+        allowed.unwrap_or(true),
+    )
+}
+pub async fn permits_sqlite(
+    connection: &mut sqlx::SqliteConnection,
+    actor: i64,
+    query: &Query<'_>,
+    permission: &Permission<'_>,
+) -> Result<bool> {
+    let Some(credential) = sqlite(connection, query)
+        .await?
+        .filter(|credential| credential.user.id == actor)
+    else {
+        return Ok(false);
+    };
+    let repository: Option<crate::models::Repository> = match permission.repository {
+        Some(id) => {
+            sqlx::query_as("SELECT * FROM repositories WHERE id=$1 AND NOT is_stub")
+                .bind(id)
+                .fetch_optional(&mut *connection)
+                .await?
+        }
+        None => None,
+    };
+    if permission.repository.is_some() && repository.is_none() {
+        return Ok(false);
+    }
+    let organization = permission
+        .organization
+        .or_else(|| repository.as_ref().and_then(|repo| repo.owner_org_id));
+    let allowed: Option<bool> = sqlx::query_scalar(
+        "SELECT classic_allowed FROM organization_token_policies WHERE org_id=$1",
+    )
+    .bind(organization)
+    .fetch_optional(&mut *connection)
+    .await?;
+    permits(
+        &credential,
+        repository.as_ref(),
+        permission,
+        allowed.unwrap_or(true),
+    )
+}
+
+/// SQL projections of the same cached bounds, for queries that retain their credential
+/// and read their resource rows in one statement. Aliases `r` and `u` are native rows.
+pub fn repository_condition(
+    postgres: bool,
+    permission: &str,
+    write: bool,
+    token: &str,
+    hash: &str,
+) -> String {
+    if permission.is_empty()
+        || permission.len() > 100
+        || !permission
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte == b'_' || byte == b'-')
+    {
+        return "FALSE".into();
+    }
+    let field = |path: &str| {
+        if postgres {
+            format!("(fc.answer)::jsonb#>>'{{{}}}'", path.replace('.', ","))
+        } else {
+            format!("json_extract(fc.answer,'$.{path}')")
+        }
+    };
+    let kind = field("authority.kind");
+    let enabled = if write {
+        format!("CAST({} AS TEXT) IN ('true','1')", field("write"))
+    } else {
+        "TRUE".into()
+    };
+    let now = if postgres {
+        "clock_timestamp()"
+    } else {
+        "strftime('%Y-%m-%dT%H:%M:%f000Z','now')"
+    };
+    let owner=format!("((CAST({} AS BIGINT)=r.owner_user_id AND ({kind}='app' OR r.owner_user_id=u.id)) OR CAST({} AS BIGINT)=r.owner_org_id)",field("authority.owner_user"),field("authority.owner_org"));
+    let selected = if postgres {
+        "((fc.answer)::jsonb#>'{authority,repositories}'='null'::jsonb OR EXISTS(SELECT 1 FROM jsonb_array_elements_text(COALESCE(NULLIF((fc.answer)::jsonb#>'{authority,repositories}','null'::jsonb),'[]'::jsonb)) selected WHERE CAST(selected.value AS BIGINT)=r.id))".into()
+    } else {
+        "(json_type(fc.answer,'$.authority.repositories')='null' OR EXISTS(SELECT 1 FROM json_each(json_extract(fc.answer,'$.authority.repositories')) selected WHERE selected.value=r.id))".to_owned()
+    };
+    let level = field(&format!(
+        "authority.permissions.{}",
+        permission.replace('-', "_")
+    ));
+    let levels = if write {
+        "'write','admin'"
+    } else {
+        "'read','write','admin'"
+    };
+    let fine = format!("{owner} AND {selected} AND {level} IN ({levels})");
+    let job_level = field(&format!(
+        "authority.permissions.{}",
+        permission.replace('_', "-")
+    ));
+    let job = format!(
+        "CAST({} AS BIGINT)=r.id AND CAST({job_level} AS INTEGER)>={}",
+        field("authority.repository"),
+        if write { 2 } else { 1 }
+    );
+    let scopes = field("authority.scopes");
+    let oauth: Vec<_> = ["repo", "security_events"]
+        .into_iter()
+        .filter(|scope| {
+            codeyard_model::oauth_apps::allows(
+                scope,
+                &crate::queries::credentials::oauth_repository_path(permission),
+                write,
+            )
+        })
+        .map(|scope| format!("(',' || {scopes} || ',') LIKE '%,{scope},%'"))
+        .collect();
+    let oauth = if oauth.is_empty() {
+        "FALSE".into()
+    } else {
+        oauth.join(" OR ")
+    };
+    let classic="NOT EXISTS(SELECT 1 FROM organization_token_policies p WHERE p.org_id=r.owner_org_id AND NOT p.classic_allowed)";
+    format!("EXISTS(SELECT 1 FROM foreign_credentials fc WHERE fc.kind='token' AND fc.credential_id=CAST({token} AS BIGINT) AND fc.credential_hash={hash} AND fc.user_id=u.id AND u.is_stub AND NOT u.is_banned AND NOT u.must_change_password AND fc.expires_at>{now} AND {enabled} AND CASE {kind} WHEN 'classic' THEN {classic} WHEN 'oauth' THEN ({oauth}) WHEN 'fine_grained' THEN ({fine}) WHEN 'app' THEN ({fine}) WHEN 'job' THEN ({job}) ELSE FALSE END)")
 }

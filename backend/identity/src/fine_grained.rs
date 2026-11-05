@@ -440,10 +440,42 @@ impl Grant {
 }
 
 pub async fn grant(pool: &DbPool, token: i64) -> anyhow::Result<Option<Grant>> {
-    codeyard_db_identity::fine_grained_tokens::bounds(pool, token)
-        .await?
-        .map(Grant::from_bounds)
-        .transpose()
+    if let Some(bounds) = codeyard_db_identity::fine_grained_tokens::bounds(pool, token).await? {
+        return Ok(Some(Grant::from_bounds(bounds)?));
+    }
+    let cached = codeyard_db_core::cells::authorization::lookup(
+        pool,
+        &codeyard_db_core::cells::authorization::Query {
+            kind: "token",
+            id: Some(token),
+            hash: None,
+            write: false,
+        },
+    )
+    .await?;
+    Ok(
+        cached.and_then(|credential| match credential.answer.authority {
+            codeyard_db_core::cells::authorization::Authority::FineGrained {
+                owner_user,
+                owner_org,
+                repositories,
+                permissions,
+            } => Some(Grant {
+                token_id: token,
+                owner: owner_org
+                    .map(Owner::Organization)
+                    .or_else(|| owner_user.map(Owner::User))?,
+                access: if repositories.is_none() {
+                    Access::All
+                } else {
+                    Access::Selected
+                },
+                permissions: permissions.as_object()?.clone(),
+                active: true,
+            }),
+            _ => None,
+        }),
+    )
 }
 
 /// What a REST request needs from a fine-grained token.

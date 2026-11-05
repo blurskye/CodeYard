@@ -160,6 +160,96 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .await
     .unwrap();
     assert!((0.0..60.0).contains(&seconds));
+    codeyard_db_cluster::node_config::upsert_node_configuration(&zero.pool, "public", true)
+        .await
+        .unwrap();
+    let alice = codeyard_db_identity::users::accounts::create_user(&zero.pool, "alice", None)
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("private.git");
+    git2::Repository::init_bare(&path).unwrap();
+    let repository = codeyard_db_repos::repositories::records::create_repository(
+        &zero.pool,
+        alice.id,
+        "private",
+        None,
+        true,
+        path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    codeyard_db_repos::repositories::access::grant_repo_access(
+        &zero.pool,
+        user.id,
+        repository.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    let storage = Arc::new(
+        codeyard_storage::ObjectStore::open(root.path(), None)
+            .await
+            .unwrap(),
+    );
+    let app = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
+        zero.pool.clone(),
+        root.path().into(),
+        storage,
+        None,
+        Default::default(),
+        None,
+    ));
+    let mut http = super::cells_frontend::Server::start(app).await;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let response = client
+        .post(format!("{}/api/v3/repos/alice/private/issues", http.url()))
+        .bearer_auth(&value)
+        .header("x-codeyard-user", alice.id.to_string())
+        .json(&serde_json::json!({"title":"from the other cell","creator_id":alice.id}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    let issue: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(issue["user"]["login"], "bob");
+    let response = client
+        .get(format!(
+            "{}/alice/private.git/info/refs?service=git-upload-pack",
+            http.url()
+        ))
+        .basic_auth("bob", Some(&value))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(!response.bytes().await.unwrap().is_empty());
+    // Resource-cell revocation is immediate, independent of a warm home answer.
+    sqlx::query("DELETE FROM repo_access WHERE repo_id=$1 AND user_id=$2")
+        .bind(repository.id)
+        .bind(user.id)
+        .execute(&zero.raw)
+        .await
+        .unwrap();
+    let response = client
+        .post(format!("{}/api/v3/repos/alice/private/issues", http.url()))
+        .bearer_auth(&value)
+        .json(&serde_json::json!({"title":"must be denied"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 404);
+    codeyard_db_repos::repositories::access::grant_repo_access(
+        &zero.pool,
+        user.id,
+        repository.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     // A read-only router, an unknown node and a wrong server pin cannot request accounts.
     for (key, pin) in [
         (router_key, one_key.public_key()),
@@ -199,6 +289,22 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap()
         .is_none());
+    let response = client
+        .post(format!("{}/api/v3/repos/alice/private/issues", http.url()))
+        .bearer_auth(&value)
+        .json(&serde_json::json!({"title":"revoked at home"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 401);
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM issues WHERE repo_id=$1")
+        .bind(repository.id)
+        .fetch_one(&zero.raw)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+    drop(client);
+    http.stop().await;
     // Cell-key revocation is live at the receiver, even when a route is cached.
     let replacement = NodeKey::generate();
     directory

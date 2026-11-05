@@ -76,9 +76,37 @@ native_operation!(crate::postgres::oauth_apps::approve,
 native_operation!(crate::postgres::oauth_apps::exchange,
     crate::sqlite::oauth_apps::exchange,
     fn exchange(pool: &DbPool, hash: &str, client_id: &str, kind: &str, redirect_uri: Option<&str>, verifier: &str, state: Option<&str>, value: &str) -> Result<Exchange>);
-native_operation!(codeyard_db_core::queries::postgres::oauth_apps::token,
-    crate::sqlite::oauth_apps::token,
-    fn token(pool: &DbPool, id: i64) -> Result<Option<Token>>);
+pub async fn token(pool: &DbPool, id: i64) -> Result<Option<Token>> {
+    let native = match pool {
+        DbPool::Postgres(pool) => {
+            codeyard_db_core::queries::postgres::oauth_apps::token(pool, id).await?
+        }
+        DbPool::Sqlite(pool) => crate::sqlite::oauth_apps::token(pool, id).await?,
+    };
+    if native.is_some() {
+        return Ok(native);
+    }
+    let cached = codeyard_db_core::cells::authorization::lookup(
+        pool,
+        &codeyard_db_core::cells::authorization::Query {
+            kind: "token",
+            id: Some(id),
+            hash: None,
+            write: false,
+        },
+    )
+    .await?;
+    Ok(cached.and_then(|cached| match cached.answer.authority {
+        codeyard_db_core::cells::authorization::Authority::OAuth { client_id, scopes } => {
+            Some(Token {
+                token_id: id,
+                client_id,
+                scopes,
+            })
+        }
+        _ => None,
+    }))
+}
 native_operation!(crate::postgres::oauth_apps::owned_token,
     crate::sqlite::oauth_apps::owned_token,
     fn owned_token(pool: &DbPool, client: &str, hash: &str) -> Result<Option<PersonalAccessToken>>);

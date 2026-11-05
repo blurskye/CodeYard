@@ -92,6 +92,7 @@ pub struct GitSshHandler {
     pub(crate) router_authorization: Option<Arc<dyn RouterAuthorization>>,
     router_peer: Option<PublicKey>,
     router_client_key: Option<String>,
+    foreign_key: Option<String>,
     pool: DbPool,
     user: Option<User>,
     key_id: Option<i64>,
@@ -116,6 +117,7 @@ impl GitSshHandler {
             router_authorization: None,
             router_peer: None,
             router_client_key: None,
+            foreign_key: None,
             pool,
             user: None,
             key_id: None,
@@ -228,6 +230,33 @@ impl GitSshHandler {
             )
             .await?
             .map(|key| KeyIdentity::Deploy(key.id))),
+            (None, None) => {
+                use codeyard_db_core::cells::authorization::{self, Proof, Query};
+                let proof = Proof::Ssh { fingerprint };
+                if authorization::authorize(&self.pool, &proof)
+                    .await?
+                    .is_none()
+                {
+                    return Ok(None);
+                }
+                let hash = proof.hash();
+                Ok(authorization::lookup(
+                    &self.pool,
+                    &Query {
+                        kind: "ssh",
+                        id: None,
+                        hash: Some(&hash),
+                        write: false,
+                    },
+                )
+                .await?
+                .and_then(|credential| {
+                    credential
+                        .answer
+                        .credential_id
+                        .map(|id| KeyIdentity::Account(Box::new(credential.user), id))
+                }))
+            }
             _ => Ok(None),
         }
     }
@@ -245,6 +274,14 @@ impl GitSshHandler {
         use codeyard_repos_core::repositories::git_sessions::CredentialRefusal;
         let credential = if let Some(key) = self.deploy_key {
             ReceiveCredential::DeployKey(key)
+        } else if self.user.as_ref().is_some_and(|user| user.is_stub) {
+            ReceiveCredential::foreign_ssh(
+                self.key_id
+                    .ok_or_else(|| anyhow::anyhow!("SSH key unavailable"))?,
+                self.foreign_key
+                    .as_deref()
+                    .ok_or_else(|| anyhow::anyhow!("SSH fingerprint unavailable"))?,
+            )?
         } else if self.user.is_some() {
             ReceiveCredential::SshKey(
                 self.key_id
@@ -388,6 +425,7 @@ impl russh::server::Handler for GitSshHandler {
     ) -> Result<Auth, Self::Error> {
         self.router_peer = None;
         self.router_client_key = None;
+        self.foreign_key = None;
         self.user = None;
         self.key_id = None;
         self.deploy_key = None;
@@ -419,6 +457,14 @@ impl russh::server::Handler for GitSshHandler {
         };
         match identity {
             KeyIdentity::Account(user, id) => {
+                self.foreign_key = user
+                    .is_stub
+                    .then(|| {
+                        codeyard_db_identity::users::ssh_keys::calculate_fingerprint(
+                            &public_key.to_openssh()?,
+                        )
+                    })
+                    .transpose()?;
                 self.user = Some(*user);
                 self.key_id = Some(id);
             }
@@ -504,6 +550,14 @@ impl russh::server::Handler for GitSshHandler {
                     .await??
                     {
                         Some(KeyIdentity::Account(user, id)) => {
+                            self.foreign_key = user
+                                .is_stub
+                                .then(|| {
+                                    codeyard_db_identity::users::ssh_keys::calculate_fingerprint(
+                                        variable_value,
+                                    )
+                                })
+                                .transpose()?;
                             self.user = Some(*user);
                             self.key_id = Some(id);
                             self.router_client_key = Some(variable_value.to_owned());

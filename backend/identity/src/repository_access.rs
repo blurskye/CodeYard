@@ -15,6 +15,19 @@ pub async fn credential_user(
         Some(OwnedAccountCredential::Session(session)) => {
             codeyard_db_identity::users::sessions::get_session_user(pool, session).await?
         }
+        Some(OwnedAccountCredential::ForeignToken(id, hash)) => {
+            codeyard_db_core::cells::authorization::lookup(
+                pool,
+                &codeyard_db_core::cells::authorization::Query {
+                    kind: "token",
+                    id: Some(*id),
+                    hash: Some(hash),
+                    write,
+                },
+            )
+            .await?
+            .map(|credential| credential.user)
+        }
         Some(OwnedAccountCredential::Token(token_id, _)) => {
             codeyard_db_identity::users::tokens::token_user(pool, *token_id, write).await?
         }

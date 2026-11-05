@@ -54,6 +54,17 @@ pub async fn credential_live(
     use crate::queries::users::accounts::AccountCredential;
     Ok(match credential {
         AccountCredential::Session(session) => live_session(tx, actor, session).await?,
+        AccountCredential::ForeignToken(id, hash) => crate::cells::authorization::postgres(
+            tx,
+            &crate::cells::authorization::Query {
+                kind: "token",
+                id: Some(*id),
+                hash: Some(hash),
+                write,
+            },
+        )
+        .await?
+        .is_some_and(|credential| credential.user.id == actor),
         AccountCredential::Token(id, hash) => {
             crate::queries::postgres::oauth_apps::lock_token_issuer(tx, *id).await?;
             // Installation revocation takes this row before deleting its personal tokens.

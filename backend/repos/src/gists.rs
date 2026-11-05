@@ -6,6 +6,7 @@ use serde::Serialize;
 pub enum GistCredential {
     Session(String),
     Token(i64, String),
+    ForeignToken(i64, String),
 }
 impl std::fmt::Debug for GistCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -17,12 +18,14 @@ impl GistCredential {
         match self {
             Self::Session(session) => AccountCredential::Session(session),
             Self::Token(id, hash) => AccountCredential::Token(*id, hash),
+            Self::ForeignToken(id, hash) => AccountCredential::ForeignToken(*id, hash),
         }
     }
     pub fn from_credential(credential: &AccountCredential<'_>) -> Self {
         match credential {
             AccountCredential::Session(session) => Self::Session((*session).into()),
             AccountCredential::Token(id, hash) => Self::Token(*id, (*hash).into()),
+            AccountCredential::ForeignToken(id, hash) => Self::ForeignToken(*id, (*hash).into()),
         }
     }
 }

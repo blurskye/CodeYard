@@ -38,6 +38,15 @@ pub async fn ci(
             OwnedAccountCredential::Session(session.clone()),
             "actions",
         ),
+        CiCredential::ForeignToken {
+            id,
+            hash,
+            permission,
+        } => (
+            actor,
+            OwnedAccountCredential::ForeignToken(*id, hash.clone()),
+            *permission,
+        ),
         CiCredential::Token {
             id,
             hash,

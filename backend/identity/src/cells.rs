@@ -27,7 +27,7 @@ impl Local {
                     return Ok(None);
                 }
                 let Some(token) =
-                    codeyard_db_identity::users::tokens::find_token(pool, hash).await?
+                    codeyard_db_identity::users::tokens::find_native_token(pool, hash).await?
                 else {
                     return Ok(None);
                 };
@@ -128,6 +128,7 @@ impl Local {
                     codeyard_db_identity::oauth_apps::token(pool, token.id).await?
                 {
                     Authority::OAuth {
+                        client_id: oauth.client_id,
                         scopes: oauth.scopes,
                     }
                 } else {

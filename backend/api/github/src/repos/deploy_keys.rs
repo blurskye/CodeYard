@@ -68,10 +68,7 @@ async fn list(
         &state.pool,
         &auth.user,
         &repo,
-        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
-            auth.token.id,
-            auth.token.token_hash.clone(),
-        ),
+        auth.owned_credential(),
     )
     .await
     .map_err(key_error)?;
@@ -95,10 +92,7 @@ async fn read(
         &state.pool,
         &auth.user,
         &repo,
-        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
-            auth.token.id,
-            auth.token.token_hash.clone(),
-        ),
+        auth.owned_credential(),
     )
     .await
     .map_err(key_error)?;
@@ -144,10 +138,7 @@ async fn create(
     let key = codeyard_repos::deploy_keys::add_key(
         &state.pool,
         &auth.user,
-        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
-            auth.token.id,
-            auth.token.token_hash.clone(),
-        ),
+        auth.owned_credential(),
         &repo,
         &title,
         &input.key,
@@ -172,10 +163,7 @@ async fn remove(
     codeyard_repos::deploy_keys::remove_key(
         &state.pool,
         &auth.user,
-        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
-            auth.token.id,
-            auth.token.token_hash.clone(),
-        ),
+        auth.owned_credential(),
         &repo,
         id,
     )

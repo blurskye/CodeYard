@@ -8,7 +8,7 @@ use serde_json::{json, Value};
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
 
-struct Server {
+pub(super) struct Server {
     address: SocketAddr,
     stop: CancellationToken,
     task: AbortOnDropHandle<()>,
@@ -19,7 +19,7 @@ impl Drop for Server {
     }
 }
 impl Server {
-    async fn start(app: axum::Router) -> Self {
+    pub(super) async fn start(app: axum::Router) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let stop = CancellationToken::new();
@@ -39,14 +39,14 @@ impl Server {
             task,
         }
     }
-    async fn stop(&mut self) {
+    pub(super) async fn stop(&mut self) {
         self.stop.cancel();
         tokio::time::timeout(Duration::from_secs(10), &mut self.task)
             .await
             .unwrap()
             .unwrap();
     }
-    fn url(&self) -> String {
+    pub(super) fn url(&self) -> String {
         format!("http://{}", self.address)
     }
 }

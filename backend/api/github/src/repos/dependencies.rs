@@ -70,10 +70,7 @@ async fn change(
         &state.pool,
         state.cluster.as_ref(),
         actor.user.id,
-        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
-            actor.token.id,
-            actor.token.token_hash.clone(),
-        ),
+        actor.owned_credential(),
         repo.id,
         feature,
         enabled,

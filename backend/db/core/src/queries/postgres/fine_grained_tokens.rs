@@ -22,6 +22,7 @@ pub async fn repositories(
     let (session, presented) = match credential {
         AccountCredential::Session(session) => (Some(*session), None),
         AccountCredential::Token(id, hash) => (None, Some((*id, *hash))),
+        AccountCredential::ForeignToken(..) => return Ok(vec![]),
     };
     let issuer = crate::queries::oauth_apps::token_issuer_condition("t", "$6");
     let readable = crate::queries::postgres::repositories::access::readable_condition();

@@ -17,6 +17,17 @@ pub async fn credential_live(
     use crate::queries::users::accounts::AccountCredential;
     Ok(match credential {
         AccountCredential::Session(session) => live_session(tx, actor, session).await?,
+        AccountCredential::ForeignToken(id, hash) => crate::cells::authorization::sqlite(
+            tx,
+            &crate::cells::authorization::Query {
+                kind: "token",
+                id: Some(*id),
+                hash: Some(hash),
+                write,
+            },
+        )
+        .await?
+        .is_some_and(|credential| credential.user.id == actor),
         AccountCredential::Token(id, hash) => {
             // A token issued to an OAuth app ends with that app's availability.
             let issuer = crate::queries::oauth_apps::token_issuer_condition("t", "?5");

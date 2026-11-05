@@ -123,6 +123,12 @@ impl RequestContext {
         if live.is_none_or(|user| user.id != self.auth.user.id) {
             return Err(token_denied());
         }
+        if self.auth.user.is_stub {
+            self.auth
+                .repository_scope(pool, repo, scope, write)
+                .await
+                .map_err(|error| codeyard_api_github::auth::scope_error(error).graphql())?;
+        }
         // Integration credentials were excluded at admission. Do not rediscover Apps for
         // every scalar; personal bounds and job permissions still have to be live.
         if self.personal.is_some() {

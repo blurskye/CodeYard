@@ -20,6 +20,29 @@ pub async fn check_publication_actor(
         Some(OwnedAccountCredential::Session(session)) => {
             codeyard_db_identity::users::sessions::get_session_user(pool, session).await?
         }
+        Some(OwnedAccountCredential::ForeignToken(id, hash)) => {
+            let credential = codeyard_db_core::cells::authorization::lookup(
+                pool,
+                &codeyard_db_core::cells::authorization::Query {
+                    kind: "token",
+                    id: Some(*id),
+                    hash: Some(hash),
+                    write: true,
+                },
+            )
+            .await?
+            .ok_or_else(|| anyhow::anyhow!(codeyard_support::credentials::AccountRestricted))?;
+            anyhow::ensure!(
+                credential.answer.authority.repository(
+                    credential.user.id,
+                    &repository,
+                    "contents",
+                    true
+                )?,
+                codeyard_support::credentials::AccountRestricted
+            );
+            Some(credential.user)
+        }
         Some(OwnedAccountCredential::Token(token_id, _)) => Some(
             crate::repositories::git_sessions::ReceiveCredential::Token(*token_id)
                 .authorize(pool, &repository, true)

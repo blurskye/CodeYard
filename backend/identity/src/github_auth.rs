@@ -42,10 +42,23 @@ pub enum ScopeError {
 
 impl Authentication {
     pub fn credential(&self) -> codeyard_db_core::queries::users::accounts::AccountCredential<'_> {
-        codeyard_db_core::queries::users::accounts::AccountCredential::Token(
-            self.token.id,
-            &self.token.token_hash,
-        )
+        if self.user.is_stub {
+            codeyard_db_core::queries::users::accounts::AccountCredential::ForeignToken(
+                self.token.id,
+                &self.token.token_hash,
+            )
+        } else {
+            codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+                self.token.id,
+                &self.token.token_hash,
+            )
+        }
+    }
+
+    pub fn owned_credential(
+        &self,
+    ) -> codeyard_db_core::queries::users::accounts::OwnedAccountCredential {
+        (&self.credential()).into()
     }
 
     /// The authenticated token, so database admission re-checks it is still live.
@@ -58,6 +71,13 @@ impl Authentication {
         headers: &HeaderMap,
         permission: &'static str,
     ) -> Result<codeyard_db_core::queries::ci::CiCredential> {
+        if self.user.is_stub {
+            return Ok(codeyard_db_core::queries::ci::CiCredential::ForeignToken {
+                id: self.token.id,
+                hash: token_hash(credential(headers).ok_or_else(required)?),
+                permission,
+            });
+        }
         Ok(codeyard_db_core::queries::ci::CiCredential::Token {
             id: self.token.id,
             hash: token_hash(credential(headers).ok_or_else(required)?),
@@ -76,6 +96,50 @@ impl Authentication {
         scope: &str,
         write: bool,
     ) -> std::result::Result<(), ScopeError> {
+        if self.user.is_stub {
+            let credential = codeyard_db_core::cells::authorization::lookup(
+                pool,
+                &codeyard_db_core::cells::authorization::Query {
+                    kind: "token",
+                    id: Some(self.token.id),
+                    hash: Some(&self.token.token_hash),
+                    write,
+                },
+            )
+            .await
+            .map_err(|_| ScopeError::Unavailable)?
+            .ok_or(ScopeError::Denied)?;
+            let repo =
+                codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo_id)
+                    .await
+                    .map_err(|_| ScopeError::Unavailable)?
+                    .ok_or(ScopeError::Missing)?;
+            if matches!(
+                credential.answer.authority,
+                codeyard_db_core::cells::authorization::Authority::Classic
+            ) && repo.owner_org_id.is_some()
+            {
+                let policy = codeyard_db_identity::fine_grained_tokens::policy(
+                    pool,
+                    repo.owner_org_id.ok_or(ScopeError::Missing)?,
+                )
+                .await
+                .map_err(|_| ScopeError::Unavailable)?;
+                if !policy.classic_allowed {
+                    return Err(ScopeError::Denied);
+                }
+            }
+            return if credential
+                .answer
+                .authority
+                .repository(self.user.id, &repo, scope, write)
+                .map_err(|_| ScopeError::Unavailable)?
+            {
+                Ok(())
+            } else {
+                Err(ScopeError::Denied)
+            };
+        }
         // An App or fine-grained credential reaches only its selected repositories with its
         // granted permissions, also when a request reads a second repository, such as a
         // compared fork. Job scopes are spelled with hyphens; App permissions with underscores.

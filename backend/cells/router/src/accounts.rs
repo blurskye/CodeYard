@@ -23,7 +23,7 @@ pub const ALPN: &[u8] = b"codeyard/cells/1";
     deny_unknown_fields
 )]
 enum Reply {
-    Account(Option<Answer>),
+    Account(Option<Box<Answer>>),
     Unavailable,
 }
 pub struct Remote {
@@ -76,7 +76,7 @@ impl Home for Remote {
                 )?;
                 match client.request::<_, Reply>(proof).await {
                     Ok(Reply::Account(value)) => {
-                        answer = Some(value);
+                        answer = Some(value.map(|value| *value));
                         break;
                     }
                     Ok(Reply::Unavailable) => {
@@ -138,7 +138,7 @@ impl rpc::Service for Accounts {
             let proof: Proof = serde_json::from_slice(bytes)?;
             proof.validate()?;
             let reply = match self.home.authorize(&proof).await {
-                Ok(answer) => Reply::Account(answer),
+                Ok(answer) => Reply::Account(answer.map(Box::new)),
                 Err(_) => Reply::Unavailable,
             };
             self.admitted(peer).await?;

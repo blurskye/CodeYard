@@ -28,14 +28,7 @@ impl From<(i64, String)> for Actor {
 
 impl From<(i64, &AccountCredential<'_>)> for Actor {
     fn from((user_id, credential): (i64, &AccountCredential<'_>)) -> Self {
-        let credential = match credential {
-            AccountCredential::Session(session) => {
-                OwnedAccountCredential::Session((*session).to_owned())
-            }
-            AccountCredential::Token(id, hash) => {
-                OwnedAccountCredential::Token(*id, (*hash).to_owned())
-            }
-        };
+        let credential = OwnedAccountCredential::from(credential);
         Self {
             user_id,
             credential: Some(credential),
@@ -64,7 +57,9 @@ impl From<(i64, OwnedAccountCredential)> for Actor {
 impl Actor {
     pub fn token_id(&self) -> Option<i64> {
         match &self.credential {
-            Some(OwnedAccountCredential::Token(id, _)) => Some(*id),
+            Some(
+                OwnedAccountCredential::Token(id, _) | OwnedAccountCredential::ForeignToken(id, _),
+            ) => Some(*id),
             _ => None,
         }
     }

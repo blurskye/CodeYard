@@ -29,6 +29,27 @@ pub async fn writes(
     if !live(tx, actor, true).await? {
         return Ok(false);
     }
+    if let Some(crate::queries::users::accounts::AccountCredential::ForeignToken(id, hash)) =
+        actor.credential()
+    {
+        return crate::cells::authorization::permits_sqlite(
+            tx,
+            actor.user_id,
+            &crate::cells::authorization::Query {
+                kind: "token",
+                id: Some(id),
+                hash: Some(hash),
+                write: true,
+            },
+            &crate::cells::authorization::Permission {
+                repository: repo,
+                organization: org,
+                name: permission,
+                write: true,
+            },
+        )
+        .await;
+    }
     match actor.token_id() {
         Some(token) => {
             crate::queries::sqlite::users::tokens::permits_write(
@@ -64,6 +85,27 @@ pub async fn repository(
 ) -> Result<bool> {
     if !live(tx, actor, write).await? {
         return Ok(false);
+    }
+    if let Some(crate::queries::users::accounts::AccountCredential::ForeignToken(id, hash)) =
+        actor.credential()
+    {
+        return crate::cells::authorization::permits_sqlite(
+            tx,
+            actor.user_id,
+            &crate::cells::authorization::Query {
+                kind: "token",
+                id: Some(id),
+                hash: Some(hash),
+                write,
+            },
+            &crate::cells::authorization::Permission {
+                repository: Some(repo),
+                organization: None,
+                name: permission,
+                write,
+            },
+        )
+        .await;
     }
     let Some(id) = actor.token_id() else {
         return Ok(true);
@@ -147,6 +189,27 @@ pub async fn organization(
 ) -> Result<bool> {
     if !live(tx, actor, write).await? {
         return Ok(false);
+    }
+    if let Some(crate::queries::users::accounts::AccountCredential::ForeignToken(id, hash)) =
+        actor.credential()
+    {
+        return crate::cells::authorization::permits_sqlite(
+            tx,
+            actor.user_id,
+            &crate::cells::authorization::Query {
+                kind: "token",
+                id: Some(id),
+                hash: Some(hash),
+                write,
+            },
+            &crate::cells::authorization::Permission {
+                repository: None,
+                organization: Some(org),
+                name: permission,
+                write,
+            },
+        )
+        .await;
     }
     let Some(id) = actor.token_id() else {
         return Ok(true);

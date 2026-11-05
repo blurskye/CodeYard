@@ -122,7 +122,7 @@ async fn authenticate(
 #[derive(Debug)]
 struct AuthorizedRepository {
     repo: Repository,
-    token_id: Option<i64>,
+    credential: Option<ReceiveCredential>,
     actor_id: Option<i64>,
 }
 
@@ -155,13 +155,13 @@ async fn authorize_repository(
         .filter(|config| config.setup_completed)
         .ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
     let token = authenticate(state, headers).await?;
-    let Some((token, _)) = token else {
+    let Some((token, authenticated_user)) = token else {
         // A repository that does not exist looks like a private one, so names are not revealed.
         return match found {
             Some(repo) if !(write || repo.is_private || config.is_private()) => {
                 Ok(AuthorizedRepository {
                     repo,
-                    token_id: None,
+                    credential: None,
                     actor_id: None,
                 })
             }
@@ -169,13 +169,15 @@ async fn authorize_repository(
         };
     };
     let repo = found.ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
-    let (user, _) = ReceiveCredential::Token(token.id)
+    let credential =
+        ReceiveCredential::personal(&token, &authenticated_user).map_err(|_| unavailable())?;
+    let (user, _) = credential
         .authorize(&state.pool, &repo, write)
         .await
         .map_err(credential_refusal)?;
     Ok(AuthorizedRepository {
         repo,
-        token_id: Some(token.id),
+        credential: Some(credential),
         actor_id: Some(user.id),
     })
 }
@@ -357,7 +359,7 @@ async fn rpc(
         };
     let AuthorizedRepository {
         repo,
-        token_id,
+        credential,
         actor_id,
     } = match authorize_repository(&state, found, &parts.headers, write).await {
         Ok(authorized) => authorized,
@@ -371,7 +373,7 @@ async fn rpc(
         },
         true,
     );
-    options.credential = token_id.map(ReceiveCredential::Token);
+    options.credential = credential;
     if write {
         options.owner = owner;
     }

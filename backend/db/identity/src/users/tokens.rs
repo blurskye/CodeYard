@@ -17,16 +17,57 @@ native_operation!(crate::postgres::users::tokens::delete_token,
     crate::sqlite::users::tokens::delete_token,
     /// Deletes only while the browser session that asked is still signed in.
     fn delete_token(pool: &DbPool, user_id: i64, session_id: &str, token_id: i64) -> Result<bool>);
-native_operation!(crate::postgres::users::tokens::find_token,
-    crate::sqlite::users::tokens::find_token,
-    fn find_token(pool: &DbPool, hash: &str) -> Result<Option<PersonalAccessToken>>);
+/// Native rows remain the home cell's credential store.
+pub async fn find_native_token(pool: &DbPool, hash: &str) -> Result<Option<PersonalAccessToken>> {
+    match pool {
+        DbPool::Postgres(pool) => crate::postgres::users::tokens::find_token(pool, hash).await,
+        DbPool::Sqlite(pool) => crate::sqlite::users::tokens::find_token(pool, hash).await,
+    }
+}
+pub async fn find_token(pool: &DbPool, hash: &str) -> Result<Option<PersonalAccessToken>> {
+    if let Some(token) = find_native_token(pool, hash).await? {
+        return Ok(Some(token));
+    }
+    Ok(codeyard_db_core::cells::authorization::lookup(
+        pool,
+        &codeyard_db_core::cells::authorization::Query {
+            kind: "token",
+            id: None,
+            hash: Some(hash),
+            write: false,
+        },
+    )
+    .await?
+    .and_then(|credential| credential.token()))
+}
 native_operation!(crate::postgres::users::tokens::token_hash,
     crate::sqlite::users::tokens::token_hash,
     /// The stored hash of `user_id`'s token, so a background job can act with the credential it was given.
     fn token_hash(pool: &DbPool, token_id: i64, user_id: i64) -> Result<Option<String>>);
-native_operation!(crate::postgres::users::tokens::token_user,
-    crate::sqlite::users::tokens::token_user,
-    fn token_user(pool: &DbPool, token_id: i64, write: bool) -> Result<Option<User>>);
+pub async fn token_user(pool: &DbPool, token_id: i64, write: bool) -> Result<Option<User>> {
+    let native = match pool {
+        DbPool::Postgres(pool) => {
+            crate::postgres::users::tokens::token_user(pool, token_id, write).await?
+        }
+        DbPool::Sqlite(pool) => {
+            crate::sqlite::users::tokens::token_user(pool, token_id, write).await?
+        }
+    };
+    if native.is_some() {
+        return Ok(native);
+    }
+    Ok(codeyard_db_core::cells::authorization::lookup(
+        pool,
+        &codeyard_db_core::cells::authorization::Query {
+            kind: "token",
+            id: Some(token_id),
+            hash: None,
+            write,
+        },
+    )
+    .await?
+    .map(|credential| credential.user))
+}
 native_operation!(crate::postgres::users::tokens::repository_write,
     crate::sqlite::users::tokens::repository_write,
     /// Narrows native write authority at a Git publication boundary.

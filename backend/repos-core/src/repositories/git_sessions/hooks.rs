@@ -609,11 +609,7 @@ impl Gateway {
             )
             .into());
         }
-        let check_workflows = if let ReceiveCredential::Token(id) = operation.credential {
-            !codeyard_identity::oauth_apps::allows_workflows(&self.pool, id).await?
-        } else {
-            false
-        };
+        let check_workflows = !operation.credential.allows_workflows(&self.pool).await?;
         let ref_change = crate::repositories::store::local::begin_coordinated_ref_change(
             &self.pool,
             repo.id,
@@ -672,7 +668,10 @@ impl Gateway {
                 .collect::<Vec<_>>();
             let actor = match admitted.credential {
                 ReceiveCredential::DeployKey(id) => codeyard_git::PublicationActor::DeployKey(id),
-                ReceiveCredential::SshKey(_) | ReceiveCredential::Token(_) => {
+                ReceiveCredential::SshKey(_)
+                | ReceiveCredential::Token(_)
+                | ReceiveCredential::ForeignToken { .. }
+                | ReceiveCredential::ForeignSsh { .. } => {
                     codeyard_git::PublicationActor::User(admitted.actor_id)
                 }
             };
