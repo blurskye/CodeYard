@@ -85,6 +85,33 @@ async fn keys(State(provider): State<Arc<Provider>>) -> Json<Value> {
         "n":URL_SAFE_NO_PAD.encode(provider.key.n().to_bytes_be()),"e":URL_SAFE_NO_PAD.encode(provider.key.e().to_bytes_be())}]}),
     )
 }
+async fn provider() -> (String, String, tokio_util::task::AbortOnDropHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let issuer = format!("http://{}", listener.local_addr().unwrap());
+    let key = tokio::task::spawn_blocking(|| {
+        rsa::RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap()
+    })
+    .await
+    .unwrap();
+    let provider = Arc::new(Provider {
+        issuer: issuer.clone(),
+        key,
+        codes: Default::default(),
+    });
+    let app = Router::new()
+        .route("/authorize", get(authorize))
+        .route("/token", post(token))
+        .route("/keys", get(keys))
+        .with_state(provider);
+    let task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    }));
+    let config = json!([{"organization":"acme","issuer":issuer,"authorization_url":format!("{issuer}/authorize"),
+    "token_url":format!("{issuer}/token"),"jwks_url":format!("{issuer}/keys"),"client_id":"codeyard-organization",
+    "client_secret_env":"OIDC_ACME_CLIENT_SECRET"}]).to_string();
+    (issuer, config, task)
+}
+
 struct Server(std::process::Child);
 impl Drop for Server {
     fn drop(&mut self) {
@@ -203,29 +230,7 @@ async fn organization_oidc_crosses_web_nodes_and_rechecks_membership_and_audit_f
         db.complete_setup().await;
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join(".env"), "").unwrap();
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let issuer = format!("http://{}", listener.local_addr().unwrap());
-        let key = tokio::task::spawn_blocking(|| {
-            rsa::RsaPrivateKey::new(&mut rand::thread_rng(), 2048).unwrap()
-        })
-        .await
-        .unwrap();
-        let provider = Arc::new(Provider {
-            issuer: issuer.clone(),
-            key,
-            codes: Default::default(),
-        });
-        let app = Router::new()
-            .route("/authorize", get(authorize))
-            .route("/token", post(token))
-            .route("/keys", get(keys))
-            .with_state(provider);
-        let provider_task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        }));
-        let config = json!([{"organization":"acme","issuer":issuer,"authorization_url":format!("{issuer}/authorize"),
-            "token_url":format!("{issuer}/token"),"jwks_url":format!("{issuer}/keys"),"client_id":"codeyard-organization",
-            "client_secret_env":"OIDC_ACME_CLIENT_SECRET"}]).to_string();
+        let (issuer, config, provider_task) = provider().await;
         let owner = db.actor("sso-owner").await;
         let mut hash = Sha256::new();
         hash.update((issuer.len() as u64).to_be_bytes());
@@ -464,6 +469,206 @@ async fn organization_oidc_crosses_web_nodes_and_rechecks_membership_and_audit_f
         );
         drop(second_server);
         drop(first_server);
+        drop(provider_task);
+        db.finish().await;
+    }
+}
+
+#[tokio::test]
+async fn private_oidc_enrollment_cli_rechecks_the_administrator_member_and_audit_commit() {
+    use codeyard_db_core::queries::organizations::OrganizationOutcome;
+    use codeyard_db_orgs::organizations::profiles::{NewOrganization, OrganizationProfile};
+    for pg in [false, true] {
+        let mut db = Database::new(pg).await;
+        db.complete_setup().await;
+        db.execute("UPDATE node_configuration SET node_mode='private'", &[])
+            .await;
+        let owner = db.actor("sso-owner").await;
+        let member = db.actor("oidc-member").await;
+        db.execute("UPDATE users SET is_admin=true WHERE id=$1", &[owner])
+            .await;
+        let input =
+            NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap();
+        let OrganizationOutcome::Applied(org) =
+            codeyard_db_orgs::organizations::profiles::create_organization(
+                db.pool(),
+                owner,
+                &input,
+            )
+            .await
+            .unwrap()
+        else {
+            panic!("fixture organization");
+        };
+        assert!(matches!(
+            codeyard_db_orgs::organizations::membership::add_organization_member(
+                db.pool(),
+                owner,
+                org.id,
+                member,
+                codeyard_db_core::models::OrgRole::Member
+            )
+            .await
+            .unwrap(),
+            OrganizationOutcome::Applied(_)
+        ));
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join(".env"), "").unwrap();
+        let (_, config, provider_task) = provider().await;
+        let (server, base) = web(&db, root.path(), "private", None, &config, None).await;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .unwrap();
+        let (callback, cookie) = flow(&client, &base, None).await;
+        assert_eq!(
+            client
+                .get(format!("{base}{callback}"))
+                .header("cookie", cookie)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM oauth_accounts WHERE user_id=$1",
+                &[member]
+            )
+            .await,
+            0
+        );
+        let url = db.connection_url();
+        let repos = root.path().join("cli-repos");
+        let state = root.path().join("cli-state");
+        let enrollment = |subject: &str| {
+            let mut command = super::backups::command(
+                root.path(),
+                &url,
+                None,
+                "sso-operator",
+                &repos,
+                &state,
+                &[
+                    "user",
+                    "enroll-oidc",
+                    "oidc-member",
+                    "--administrator",
+                    "sso-owner",
+                    "--organization",
+                    "acme",
+                    "--subject",
+                    subject,
+                ],
+            );
+            command
+                .env("OIDC_PROVIDERS", &config)
+                .env("OIDC_ACME_CLIENT_SECRET", "owned-client-secret");
+            command
+        };
+        for subject in ["", "non-ascii-é", &"x".repeat(256)] {
+            assert!(!super::backups::run_command(enrollment(subject))
+                .await
+                .status
+                .success());
+        }
+        db.execute("UPDATE users SET is_admin=false WHERE id=$1", &[owner])
+            .await;
+        assert!(!super::backups::run_command(enrollment("member-subject"))
+            .await
+            .status
+            .success());
+        db.execute("UPDATE users SET is_admin=true WHERE id=$1", &[owner])
+            .await;
+        db.execute(
+            "DELETE FROM org_memberships WHERE org_id=$1 AND user_id=$2",
+            &[org.id, member],
+        )
+        .await;
+        assert!(!super::backups::run_command(enrollment("member-subject"))
+            .await
+            .status
+            .success());
+        db.execute(
+            "INSERT INTO org_memberships(org_id,user_id,role) VALUES($1,$2,'member')",
+            &[org.id, member],
+        )
+        .await;
+        if pg {
+            db.execute("CREATE FUNCTION owned_enrollment_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='org.sso_enroll' THEN RAISE EXCEPTION 'owned audit outage'; END IF; RETURN NEW; END $$",&[]).await;
+            db.execute("CREATE TRIGGER owned_enrollment_failure BEFORE INSERT ON audit_log FOR EACH ROW EXECUTE FUNCTION owned_enrollment_failure()",&[]).await;
+        } else {
+            db.execute("CREATE TRIGGER owned_enrollment_failure BEFORE INSERT ON audit_log WHEN NEW.action='org.sso_enroll' BEGIN SELECT RAISE(ABORT,'owned audit outage'); END",&[]).await;
+        }
+        assert!(!super::backups::run_command(enrollment("member-subject"))
+            .await
+            .status
+            .success());
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM oauth_accounts WHERE user_id=$1",
+                &[member]
+            )
+            .await,
+            0
+        );
+        db.execute(
+            if pg {
+                "DROP TRIGGER owned_enrollment_failure ON audit_log"
+            } else {
+                "DROP TRIGGER owned_enrollment_failure"
+            },
+            &[],
+        )
+        .await;
+        let output = super::backups::run_command(enrollment("member-subject")).await;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("member-subject"));
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("owned-client-secret"));
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM oauth_accounts WHERE user_id=$1",
+                &[member]
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            db.scalar(
+                "SELECT COUNT(*) FROM audit_log WHERE org_id=$1 AND action='org.sso_enroll'",
+                &[org.id]
+            )
+            .await,
+            1
+        );
+        let (callback, cookie) = flow(&client, &base, None).await;
+        assert_eq!(
+            client
+                .get(format!("{base}{callback}"))
+                .header("cookie", cookie)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FOUND
+        );
+        assert_eq!(
+            db.scalar("SELECT COUNT(*) FROM sessions WHERE user_id=$1", &[member])
+                .await,
+            1
+        );
+        assert_eq!(
+            db.scalar("SELECT COUNT(*) FROM sessions WHERE user_id=$1", &[owner])
+                .await,
+            0
+        );
+        drop(server);
         drop(provider_task);
         db.finish().await;
     }

@@ -156,6 +156,28 @@ impl DbPool {
         Ok(())
     }
 
+    /// Authentication uses the database clock across different web nodes.
+    pub async fn unix_time(&self) -> Result<i64> {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            match self {
+                Self::Postgres(pool) => {
+                    sqlx::query_scalar(
+                        "SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint",
+                    )
+                    .fetch_one(pool)
+                    .await
+                }
+                Self::Sqlite(pool) => {
+                    sqlx::query_scalar("SELECT CAST(strftime('%s','now') AS INTEGER)")
+                        .fetch_one(pool)
+                        .await
+                }
+            }
+        })
+        .await?
+        .map_err(Into::into)
+    }
+
     /// Open connections, including idle connections, for this process.
     pub fn size(&self) -> u32 {
         match self {
@@ -467,5 +489,22 @@ mod safe_logging_tests {
         assert!(!logged.contains(url));
         assert!(!logged.contains("logging-fixture-password"));
         assert!(!logged.contains("logging-fixture-query-password"));
+    }
+}
+
+#[cfg(test)]
+mod clock_tests {
+    #[tokio::test]
+    async fn both_database_clocks_return_current_unix_seconds() {
+        let pg = std::env::var("GITSERV_TEST_DATABASE_URL")
+            .expect("builder-test.sh supplies PostgreSQL");
+        for url in ["sqlite::memory:", pg.as_str()] {
+            let pool = super::init_db(url).await.unwrap();
+            let before = chrono::Utc::now().timestamp();
+            let actual = pool.unix_time().await.unwrap();
+            let after = chrono::Utc::now().timestamp();
+            assert!((before..=after).contains(&actual));
+            pool.close().await;
+        }
     }
 }

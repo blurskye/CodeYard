@@ -566,8 +566,8 @@ pub async fn admit_oauth_account(
 }
 
 /// Explicit administrator-approved enrollment for an existing private-node account.
-/// Ingress must first obtain the provider subject from a verified provider flow, not
-/// an email/profile match. The parent owns any new route/UI wiring for this operation.
+/// The subject comes from a verified provider flow or the local operator's identity
+/// provider console. An email/profile match is never authority to link an account.
 pub async fn enroll_oauth_identity(
     pool: &SqlitePool,
     actor: i64,
@@ -575,11 +575,7 @@ pub async fn enroll_oauth_identity(
     provider: &str,
     subject: &str,
 ) -> Result<bool> {
-    if (!["github", "google", "gitlab", "discord", "bitbucket"].contains(&provider)
-        && codeyard_model::oauth_apps::organization_from_oidc_provider(provider).is_none())
-        || subject.is_empty()
-        || subject.len() > 255
-    {
+    if !crate::users::transitions::valid_oauth_enrollment(provider, subject) {
         return Ok(false);
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -600,8 +596,34 @@ pub async fn enroll_oauth_identity(
     if !active {
         return Ok(false);
     }
+    let organization =
+        if let Some(name) = codeyard_model::oauth_apps::organization_from_oidc_provider(provider) {
+            let id: Option<i64> = sqlx::query_scalar("SELECT id FROM organizations WHERE name=$1")
+                .bind(name)
+                .fetch_optional(&mut *tx)
+                .await?;
+            let Some(id) = id else {
+                return Ok(false);
+            };
+            if !matches!(
+                codeyard_db_core::queries::sqlite::organizations::authority::authority(
+                    &mut tx, user, id
+                )
+                .await?,
+                codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+            ) {
+                return Ok(false);
+            }
+            Some(id)
+        } else {
+            None
+        };
     let inserted = sqlx::query("INSERT INTO oauth_accounts (user_id,provider,provider_user_id) VALUES (?1,?2,?3) ON CONFLICT (provider,provider_user_id) DO NOTHING")
         .bind(user).bind(provider).bind(subject).execute(&mut *tx).await?.rows_affected() == 1;
+    if let Some(org) = organization.filter(|_| inserted) {
+        sqlx::query("INSERT INTO audit_log(org_id,actor_id,action,target_type,target_id,metadata) VALUES($1,$2,'org.sso_enroll','user',$3,$4)")
+            .bind(org).bind(actor).bind(user).bind(serde_json::json!({"provider":provider}).to_string()).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     Ok(inserted)
 }

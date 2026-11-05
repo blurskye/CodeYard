@@ -611,12 +611,24 @@ configuration on every web node. See [.env.example](../.env.example) for an exam
 Give members `/login/oauth/oidc-<organization>` and register
 `PUBLIC_URL/login/oauth/oidc-<organization>/callback` at the provider, using `client_secret_post` for token exchange. The flow uses the
 existing single-use, browser-bound OAuth state, PKCE S256 and a nonce. Only signed RS256
-ID tokens from the configured issuer, client and keys are accepted. Changing issuer or
+ID tokens from the configured issuer, client and keys are accepted. Expiry uses the
+database clock, so web-node clock differences do not change token validation. Changing issuer or
 client invalidates unfinished flows. Identity uses issuer and subject, never an email;
 organization membership must already exist when the session commits. A public-node
 first login can create the local identity, but issues no session until an owner invites
-that identity. Private nodes require prior administrator-approved provider enrollment,
-as with the existing OAuth providers. Password and token login remain available.
+that identity. On a private node, create the local account and its organization membership first, then
+obtain its exact case-sensitive `sub` from the identity provider's console. With the same
+OIDC environment, a local operator enrolls it using an active site administrator:
+
+```bash
+codeyard user enroll-oidc alice --administrator site-admin --organization acme --subject PROVIDER_SUBJECT
+```
+
+The command verifies live administrator and member access and records `org.sso_enroll`
+in the same transaction as the identity link. It accepts an identifier, not a provider
+access token. Issuer and subject form the identity, following
+[OIDC Core](https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation).
+Password and token login remain available.
 
 Successful organization logins and their session insert share an `org.sso_login` audit
 transaction. Revoked membership, a restricted account, suspended organization governance

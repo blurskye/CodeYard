@@ -2,7 +2,7 @@
 use codeyard_support::node_identity::NodeKey;
 use std::path::Path;
 
-pub(super) async fn cli(
+pub(super) fn command(
     root: &Path,
     url: &str,
     key: Option<&NodeKey>,
@@ -10,7 +10,7 @@ pub(super) async fn cli(
     repos: &Path,
     state: &Path,
     args: &[&str],
-) -> std::process::Output {
+) -> tokio::process::Command {
     let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_codeyard"));
     command
         .args(args)
@@ -34,6 +34,10 @@ pub(super) async fn cli(
     if let Some(key) = key {
         command.env("NODE_KEY", key.secret_hex());
     }
+    command
+}
+
+pub(super) async fn run_command(command: tokio::process::Command) -> std::process::Output {
     codeyard_git::repository::process::run(
         command,
         &[],
@@ -43,6 +47,18 @@ pub(super) async fn cli(
     .await
     .unwrap()
 }
+pub(super) async fn cli(
+    root: &Path,
+    url: &str,
+    key: Option<&NodeKey>,
+    name: &str,
+    repos: &Path,
+    state: &Path,
+    args: &[&str],
+) -> std::process::Output {
+    run_command(command(root, url, key, name, repos, state, args)).await
+}
+
 fn success(output: std::process::Output) {
     assert!(
         output.status.success(),

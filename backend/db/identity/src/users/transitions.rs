@@ -121,6 +121,14 @@ native_operation!(crate::postgres::users::transitions::admit_oauth_account,
     display_name: Option<&str>,
 ) -> Result<AccountAdmission>);
 
+pub(crate) fn valid_oauth_enrollment(provider: &str, subject: &str) -> bool {
+    let oidc = codeyard_model::oauth_apps::organization_from_oidc_provider(provider).is_some();
+    (oidc || ["github", "google", "gitlab", "discord", "bitbucket"].contains(&provider))
+        && !subject.is_empty()
+        && subject.len() <= 255
+        && (!oidc || codeyard_support::crypto::is_hex_token(subject, 64))
+}
+
 native_operation!(crate::postgres::users::transitions::enroll_oauth_identity,
     crate::sqlite::users::transitions::enroll_oauth_identity,
     fn enroll_oauth_identity(

@@ -160,6 +160,18 @@ pub(super) enum UserAction {
         #[arg(long, default_value = "public", value_parser = ["public", "private"])]
         mode: String,
     },
+    /// Enroll a verified provider subject for an existing private-node organization member
+    EnrollOidc {
+        username: String,
+        /// Active site administrator authorizing this local operation
+        #[arg(long)]
+        administrator: String,
+        #[arg(long)]
+        organization: String,
+        /// Exact case-sensitive sub from the provider identity record
+        #[arg(long)]
+        subject: String,
+    },
     /// List all users
     List,
 }

@@ -9,7 +9,8 @@ keeps the longer plan for cells; this file comes first and does not repeat it.
 Items 1–9 have source implementations and acceptance tests. The earlier source batch,
 backup/restore and organization OIDC pass workspace, Clippy and WASM checks. Acquisition
 waiter tracking passes source checks and awaits runtime acceptance. Majority defaults
-and the final primary-loss e2e step are written and await checks. One runtime job passed 1,013 library
+and the final primary-loss e2e step pass source checks. Private organization OIDC
+enrollment through the operator CLI is written and awaits checks. One runtime job passed 1,013 library
 tests and Helm render checks; its single CI fixture failure is corrected. The cluster,
 storage, identity, backup/restore and end-to-end runs are in progress. Rolling upgrades
 and measured load limits are not complete.
@@ -35,7 +36,7 @@ Current acceptance status (runtime checks are still pending):
 
 - 1: hiding switch built; source checks pass.
 - 2: two-copy storage-node backend, shared drain reservations and HTTP acceptance written; source checks pass, runtime pending.
-- 3: quorum initialization, copy and voter replacement pass source checks; majority defaults and explicit legacy selection are written, awaiting checks.
+- 3: quorum initialization, copy and voter replacement pass source checks; majority defaults and explicit legacy selection pass source checks.
 - 4: drain source checks pass; runtime acceptance pending.
 - 5: quorum, drain and acquisition waiter metrics pass source checks; runtime acceptance pending.
 - 6: bounded invitations and environment-only provisioning source checks pass; runtime pending.
@@ -44,7 +45,7 @@ Current acceptance status (runtime checks are still pending):
 - 9: pool configuration source checks and Helm render checks pass; PostgreSQL failover, PgBouncer and load runs pending.
 - 10: previous-release target needs confirmation before compatibility work.
 - 11: primary snapshots, object copies, fenced import and per-node restore pass source checks; runtime pending.
-- 12: cross-node REST account/IP and audit acceptance written; organization OIDC login and commit-time membership checks pass source checks, runtime pending.
+- 12: cross-node REST account/IP and audit acceptance written; organization OIDC login and commit-time membership checks pass source checks; private enrollment CLI awaits checks, runtime pending.
 
 ## A. Checks on what exists
 

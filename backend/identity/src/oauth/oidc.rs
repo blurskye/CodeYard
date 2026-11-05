@@ -54,6 +54,57 @@ fn field<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
         .context("missing OIDC configuration field")
 }
 
+fn valid_subject(value: &str) -> Result<()> {
+    ensure!(
+        !value.is_empty()
+            && value.len() <= 255
+            && value.is_ascii()
+            && !value.chars().any(char::is_control),
+        "invalid OIDC subject"
+    );
+    Ok(())
+}
+
+/// Local operators obtain the case-sensitive subject from their identity provider.
+/// The database rechecks the named administrator and the target's membership at commit.
+pub async fn enroll(
+    pool: &codeyard_db_core::DbPool,
+    administrator: &str,
+    username: &str,
+    organization: &str,
+    subject: &str,
+) -> Result<()> {
+    for name in [administrator, username] {
+        codeyard_model::account_input::validate_namespace(name, 3)
+            .map_err(|_| anyhow::anyhow!("invalid account name"))?;
+    }
+    valid_subject(subject)?;
+    let name = provider_name(organization).context("invalid OIDC organization name")?;
+    let configured = provider(&name).context("organization OIDC provider is not configured")?;
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let actor =
+            codeyard_db_identity::users::accounts::get_user_by_username(pool, administrator)
+                .await?
+                .context("administrator not found")?;
+        let user = codeyard_db_identity::users::accounts::get_user_by_username(pool, username)
+            .await?
+            .context("account not found")?;
+        ensure!(
+            codeyard_db_identity::users::transitions::enroll_oauth_identity(
+                pool,
+                actor.id,
+                user.id,
+                &name,
+                &configured.identity(subject)
+            )
+            .await?,
+            "OIDC enrollment refused or identity is already enrolled"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await?
+}
+
 fn parse(raw: &str) -> Result<Vec<(String, Provider)>> {
     ensure!(raw.len() <= 65_536, "OIDC configuration is too large");
     let configuration: Value = serde_json::from_str(raw)?;
@@ -130,6 +181,14 @@ pub fn provider(name: &str) -> Option<Provider> {
 }
 
 impl Provider {
+    fn identity(&self, subject: &str) -> String {
+        let mut identity = Sha256::new();
+        identity.update((self.issuer.len() as u64).to_be_bytes());
+        identity.update(self.issuer.as_bytes());
+        identity.update(subject.as_bytes());
+        hex::encode(identity.finalize())
+    }
+
     pub fn credentials(&self) -> (String, String) {
         (self.client.clone(), self.secret.clone())
     }
@@ -195,7 +254,7 @@ impl Provider {
         state: &str,
         browser: &str,
         redirect: &str,
-    ) -> Result<(OAuthProfile, String)> {
+    ) -> Result<(OAuthProfile, String), super::OAuthError> {
         let stored = codeyard_db_identity::users::sessions::consume_bound_oauth_state(
             pool,
             state,
@@ -203,12 +262,30 @@ impl Provider {
             &super::providers::browser_binding(browser),
             redirect,
         )
-        .await?
-        .context("invalid OIDC state")?;
-        ensure!(
-            codeyard_support::crypto::is_hex_token(&stored.pkce_verifier, 64),
-            "invalid OIDC verifier"
-        );
+        .await
+        .map_err(|_| super::OAuthError::StateUnavailable)?
+        .ok_or(super::OAuthError::InvalidState)?;
+        if !codeyard_support::crypto::is_hex_token(&stored.pkce_verifier, 64) {
+            return Err(super::OAuthError::InvalidPkce);
+        }
+        let now = pool
+            .unix_time()
+            .await
+            .map_err(|_| super::OAuthError::StateUnavailable)?;
+        let profile = self
+            .exchange(code, redirect, &stored.pkce_verifier, now)
+            .await
+            .map_err(|_| super::OAuthError::ProviderFailed)?;
+        Ok((profile, stored.return_to))
+    }
+
+    async fn exchange(
+        &self,
+        code: &str,
+        redirect: &str,
+        verifier: &str,
+        now: i64,
+    ) -> Result<OAuthProfile> {
         let client = provider_client().map_err(|_| anyhow::anyhow!("OIDC client unavailable"))?;
         let body = super::providers::token_body(
             "oidc",
@@ -216,7 +293,7 @@ impl Provider {
             &self.secret,
             code,
             redirect,
-            &stored.pkce_verifier,
+            verifier,
         );
         let token = bounded_json(
             client
@@ -234,6 +311,8 @@ impl Provider {
         let access = field(&token, "access_token")?;
         ensure!(
             access.len() <= 8192
+                && access.is_ascii()
+                && !access.chars().any(char::is_control)
                 && token["token_type"]
                     .as_str()
                     .is_some_and(|v| v.eq_ignore_ascii_case("bearer")),
@@ -254,17 +333,10 @@ impl Provider {
         let value = id.to_owned();
         let issuer = self.issuer.clone();
         let audience = self.client.clone();
-        let nonce = codeyard_model::oauth_apps::pkce_challenge(&stored.pkce_verifier);
+        let nonce = codeyard_model::oauth_apps::pkce_challenge(verifier);
         let claims = tokio::task::spawn_blocking(move || {
             let _permit = permit;
-            verify(
-                &value,
-                &jwks,
-                &issuer,
-                &audience,
-                &nonce,
-                chrono::Utc::now().timestamp(),
-            )
+            verify(&value, &jwks, &issuer, &audience, &nonce, now)
         })
         .await??;
         if let Some(expected) = claims.get("at_hash") {
@@ -274,20 +346,13 @@ impl Provider {
                 "OIDC access token hash mismatch"
             );
         }
-        let mut identity = Sha256::new();
-        identity.update((self.issuer.len() as u64).to_be_bytes());
-        identity.update(self.issuer.as_bytes());
-        identity.update(field(&claims, "sub")?.as_bytes());
-        Ok((
-            OAuthProfile {
-                provider_user_id: hex::encode(identity.finalize()),
-                name: claims["name"]
-                    .as_str()
-                    .filter(|v| v.len() <= 255)
-                    .map(str::to_owned),
-            },
-            stored.return_to,
-        ))
+        Ok(OAuthProfile {
+            provider_user_id: self.identity(field(&claims, "sub")?),
+            name: claims["name"]
+                .as_str()
+                .filter(|v| v.len() <= 255)
+                .map(str::to_owned),
+        })
     }
 }
 
@@ -355,10 +420,9 @@ fn verify(
         &signature,
     )?;
     let claims: Value = serde_json::from_slice(&URL_SAFE_NO_PAD.decode(pieces[1])?)?;
+    valid_subject(field(&claims, "sub")?)?;
     ensure!(
-        claims["iss"].as_str() == Some(issuer)
-            && claims["nonce"].as_str() == Some(nonce)
-            && field(&claims, "sub")?.len() <= 255,
+        claims["iss"].as_str() == Some(issuer) && claims["nonce"].as_str() == Some(nonce),
         "OIDC issuer, subject or nonce mismatch"
     );
     let audiences: Vec<&str> = match &claims["aud"] {
@@ -371,6 +435,7 @@ fn verify(
     };
     ensure!(
         audiences.contains(&client)
+            && audiences.iter().all(|audience| *audience == client)
             && (audiences.len() == 1 || claims["azp"].as_str() == Some(client))
             && claims.get("azp").is_none_or(|v| v.as_str() == Some(client)),
         "OIDC audience mismatch"
@@ -433,6 +498,8 @@ mod tests {
             ("exp", serde_json::json!(9900)),
             ("iat", serde_json::json!(11_000)),
             ("sub", serde_json::json!("")),
+            ("sub", serde_json::json!("non-ascii-é")),
+            ("sub", serde_json::json!("control\u{0}")),
             ("aud", serde_json::json!(["codeyard", "other"])),
             ("azp", serde_json::json!("other")),
             ("nbf", serde_json::json!(11_000)),
@@ -455,6 +522,16 @@ mod tests {
         let mut multiple = claims.clone();
         multiple["aud"] = serde_json::json!(["codeyard", "other"]);
         multiple["azp"] = serde_json::json!("codeyard");
+        assert!(verify(
+            &token(&multiple),
+            &jwks,
+            "https://id.example/realm/acme",
+            "codeyard",
+            "browser nonce",
+            10_001
+        )
+        .is_err());
+        multiple["aud"] = serde_json::json!(["codeyard"]);
         assert!(verify(
             &token(&multiple),
             &jwks,

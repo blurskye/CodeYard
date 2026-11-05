@@ -124,8 +124,7 @@ pub async fn complete(
         require_setup(pool).await?;
         let (profile, return_to) = configured
             .complete(pool, code, token, browser_nonce, redirect)
-            .await
-            .map_err(|_| OAuthError::ProviderFailed)?;
+            .await?;
         return admit_profile(
             pool,
             provider,

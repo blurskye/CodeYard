@@ -382,6 +382,22 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     crate::backend::cli::commands::bootstrap_user_cmd(&pool, &username, &mode)
                         .await?;
                 }
+                UserAction::EnrollOidc {
+                    username,
+                    administrator,
+                    organization,
+                    subject,
+                } => {
+                    codeyard_identity::oauth::oidc::enroll(
+                        &pool,
+                        &administrator,
+                        &username,
+                        &organization,
+                        &subject,
+                    )
+                    .await?;
+                    println!("OIDC identity enrolled.");
+                }
                 UserAction::List => {
                     crate::backend::cli::commands::list_users_cmd(&pool).await?;
                 }
