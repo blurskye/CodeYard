@@ -33,7 +33,7 @@ if not binary.is_file() or not os.access(binary, os.X_OK):
     raise SystemExit('BENCH_BINARY must name an already built codeyard binary')
 if not actions.is_file() or not os.access(actions, os.X_OK):
     raise SystemExit('CODEYARD_ACTIONS_BIN must name an already built native runner')
-for tool in ('curl', 'git', 'createdb', 'dropdb', 'timeout'):
+for tool in ('curl', 'git', 'createdb', 'dropdb', 'timeout', 'stat'):
     if not shutil.which(tool):
         raise SystemExit(f'Missing tool: {tool}')
 work = pathlib.Path(tempfile.mkdtemp(prefix='codeyard-bench-'))
@@ -303,7 +303,17 @@ try:
     else:
         raise RuntimeError('CI sample limit reached')
     elapsed = time.monotonic() - started
-    print(f'Client host: {os.uname().nodename}; CPUs: {os.cpu_count()}; duration: {elapsed:.2f}s')
+    print(f'Client/server host: {os.uname().nodename}; CPUs: {os.cpu_count()}; duration: {elapsed:.2f}s')
+    if hasattr(os, 'sched_getaffinity'):
+        print(f'Available CPUs: {len(os.sched_getaffinity(0))}')
+    for name, prefix in (('/proc/cpuinfo', 'model name'), ('/proc/meminfo', 'MemTotal:')):
+        with open(name) as source:
+            lines = source.read(65536).splitlines()
+        print(next((line.strip() for line in lines if line.startswith(prefix)), f'{prefix} unavailable'))
+    filesystem = command(['stat', '-f', '-c', '%T', work], stdout=subprocess.PIPE).stdout.decode().strip()
+    disk = os.statvfs(work)
+    print(f'Fixture filesystem: {filesystem}; block size: {disk.f_frsize}; available: {disk.f_bavail * disk.f_frsize} bytes')
+    print(f'Git/API network: loopback; PostgreSQL host: {u.urlsplit(upstream).hostname}')
     print('PostgreSQL hardware is external; record its CPU, RAM, disk and network with these results.')
     print(f'{"operation":<12} {"samples":>8} {"p50 ms":>10} {"p95 ms":>10} {"p99 ms":>10} {"ops/s":>10}')
     for kind, values in samples.items():

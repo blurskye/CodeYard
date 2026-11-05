@@ -586,6 +586,7 @@ alongside 1 MiB clones and small pushes, each scheduling a CI job. The API sampl
 inside the real anonymous 60/hour IP budget; later reader batches contain only pages.
 Every job must finish successfully; missing or queued runs fail the benchmark.
 It prints p50/p95/p99 latencies, operation rates and clone object throughput, not wire throughput.
+It also records the client/server CPU, RAM, fixture filesystem and PostgreSQL host; Git and API traffic use loopback.
 CI latency includes admission and queue time. `CODEYARD_ACTIONS_BIN` overrides the runner path. These are
 client slots, not 500 new accounts. Record the server and PostgreSQL CPU, RAM, disk and
 network alongside results; this is a small workload, not a proven cell capacity.
