@@ -45,7 +45,7 @@ impl Directory {
             let cell = cell.prepare().map_err(|_| Refusal::Invalid)?;
             let id = i32::from(cell.id.get());
             let mut tx = self.begin().await?;
-            sqlx::query("INSERT INTO directory_cells(id,name,region,state,web_urls,ssh_addresses,database_bytes,write_rate,maximum_database_bytes,maximum_write_rate) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET name=excluded.name,region=excluded.region,state=excluded.state,web_urls=excluded.web_urls,ssh_addresses=excluded.ssh_addresses,database_bytes=excluded.database_bytes,write_rate=excluded.write_rate,maximum_database_bytes=excluded.maximum_database_bytes,maximum_write_rate=excluded.maximum_write_rate,observed_at=clock_timestamp()")
+            sqlx::query("INSERT INTO directory_cells(id,name,region,state,web_urls,ssh_addresses,database_bytes,write_rate,maximum_database_bytes,maximum_write_rate) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET name=excluded.name,region=excluded.region,state=excluded.state,web_urls=excluded.web_urls,ssh_addresses=excluded.ssh_addresses,maximum_database_bytes=excluded.maximum_database_bytes,maximum_write_rate=excluded.maximum_write_rate")
                 .bind(id).bind(&cell.name).bind(&cell.region).bind(cell.state.as_str()).bind(serde_json::to_value(&cell.web_urls)?).bind(serde_json::to_value(&cell.ssh_addresses)?).bind(cell.database_bytes).bind(cell.write_rate).bind(cell.maximum_database_bytes).bind(cell.maximum_write_rate).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO directory_cell_prefixes(prefix,cell_id) VALUES($1,$1) ON CONFLICT DO NOTHING")
                 .bind(id).execute(&mut *tx).await?;

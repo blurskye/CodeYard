@@ -157,12 +157,14 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     issue/PR replica reads and scoped namespace/email/attestation locks pass workspace,
     Clippy and WASM checks. Initial CI, database, cluster, PgBouncer and quorum acceptance
     passes. The CI-engine library lock rerun passes; durable log delivery exceeded an old
-    SQL-only test deadline, and the replica client check still fails after startup was fixed.
+    SQL-only test deadline, and the replica client check found a Python name error after startup was fixed.
     The fixture fix, scoped object reservations, cache-policy row locks and removal of the
-    experimental gate pass source checks; the combined acceptance rerun is running. Stage 1 finished-CI and load
+    experimental gate pass source checks. The rerun passes all 226 cluster, 168 database and
+    100 storage tests; the deadline and Python fixes await their rerun. Stage 1 finished-CI and load
     measurements are runtime pending, need a writable delegated cgroup. Other content read
     families remain on the primary; bulk retention remains open.
-    Stage 2 ID initialization, credential framing and directory data queries are written
+    Stage 2 ID initialization, credential framing, directory CLI and atomic directory claims
+    with failure tests are written
     but unchecked. The directory transport, router, foreign authorization and stubs are
     not built. Stages 3 to 6 are not built.
     Individual users may move automatically to

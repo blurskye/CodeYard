@@ -231,7 +231,7 @@ class Client:
     def read_replica(self):
         primary = os.environ["E2E_PRIMARY_URL"]
         replica = os.environ["E2E_REPLICA_URL"]
-        data = pathlib.Path(os.environ["E2E_REPLICA_DATA"])
+        data = Path(os.environ["E2E_REPLICA_DATA"])
 
         def pg(url, sql):
             parts = urllib.parse.urlsplit(url)

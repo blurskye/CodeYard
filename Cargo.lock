@@ -1380,6 +1380,7 @@ dependencies = [
  "codeyard-db-actions",
  "codeyard-db-cluster",
  "codeyard-db-core",
+ "codeyard-db-directory",
  "codeyard-db-identity",
  "codeyard-db-orgs",
  "codeyard-db-repos",

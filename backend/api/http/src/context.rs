@@ -59,8 +59,7 @@ pub(crate) async fn csrf_token_for_existing_session(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<String, ExistingCsrfError> {
-    let id = crate::session::extract_session_id(headers)
-        .filter(|id| is_hex_token(id, 64))
+    let id = crate::session::extract_local_session_id(&state.pool, headers)
         .ok_or(ExistingCsrfError::Missing)?;
     let session = codeyard_db_identity::users::sessions::get_browser_session(&state.pool, &id)
         .await

@@ -2,6 +2,7 @@ mod account_transitions;
 mod cells;
 mod copy;
 mod dependency_security;
+mod directory;
 mod migrations;
 mod native;
 mod ops;
