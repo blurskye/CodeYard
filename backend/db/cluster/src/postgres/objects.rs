@@ -35,8 +35,8 @@ pub async fn reserve(pool: &PgPool, id: i64, key: &str, object: &Object) -> Resu
     let copies: Vec<(i64,i32)> = sqlx::query_as("SELECT node_id,ready FROM storage_object_copies WHERE object_key=$1 ORDER BY node_id LIMIT 1001")
         .bind(&object.object_key).fetch_all(&mut *tx).await?;
     ensure!(copies.len() <= 1000, "object copy limit exceeded");
-    let pending = pending(&mut tx).await?;
-    let candidates = crate::objects::targets(&nodes, &copies, &pending, object.bytes)?;
+    let reservations = pending(&mut tx).await?;
+    let candidates = crate::objects::targets(&nodes, &copies, &reservations, object.bytes)?;
     // Include the caller before retaining its authority, preserving sorted row order
     // even when a node serves both web and storage roles.
     let mut retained = candidates.clone();

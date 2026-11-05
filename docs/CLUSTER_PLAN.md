@@ -160,7 +160,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     The fixture fix, scoped object reservations, cache-policy row locks and removal of the
     experimental gate await checks and runtime acceptance. Stage 1 finished-CI and load
     measurements are runtime pending, need a writable delegated cgroup. Other content read
-    families and bulk retention remain on the primary and bounded cleanup paths.
+    families remain on the primary; bulk retention remains open.
     Stages 2 to 6 are not built. Individual users may move automatically to
     their working region in stage 6. Organizations retain one write home and gain read
     presence across regions in stages 5 and 6; see the architecture acceptance lists.

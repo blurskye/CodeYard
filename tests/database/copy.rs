@@ -741,7 +741,10 @@ async fn failed_copy_leaves_destination_empty() {
         // Only the rows the migrations seed remain.
         let expected = match table.as_str() {
             "file_reason_limits" => 10,
-            "issue_attribute_guard" | "issue_relation_guard" | "vulnerability_settings" => 1,
+            "issue_attribute_guard"
+            | "issue_relation_guard"
+            | "vulnerability_settings"
+            | "actions_settings" => 1,
             "organization_roles" => 6,
             _ => 0,
         };
@@ -889,4 +892,53 @@ async fn copies_never_reissue_deleted_repository_ids() {
         "SQLite reissued deleted repository id {}",
         after_copy.id
     );
+}
+
+#[tokio::test]
+async fn copy_cli_preserves_customized_destination_actions_settings_on_both_engines() {
+    let _turn = TURNS.lock().await;
+    let sqlite = NativeDatabase::new().await;
+    let postgres = PostgresDatabase::new().await;
+    sqlx::query("UPDATE actions_settings SET cache_size_gib=3 WHERE id=1")
+        .execute(&sqlite.raw)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE actions_settings SET cache_size_gib=2 WHERE id=1")
+        .execute(&postgres.raw)
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join(".env"), "").unwrap();
+    let pg = postgres.connection_url();
+    for (source, target) in [(&sqlite.url, &pg), (&pg, &sqlite.url)] {
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            tokio::process::Command::new(env!("CARGO_BIN_EXE_codeyard"))
+                .args(["db", "copy"])
+                .current_dir(root.path())
+                .env_clear()
+                .env("COPY_FROM_DATABASE_URL", source)
+                .env("COPY_TO_DATABASE_URL", target)
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("copy CLI must finish within its owned timeout")
+        .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("actions_settings already has rows"),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let pg: i32 = sqlx::query_scalar("SELECT cache_size_gib FROM actions_settings WHERE id=1")
+        .fetch_one(&postgres.raw)
+        .await
+        .unwrap();
+    let local: i32 = sqlx::query_scalar("SELECT cache_size_gib FROM actions_settings WHERE id=1")
+        .fetch_one(&sqlite.raw)
+        .await
+        .unwrap();
+    assert_eq!((pg, local), (2, 3));
 }

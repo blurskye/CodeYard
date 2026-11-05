@@ -41,6 +41,7 @@ const MIGRATION_SEEDS: &[(&str, &str, &[&str])] = &[
     ("issue_relation_guard", "id", &["1"]),
     ("organization_roles", "id", &["1", "2", "3", "4", "5", "6"]),
     ("vulnerability_settings", "id", &["1"]),
+    ("actions_settings", "id", &["1"]),
 ];
 
 /// Rows travel as JSON arrays of about this many bytes, so a large table never sits in
@@ -256,8 +257,15 @@ async fn require_empty(destination: &mut Tx, tables: &[Table]) -> Result<()> {
                     .map(|value| format!("'{value}'"))
                     .collect::<Vec<_>>()
                     .join(", ");
+                // A settings-only destination may already contain an operator's policy.
+                // Only the unchanged baseline singleton is disposable migration seed data.
+                let changed = if table.name == "actions_settings" {
+                    " OR NOT (enabled AND run_timeout_minutes IS NULL AND job_cpus IS NULL AND job_memory_gib IS NULL AND runner_image IS NULL AND results_url IS NULL AND cache_size_gib IS NULL AND cache_retention_days IS NULL AND artifact_retention_days IS NULL AND default_workflow_permissions='restricted' AND codeyard_actions_enabled AND act_enabled AND default_engine='codeyard-actions')"
+                } else {
+                    ""
+                };
                 format!(
-                    "SELECT count(*) FROM {} WHERE {} NOT IN ({list})",
+                    "SELECT count(*) FROM {} WHERE {} NOT IN ({list}){changed}",
                     quote(&table.name),
                     quote(key)
                 )
