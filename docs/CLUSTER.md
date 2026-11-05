@@ -88,8 +88,8 @@ browser sessions and repository-scoped tokens do not grant access. Scrapes have 
   `codeyard_database_pool_waiters` is `NaN`: SQLx does not expose its acquisition queue.
 - `codeyard_quorum_failures_total`: refused or aborted quorum attempts in this process.
   Alert on any increase.
-- `codeyard_drain_repositories_total{node_id,state}` and
-  `codeyard_drain_repositories_completed{node_id,state}`: reserved and completed drain
+- `codeyard_drain_total{node_id,state}` and
+  `codeyard_drain_completed{node_id,state}`: reserved and completed drain
   work. Alert on stalled progress.
 - `codeyard_nodes{state}`: counts of pending, active and revoked memberships, not
   heartbeat health. Alert on unexpected membership changes and scrape failures.
@@ -508,6 +508,11 @@ Restore into a new PostgreSQL database using the same schema name and empty data
    before enabling writes. Other web nodes and runners remain drained until the operator
    cancels their drain. Scaling policies remain paused and in dry run after restore.
 
+A coordinator failure after import is resumable with the same archive and coordinator
+paths; the pending database records their digest and refuses a different archive or root.
+The snapshot pins pull-request and unfinished-CI revisions in the replica stream, so
+concurrent branch changes cannot leave the database naming missing commits.
+
 Import and initial fencing share one PostgreSQL transaction. Live addresses, join tickets
 and running CI claims are cleared; old job tokens cannot write into the restored cluster.
 The installation's serving leases exclude offline restore and verification. Offline
@@ -515,6 +520,7 @@ cluster verification uses this restore catalogue, and is refused after the clust
 restore mode. It does not inspect a running cluster through a stale archive.
 
 `BACKUP_MAX_ENTRIES` bounds repositories and stored objects (default 10,000, max 1,000,000).
+`BACKUP_MAX_REFERENCES` bounds SQL-snapshot revision pins (default 1,000,000, max 10,000,000).
 `BACKUP_COMMAND_TIMEOUT_SECONDS` bounds each database tool (default 3,600, max 86,400).
 `BACKUP_MAX_DATABASE_BYTES` bounds restore SQL on disk (default 10 GiB, max 10 TiB).
 `REPLICA_MAX_PACK_BYTES` bounds each repository transfer (default 4 GiB, max 1 TiB).

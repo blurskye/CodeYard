@@ -630,6 +630,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (
             Operation::ReplicaPack {
                 have: vec![sha.into()],
+                want:Vec::new(),
             },
             false,
         ),

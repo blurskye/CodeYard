@@ -1,4 +1,4 @@
-//! `codeyard backup` and `codeyard restore` for a single-node installation.
+//! `codeyard backup` and `codeyard restore` for single-node and cluster installations.
 //!
 //! A backup directory holds the database (`database.sqlite` or `database.pgdump`), a bare copy
 //! of every repository the database names and of every kept deleted one under `deleted/`, the
@@ -467,6 +467,7 @@ pub async fn backup_with_context(
     let lock = std::sync::Arc::new(lock_destination(dir)?);
     let _lock = lock.clone();
     let mut object_inventory = Vec::new();
+    let mut snapshot_revisions = std::collections::BTreeMap::<i64, Vec<String>>::new();
     let file = match pool {
         codeyard_db_core::DbPool::Sqlite(_) => SQLITE_FILE,
         codeyard_db_core::DbPool::Postgres(_) => POSTGRES_FILE,
@@ -484,7 +485,7 @@ pub async fn backup_with_context(
             codeyard_db_cluster::backups::sqlite_snapshot_repositories(&partial).await?
         }
         codeyard_db_core::DbPool::Postgres(_) => {
-            let (snapshot_tx, snapshot, repositories, objects) =
+            let (snapshot_tx, snapshot, repositories, objects, revisions) =
                 codeyard_db_cluster::backups::postgres_snapshot(pool).await?;
             let snapshot = format!("--snapshot={snapshot}");
             let schema = codeyard_db_cluster::backups::schema_name(pool).await?;
@@ -506,6 +507,9 @@ pub async fn backup_with_context(
             .await?;
             snapshot_tx.commit().await?;
             object_inventory = objects;
+            for (repository, id) in revisions {
+                snapshot_revisions.entry(repository).or_default().push(id);
+            }
             repositories
         }
     };
@@ -554,7 +558,16 @@ pub async fn backup_with_context(
             let primary = current
                 .storage_node_id
                 .context("snapshot repository placement disappeared")?;
-            codeyard_cluster::replicas::snapshot(context, primary, uuid, &path).await?;
+            codeyard_cluster::replicas::snapshot(
+                context,
+                primary,
+                uuid,
+                &path,
+                snapshot_revisions
+                    .get(&repository.id)
+                    .map_or(&[], Vec::as_slice),
+            )
+            .await?;
             repositories.push((name, path));
             continue;
         }
@@ -587,6 +600,28 @@ pub async fn backup_with_context(
         repositories.len(),
         kept.len()
     );
+
+    for repository in &after {
+        if let Some(want) = snapshot_revisions.get(&repository.id) {
+            let name = if repository.storage_node_id.is_some() {
+                format!(
+                    "{}.git",
+                    codeyard_repos_core::wire::repository_uuid(&repository.disk_path)?
+                )
+            } else {
+                directory_name(Path::new(&repository.disk_path))?
+            };
+            let path = dir.join(REPOSITORIES_DIR).join(name);
+            let store = codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
+                path.to_str().context("backup path is not text")?,
+            );
+            let present = store.existing_commits(want).await?;
+            ensure!(
+                want.iter().all(|id| present.contains(id)),
+                "backup lacks a revision named by its database snapshot"
+            );
+        }
+    }
 
     if s3 {
         println!("Uploads are in S3 and are not copied; back up the bucket with its own tools.");
@@ -705,14 +740,38 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
             "restore would replace a different release signing identity"
         );
     }
+    let source_repos = resolved(&dir.join(REPOSITORIES_DIR))?;
+    let target_repos = resolved(places.repos_path)?;
     ensure!(
-        directory_empty(places.repos_path)?,
+        !source_repos.starts_with(&target_repos) && !target_repos.starts_with(&source_repos),
+        "restore repository source and destination overlap"
+    );
+    let mut prepared_pool = None;
+    let mut resume = false;
+    if codeyard_db_core::sqlite_file(places.database_url)?.is_none() {
+        let pool = codeyard_db_core::init_db(places.database_url).await?;
+        if !codeyard_db_cluster::backups::is_empty(&pool).await? {
+            let digest = codeyard_db_cluster::backups::restore_digest(&pool)
+                .await?
+                .context(
+                    "restore needs an empty PostgreSQL database or its own interrupted restore",
+                )?;
+            ensure!(
+                digest == cluster::restore_fingerprint(places, &dir.join(POSTGRES_FILE)).await?,
+                "pending restore uses a different archive or coordinator paths"
+            );
+            resume = true;
+        }
+        prepared_pool = Some(pool);
+    }
+    ensure!(
+        resume || directory_empty(places.repos_path)?,
         "restore needs an empty REPOS_PATH; {} already holds repositories",
         places.repos_path.display()
     );
     let uploads = places.state_dir.join(UPLOADS_DIR);
     ensure!(
-        s3 || directory_empty(&uploads)?,
+        resume || s3 || directory_empty(&uploads)?,
         "restore needs an empty upload directory; {} is not empty",
         uploads.display()
     );
@@ -750,13 +809,13 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
         None => {
             let source = dir.join(POSTGRES_FILE);
             ensure!(source.is_file(), "{} has no {POSTGRES_FILE}", dir.display());
-            let pool = codeyard_db_core::init_db(places.database_url).await?;
-            ensure!(
-                codeyard_db_cluster::backups::is_empty(&pool).await?,
-                "restore needs an empty PostgreSQL database; this one has tables"
-            );
-            let schema = codeyard_db_cluster::backups::schema_name(&pool).await?;
-            cluster::restore_postgres(places.database_url, &source, &schema).await?;
+            let pool = prepared_pool
+                .take()
+                .context("restore database was not prepared")?;
+            if !resume {
+                let schema = codeyard_db_cluster::backups::schema_name(&pool).await?;
+                cluster::restore_postgres(places, &source, &schema).await?;
+            }
             pool
         }
     };

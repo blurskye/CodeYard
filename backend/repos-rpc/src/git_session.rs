@@ -190,9 +190,15 @@ impl RpcHandler {
                     let write = codeyard_db_cluster::cluster::writes::load_write(self.context.database()?, id).await.map_err(RepoError::from)?.ok_or_else(unavailable)?;
                     (Value::Null, write_targets(&write).map_err(RepoError::from)?)
                 }
-                Operation::ReplicaPack { .. } => {
+                Operation::ReplicaPack { want,.. } => {
+                    if want.len()>codeyard_git::repository::MAX_MIRROR_REFS || want.iter().any(|id|!codeyard_git::is_full_commit_id(id)) {
+                        return Err(codeyard_repos_core::wire::invalid("invalid snapshot revisions"));
+                    }
                     let (refs, head) = store.replica_listing().await?;
                     let mut targets: Vec<String> = refs.values().cloned().collect();
+                    let requested=store.existing_commits(want).await?;
+                    if want.iter().any(|id|!requested.contains(id)) {return Err(unavailable());}
+                    targets.extend(want.iter().cloned());
                     let retained = codeyard_db_actions::ci::retained_ci_commits(self.context.database()?, repo_id.ok_or_else(unavailable)?).await.map_err(RepoError::from)?;
                     let present = store.existing_commits(&retained).await?;
                     targets.extend(retained.into_iter().filter(|commit| present.contains(commit)));
@@ -256,7 +262,7 @@ impl RpcHandler {
                     session.allow_unreachable = checkout;
                     store.git_session(session, receive, streams).await
                 }
-                Operation::ReplicaPack { have } => {
+                Operation::ReplicaPack { have, .. } => {
                     store.replica_pack(&targets, &have, streams).await
                 }
                 Operation::WritePack { .. } => {

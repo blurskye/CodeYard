@@ -396,11 +396,11 @@ async fn metrics_include_drain_progress_and_quorum_refusals() {
         )
         .await;
         assert!(body.contains(&format!(
-            "codeyard_drain_repositories_total{{node_id=\"{}\",state=\"draining\"}} 7",
+            "codeyard_drain_total{{node_id=\"{}\",state=\"draining\"}} 7",
             node.id
         )));
         assert!(body.contains(&format!(
-            "codeyard_drain_repositories_completed{{node_id=\"{}\",state=\"draining\"}} 3",
+            "codeyard_drain_completed{{node_id=\"{}\",state=\"draining\"}} 3",
             node.id
         )));
         assert!(body.contains("# TYPE codeyard_quorum_failures_total counter"));

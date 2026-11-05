@@ -993,7 +993,10 @@ async fn only_nodes_holding_a_copy_may_ask_for_its_packs() {
 
     let pack_request = || Request {
         repository: uuid,
-        operation: Operation::ReplicaPack { have: Vec::new() },
+        operation: Operation::ReplicaPack {
+            have: Vec::new(),
+            want: Vec::new(),
+        },
         actor: None,
         ci_run: None,
     };
@@ -1035,6 +1038,7 @@ async fn only_nodes_holding_a_copy_may_ask_for_its_packs() {
             Request {
                 operation: Operation::ReplicaPack {
                     have: vec!["1".repeat(40)],
+                    want: Vec::new(),
                 },
                 ..pack_request()
             },
@@ -1454,7 +1458,10 @@ async fn a_copy_waits_while_a_ref_change_is_counted() {
             primary.context.node_id,
             Request {
                 repository: uuid,
-                operation: Operation::ReplicaPack { have: Vec::new() },
+                operation: Operation::ReplicaPack {
+                    have: Vec::new(),
+                    want: Vec::new(),
+                },
                 actor: None,
                 ci_run: None,
             },
@@ -4472,11 +4479,40 @@ async fn operator_snapshot_uses_the_copy_transport_without_enrolling_a_backup_as
     let repo = create_repository(&database.pool, &primary, "snapshot").await;
     let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let tip = repo.save("main", "a.txt", "unborn", b"backup bytes").await;
-    let path = root.path().join("backup.git");
-    codeyard_cluster::replicas::snapshot(&web.context, primary.context.node_id, uuid, &path)
-        .await
+    let disk = git2::Repository::open_bare(primary_path(&primary, uuid)).unwrap();
+    let tree = disk
+        .find_tree(disk.treebuilder(None).unwrap().write().unwrap())
         .unwrap();
+    let signature = git2::Signature::now("Snapshot", "snapshot@example.test").unwrap();
+    let pinned = disk
+        .commit(
+            None,
+            &signature,
+            &signature,
+            "Snapshot-only revision",
+            &tree,
+            &[],
+        )
+        .unwrap()
+        .to_string();
+    let path = root.path().join("backup.git");
+    codeyard_cluster::replicas::snapshot(
+        &web.context,
+        primary.context.node_id,
+        uuid,
+        &path,
+        std::slice::from_ref(&pinned),
+    )
+    .await
+    .unwrap();
     assert_eq!(applied_on(&database.pool, repo.id(), &web).await, None);
+    assert!(
+        git2::Repository::open_bare(&path)
+            .unwrap()
+            .find_commit(git2::Oid::from_str(&pinned).unwrap())
+            .is_ok(),
+        "snapshot pins survive even without a live ref"
+    );
     let retained = git2::Repository::open_bare(&path).unwrap();
     assert_eq!(
         retained
@@ -4498,7 +4534,8 @@ async fn operator_snapshot_uses_the_copy_transport_without_enrolling_a_backup_as
         &web.context,
         primary.context.node_id,
         uuid,
-        &path
+        &path,
+        &[]
     )
     .await
     .is_err());

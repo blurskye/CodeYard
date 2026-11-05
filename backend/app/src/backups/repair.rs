@@ -370,9 +370,8 @@ pub(super) async fn rebuild_offline(
                 .join(format!("{uuid}.git"))
                 .to_string_lossy()
                 .into_owned();
-            repository.storage_node_id = None;
         }
-        if repository.storage_node_id.is_some() {
+        if root.is_none() && repository.storage_node_id.is_some() {
             continue;
         }
         codeyard_db_repos::repositories::records::advance_contribution_version(pool, repository.id)
@@ -387,7 +386,13 @@ pub(super) async fn rebuild_offline(
         // The language rows are derived from Git. Forget the cache marker first, or the scan
         // returns the rows that were lost.
         codeyard_db_repos::repository_stats::forget_languages(pool, repository.id).await?;
-        let store = codeyard_repos_core::repositories::store::repo_store(&repository, None);
+        let store = if root.is_some() && repository.storage_node_id.is_some() {
+            codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
+                &repository.disk_path,
+            )
+        } else {
+            codeyard_repos_core::repositories::store::repo_store(&repository, None)
+        };
         codeyard_repos_core::repositories::languages::compute_and_store(
             pool,
             &store,

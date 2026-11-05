@@ -581,6 +581,9 @@ pub enum Operation {
     /// and refs, then a pack of the objects those refs need follows.
     ReplicaPack {
         have: Vec<String>,
+        /// Commits named by an operator's database snapshot, even if their refs moved.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        want: Vec<String>,
     },
     PrepareWrite {
         id: String,

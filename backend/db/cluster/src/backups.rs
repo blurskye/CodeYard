@@ -60,6 +60,7 @@ pub async fn postgres_snapshot(
     String,
     Vec<Repository>,
     Vec<crate::objects::Object>,
+    Vec<(i64, String)>,
 )> {
     match pool {
         DbPool::Postgres(pool) => crate::postgres::backups::export_snapshot(pool).await,
@@ -79,15 +80,16 @@ pub async fn copy_sqlite(pool: &DbPool, path: &str) -> Result<()> {
 
 /// A bounded snapshot catalogue; it can be raised for a larger installation.
 pub fn entry_limit() -> Result<i64> {
-    let count = match std::env::var("BACKUP_MAX_ENTRIES") {
+    count_limit("BACKUP_MAX_ENTRIES", 10_000, 1_000_000)
+}
+
+fn count_limit(key: &str, default: i64, maximum: i64) -> Result<i64> {
+    let count = match std::env::var(key) {
         Ok(raw) => raw.parse::<i64>()?,
-        Err(std::env::VarError::NotPresent) => 10_000,
+        Err(std::env::VarError::NotPresent) => default,
         Err(error) => return Err(error.into()),
     };
-    anyhow::ensure!(
-        (1..=1_000_000).contains(&count),
-        "invalid backup entry limit"
-    );
+    anyhow::ensure!((1..=maximum).contains(&count), "invalid {key}");
     Ok(count)
 }
 native_operation!(crate::postgres::backups::restore_refs,crate::sqlite::backups::restore_refs,
@@ -106,3 +108,10 @@ native_operation!(crate::postgres::backups::finish_restore,crate::sqlite::backup
 
 native_operation!(crate::postgres::backups::schema_name,crate::sqlite::backups::schema_name,
     fn schema_name(pool:&DbPool)->Result<String>);
+
+native_operation!(crate::postgres::backups::restore_digest,crate::sqlite::backups::restore_digest,
+    fn restore_digest(pool:&DbPool)->Result<Option<String>>);
+
+pub fn reference_limit() -> Result<i64> {
+    count_limit("BACKUP_MAX_REFERENCES", 1_000_000, 10_000_000)
+}

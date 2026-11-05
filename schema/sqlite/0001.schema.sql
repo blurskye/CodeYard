@@ -77,6 +77,7 @@ CREATE TABLE node_configuration (
     -- cluster mode.
     cluster_enabled INTEGER NOT NULL DEFAULT 0 CHECK (cluster_enabled IN (0,1)),
     restore_pending INTEGER NOT NULL DEFAULT 0 CHECK (restore_pending IN (0,1)),
+    restore_digest TEXT CHECK (restore_digest IS NULL OR length(restore_digest)=64),
     CONSTRAINT node_configuration_singleton CHECK (id = 1),
     CONSTRAINT node_configuration_mode_check CHECK (node_mode IN ('public', 'private'))
 );

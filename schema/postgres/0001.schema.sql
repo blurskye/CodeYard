@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS node_configuration (
     -- cluster mode.
     cluster_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     restore_pending BOOLEAN NOT NULL DEFAULT FALSE,
+    restore_digest TEXT CHECK (restore_digest IS NULL OR length(restore_digest)=64),
     CONSTRAINT node_configuration_singleton CHECK (id = 1),
     CONSTRAINT node_configuration_mode_check CHECK (node_mode IN ('public', 'private'))
 );

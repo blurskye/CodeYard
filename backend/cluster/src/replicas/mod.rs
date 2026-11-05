@@ -42,8 +42,9 @@ pub async fn snapshot(
     primary: i64,
     repository: Uuid,
     mirror: &Path,
+    want: &[String],
 ) -> Result<()> {
-    transfer::snapshot(context, primary, repository, mirror).await
+    transfer::snapshot(context, primary, repository, mirror, want).await
 }
 
 #[cfg(test)]

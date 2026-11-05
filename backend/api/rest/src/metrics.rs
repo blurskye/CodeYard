@@ -101,10 +101,10 @@ async fn collect(state: &AppState) -> anyhow::Result<String> {
         writeln!(body, "codeyard_{name} {value}")?;
     }
     let drains = codeyard_db_cluster::metrics::drains(&state.pool).await?;
-    for name in ["drain_repositories_total", "drain_repositories_completed"] {
+    for name in ["drain_total", "drain_completed"] {
         gauge(&mut body, name);
         for node in &drains {
-            let value = if name == "drain_repositories_total" {
+            let value = if name == "drain_total" {
                 node.total
             } else {
                 node.completed

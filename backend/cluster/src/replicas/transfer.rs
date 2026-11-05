@@ -80,7 +80,7 @@ async fn fetch(
     have: &[String],
     stop: &CancellationToken,
 ) -> Result<()> {
-    let (pack, listing) = download(context, primary, repository, mirror, have, stop).await?;
+    let (pack, listing) = download(context, primary, repository, mirror, have, &[], stop).await?;
     let store =
         RepoStore::from_disk_path(mirror.to_str().context("replica copy path is not text")?);
     let pool = context.database()?;
@@ -304,7 +304,7 @@ mod tests {
                 .unwrap();
                 let request: Request = serde_json::from_slice(&header).unwrap();
                 let call = count.fetch_add(1, Ordering::SeqCst);
-                let Operation::ReplicaPack { have } = request.operation else {
+                let Operation::ReplicaPack { have, .. } = request.operation else {
                     panic!("not a pack");
                 };
                 assert_eq!(have.is_empty(), call > 0);
@@ -454,6 +454,7 @@ async fn download(
     repository: Uuid,
     mirror: &Path,
     have: &[String],
+    want: &[String],
     stop: &CancellationToken,
 ) -> Result<(tempfile::NamedTempFile, Listing)> {
     let copies = mirror.parent().context("replica copy has no directory")?;
@@ -499,6 +500,7 @@ async fn download(
                 repository,
                 operation: Operation::ReplicaPack {
                     have: have.to_vec(),
+                    want: want.to_vec(),
                 },
                 actor: None,
                 ci_run: None,
@@ -524,6 +526,7 @@ pub(super) async fn snapshot(
     primary: i64,
     repository: Uuid,
     mirror: &Path,
+    want: &[String],
 ) -> Result<()> {
     let stop = CancellationToken::new();
     let have = if mirror.join("HEAD").is_file() {
@@ -531,12 +534,18 @@ pub(super) async fn snapshot(
     } else {
         Vec::new()
     };
-    let (pack, listing) = download(context, primary, repository, mirror, &have, &stop).await?;
+    let (pack, listing) =
+        download(context, primary, repository, mirror, &have, want, &stop).await?;
     let store = RepoStore::from_disk_path(mirror.to_str().context("backup path is not text")?);
     if !mirror.join("HEAD").is_file() {
         store.initialize(None, "main").await?;
     }
     store.index_pack(pack.path(), false).await?;
+    let present = store.existing_commits(want).await?;
+    ensure!(
+        want.iter().all(|id| present.contains(id)),
+        "primary omitted a revision named by the database snapshot"
+    );
     store.set_refs(&listing.refs).await?;
     if let Some(head) = listing.head {
         store.set_head_target(&head).await?;

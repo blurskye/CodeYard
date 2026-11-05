@@ -54,7 +54,7 @@ pub(super) async fn save_objects(
 // import leaves the destination empty; no copied live address or claim can become active.
 const FENCE: &str = r#"DO $$ BEGIN
 IF EXISTS(SELECT 1 FROM node_configuration WHERE cluster_enabled) THEN
-    UPDATE node_configuration SET restore_pending=true WHERE cluster_enabled;
+    UPDATE node_configuration SET restore_pending=true,restore_digest='__RESTORE_DIGEST__' WHERE cluster_enabled;
     UPDATE nodes SET state='drained',last_seen=NULL,addr_hint=NULL,drain_started_at=NULL,drain_total=0,drain_completed=0,drain_error=NULL;
     UPDATE repository_write_control SET serving=0;
     UPDATE repository_replicas SET applied_version=-1,synced_at=NULL;
@@ -86,7 +86,7 @@ pub(super) fn command_timeout() -> Result<Duration> {
     Ok(Duration::from_secs(seconds))
 }
 
-pub(super) async fn restore_postgres(url: &str, archive: &Path, schema: &str) -> Result<()> {
+fn database_limit() -> Result<u64> {
     let limit = match std::env::var("BACKUP_MAX_DATABASE_BYTES") {
         Ok(raw) => raw.parse::<u64>()?,
         Err(std::env::VarError::NotPresent) => 10 * 1024 * 1024 * 1024,
@@ -96,6 +96,52 @@ pub(super) async fn restore_postgres(url: &str, archive: &Path, schema: &str) ->
         (1..=10 * 1024 * 1024 * 1024 * 1024).contains(&limit),
         "invalid backup database limit"
     );
+    Ok(limit)
+}
+
+/// A retry owns the same archive and data paths; a pending restore never authorizes
+/// replacement of an unrelated installation's files.
+pub(super) async fn restore_fingerprint(places: &Places<'_>, archive: &Path) -> Result<String> {
+    use sha2::Digest;
+    use tokio::io::AsyncReadExt;
+    let limit = database_limit()?;
+    let mut input = tokio::fs::File::open(archive).await?.take(limit + 1);
+    let mut hash = sha2::Sha256::new();
+    let mut bytes = 0u64;
+    let mut buffer = vec![0; 64 * 1024];
+    tokio::time::timeout(command_timeout()?, async {
+        loop {
+            let count = input.read(&mut buffer).await?;
+            if count == 0 {
+                break;
+            }
+            bytes += count as u64;
+            ensure!(
+                bytes <= limit,
+                "backup archive exceeds the database size limit"
+            );
+            hash.update(&buffer[..count]);
+        }
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
+    for path in [places.repos_path, places.state_dir] {
+        let path = super::resolved(path)?;
+        let bytes = path.as_os_str().as_encoded_bytes();
+        hash.update((bytes.len() as u64).to_be_bytes());
+        hash.update(bytes);
+    }
+    Ok(hex::encode(hash.finalize()))
+}
+
+pub(super) async fn restore_postgres(
+    places: &Places<'_>,
+    archive: &Path,
+    schema: &str,
+) -> Result<()> {
+    let url = places.database_url;
+    let limit = database_limit()?;
+    let fingerprint = restore_fingerprint(places, archive).await?;
     let sql = tempfile::NamedTempFile::new()?;
     private_file(sql.path())?;
     let mut output = tokio::fs::File::from_std(sql.reopen()?);
@@ -148,8 +194,9 @@ pub(super) async fn restore_postgres(url: &str, archive: &Path, schema: &str) ->
             &format!("--file={}", sql.path().display()),
             "--command",
             &format!(
-                "SET search_path TO \"{}\"; {FENCE}",
-                schema.replace('"', "\"\"")
+                "SET search_path TO \"{}\"; {}",
+                schema.replace('"', "\"\""),
+                FENCE.replace("__RESTORE_DIGEST__", &fingerprint)
             ),
         ],
     )
@@ -196,6 +243,10 @@ pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Res
         "node restore requires a restored cluster database"
     );
     let maintenance = codeyard_db_cluster::cluster::maintenance_lock(pool).await?;
+    ensure!(
+        codeyard_db_cluster::backups::restore_pending(pool).await?,
+        "node restore requires a pending cluster restore"
+    );
     codeyard_support::fs::private_dir(places.repos_path)?;
     codeyard_support::fs::private_dir(places.state_dir)?;
     let _root = codeyard_support::locks::exclusive_file(&places.repos_path.join("storage.lock"))?;

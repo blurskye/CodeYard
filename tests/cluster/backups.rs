@@ -273,6 +273,69 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
     context.iroh.close().await;
     let coordinator = root.path().join("restored-web-repos");
     let state = root.path().join("restored-web-state");
+    let archive = backup.join("database.pgdump");
+    let held_archive = backup.join("database.pgdump.held");
+    std::fs::rename(&archive, &held_archive).unwrap();
+    std::fs::write(&archive, b"not a PostgreSQL archive").unwrap();
+    assert!(!cli(
+        root.path(),
+        &urls[1],
+        Some(&key),
+        "backup-web",
+        &coordinator,
+        &state,
+        &["restore", backup.to_str().unwrap()]
+    )
+    .await
+    .status
+    .success());
+    let empty = codeyard_db_core::init_db(&urls[1]).await.unwrap();
+    assert!(codeyard_db_cluster::backups::is_empty(&empty)
+        .await
+        .unwrap());
+    empty.close().await;
+    std::fs::remove_file(&archive).unwrap();
+    std::fs::rename(held_archive, archive).unwrap();
+    let missing = backup.join("repositories").join(format!(
+        "{}.git",
+        codeyard_repos_core::wire::repository_uuid(&record.disk_path).unwrap()
+    ));
+    let held = missing.with_extension("held");
+    std::fs::rename(&missing, &held).unwrap();
+    assert!(!cli(
+        root.path(),
+        &urls[1],
+        Some(&key),
+        "backup-web",
+        &coordinator,
+        &state,
+        &["restore", backup.to_str().unwrap()]
+    )
+    .await
+    .status
+    .success());
+    let interrupted = codeyard_db_core::init_db(&urls[1]).await.unwrap();
+    assert!(codeyard_db_cluster::backups::restore_pending(&interrupted)
+        .await
+        .unwrap());
+    let unrelated = root.path().join("unrelated-repos");
+    std::fs::create_dir(&unrelated).unwrap();
+    std::fs::write(unrelated.join("keep"), b"preserve").unwrap();
+    assert!(!cli(
+        root.path(),
+        &urls[1],
+        Some(&key),
+        "backup-web",
+        &unrelated,
+        &state,
+        &["restore", backup.to_str().unwrap()]
+    )
+    .await
+    .status
+    .success());
+    assert_eq!(std::fs::read(unrelated.join("keep")).unwrap(), b"preserve");
+    interrupted.close().await;
+    std::fs::rename(held, missing).unwrap();
     success(
         cli(
             root.path(),
@@ -304,6 +367,19 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
         let repos = root.path().join(format!("restored-store-{index}"));
         let state = root.path().join(format!("restored-store-state-{index}"));
         if index == 0 {
+            let wrong = NodeKey::generate();
+            assert!(!cli(
+                root.path(),
+                &urls[1],
+                Some(&wrong),
+                "storage",
+                &repos,
+                &state,
+                &["restore", backup.to_str().unwrap(), "--node"]
+            )
+            .await
+            .status
+            .success());
             let source = backup.join("repositories").join(format!(
                 "{}.git",
                 codeyard_repos_core::wire::repository_uuid(&record.disk_path).unwrap()
@@ -483,4 +559,28 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
             .unwrap();
     }
     admin.close().await;
+}
+
+#[tokio::test]
+async fn offline_maintenance_and_serving_leases_exclude_each_other_on_both_engines() {
+    for pg in [false, true] {
+        let mut db = crate::support::database::Database::new(pg).await;
+        let serving = codeyard_db_cluster::cluster::serving_lock(db.pool(), "restore-lease")
+            .await
+            .unwrap();
+        assert!(codeyard_db_cluster::cluster::maintenance_lock(db.pool())
+            .await
+            .is_err());
+        serving.release().await;
+        let maintenance = codeyard_db_cluster::cluster::maintenance_lock(db.pool())
+            .await
+            .unwrap();
+        assert!(
+            codeyard_db_cluster::cluster::serving_lock(db.pool(), "another-core")
+                .await
+                .is_err()
+        );
+        maintenance.release().await;
+        db.finish().await;
+    }
 }
