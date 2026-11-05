@@ -113,6 +113,7 @@ async fn account_and_ip_limits_are_atomic_across_web_nodes_on_both_engines() {
 #[tokio::test]
 async fn drain_and_audit_are_atomic_and_audits_recheck_admin_access_across_web_nodes() {
     use crate::support::http_client::Client;
+    crate::support::fake_webui_bundle::install();
     for pg in [false, true] {
         let mut db = Database::new(pg).await;
         db.complete_setup().await;

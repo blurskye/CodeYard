@@ -367,15 +367,23 @@ async fn content_search_allows_transport_fallback_and_keeps_completed_repositori
     }
     silent.abort();
     let _ = silent.await;
-    // A real database wait stalls only the remote repository's transport lookup. The healthy
-    // local repository finishes behind it in the ordered search batch.
+    // Stall only the remote copy lookup, leaving the web node's live membership
+    // admission available. The healthy local repository still finishes in the batch.
+    address.addrs.clear();
+    address.relays.clear();
+    sqlx::query("UPDATE nodes SET addr_hint=$1 WHERE id=$2")
+        .bind(serde_json::to_string(&address).unwrap())
+        .bind(storage.context.node_id)
+        .execute(raw)
+        .await
+        .unwrap();
     sqlx::query("UPDATE repositories SET updated_at=NOW()+INTERVAL '1 hour' WHERE id=$1")
         .bind(remote.id)
         .execute(raw)
         .await
         .unwrap();
     let mut gate = raw.begin().await.unwrap();
-    sqlx::query("LOCK TABLE nodes IN ACCESS EXCLUSIVE MODE")
+    sqlx::query("LOCK TABLE repository_replicas IN ACCESS EXCLUSIVE MODE")
         .execute(&mut *gate)
         .await
         .unwrap();
