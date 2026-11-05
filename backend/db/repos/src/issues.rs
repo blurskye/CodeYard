@@ -107,20 +107,20 @@ native_operation!(crate::postgres::issues::issue_ids_by_numbers,
     crate::sqlite::issues::issue_ids_by_numbers,
     fn issue_ids_by_numbers(pool: &DbPool, repo: i64, viewer: Option<i64>, numbers: &[i32]) -> Result<Vec<(i64, i32)>>);
 
-native_operation!(crate::postgres::issues::get_issue,
+native_operation!(read crate::postgres::issues::get_issue,
     crate::sqlite::issues::get_issue,
     fn get_issue(pool: &DbPool, repo_id: i64, number: i32) -> Result<Option<Issue>>);
 
-native_operation!(crate::postgres::issues::get_issue_by_id,
+native_operation!(read crate::postgres::issues::get_issue_by_id,
     crate::sqlite::issues::get_issue_by_id,
     fn get_issue_by_id(pool: &DbPool, id: i64) -> Result<Option<Issue>>);
 
-native_operation!(crate::postgres::issues::get_issues_by_ids,
+native_operation!(read crate::postgres::issues::get_issues_by_ids,
     crate::sqlite::issues::get_issues_by_ids,
     /// The issues of the repository among `ids` (at most 500), in no order.
     fn get_issues_by_ids(pool: &DbPool, repo_id: i64, ids: &[i64]) -> Result<Vec<Issue>>);
 
-native_operation!(crate::postgres::issues::list_repo_issues,
+native_operation!(read crate::postgres::issues::list_repo_issues,
     crate::sqlite::issues::list_repo_issues,
     fn list_repo_issues(
     pool: &DbPool,
@@ -139,7 +139,7 @@ pub struct RepositoryItemOptions<'a> {
     pub mentioned: Option<&'a str>,
 }
 
-native_operation!(crate::postgres::issues::list_repository_items,
+native_operation!(read crate::postgres::issues::list_repository_items,
     crate::sqlite::issues::list_repository_items,
     fn list_repository_items(pool: &DbPool, repo_id: i64, filter: &ListFilter<'_>, options: &RepositoryItemOptions<'_>, limit: i64) -> Result<Vec<(i64, bool)>>);
 
@@ -155,7 +155,7 @@ pub(crate) fn repository_item_order(sort: crate::discussions::ListSort) -> &'sta
     }
 }
 
-native_operation!(crate::postgres::issues::count_repo_issues,
+native_operation!(read crate::postgres::issues::count_repo_issues,
     crate::sqlite::issues::count_repo_issues,
     fn count_repo_issues(pool: &DbPool, repo_id: i64, filter: &ListFilter<'_>) -> Result<StateCounts>);
 
@@ -182,10 +182,10 @@ native_operation!(crate::postgres::issues::add_issue_comment,
     credential: &codeyard_db_core::queries::users::accounts::AccountCredential<'_>,
 ) -> Result<IssueComment>);
 
-native_operation!(crate::postgres::issues::list_issue_comments_ordered,
+native_operation!(read crate::postgres::issues::list_issue_comments_ordered,
     crate::sqlite::issues::list_issue_comments_ordered,
     fn list_issue_comments_ordered(pool: &DbPool, issue_id: i64, limit: i64, offset: i64, updated: bool, descending: bool) -> Result<Vec<IssueCommentEntry>>);
-native_operation!(crate::postgres::issues::list_issue_comments,
+native_operation!(read crate::postgres::issues::list_issue_comments,
     crate::sqlite::issues::list_issue_comments,
     fn list_issue_comments(
     pool: &DbPool,
@@ -218,7 +218,7 @@ native_operation!(crate::postgres::issues::list_repository_comments,
     crate::sqlite::issues::list_repository_comments,
     fn list_repository_comments(pool: &DbPool, repo_id: i64, filter: &CommentFilter) -> Result<Vec<ConversationComment>>);
 
-native_operation!(crate::postgres::issues::get_issue_comment,
+native_operation!(read crate::postgres::issues::get_issue_comment,
     crate::sqlite::issues::get_issue_comment,
     fn get_issue_comment(pool: &DbPool, comment_id: i64) -> Result<Option<IssueComment>>);
 

@@ -265,6 +265,7 @@ async fn client(key: &codeyard_support::node_identity::NodeKey) -> NodeContext {
         repos_path: Default::default(),
         peers: Default::default(),
         unreachable: Default::default(),
+        clone_cursor: Default::default(),
         ci_replicas: Default::default(),
     }
 }
@@ -482,6 +483,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         repos_path: root.path().to_owned(),
         peers: Default::default(),
         unreachable: Default::default(),
+        clone_cursor: Default::default(),
         ci_replicas: Default::default(),
     };
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "ci_owner", None)
@@ -4413,6 +4415,7 @@ async fn ci_fixture() -> CiFixture {
         repos_path: root.path().to_owned(),
         peers: Default::default(),
         unreachable: Default::default(),
+        clone_cursor: Default::default(),
         ci_replicas: Default::default(),
     };
     let owner = codeyard_db_identity::users::accounts::create_user(&pool, "ci_owner", None)

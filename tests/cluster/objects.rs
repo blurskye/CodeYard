@@ -82,6 +82,7 @@ async fn node(db: &Database, root: &Path, name: &str, role: &str) -> Node {
         repos_path: repos,
         peers: Default::default(),
         unreachable: Default::default(),
+        clone_cursor: Default::default(),
         ci_replicas: Default::default(),
     };
     let listener = listen(&context).await;

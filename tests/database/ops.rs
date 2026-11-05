@@ -126,3 +126,72 @@ async fn cli_escapes_emails_descriptions_and_key_labels() {
         );
     }
 }
+
+async fn primary_read_hints(pool: &DbPool) {
+    use codeyard_db_core::read_routing::{primary_required, Credential};
+    let user = codeyard_db_identity::users::accounts::create_user(pool, "read-hints", None)
+        .await
+        .unwrap();
+    let session = "a".repeat(64);
+    codeyard_db_identity::users::sessions::create_session(
+        pool,
+        &session,
+        user.id,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let hash = "b".repeat(64);
+    codeyard_db_identity::users::tokens::create_token(
+        pool, user.id, &session, "reads", &hash, "write", None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    for credential in [Credential::Session(&session), Credential::Token(&hash)] {
+        assert!(!primary_required(pool, credential, false).await.unwrap());
+    }
+    primary_required(pool, Credential::Session(&session), true)
+        .await
+        .unwrap();
+    primary_required(pool, Credential::Token(&hash), true)
+        .await
+        .unwrap();
+    assert!(primary_required(pool, Credential::Session(&session), false)
+        .await
+        .unwrap());
+    assert!(primary_required(pool, Credential::Token(&hash), false)
+        .await
+        .unwrap());
+    assert!(
+        !primary_required(pool, Credential::Session(&"c".repeat(64)), false)
+            .await
+            .unwrap()
+    );
+    assert!(
+        primary_required(pool, Credential::Token("hostile\nvalue"), true)
+            .await
+            .is_err()
+    );
+    codeyard_db_identity::users::sessions::delete_session(pool, &session)
+        .await
+        .unwrap();
+    assert!(
+        !primary_required(pool, Credential::Session(&session), false)
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn sqlite_primary_read_hints_are_per_credential_and_cannot_restore_a_revoked_session() {
+    let database = NativeDatabase::new().await;
+    primary_read_hints(&database.pool).await;
+}
+#[tokio::test]
+async fn postgres_primary_read_hints_are_per_credential_and_cannot_restore_a_revoked_session() {
+    let database = PostgresDatabase::new().await;
+    primary_read_hints(&database.pool).await;
+}

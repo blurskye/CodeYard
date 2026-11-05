@@ -21,11 +21,14 @@ pub type SqlitePool = Pool<sqlx::Sqlite>;
 pub struct Pool<DB: Database> {
     inner: sqlx::Pool<DB>,
     waiting: Arc<AtomicUsize>,
+    pub(crate) read_replica: Arc<std::sync::RwLock<Option<PgPool>>>,
     log_objects: Arc<std::sync::RwLock<Option<std::sync::Weak<dyn crate::ci_logs::LogObjects>>>>,
 }
 impl<DB: Database> std::fmt::Debug for Pool<DB> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Pool").field("waiting", &self.waiters()).finish_non_exhaustive()
+        f.debug_struct("Pool")
+            .field("waiting", &self.waiters())
+            .finish_non_exhaustive()
     }
 }
 impl<DB: Database> Clone for Pool<DB> {
@@ -33,6 +36,7 @@ impl<DB: Database> Clone for Pool<DB> {
         Self {
             inner: self.inner.clone(),
             waiting: self.waiting.clone(),
+            read_replica: self.read_replica.clone(),
             log_objects: self.log_objects.clone(),
         }
     }
@@ -42,6 +46,7 @@ impl<DB: Database> From<sqlx::Pool<DB>> for Pool<DB> {
         Self {
             inner,
             waiting: Arc::new(AtomicUsize::new(0)),
+            read_replica: Arc::default(),
             log_objects: Arc::default(),
         }
     }
@@ -65,11 +70,21 @@ impl Drop for Waiter {
     }
 }
 impl<DB: Database> Pool<DB> {
+    pub(crate) fn same_pool(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.waiting, &other.waiting)
+    }
     pub fn set_log_objects(&self, store: Arc<dyn crate::ci_logs::LogObjects>) {
-        *self.log_objects.write().unwrap_or_else(|error| error.into_inner()) = Some(Arc::downgrade(&store));
+        *self
+            .log_objects
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some(Arc::downgrade(&store));
     }
     pub fn log_objects(&self) -> anyhow::Result<Arc<dyn crate::ci_logs::LogObjects>> {
-        self.log_objects.read().unwrap_or_else(|error| error.into_inner()).as_ref().and_then(std::sync::Weak::upgrade)
+        self.log_objects
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
             .ok_or_else(|| anyhow::anyhow!("CI object storage is not configured"))
     }
     /// Acquisitions that have yielded, including connection creation or health checks.

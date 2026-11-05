@@ -38,7 +38,9 @@ impl NativeDatabase {
             .await
             .expect("native SQLite open");
         let log_objects = std::sync::Arc::new(
-            codeyard_storage::ObjectStore::open(directory.path(), None).await.unwrap(),
+            codeyard_storage::ObjectStore::open(directory.path(), None)
+                .await
+                .unwrap(),
         );
         pool.set_log_objects(log_objects.clone());
         let options = SqliteConnectOptions::from_str(&url)
@@ -155,7 +157,9 @@ impl PostgresDatabase {
             .unwrap();
         let objects = tempfile::tempdir().unwrap();
         let log_objects = std::sync::Arc::new(
-            codeyard_storage::ObjectStore::open(objects.path(), None).await.unwrap(),
+            codeyard_storage::ObjectStore::open(objects.path(), None)
+                .await
+                .unwrap(),
         );
         let mut fixture = Self {
             pool: admin.clone().into(),

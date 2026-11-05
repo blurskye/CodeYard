@@ -3573,6 +3573,74 @@ async fn reads_are_served_by_a_copy_while_the_primary_is_down() {
 }
 
 #[tokio::test]
+async fn clones_select_a_current_copy_even_when_the_primary_answers() {
+    let database = native::PostgresDatabase::new().await;
+    crate::support::native_database::enable_cluster(&database.pool)
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
+    let web = web_node(&database.pool, root.path()).await;
+    let repo = create_repository(&database.pool, &primary, "clone-share").await;
+    let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
+    let head = repo
+        .save("main", "README.md", "unborn", b"shared clone\n")
+        .await;
+    assert_current(&primary, &copy, &repo).await;
+    // Keep both nodes serving, but hide this tip only on the primary. A request
+    // selected there is admitted and Git refuses the want; it cannot fail over
+    // after streaming starts. The current copy can still serve exactly that tip.
+    let git = git2::Repository::open_bare(primary_path(&primary, uuid)).unwrap();
+    let mut config = git.config().unwrap();
+    config
+        .set_multivar("uploadpack.hideRefs", "^$", "refs/")
+        .unwrap();
+    config
+        .set_multivar("uploadpack.hideRefs", "^$", "HEAD")
+        .unwrap();
+    let mut copied = false;
+    let mut refused = false;
+    for _ in 0..2 {
+        let input = fetch_input(&head);
+        let mut pack = Vec::new();
+        let result = web
+            .context
+            .git_session(
+                primary.context.node_id,
+                request(
+                    uuid,
+                    Operation::GitSession(GitSession::new(GitService::UploadPack, true)),
+                ),
+                GitStreams {
+                    input: &mut input.as_bytes(),
+                    output: &mut pack,
+                    errors: &mut tokio::io::sink(),
+                },
+            )
+            .await;
+        match result {
+            Ok((_, status)) if status.success() => {
+                assert!(pack.windows(4).any(|window| window == b"PACK"));
+                copied = true;
+            }
+            Ok(_) => {
+                assert!(!pack.windows(4).any(|window| window == b"PACK"));
+                refused = true;
+            }
+            Err(error) => panic!("Git admission failed: {error}"),
+        }
+    }
+    assert!(
+        copied && refused,
+        "successive clones select both current locations"
+    );
+    config.remove_multivar("uploadpack.hideRefs", ".*").unwrap();
+    web.shutdown().await;
+    copy.shutdown().await;
+    primary.shutdown().await;
+}
+
+#[tokio::test]
 async fn git_fetches_use_the_primary_instead_of_a_lagging_copy() {
     let database = native::PostgresDatabase::new().await;
     crate::support::native_database::enable_cluster(&database.pool)

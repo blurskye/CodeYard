@@ -503,23 +503,43 @@ mod tests {
 pub mod zip_archives;
 
 impl codeyard_db_core::ci_logs::LogObjects for ObjectStore {
-    fn put<'a>(&'a self, key: &'a str, digest: &'a str, bytes: Vec<u8>)
-        -> futures_util::future::BoxFuture<'a, Result<()>> {
+    fn put<'a>(
+        &'a self,
+        key: &'a str,
+        digest: &'a str,
+        bytes: Vec<u8>,
+    ) -> futures_util::future::BoxFuture<'a, Result<()>> {
         Box::pin(async move {
-            anyhow::ensure!(bytes.len() <= 2 * 1024 * 1024, "CI chunk exceeds storage limit");
+            anyhow::ensure!(
+                bytes.len() <= 2 * 1024 * 1024,
+                "CI chunk exceeds storage limit"
+            );
             let upload = Upload {
-                key, bytes: bytes.len() as i64, content_type: "application/octet-stream", sha256_hex: digest,
+                key,
+                bytes: bytes.len() as i64,
+                content_type: "application/octet-stream",
+                sha256_hex: digest,
             };
             let permit = Arc::new(self.try_acquire_io()?);
-            tokio::time::timeout(Duration::from_secs(30), self.put_bytes(&upload, bytes, permit)).await??;
+            tokio::time::timeout(
+                Duration::from_secs(30),
+                self.put_bytes(&upload, bytes, permit),
+            )
+            .await??;
             Ok(())
         })
     }
-    fn get<'a>(&'a self, key: &'a str, length: usize)
-        -> futures_util::future::BoxFuture<'a, Result<Vec<u8>>> {
+    fn get<'a>(
+        &'a self,
+        key: &'a str,
+        length: usize,
+    ) -> futures_util::future::BoxFuture<'a, Result<Vec<u8>>> {
         Box::pin(async move {
             anyhow::ensure!(length <= 2 * 1024 * 1024, "CI chunk exceeds storage limit");
-            Ok(tokio::time::timeout(Duration::from_secs(30), self.read_object(key, length)).await??)
+            Ok(
+                tokio::time::timeout(Duration::from_secs(30), self.read_object(key, length))
+                    .await??,
+            )
         })
     }
 }

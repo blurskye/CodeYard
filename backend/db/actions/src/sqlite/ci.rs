@@ -1193,27 +1193,48 @@ pub async fn list_ci_runs_for_user(
     .await?)
 }
 pub(crate) async fn prepare_ci_log_upload(
-    pool: &SqlitePool, run: i64, worker: &str, sequence: i64, hash: &str, key: &str,
+    pool: &SqlitePool,
+    run: i64,
+    worker: &str,
+    sequence: i64,
+    hash: &str,
+    key: &str,
 ) -> Result<crate::ci::log_chunks::Preparation> {
     use crate::ci::log_chunks::Preparation;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let totals: Option<(i64, i64)> = sqlx::query_as(
-        "SELECT log_lines,log_bytes FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running'"
-    ).bind(run).bind(worker).fetch_optional(&mut *tx).await?;
-    let (lines, bytes) = totals.ok_or_else(|| anyhow::anyhow!("CI run is not owned by this worker"))?;
+        "SELECT log_lines,log_bytes FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running'",
+    )
+    .bind(run)
+    .bind(worker)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let (lines, bytes) =
+        totals.ok_or_else(|| anyhow::anyhow!("CI run is not owned by this worker"))?;
     let previous: Option<String> = sqlx::query_scalar(
-        "SELECT request_hash FROM ci_log_chunks WHERE run_id=$1 AND sequence=$2"
-    ).bind(run).bind(sequence).fetch_optional(&mut *tx).await?;
+        "SELECT request_hash FROM ci_log_chunks WHERE run_id=$1 AND sequence=$2",
+    )
+    .bind(run)
+    .bind(sequence)
+    .fetch_optional(&mut *tx)
+    .await?;
     if let Some(previous) = previous {
-        ensure!(previous == hash, "CI upload sequence has different contents");
-        return Ok(Preparation::Complete(lines < codeyard_model::ci::MAX_RUN_LOG_LINES));
+        ensure!(
+            previous == hash,
+            "CI upload sequence has different contents"
+        );
+        return Ok(Preparation::Complete(
+            lines < codeyard_model::ci::MAX_RUN_LOG_LINES,
+        ));
     }
     if lines >= codeyard_model::ci::MAX_RUN_LOG_LINES {
         return Ok(Preparation::Complete(false));
     }
-    let next: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(sequence)+1,0) FROM ci_log_chunks WHERE run_id=$1"
-    ).bind(run).fetch_one(&mut *tx).await?;
+    let next: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(sequence)+1,0) FROM ci_log_chunks WHERE run_id=$1")
+            .bind(run)
+            .fetch_one(&mut *tx)
+            .await?;
     ensure!(sequence == next, "CI upload sequence is out of order");
     // Reserve cleanup before I/O; a crash or rejected commit leaves no unowned bytes.
     sqlx::query("INSERT INTO pending_object_deletions(object_key,delete_after) VALUES($1,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+7 days'))")
@@ -1299,14 +1320,19 @@ pub(crate) async fn commit_ci_logs(
     ensure!(sequence == next, "CI upload sequence is out of order");
     let (kept, lines_total, bytes_total) =
         codeyard_db_core::ci_logs::admit_log_lines(stored_lines, stored_bytes, &lines);
-    let size = kept.iter().map(|line| (line.stage.len() + line.line.len()) as i64).sum::<i64>();
+    let size = kept
+        .iter()
+        .map(|line| (line.stage.len() + line.line.len()) as i64)
+        .sum::<i64>();
     // Mixed-job batches keep their job and step tags in the compressed payload.
     let job = crate::ci::log_chunks::batch_job(&kept);
     sqlx::query("INSERT INTO ci_log_chunks(run_id,job_id,sequence,request_hash,first_line,line_count,byte_size,object_key,object_bytes,object_digest) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
         .bind(run_id).bind(job).bind(sequence).bind(&hash).bind(stored_lines + 1)
         .bind(kept.len() as i64).bind(size).bind(&upload.key).bind(upload.length).bind(&upload.digest).execute(&mut *tx).await?;
     sqlx::query("DELETE FROM pending_object_deletions WHERE object_key=$1")
-        .bind(&upload.key).execute(&mut *tx).await?;
+        .bind(&upload.key)
+        .execute(&mut *tx)
+        .await?;
     if lines_total != stored_lines || bytes_total != stored_bytes {
         sqlx::query("UPDATE ci_runs SET log_lines = ?2, log_bytes = ?3 WHERE id = ?1")
             .bind(run_id)
@@ -1353,7 +1379,11 @@ pub async fn has_ci_accepted_push(
         .bind(repo_id).bind(actor_id).bind(reference).bind(sha.to_ascii_lowercase()).fetch_one(pool).await?)
 }
 pub(crate) async fn read_log_chunks(
-    pool: &SqlitePool, run: i64, after: i64, before: i64, reverse: bool,
+    pool: &SqlitePool,
+    run: i64,
+    after: i64,
+    before: i64,
+    reverse: bool,
 ) -> Result<Vec<crate::ci::log_chunks::Chunk>> {
     let order = if reverse { "DESC" } else { "ASC" };
     Ok(sqlx::query_as(&format!(

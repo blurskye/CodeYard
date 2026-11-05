@@ -60,7 +60,10 @@ impl NodeContext {
             if request.ci_run.is_none()
                 && matches!(&request.operation, Operation::GitSession(session) if session.service == GitService::UploadPack)
             {
-                let offset = (uuid::Uuid::new_v4().as_u128() % candidates.len() as u128) as usize;
+                let offset = self
+                    .clone_cursor
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                    % candidates.len();
                 candidates.rotate_left(offset);
             }
         }
@@ -79,7 +82,8 @@ impl NodeContext {
                 // Admission repeats current-copy and live credential checks after waiting
                 // for the permit, before touching the client's streams.
                 let Ok(Ok(_permit)) =
-                    tokio::time::timeout_at(candidate_deadline, git_process::session_permit()).await
+                    tokio::time::timeout_at(candidate_deadline, git_process::session_permit())
+                        .await
                 else {
                     continue;
                 };
@@ -95,7 +99,9 @@ impl NodeContext {
                 }
                 continue;
             }
-            let answer = self.open_session(candidate, &request, candidate_deadline).await;
+            let answer = self
+                .open_session(candidate, &request, candidate_deadline)
+                .await;
             if !read_only || !cannot_serve(answer.as_ref().ok().map(|(_, reply)| reply), primary) {
                 if candidate != node_id {
                     log_failover(request.repository, node_id, candidate);

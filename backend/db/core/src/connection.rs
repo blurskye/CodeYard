@@ -40,7 +40,7 @@ impl From<crate::pool::SqlitePool> for DbPool {
 
 // SQLx warns with both the name and value of unknown PostgreSQL options. Validate before
 // calling its parser so a misspelled password option cannot reach the logger.
-fn postgres_options(database_url: &str) -> Result<PgConnectOptions> {
+pub(crate) fn postgres_options(database_url: &str) -> Result<PgConnectOptions> {
     let url = url::Url::parse(database_url)?;
     for (name, _) in url.query_pairs() {
         let supported = matches!(
@@ -219,7 +219,17 @@ impl DbPool {
         // process from reaching its runtime shutdown deadline.
         if tokio::time::timeout(Duration::from_secs(10), async {
             match self {
-                Self::Postgres(pool) => pool.close().await,
+                Self::Postgres(pool) => {
+                    let replica = pool
+                        .read_replica
+                        .read()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .clone();
+                    if let Some(replica) = replica {
+                        replica.close().await;
+                    }
+                    pool.close().await;
+                }
                 Self::Sqlite(pool) => pool.close().await,
             }
         })
@@ -259,7 +269,7 @@ mod shutdown_tests {
     }
 }
 
-fn postgres_pool_size(raw: Option<&str>) -> Result<u32> {
+pub(crate) fn postgres_pool_size(raw: Option<&str>) -> Result<u32> {
     let size = raw
         .unwrap_or("20")
         .parse::<u32>()

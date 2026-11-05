@@ -1581,6 +1581,7 @@ mod fixture {
                 repos_path: fixture.path.parent().unwrap().to_owned(),
                 peers: Default::default(),
                 unreachable: Default::default(),
+                clone_cursor: Default::default(),
                 ci_replicas: Default::default(),
             }),
             Arc::new(

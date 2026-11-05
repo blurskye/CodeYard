@@ -178,6 +178,7 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         repos_path: root.clone(),
         peers: Arc::new(RwLock::new(HashMap::new())),
         unreachable: Arc::new(Mutex::new(HashMap::new())),
+        clone_cursor: Default::default(),
         ci_replicas: Arc::new(RwLock::new(HashMap::new())),
     };
     let ci = Arc::new(CiRuns::new(

@@ -137,6 +137,7 @@ pub async fn worker_context(
             repos_path: state_dir.to_owned(),
             peers: Arc::new(RwLock::new(HashMap::new())),
             unreachable: Default::default(),
+            clone_cursor: Default::default(),
             ci_replicas: Default::default(),
         },
         peers,

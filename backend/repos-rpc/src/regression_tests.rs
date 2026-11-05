@@ -52,6 +52,7 @@ async fn context(path: &Path) -> NodeContext {
         repos_path: path.to_owned(),
         peers: Default::default(),
         unreachable: Default::default(),
+        clone_cursor: Default::default(),
         ci_replicas: Default::default(),
     }
 }

@@ -104,20 +104,33 @@ impl Manifest {
 native_operation!(crate::postgres::action_logs::issue,crate::sqlite::action_logs::issue,
     fn issue(pool:&DbPool,actor:impl Into<codeyard_db_core::queries::credentials::Actor>,repo:i64,resource:&str,target:Target,hash:&str)->Result<bool>);
 pub async fn read(pool: &DbPool, hash: &str, resource: &str) -> Result<Option<Snapshot>> {
-    let Some(grant) = read_grant(pool, hash, resource).await? else { return Ok(None); };
-    let lines = crate::ci::log_chunks::read_range(pool, grant.run_id, 0, grant.max_log_id, 100_000, false).await?
-        .into_iter().filter(|line| {
-            grant.job_id.is_none_or(|job| line.job_id == Some(job))
-                && grant.step_number.is_none_or(|step| line.step_number == Some(step))
-        }).map(Line::from).collect();
+    let Some(grant) = read_grant(pool, hash, resource).await? else {
+        return Ok(None);
+    };
+    let lines =
+        crate::ci::log_chunks::read_range(pool, grant.run_id, 0, grant.max_log_id, 100_000, false)
+            .await?
+            .into_iter()
+            .filter(|line| {
+                grant.job_id.is_none_or(|job| line.job_id == Some(job))
+                    && grant
+                        .step_number
+                        .is_none_or(|step| line.step_number == Some(step))
+            })
+            .map(Line::from)
+            .collect();
     // Deletion or expiry during object I/O invalidates the same frozen capability.
-    if read_grant(pool, hash, resource).await?.is_none() { return Ok(None); }
+    if read_grant(pool, hash, resource).await?.is_none() {
+        return Ok(None);
+    }
     Ok(Some(Snapshot { grant, lines }))
 }
 
 async fn read_grant(pool: &DbPool, hash: &str, resource: &str) -> Result<Option<Grant>> {
     match pool {
-        DbPool::Postgres(native) => crate::postgres::action_logs::grant(native, hash, resource).await,
+        DbPool::Postgres(native) => {
+            crate::postgres::action_logs::grant(native, hash, resource).await
+        }
         DbPool::Sqlite(native) => crate::sqlite::action_logs::grant(native, hash, resource).await,
     }
 }

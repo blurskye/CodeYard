@@ -72,6 +72,7 @@ CREATE UNIQUE INDEX users_username_folded ON users(lower(username COLLATE "C"));
 
 CREATE TABLE IF NOT EXISTS node_configuration (
     id SMALLINT PRIMARY KEY,
+    database_id TEXT NOT NULL UNIQUE DEFAULT (replace(gen_random_uuid()::text,'-','')),
     node_mode VARCHAR(20) NOT NULL DEFAULT 'public', -- public | private
     setup_completed BOOLEAN NOT NULL DEFAULT FALSE,
     -- '1' keeps one copy (the default), a count such as '2' keeps that many copies in
@@ -140,6 +141,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user_id ON oauth_accounts(user_id)
 
 CREATE TABLE IF NOT EXISTS sessions (
     id VARCHAR(64) PRIMARY KEY,
+    read_primary_until BIGINT NOT NULL DEFAULT 0,
     ordinal BIGSERIAL NOT NULL UNIQUE,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     user_agent TEXT,
@@ -184,6 +186,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires_at ON oauth_states(expires_a
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS personal_access_tokens (
     id BIGSERIAL PRIMARY KEY,
+    read_primary_until BIGINT NOT NULL DEFAULT 0,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name VARCHAR(100) NOT NULL CHECK (length(name) > 0),
     token_hash VARCHAR(64) NOT NULL UNIQUE,

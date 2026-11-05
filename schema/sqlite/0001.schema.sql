@@ -57,6 +57,7 @@ CREATE UNIQUE INDEX users_username_folded ON users(lower(username));
 
 CREATE TABLE node_configuration (
     id INTEGER PRIMARY KEY CHECK (id IS NULL OR typeof(id)='integer') CHECK (id BETWEEN -32768 AND 32767),
+    database_id TEXT NOT NULL UNIQUE DEFAULT (lower(hex(randomblob(16)))),
     node_mode TEXT NOT NULL DEFAULT 'public' CHECK (length(node_mode)<=20),
     setup_completed INTEGER NOT NULL DEFAULT 0 CHECK (setup_completed IN (0,1)),
     -- '1' keeps one copy (the default), a count such as '2' keeps that many copies in
@@ -121,6 +122,7 @@ CREATE TABLE oauth_accounts (
 CREATE TABLE sessions (
     ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE CHECK (length(id)<=64),
+    read_primary_until BIGINT NOT NULL DEFAULT 0,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (user_id IS NULL OR typeof(user_id)='integer'),
     user_agent TEXT,
     ip_address TEXT,
@@ -153,6 +155,7 @@ CREATE TABLE oauth_states (
 
 CREATE TABLE personal_access_tokens (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    read_primary_until BIGINT NOT NULL DEFAULT 0,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 100),
     token_hash TEXT NOT NULL UNIQUE CHECK (length(token_hash) = 64),

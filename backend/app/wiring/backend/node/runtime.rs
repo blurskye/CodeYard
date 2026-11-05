@@ -114,6 +114,7 @@ async fn prepare_application(
         cluster.as_ref().map(|n| n.node_id),
     )
     .await?;
+    codeyard_db_core::read_routing::configure(&pool).await?;
     let mut state = AppState::new(
         pool,
         repos_path,

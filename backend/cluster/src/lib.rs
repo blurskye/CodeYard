@@ -294,6 +294,7 @@ pub async fn start(
         repos_path: repos_path.clone(),
         peers: Default::default(),
         unreachable: Default::default(),
+        clone_cursor: Default::default(),
         ci_replicas: Default::default(),
     };
     let storage_path = roles.contains(NodeRole::Storage).then_some(repos_path);
@@ -401,6 +402,7 @@ pub async fn client_context(
         repos_path: std::path::absolute(repos_path)?,
         peers: Default::default(),
         unreachable: Default::default(),
+        clone_cursor: Default::default(),
         ci_replicas: Default::default(),
     }))
 }

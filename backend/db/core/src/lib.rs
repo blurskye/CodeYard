@@ -2,6 +2,17 @@
 
 #[macro_export]
 macro_rules! native_operation {
+    (read $postgres:path, $sqlite:path, $(#[$attr:meta])* fn $name:ident($pool:ident: &DbPool $(, $arg:ident: $ty:ty)* $(,)?) -> $result:ty) => {
+        #[allow(clippy::too_many_arguments, reason = "The dispatcher repeats its engine functions' signature.")]
+        $(#[$attr])*
+        pub async fn $name($pool: &DbPool, $($arg: $ty),*) -> $result {
+            let selected = $crate::read_routing::content_pool($pool);
+            match &selected {
+                $crate::DbPool::Postgres(native) => $postgres(native, $($arg),*).await,
+                $crate::DbPool::Sqlite(native) => $sqlite(native, $($arg),*).await,
+            }
+        }
+    };
     ($postgres:path, $sqlite:path, $(#[$attr:meta])* fn $name:ident($pool:ident: &DbPool $(, $arg:ident: $ty:ty)* $(,)?) -> $result:ty) => {
         #[allow(clippy::too_many_arguments, reason = "The dispatcher repeats its engine functions' signature, and they give the reason.")]
         $(#[$attr])*
@@ -31,3 +42,5 @@ pub mod ci_messages;
 pub mod ci_policy;
 pub mod limits;
 pub mod queries;
+
+pub mod read_routing;

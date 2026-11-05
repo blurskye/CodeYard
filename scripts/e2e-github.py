@@ -228,6 +228,53 @@ class Client:
                 config.write(f"{urllib.parse.urlsplit(self.base).hostname}:\n    oauth_token: {token.strip()}\n    user: {who}\n")
         self.checked("gh auth login/status with stored GHES tokens")
 
+    def read_replica(self):
+        primary = os.environ["E2E_PRIMARY_URL"]
+        replica = os.environ["E2E_REPLICA_URL"]
+        data = pathlib.Path(os.environ["E2E_REPLICA_DATA"])
+
+        def pg(url, sql):
+            parts = urllib.parse.urlsplit(url)
+            env = dict(os.environ, PGHOST=parts.hostname, PGPORT=str(parts.port),
+                       PGUSER=urllib.parse.unquote(parts.username), PGDATABASE=parts.path[1:],
+                       PGPASSWORD=urllib.parse.unquote(parts.password or ""))
+            result = subprocess.run(["psql", "-X", "-At", "-v", "ON_ERROR_STOP=1"], input=sql,
+                                    text=True, capture_output=True, env=env, timeout=20)
+            assert result.returncode == 0, "owned replica SQL failed"
+            return result.stdout.strip()
+
+        repo = "alice/replica-read"
+        self.gh("repo", "create", repo, "--public")
+        result = self.gh("issue", "create", "-R", repo, "--title", "Read my write", "--body", "replica")
+        number = result.stdout.strip().rstrip("/").rsplit("/", 1)[1]
+        assert self.data("issue", "view", number, "-R", repo, "--json", "title")["title"] == "Read my write"
+        self.checked("gh issue view immediately sees its own create")
+        # The normal five-second pin is covered above; expire it under fixture control
+        # so the next query must prove replica replay instead of relying on timing.
+        pg(primary, "UPDATE personal_access_tokens SET read_primary_until=0")
+        lsn = pg(primary, "SELECT pg_current_wal_lsn()")
+        assert re.fullmatch(r"[0-9A-F]+/[0-9A-F]+", lsn)
+        deadline = time.monotonic() + 30
+        while pg(replica, f"SELECT pg_last_wal_replay_lsn()>='{lsn}'::pg_lsn") != "t":
+            assert time.monotonic() < deadline, "owned replica did not catch up"
+        self.gh("issue", "view", number, "-R", repo)
+        log = data.parent / "read-replica.log"
+        assert "FROM issues" in log.read_text(), "content query did not reach the replica"
+        self.checked("gh issue view uses the current read replica")
+        pg(replica, "SELECT pg_wal_replay_pause()")
+        try:
+            made = self.gh("issue", "create", "-R", repo, "--title", "Lag fallback", "--body", "home")
+            latest = made.stdout.strip().rstrip("/").rsplit("/", 1)[1]
+            pg(primary, "UPDATE personal_access_tokens SET read_primary_until=0")
+            assert self.data("issue", "view", latest, "-R", repo, "--json", "title")["title"] == "Lag fallback"
+            self.checked("a behind read replica falls back to primary")
+        finally:
+            pg(replica, "SELECT pg_wal_replay_resume()")
+        subprocess.run(["pg_ctl", "-D", str(data), "-m", "fast", "-w", "stop"],
+                       check=True, capture_output=True, timeout=30)
+        assert self.data("issue", "view", number, "-R", repo, "--json", "title")["title"] == "Read my write"
+        self.checked("a stopped read replica falls back to primary")
+
     def repositories(self):
         with self.check("gh repo create"):
             result = self.gh("repo", "create", REPO, "--public", "--description", "Real GitHub CLI repository")
@@ -1237,6 +1284,7 @@ def main():
                         help="skip the checks that need a finished workflow run, for this reason")
     parser.add_argument("--storage-loss", choices=("clone", "push", "shutdown"))
     parser.add_argument("--durability", choices=("editor", "branch", "merge"))
+    parser.add_argument("--read-replica", action="store_true")
     parser.add_argument("--primary-pid", type=int)
     parser.add_argument("--runner-pid", type=int)
     parser.add_argument("--repository")
@@ -1262,6 +1310,9 @@ def main():
     with serving(proxy), serving(receiver):
         client = Client(args.base, directory, f"http://127.0.0.1:{proxy.server_port}", cert, args.skip_runs)
         client.login()
+        if args.read_replica:
+            client.read_replica()
+            return
         if args.durability:
             assert args.primary_pid and args.repository
             client.durability(args)

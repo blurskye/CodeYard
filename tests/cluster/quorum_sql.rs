@@ -1409,6 +1409,7 @@ async fn term_directory_admission(pool: &DbPool) {
         repos_path: root.path().to_owned(),
         peers: Default::default(),
         unreachable: Default::default(),
+        clone_cursor: Default::default(),
         ci_replicas: Default::default(),
     };
     let repository = codeyard_db_repos::repositories::records::get_repository_by_id(pool, f.repo)

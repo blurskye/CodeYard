@@ -91,6 +91,7 @@ mod tests {
             repos_path: PathBuf::new(),
             peers: Default::default(),
             unreachable: Default::default(),
+            clone_cursor: Default::default(),
             ci_replicas: Default::default(),
         };
         let held: Vec<_> = (1..=5)

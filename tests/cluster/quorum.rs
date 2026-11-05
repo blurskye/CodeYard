@@ -111,6 +111,7 @@ impl Stores {
                 repos_path: root.path().to_owned(),
                 peers: Default::default(),
                 unreachable: Default::default(),
+                clone_cursor: Default::default(),
                 ci_replicas: Default::default(),
             };
             let queue = RunQueue::Database {

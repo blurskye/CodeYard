@@ -750,8 +750,9 @@ the round rather than skipping it.
 ## 3. Scaling out: cells behind a router (plan, not built)
 
 Stage 0 reuses the durability work from cluster plan items 3 and 11. Stage 1 already
-has account and package lock scoping, cursor polling, configurable pools and compressed
-log batches in the database; object-store logs and read routing are still missing.
+has account and package lock scoping, cursor polling and configurable pools. Its new
+object-store log chunks, current-copy clone distribution and issue/PR read routing are
+written; source and runtime checks are pending.
 Stages 2 to 6 are not built. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
 numbers remain assumptions until stage 1 measures a real cell.
 
@@ -765,8 +766,8 @@ Two findings set the order of work:
 - **One large cell still needs work.** Account authority locks are scoped by account,
   organizations use row locks, and package reads use snapshots without package locks.
   Notification hints use bounded cursor polling and the pool is configurable. CI logs
-  use compressed batches in `ci_log_chunks`, still in the database. Stage 1 moves those
-  bytes to object storage, adds replica read routing and measures a real cell.
+  use compressed objects with metadata in `ci_log_chunks`; uploads recheck the worker
+  before committing their pointer. Stage 1 acceptance and measured capacity remain open.
 
 So stages 0 and 1 work inside one installation, and cells come after. "With ease" does not
 hold at 10 billion accounts: every part is well known, but the base case is about 1,000
@@ -802,7 +803,7 @@ Stage 0 needs no cells or router. It closes every gap where acknowledged data ca
 | Derived Git data: pack indexes, bitmaps, commit-graphs, the language and contributor tables | not backed up or replicated; `codeyard repo rebuild` makes it again | none | slower pages meanwhile |
 | PostgreSQL | Patroni with `synchronous_mode_strict` and a synchronous standby in another zone; WAL archive and daily base backups with pgBackRest or WAL-G; 14 days of point-in-time recovery | 0 on node or zone loss; under a minute on cluster loss | about 30 s failover; about 2 h to restore 4 TB |
 | SQLite | already WAL with `synchronous=FULL`; `codeyard backup` copies it online with `VACUUM INTO`; Litestream optional | 0 on a crash; the last backup on disk loss | minutes |
-| CI logs | compressed database chunks until stage 1, then chunks in object storage; a job completes only after its last chunk is stored | the unstored tail of a running job | none |
+| CI logs | compressed chunks in object storage, metadata in SQL; a job completes only after its last chunk is stored | the unstored tail of a running job | none |
 | Artifacts, caches, uploads | Two checked storage-node copies, or optional versioned S3; local disk on one machine | last completed cluster backup, or the operator's S3 recovery point | restore time |
 | Node keys, membership | membership is in the database; a lost node pairs again with a new key; `SECRETS_MASTER_KEY` and `CLUSTER_*` are kept offline, apart from the backups | none | minutes |
 
@@ -1017,9 +1018,14 @@ Cost: four PostgreSQL nodes per 10 million accounts.
 
 - Stage 1 reuses scoped account and org authority, per-package publish locks and
   lock-free registry snapshots, notification cursor polling and configurable pools behind
-  PgBouncer. CI log batches still live in `ci_log_chunks`; their bytes must move to object
-  storage. GET requests still need replica routing except for a few seconds after the
-  same session wrote, and bulky tables need retention.
+  PgBouncer. `ci_log_chunks` holds object keys, checksums and bounded ranges; bytes use the
+  local, S3 or storage-node object backend. Cleanup is reserved before upload and committed
+  pointers cancel it; deletion retains objects for the seven-day restore window.
+  `DATABASE_READ_URL` routes issue/PR GET content to a physical replica only after checking
+  database identity and replay against the primary's WAL position. Credentials and writes
+  stay on primary, including reads for five seconds after the same credential wrote.
+  Missing, behind, promoted or stopped replicas use primary. Other content families remain
+  on primary; bulk-table retention and completed load measurements remain open.
 - Four nodes: primary, synchronous standby in a second zone, asynchronous read replica in a
   third, and an asynchronous copy in the disaster-recovery region. Patroni with etcd runs
   failover, pgBackRest or WAL-G archives WAL (pgBackRest changed maintainers in 2026), and

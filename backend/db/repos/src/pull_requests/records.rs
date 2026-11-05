@@ -219,7 +219,7 @@ native_operation!(crate::postgres::pull_requests::records::create_pull_request,
     crate::sqlite::pull_requests::records::create_pull_request,
     fn create_pull_request(pool: &DbPool, input: NewPullRequest<'_>) -> Result<PullRequest>);
 
-native_operation!(crate::postgres::pull_requests::records::get_pull_request,
+native_operation!(read crate::postgres::pull_requests::records::get_pull_request,
     crate::sqlite::pull_requests::records::get_pull_request,
     fn get_pull_request(
     pool: &DbPool,
@@ -235,16 +235,16 @@ native_operation!(crate::postgres::pull_requests::records::get_converted_pull_re
 native_operation!(crate::postgres::pull_requests::records::retained_revisions,
     crate::sqlite::pull_requests::records::retained_revisions,
     fn retained_revisions(pool: &DbPool, repo: i64) -> Result<Vec<String>>);
-native_operation!(crate::postgres::pull_requests::records::get_pull_request_by_id,
+native_operation!(read crate::postgres::pull_requests::records::get_pull_request_by_id,
     crate::sqlite::pull_requests::records::get_pull_request_by_id,
     fn get_pull_request_by_id(pool: &DbPool, id: i64) -> Result<Option<PullRequest>>);
 
-native_operation!(crate::postgres::pull_requests::records::get_pull_requests_by_ids,
+native_operation!(read crate::postgres::pull_requests::records::get_pull_requests_by_ids,
     crate::sqlite::pull_requests::records::get_pull_requests_by_ids,
     /// The pull requests of the repository among `ids` (at most 500), in no order.
     fn get_pull_requests_by_ids(pool: &DbPool, repo_id: i64, ids: &[i64]) -> Result<Vec<PullRequest>>);
 
-native_operation!(crate::postgres::pull_requests::records::list_repo_pull_requests,
+native_operation!(read crate::postgres::pull_requests::records::list_repo_pull_requests,
     crate::sqlite::pull_requests::records::list_repo_pull_requests,
     fn list_repo_pull_requests(
     pool: &DbPool,
@@ -253,11 +253,11 @@ native_operation!(crate::postgres::pull_requests::records::list_repo_pull_reques
     limit: i64,
 ) -> Result<Vec<PullRequestListEntry>>);
 
-native_operation!(crate::postgres::pull_requests::records::count_repo_pull_requests_by_state,
+native_operation!(read crate::postgres::pull_requests::records::count_repo_pull_requests_by_state,
     crate::sqlite::pull_requests::records::count_repo_pull_requests_by_state,
     fn count_repo_pull_requests_by_state(pool: &DbPool, repo_id: i64, filter: &ListFilter<'_>) -> Result<Vec<(String, i64)>>);
 
-native_operation!(crate::postgres::pull_requests::records::count_repo_pull_requests,
+native_operation!(read crate::postgres::pull_requests::records::count_repo_pull_requests,
     crate::sqlite::pull_requests::records::count_repo_pull_requests,
     fn count_repo_pull_requests(pool: &DbPool, repo_id: i64, filter: &ListFilter<'_>) -> Result<StateCounts>);
 

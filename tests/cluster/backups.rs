@@ -244,6 +244,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
         repos_path: root.path().join("source-web-repos"),
         peers: Default::default(),
         unreachable: Default::default(),
+        clone_cursor: Default::default(),
         ci_replicas: Default::default(),
     };
     for node in &stores.contexts {
@@ -513,6 +514,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
             repos_path: root.path().join(format!("restored-store-{index}")),
             peers: Default::default(),
             unreachable: Default::default(),
+            clone_cursor: Default::default(),
             ci_replicas: Default::default(),
         };
         listeners.push(super::objects::listen(&context).await);
@@ -537,6 +539,7 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
         repos_path: coordinator.clone(),
         peers: Default::default(),
         unreachable: Default::default(),
+        clone_cursor: Default::default(),
         ci_replicas: Default::default(),
     };
     let want = format!("want {expected}\n");

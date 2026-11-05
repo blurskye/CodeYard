@@ -667,7 +667,12 @@ flow passes on both database engines and across web processes with five-minute c
 
 The cluster assumes one PostgreSQL primary shared by every web, SSH and storage node.
 Making that database highly available (Patroni, a managed service, a standby you
-promote) is the operator's job; Codeyard does not route reads to database replicas.
+promote) is the operator's job. Optional `DATABASE_READ_URL` selects a physical read replica
+for issue and pull request GET content. The server checks database identity and WAL replay
+once per request and falls back to primary when it cannot prove the copy current within
+two seconds. Authentication, permission checks and writes stay on primary; the same
+credential's reads stay there for five seconds after a write. Other content families still
+use primary. Source and replica acceptance checks are pending.
 `DATABASE_POOL_SIZE` sets each process's PostgreSQL pool (1–1,000, default 20), with
 a five-second acquisition deadline and connection validation before reuse. Lost
 connections reconnect through `DATABASE_URL`; writes with an uncertain result are
@@ -678,7 +683,8 @@ is no completed capacity measurement; size the installation from your own measur
 Majority writes require both fixed storage voters before acknowledgement. Additional
 copies and the explicit `--write-quorum 1` policy are asynchronous; there is no
 geo-routing. Reads fail over to an eligible copy when the primary cannot be reached,
-and are not spread across copies. Take-over requires a current copy of every member of
+and clone/fetch sessions are spread across current copies. Other reads still prefer
+ the primary. Take-over requires a current copy of every member of
 the fork family. Legacy copies that are behind require `cluster promote --force`;
 quorum promotion must retain every committed ref. A comparison between two repositories
 (a fork's compare page) is not served by a copy.

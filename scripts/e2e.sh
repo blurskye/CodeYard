@@ -24,7 +24,7 @@
 # build done, the SQLite round takes a few minutes and the PostgreSQL round about ten.
 #
 # Settings (environment):
-#   E2E_DATABASES   rounds to run, default "sqlite postgres pgbouncer cluster quorum". PostgreSQL
+#   E2E_DATABASES   rounds to run, default "sqlite postgres pgbouncer replica cluster quorum". PostgreSQL
 #                   rounds need GITSERV_TEST_DATABASE_URL; if it
 #                   is missing the round fails, it is not skipped.
 #   E2E_PROFILE     release (default) or debug, for the server and the bundle.
@@ -55,7 +55,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT" || exit 2
 HELPER=$ROOT/scripts/e2e-web.py
 
-E2E_DATABASES=${E2E_DATABASES:-sqlite postgres pgbouncer cluster quorum}
+E2E_DATABASES=${E2E_DATABASES:-sqlite postgres pgbouncer replica cluster quorum}
 E2E_PROFILE=${E2E_PROFILE:-release}
 E2E_SKIP_BUILD=${E2E_SKIP_BUILD:-0}
 E2E_BUILD_ONLY=${E2E_BUILD_ONLY:-0}
@@ -101,6 +101,8 @@ CLUSTER_NODES=(web1 store1 store2 ci1)
 PG_DB=''
 PG_OWNED=()
 PGBOUNCER_PID=''
+READ_REPLICA_DATA=''
+DATABASE_READ_URL=''
 RUN=''
 STARTED=$SECONDS
 
@@ -125,6 +127,7 @@ cleanup() {
     terminate_operators
     terminate_servers
     stop_pgbouncer
+    stop_read_replica
     drop_pg || rc=1
     if [[ $E2E_KEEP == 1 ]]; then
         echo "kept $WORK"
@@ -317,7 +320,7 @@ prepare_database() {
     DATABASE_URL=''
     case $ROUND in
         sqlite) echo "SQLite database in the state directory (DATABASE_URL unset)" ;;
-        postgres | pgbouncer | cluster | quorum)
+        postgres | pgbouncer | replica | cluster | quorum)
             if [[ -z ${GITSERV_TEST_DATABASE_URL:-} ]]; then
                 echo "GITSERV_TEST_DATABASE_URL is not set: point it at a PostgreSQL server" >&2
                 return 1
@@ -334,6 +337,36 @@ prepare_database() {
             ;;
         *) echo "unknown database '$ROUND'" >&2; return 1 ;;
     esac
+}
+
+start_read_replica() {
+    [[ -n ${GITSERV_TEST_POSTGRES_DATA:-} && -f ${GITSERV_TEST_POSTGRES_DATA%/data}/.codeyard-owned-postgres ]] || {
+        echo 'Read replica acceptance needs the owned PostgreSQL from builder-test.sh' >&2; return 1;
+    }
+    local backup ctl port
+    backup=$(pg_tool pg_basebackup) || return 1
+    ctl=$(pg_tool pg_ctl) || return 1
+    port=$(free_ports 1) || return 1
+    READ_REPLICA_DATA=$RUN/read-replica
+    pg_command "$GITSERV_TEST_DATABASE_URL" "$backup" --dbname -D "$READ_REPLICA_DATA" -R -X stream --checkpoint=fast || return 1
+    "$ctl" -D "$READ_REPLICA_DATA" -l "$RUN/read-replica.log" -w \
+        -o "-h 127.0.0.1 -p $port -k $RUN -c hot_standby=on -c log_statement=all" start || return 1
+    DATABASE_READ_URL=$(E2E_REPLICA_PORT=$port E2E_PRIMARY_URL=$DATABASE_URL "$PYTHON" -I -c 'import os, urllib.parse as u
+p=u.urlsplit(os.environ["E2E_PRIMARY_URL"])
+host=p.netloc.rsplit(":",1)[0]
+print(p._replace(netloc=host+":"+os.environ["E2E_REPLICA_PORT"]).geturl())')
+}
+
+stop_read_replica() {
+    [[ -z ${READ_REPLICA_DATA:-} ]] || "$(pg_tool pg_ctl)" -D "$READ_REPLICA_DATA" -m fast -w stop >/dev/null 2>&1 || true
+    READ_REPLICA_DATA=''
+    DATABASE_READ_URL=''
+}
+
+t_read_replica() {
+    t_github_token
+    E2E_PRIMARY_URL=$DATABASE_URL E2E_REPLICA_URL=$DATABASE_READ_URL E2E_REPLICA_DATA=$READ_REPLICA_DATA \
+        "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" --read-replica
 }
 
 start_pgbouncer() { # inline: a private transaction pool for this round's database
@@ -463,6 +496,7 @@ configure_node() {
     if [[ ${E2E_GH_SWEEP:-0} == 1 ]]; then NODE_ENV+=("CI_TRUSTED_ACTOR_IDS=$(seq -s, 1 500)"); fi
     if [[ -n $DATABASE_URL ]] && ! is_runner "$node"; then NODE_ENV+=("DATABASE_URL=$DATABASE_URL"); fi
     if ! is_runner "$node"; then NODE_ENV+=("SECRETS_MASTER_KEY=$(get master_key)"); fi
+    if [[ -n ${DATABASE_READ_URL:-} ]] && ! is_runner "$node"; then NODE_ENV+=("DATABASE_READ_URL=$DATABASE_READ_URL"); fi
     # A single server opens the node connection only for runners on other processes.
     if [[ $node == server && -n ${SERVER_IROH:-} ]]; then
         NODE_ENV+=("NODE_NAME=server" "IROH_BIND=127.0.0.1:$SERVER_IROH" "IROH_ADVERTISE=127.0.0.1:$SERVER_IROH")
@@ -3069,6 +3103,7 @@ run_round() {
     BASE=''
     SSH_URL=''
     DATABASE_URL=''
+    DATABASE_READ_URL=''
     SERVER_ROLES=''
     SERVER_IROH=''
     ACTION_OBJECTS_ORIGIN=''
@@ -3083,22 +3118,25 @@ run_round() {
         [[ $pool_mode != session ]] || pool_size=96
         step -f -i "PgBouncer starts with $pool_mode pooling and $pool_size backend connections" start_pgbouncer
     fi
+    if [[ $db == replica ]]; then step -f -i 'physical read replica starts' start_read_replica; fi
     step -f -i 'server starts and /health answers' start_server
     step -f 'ssh and test keys are generated' t_keys
     step -f 'setup: first-run admin through the HTML form' t_setup
     step -f 'users: sign up, sign out and sign in through HTML forms' t_users
-    if [[ $db == pgbouncer ]]; then
+    if [[ $db == pgbouncer || $db == replica ]]; then
         step -f 'repositories: create public and private repositories behind PgBouncer' t_repos
         step -f 'ssh keys: created behind PgBouncer' t_ssh_keys
         step -f 'tokens: created behind PgBouncer' t_tokens
         step 'git: push through PgBouncer' t_push
         step 'git: clone and HTTP push through PgBouncer' t_clone
         step 'issues: create, read and comment through PgBouncer' t_issues
+        if [[ $db == replica ]]; then step 'replica: gh reads after writes, lag and stopped replica fallback' t_read_replica; fi
         ROUND_BLOCKED=0
         step 'log: the server log has no panic' t_log_clean
         step -i 'shutdown: SIGTERM exits with status 0' stop_server
         terminate_servers
         stop_pgbouncer
+        stop_read_replica
         step -i 'disposable database removed' drop_pg
         return
     fi

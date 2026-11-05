@@ -250,6 +250,7 @@ async fn provisioning_api_limits_invitation_uses_and_rejects_request_commands() 
             repos_path: root.path().to_owned(),
             peers: Default::default(),
             unreachable: Default::default(),
+            clone_cursor: Default::default(),
             ci_replicas: Default::default(),
         };
         let state = codeyard_app::app::AppState::new(

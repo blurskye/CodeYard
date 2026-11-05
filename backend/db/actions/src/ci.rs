@@ -346,20 +346,33 @@ native_operation!(crate::postgres::ci::list_ci_runs_for_user,
     fn list_ci_runs_for_user(pool: &DbPool, user_id: i64, limit: i64) -> Result<Vec<CiRun>>);
 
 pub async fn append_ci_logs(
-    pool: &DbPool, run_id: i64, worker: &str, sequence: i64, lines: &[codeyard_model::ci::LogLine],
+    pool: &DbPool,
+    run_id: i64,
+    worker: &str,
+    sequence: i64,
+    lines: &[codeyard_model::ci::LogLine],
 ) -> Result<bool> {
     log_chunks::append(pool, run_id, worker, sequence, lines).await
 }
 
 pub async fn list_ci_logs(pool: &DbPool, run_id: i64, limit: i64) -> Result<Vec<CiLogLine>> {
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
-    let mut lines = log_chunks::read_range(pool, run_id, 0, 100_000, limit.min(100_000), true).await?;
+    let mut lines =
+        log_chunks::read_range(pool, run_id, 0, 100_000, limit.min(100_000), true).await?;
     lines.reverse();
     Ok(lines)
 }
 
-pub async fn list_ci_log_history(pool: &DbPool, run_id: i64, after: i64, limit: i64) -> Result<Vec<CiLogLine>> {
-    anyhow::ensure!(after >= 0 && (1..=5000).contains(&limit), "invalid CI history cursor/window");
+pub async fn list_ci_log_history(
+    pool: &DbPool,
+    run_id: i64,
+    after: i64,
+    limit: i64,
+) -> Result<Vec<CiLogLine>> {
+    anyhow::ensure!(
+        after >= 0 && (1..=5000).contains(&limit),
+        "invalid CI history cursor/window"
+    );
     log_chunks::read_range(pool, run_id, after, 100_000, limit, false).await
 }
 
