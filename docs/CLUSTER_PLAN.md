@@ -167,7 +167,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     device-code cases use separate fixtures to preserve the long OAuth contract's rate budget.
     These fixes await rerun. The database-free public HTTP/SSH role and native-cell routing,
     spoofing, router revocation and outage tests are written but unchecked. Foreign authorization, remote membership
-    pointers, remaining node families and stages 3 to 6 remain unimplemented. Automatic user
+    pointers, remaining node families and stages 3 to 6 remain unimplemented. A bounded foreign
+    answer cache and both-engine expiry/hostile-source/failure tests are written but unchecked;
+    no foreign credential is accepted yet. Automatic user
     moves and org regional presence are documented owner decisions.
 
 ## Decisions that settle the open questions

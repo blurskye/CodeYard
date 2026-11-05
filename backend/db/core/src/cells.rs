@@ -3,6 +3,7 @@ use crate::{pool::PgPool, DbPool};
 use anyhow::{ensure, Context, Result};
 use codeyard_support::cells::Prefix;
 use sqlx::PgConnection;
+pub mod authorization;
 pub mod stubs;
 
 /// Used by every native account/repository INSERT, including a cell with a later issuer range.

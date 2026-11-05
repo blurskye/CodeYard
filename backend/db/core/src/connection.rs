@@ -176,6 +176,18 @@ impl DbPool {
             Self::Sqlite(pool) => pool.cell_prefix(),
         }
     }
+    pub fn set_foreign_authorization(&self, provider: crate::cells::authorization::Provider) {
+        match self {
+            Self::Postgres(pool) => pool.set_foreign_authorization(provider),
+            Self::Sqlite(pool) => pool.set_foreign_authorization(provider),
+        }
+    }
+    pub fn foreign_authorization(&self) -> Option<crate::cells::authorization::Provider> {
+        match self {
+            Self::Postgres(pool) => pool.foreign_authorization(),
+            Self::Sqlite(pool) => pool.foreign_authorization(),
+        }
+    }
     pub fn set_log_objects(&self, store: std::sync::Arc<dyn crate::ci_logs::LogObjects>) {
         match self {
             Self::Postgres(pool) => pool.set_log_objects(store),

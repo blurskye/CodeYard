@@ -24,6 +24,7 @@ pub struct Pool<DB: Database> {
     cell_identity: Arc<AtomicU32>,
     cell_prefixes: Arc<std::sync::RwLock<Vec<codeyard_support::cells::Prefix>>>,
     pub(crate) read_replica: Arc<std::sync::RwLock<Option<PgPool>>>,
+    foreign_authorization: Arc<std::sync::RwLock<Option<crate::cells::authorization::Provider>>>,
     log_objects: Arc<std::sync::RwLock<Option<std::sync::Weak<dyn crate::ci_logs::LogObjects>>>>,
 }
 impl<DB: Database> std::fmt::Debug for Pool<DB> {
@@ -42,6 +43,7 @@ impl<DB: Database> Clone for Pool<DB> {
             cell_prefixes: self.cell_prefixes.clone(),
             read_replica: self.read_replica.clone(),
             log_objects: self.log_objects.clone(),
+            foreign_authorization: self.foreign_authorization.clone(),
         }
     }
 }
@@ -56,6 +58,7 @@ impl<DB: Database> From<sqlx::Pool<DB>> for Pool<DB> {
             ])),
             read_replica: Arc::default(),
             log_objects: Arc::default(),
+            foreign_authorization: Arc::default(),
         }
     }
 }
@@ -110,6 +113,18 @@ impl<DB: Database> Pool<DB> {
     }
     pub(crate) fn same_pool(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.waiting, &other.waiting)
+    }
+    pub fn set_foreign_authorization(&self, provider: crate::cells::authorization::Provider) {
+        *self
+            .foreign_authorization
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some(provider);
+    }
+    pub fn foreign_authorization(&self) -> Option<crate::cells::authorization::Provider> {
+        self.foreign_authorization
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
     }
     pub fn set_log_objects(&self, store: Arc<dyn crate::ci_logs::LogObjects>) {
         *self
