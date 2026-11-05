@@ -110,7 +110,7 @@ pub fn render(page: Page) -> Element {
                             td {
                                 "{node.state}"
                                 if node.state != "active" {
-                                    p { "{node.drain_completed} / {node.drain_total} repositories" }
+                                    p { "{node.drain_completed} / {node.drain_total} repositories and files" }
                                     if let Some(error) = &node.drain_error { p { "{error}" } }
                                 }
                             }
@@ -225,7 +225,7 @@ mod tests {
         }));
         assert!(html.contains("/admin/nodes/store-1/cancel-drain"));
         assert!(html.contains("Cancel drain"));
-        assert!(html.contains("3 / 7 repositories"));
+        assert!(html.contains("3 / 7 repositories and files"));
         assert!(html.contains("method=\"post\""));
         assert!(html.contains("drain-csrf"));
     }
