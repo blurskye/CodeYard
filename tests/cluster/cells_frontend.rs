@@ -259,8 +259,9 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
             .send()
             .await
             .unwrap();
-        assert_eq!(response.status(), 200);
+        let status = response.status();
         let body: Value = response.json().await.unwrap();
+        assert_eq!(status, 200, "{body}");
         assert_eq!(body["login"], name);
         assert_eq!(body["id"], id);
         let repo = client

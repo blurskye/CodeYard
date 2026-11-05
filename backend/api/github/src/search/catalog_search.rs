@@ -190,7 +190,7 @@ async fn catalog(
                         codeyard_db_identity::users::accounts::get_user_by_id(&state.pool, id)
                             .await
                             .map_err(Error::unavailable)?
-                            .filter(|u| !u.is_banned && !u.must_change_password)
+                            .filter(|u| !u.is_stub && !u.is_banned && !u.must_change_password)
                     else {
                         incomplete = true;
                         continue;
@@ -210,6 +210,7 @@ async fn catalog(
                         )
                         .await
                         .map_err(Error::unavailable)?
+                        .filter(|org| !org.is_stub)
                     else {
                         incomplete = true;
                         continue;

@@ -34,6 +34,8 @@ impl Rule {
         }
         match parts.as_slice() {
             ["avatars", ":name"] => return Some(Self::Name("name".into())),
+            // GitHub calls this parameter user_id, but /users uses the login name.
+            ["users", ":user_id", ..] => return Some(Self::Name("user_id".into())),
             ["health" | "ready"] => return Some(Self::Health),
             ["enter" | "login" | "session"] => return Some(Self::Login),
             ["register" | "setup"] => return Some(Self::Signup),
@@ -196,6 +198,27 @@ pub fn under<T>(prefix: &str, build: impl FnOnce() -> T) -> T {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn github_user_names_and_numeric_account_ids_have_distinct_routes() {
+        for path in [
+            "/api/v3/users/:user_id",
+            "/api/v3/users/:user_id/repos",
+            "/api/v3/users/:user_id/attestations/:attestation_id",
+        ] {
+            assert_eq!(
+                Rule::for_path(path),
+                Some(Rule::Name("user_id".into())),
+                "{path}"
+            );
+        }
+        assert_eq!(
+            Rule::for_path("/api/v3/user/:account_id"),
+            Some(Rule::Id {
+                parameter: "account_id".into(),
+                root: Some(ObjectKind::User)
+            })
+        );
+    }
     #[test]
     fn missing_policies_fail_and_nested_paths_keep_their_owner() {
         let (_, routes) =

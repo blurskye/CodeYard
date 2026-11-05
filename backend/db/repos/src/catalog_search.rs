@@ -184,11 +184,11 @@ impl Search {
             SELECT 'u:'||CAST(p.id AS TEXT) AS key,p.username AS login,p.display_name AS fullname,p.bio AS description,p.location,p.created_at,p.updated_at,'user' AS kind,
             CASE WHEN EXISTS(SELECT 1 FROM user_emails e WHERE e.user_id=p.id AND lower(e.email)=lower(s.public_email) AND e.verified) THEN s.public_email WHEN s.primary_visibility='public' AND p.email_verified AND (NULLIF(s.public_email,'') IS NULL OR lower(s.public_email)=lower(p.email)) THEN p.email ELSE NULL END AS email,
             (SELECT COUNT(*) FROM follows f WHERE f.following_id=p.id) AS followers,
-            (SELECT COUNT(*) FROM repositories x WHERE x.owner_kind='user' AND x.owner_user_id=p.id AND NOT x.is_private AND NOT x.is_gist) AS repositories
-            FROM users p LEFT JOIN user_profile_settings s ON s.user_id=p.id WHERE NOT p.is_banned AND NOT p.must_change_password AND p.username<>'{bot}'
+            (SELECT COUNT(*) FROM repositories x WHERE x.owner_kind='user' AND x.owner_user_id=p.id AND NOT x.is_stub AND NOT x.is_private AND NOT x.is_gist) AS repositories
+            FROM users p LEFT JOIN user_profile_settings s ON s.user_id=p.id WHERE NOT p.is_stub AND NOT p.is_banned AND NOT p.must_change_password AND p.username<>'{bot}'
             UNION ALL SELECT 'o:'||CAST(o.id AS TEXT),o.name,o.display_name,o.description,NULL,o.created_at,o.updated_at,'org',NULL,0,
-            (SELECT COUNT(*) FROM repositories x WHERE x.owner_kind='org' AND x.owner_org_id=o.id AND NOT x.is_private AND NOT x.is_gist)
-            FROM organizations o WHERE EXISTS(SELECT 1 FROM org_memberships m JOIN users own ON own.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT own.is_banned AND NOT own.must_change_password))"#,
+            (SELECT COUNT(*) FROM repositories x WHERE x.owner_kind='org' AND x.owner_org_id=o.id AND NOT x.is_stub AND NOT x.is_private AND NOT x.is_gist)
+            FROM organizations o WHERE NOT o.is_stub AND EXISTS(SELECT 1 FROM org_memberships m JOIN users own ON own.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT own.is_banned AND NOT own.must_change_password))"#,
                 bot = codeyard_db_core::queries::ci_tokens::BOT
             )
         } else {

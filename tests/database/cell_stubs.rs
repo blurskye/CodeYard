@@ -179,6 +179,17 @@ async fn contract(pg: bool) {
         .await
         .unwrap());
     assert!(
+        mutate(
+            pool,
+            &format!(
+                "INSERT INTO org_memberships(org_id,user_id,role) VALUES($1,{},'owner')",
+                native.id
+            ),
+            organization.id
+        )
+        .await
+    );
+    assert!(
         codeyard_db_orgs::organizations::discovery::list_organizations(
             pool, None, false, 0, 0, 100
         )
@@ -419,9 +430,15 @@ async fn contract(pg: bool) {
             .and_then(Value::as_array)
             .or_else(|| body.as_array())
             .unwrap();
-        assert!(items
-            .iter()
-            .all(|item| item["id"].as_i64() != Some(remote.id)));
+        assert!(
+            items
+                .iter()
+                .all(|item| item["id"].as_i64() != Some(remote.id)),
+            "{path}: {body}"
+        );
+        if path.contains("/search/") {
+            assert_eq!(body["total_count"], 0, "{path}: {body}");
+        }
     }
     for (path, field, count) in [
         ("/api/v3/orgs/local-org/members", "login", false),
