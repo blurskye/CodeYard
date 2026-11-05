@@ -10,8 +10,11 @@ Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspa
 Clippy and WASM checks pass, including the fault-test source and full-disk placement fix.
 Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed,
 19 ignored), focused runner isolation and Helm rendering pass.
-Storage checks pass (99 passed, 3 ignored). All 221 cluster integration checks pass,
-including full-disk failure/retry and interrupted cluster backup/restore. Browser bundle publication, delivery, native and hydrated cluster forms, and live
+Storage checks pass (99 passed, 3 ignored). Before cell work, all 221 cluster integration
+checks passed, including full-disk failure/retry and interrupted cluster backup/restore.
+The first stage 0 extension ran 225: 223 passed and two missed-voter checks exposed
+dangling symbolic aliases. The alias fix passes workspace, Clippy and WASM checks; its
+runtime retest is running. Browser bundle publication, delivery, native and hydrated cluster forms, and live
 cross-node issue updates pass. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
 Cluster mode stays hidden behind
