@@ -118,23 +118,25 @@ impl Home for Remote {
                 List::Organizations => ("/api/v3/user/orgs", ObjectKind::Organization),
                 List::Repositories => ("/api/v3/user/repos", ObjectKind::Repository),
             };
-            let mut query = url::form_urlencoded::Serializer::new(String::new());
-            query.extend_pairs(
-                page.query
-                    .iter()
-                    .map(|(key, value)| (key.as_str(), value.as_str())),
-            );
-            query
-                .append_pair("page", &page.number.to_string())
-                .append_pair("per_page", &page.size.to_string());
-            let request = axum::http::Request::builder()
-                .method("GET")
-                .uri(format!("{path}?{}", query.finish()))
-                .header(
-                    axum::http::header::AUTHORIZATION,
-                    format!("Bearer {credential}"),
-                )
-                .body(axum::body::Body::empty())?;
+            let request = {
+                let mut query = url::form_urlencoded::Serializer::new(String::new());
+                query.extend_pairs(
+                    page.query
+                        .iter()
+                        .map(|(key, value)| (key.as_str(), value.as_str())),
+                );
+                query
+                    .append_pair("page", &page.number.to_string())
+                    .append_pair("per_page", &page.size.to_string());
+                axum::http::Request::builder()
+                    .method("GET")
+                    .uri(format!("{path}?{}", query.finish()))
+                    .header(
+                        axum::http::header::AUTHORIZATION,
+                        format!("Bearer {credential}"),
+                    )
+                    .body(axum::body::Body::empty())?
+            };
             ensure!(
                 crate::selection::Credential::from_headers(request.headers(), "session_id")?
                     .is_some(),
