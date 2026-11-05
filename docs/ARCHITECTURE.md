@@ -281,14 +281,15 @@ Cluster files use two checksum-checked storage-node copies, or shared S3 when co
 Cluster backup reuses replica snapshots and object placement. Restore imports a fenced
 database, installs each original storage identity, and completes through offline verification;
 `restore_pending` blocks core startup until the required copies are installed.
-The new backend awaits builder verification. Single node remains supported.
+The storage backend passes source checks; runtime acceptance is pending. Backup and
+restore are in their first check rounds. Single node remains supported.
 
 Node membership (`pending`, `active`, `revoked`) is separate from allocation state
 (`active`, `draining`, `drained`). Drain admission reserves complete fork families and
 15% free space in one transaction; the existing copier and promoter advance the work.
 The panel, REST and CLI use `cluster::drain::change`. Initialization and drain source checks pass; runtime acceptance is pending.
-Provisioning, lease-led scaling, rebalancing and pool configuration are written and
-await checks. [Cluster readiness](CLUSTER_PLAN.md) tracks acceptance.
+Provisioning, lease-led scaling, rebalancing and pool configuration pass source checks;
+their runtime acceptance is pending. [Cluster readiness](CLUSTER_PLAN.md) tracks acceptance.
 
 ### Roles and shared state
 

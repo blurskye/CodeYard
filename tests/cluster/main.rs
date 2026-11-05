@@ -16,3 +16,5 @@ mod search;
 #[path = "../support/mod.rs"]
 mod support;
 mod tcp;
+
+mod sso;

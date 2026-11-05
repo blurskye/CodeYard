@@ -5,6 +5,10 @@ not listed here is not implemented.
 
 ## Limits in place
 
+- **REST API budgets.** Core requests share a persistent hourly budget across web nodes:
+  5,000 per authenticated account and 60 per anonymous client IP. Search has a separate
+  budget of 30 per account or 10 per anonymous IP per minute. Tokens for the same account
+  share its budget. Exhaustion returns GitHub's 403 rate-limit response and reset headers.
 - **Upload quotas.** Each user has a file count and a byte budget per kind of file, over
   rolling one-hour and 24-hour windows. The quota is charged when an upload is reserved,
   so an upload that is never confirmed, or is later deleted, still counts. A refused
@@ -65,7 +69,7 @@ not listed here is not implemented.
 
 ## Not implemented
 
-- Per-IP limits on HTTP requests, or on account creation.
+- General per-IP HTTP request limits outside the REST API. Login and REST budgets exist.
 - Disk quotas for repositories.
 - Recording client IP addresses. Upload and download records have no address, so there
   is no per-IP or cross-account analysis.

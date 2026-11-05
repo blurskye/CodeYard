@@ -713,7 +713,8 @@ pub async fn enroll_oauth_identity(
     provider: &str,
     subject: &str,
 ) -> Result<bool> {
-    if !["github", "google", "gitlab", "discord", "bitbucket"].contains(&provider)
+    if (!["github", "google", "gitlab", "discord", "bitbucket"].contains(&provider)
+        && codeyard_model::oauth_apps::organization_from_oidc_provider(provider).is_none())
         || subject.is_empty()
         || subject.len() > 255
     {

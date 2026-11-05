@@ -86,17 +86,46 @@ fn local_return_to(target: &str) -> &str {
     }
 }
 
+async fn enabled_provider(state: &AppState, provider: &str) -> Result<(), Response> {
+    if let Some(configured) = codeyard_identity::oauth::oidc::provider(provider) {
+        match codeyard_db_orgs::organizations::profiles::get_public_organization(
+            &state.pool,
+            &configured.organization,
+        )
+        .await
+        {
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                return Err(public_error(
+                    StatusCode::NOT_FOUND,
+                    "Organization not found.",
+                ))
+            }
+            Err(_) => {
+                return Err(public_error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Organization unavailable.",
+                ))
+            }
+        }
+    }
+    if codeyard_identity::oauth::providers::provider_credentials(provider).is_none() {
+        return Err(failure(OAuthError::Disabled, provider));
+    }
+    Ok(())
+}
+
 pub async fn oauth_redirect(
     State(state): State<Arc<AppState>>,
     Path(provider): Path<String>,
     Query(query): Query<std::collections::HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    if codeyard_identity::oauth::providers::provider_meta(&provider).is_none() {
+    if !codeyard_identity::oauth::known_provider(&provider) {
         return failure(OAuthError::UnknownProvider, &provider);
     }
-    if codeyard_identity::oauth::providers::provider_credentials(&provider).is_none() {
-        return failure(OAuthError::Disabled, &provider);
+    if let Err(response) = enabled_provider(&state, &provider).await {
+        return response;
     }
     let Some(origin) = configured_public_origin() else {
         return public_error(
@@ -166,14 +195,14 @@ pub async fn oauth_callback(
     Query(query): Query<OAuthCallbackQuery>,
     headers: HeaderMap,
 ) -> Response {
-    if codeyard_identity::oauth::providers::provider_meta(&provider).is_none() {
+    if !codeyard_identity::oauth::known_provider(&provider) {
         return failure(OAuthError::UnknownProvider, &provider);
     }
     let (Some(code), Some(token)) = (query.code, query.state) else {
         return public_error(StatusCode::BAD_REQUEST, "Missing code or state.");
     };
-    if codeyard_identity::oauth::providers::provider_credentials(&provider).is_none() {
-        return failure(OAuthError::Disabled, &provider);
+    if let Err(response) = enabled_provider(&state, &provider).await {
+        return response;
     }
     if let Err(error) = codeyard_identity::oauth::validate_callback(&code, &token) {
         return failure(error, &provider);

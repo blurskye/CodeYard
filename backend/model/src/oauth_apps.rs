@@ -2,6 +2,15 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
+/// Organization OIDC names share the existing bounded OAuth provider namespace.
+pub fn organization_from_oidc_provider(provider: &str) -> Option<&str> {
+    let organization = provider.strip_prefix("oidc-")?;
+    (organization.is_ascii()
+        && organization.len() <= 43
+        && crate::account_input::validate_namespace(organization, 3).is_ok())
+    .then_some(organization)
+}
+
 pub fn has_scope(scopes: &str, scope: &str) -> bool {
     scopes.split(',').any(|granted| {
         granted == scope

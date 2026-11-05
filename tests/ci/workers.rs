@@ -2500,8 +2500,8 @@ async fn actions_history_survives_a_stalled_git_preflight() {
         .unwrap();
     sqlx::query("INSERT INTO node_configuration(id,setup_completed) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET setup_completed=TRUE").execute(pg).await.unwrap();
     crate::support::fake_webui_bundle::install();
-    let mut context = fixture.worker.clone();
-    context.pool = Some(fixture.pool().clone());
+    // HTTP admission uses the enrolled core identity; the database-free worker is only a dialer.
+    let context = fixture.core.clone();
     let app = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
         fixture.pool().clone(),
         fixture.root.path().to_owned(),
@@ -4336,6 +4336,7 @@ struct CiFixture {
     requests: Arc<AtomicUsize>,
     authorized: mpsc::UnboundedReceiver<()>,
     worker: NodeContext,
+    core: NodeContext,
     peer: codeyard_cluster_core::worker::CorePeer,
     owner: i64,
     repo: i64,
@@ -4525,6 +4526,7 @@ async fn ci_fixture() -> CiFixture {
         requests,
         authorized: authorization,
         worker,
+        core: context,
         peer,
         owner: owner.id,
         repo: repo.id,

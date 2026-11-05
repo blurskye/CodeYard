@@ -85,6 +85,11 @@ pub enum SessionCredential<'a> {
         totp: Option<(&'a [u8], i64)>,
     },
     OAuth,
+    OrganizationOidc {
+        organization: &'a str,
+        provider: &'a str,
+        subject: &'a str,
+    },
 }
 
 impl<'a> From<Option<&'a str>> for SessionCredential<'a> {
@@ -100,7 +105,7 @@ impl<'a> SessionCredential<'a> {
     pub fn password(self) -> Option<&'a str> {
         match self {
             Self::Password(password) | Self::SecondFactor { password, .. } => Some(password),
-            Self::OAuth => None,
+            Self::OAuth | Self::OrganizationOidc { .. } => None,
         }
     }
 }

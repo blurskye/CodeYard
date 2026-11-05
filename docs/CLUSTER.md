@@ -581,6 +581,38 @@ network alongside results; this is a small workload, not a proven cell capacity.
 It drops its database and removes temporary files on exit. `BENCH_KEEP=1` retains private
 logs and fixture credentials for diagnosis. Neither script should target production.
 
+## Organization login and API controls
+
+The REST API's account and client-IP budgets live in PostgreSQL, so changing web nodes
+or personal tokens does not reset a budget. Core requests allow 5,000 per account or
+60 per anonymous IP per hour; search has its own budget. Client addresses come from the
+connection unless `HTTP_TRUSTED_PROXY_IPS` names the proxy. Account bans and permissions
+are read again on each request. The existing upload, login, body and concurrency limits
+are listed in [Abuse prevention](ABUSE_PREVENTION.md).
+
+An operator can configure one OIDC issuer per organization with `OIDC_PROVIDERS`, a JSON
+array of at most 32 entries, at most 64 KiB in all. Each entry has `organization`,
+`issuer`, `authorization_url`, `token_url`, `jwks_url`, `client_id` and
+`client_secret_env`; the last field names an environment variable containing the secret.
+Organization names in this configuration are 3–43 ASCII letters, digits, underscores or
+hyphens. Endpoints require HTTPS; loopback HTTP is allowed for tests. Use the same
+configuration on every web node. See [.env.example](../.env.example) for an example.
+
+Give members `/login/oauth/oidc-<organization>` and register
+`PUBLIC_URL/login/oauth/oidc-<organization>/callback` at the provider, using `client_secret_post` for token exchange. The flow uses the
+existing single-use, browser-bound OAuth state, PKCE S256 and a nonce. Only signed RS256
+ID tokens from the configured issuer, client and keys are accepted. Changing issuer or
+client invalidates unfinished flows. Identity uses issuer and subject, never an email;
+organization membership must already exist when the session commits. A public-node
+first login can create the local identity, but issues no session until an owner invites
+that identity. Private nodes require prior administrator-approved provider enrollment,
+as with the existing OAuth providers. Password and token login remain available.
+
+Successful organization logins and their session insert share an `org.sso_login` audit
+transaction. Revoked membership, a restricted account, suspended organization governance
+or an unavailable audit table refuses the login. The cross-node HTTP acceptance for this
+flow is written and awaits its builder run.
+
 ## Limits
 
 The cluster assumes one PostgreSQL primary shared by every web, SSH and storage node.

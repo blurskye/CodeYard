@@ -40,8 +40,8 @@ Current acceptance status (runtime checks are still pending):
 - 8: mover and bandwidth limit source checks pass; runtime pending.
 - 9: pool configuration and owned PostgreSQL crash checks written; Helm, pool and load runs pending.
 - 10: previous-release target needs confirmation before compatibility work.
-- 11: primary snapshots, object copies, fenced import and per-node restore written; checks pending.
-- 12: cross-node REST account/IP counter acceptance written; organization SSO and remaining abuse/audit acceptance are missing.
+- 11: primary snapshots, object copies, fenced import and per-node restore pass source checks; runtime pending.
+- 12: cross-node REST account/IP and audit acceptance written; organization OIDC login and commit-time membership checks are written, awaiting source checks.
 
 ## A. Checks on what exists
 

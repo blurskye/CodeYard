@@ -68,6 +68,9 @@ pub fn credential_env_keys(provider: &str) -> (String, String) {
 
 /// The client id and secret from the environment; both must be set and non-empty.
 pub fn provider_credentials(provider: &str) -> Option<(String, String)> {
+    if provider.starts_with("oidc-") {
+        return super::oidc::provider(provider).map(|provider| provider.credentials());
+    }
     let (id_key, secret_key) = credential_env_keys(provider);
     let read = |key: &str| {
         std::env::var(key)
@@ -158,7 +161,7 @@ pub fn profile_from_user_info(provider: &str, data: &Value) -> Option<OAuthProfi
 
 /// Only these providers take a PKCE code challenge.
 pub fn supports_pkce(provider: &str) -> bool {
-    matches!(provider, "github" | "google" | "gitlab")
+    matches!(provider, "github" | "google" | "gitlab") || provider.starts_with("oidc-")
 }
 pub(crate) use codeyard_support::token_hash::token_hash as browser_binding;
 
@@ -225,7 +228,7 @@ pub(crate) fn provider_client() -> Result<reqwest::Client, ()> {
         .clone()
 }
 
-async fn bounded_json(mut response: reqwest::Response) -> Result<Value, ()> {
+pub(super) async fn bounded_json(mut response: reqwest::Response) -> Result<Value, ()> {
     if !response.status().is_success()
         || response.content_length().is_some_and(|size| size > 65_536)
     {

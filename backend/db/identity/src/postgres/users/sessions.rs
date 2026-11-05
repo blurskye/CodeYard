@@ -195,6 +195,18 @@ pub async fn rotate_authenticated_session(
         anyhow::bail!("Authenticated session requires a fresh random identifier");
     }
     let mut tx = pool.begin().await?;
+    if matches!(
+        credential,
+        crate::users::sessions::SessionCredential::OrganizationOidc { .. }
+    ) {
+        // Account authority precedes browser, configuration and organization locks, as in
+        // account restrictions and private-provider enrollment.
+        codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+            &mut tx,
+            &[user_id],
+        )
+        .await?;
+    }
     let mut ids = vec![fresh];
     if let Some(old) = old {
         ids.push(old);
@@ -231,6 +243,42 @@ pub async fn rotate_authenticated_session(
     if !setup {
         return Ok(None);
     }
+    let sso = if let crate::users::sessions::SessionCredential::OrganizationOidc {
+        organization,
+        provider,
+        subject,
+    } = credential
+    {
+        if codeyard_model::oauth_apps::organization_from_oidc_provider(provider)
+            != Some(organization)
+        {
+            return Ok(None);
+        }
+        let org: Option<i64> = sqlx::query_scalar("SELECT id FROM organizations WHERE name=$1")
+            .bind(organization)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let Some(org) = org else {
+            return Ok(None);
+        };
+        if !matches!(
+            codeyard_db_core::queries::postgres::organizations::authority::authority(
+                &mut tx, user_id, org
+            )
+            .await?,
+            codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
+        ) {
+            return Ok(None);
+        }
+        let linked: Option<i64> = sqlx::query_scalar("SELECT user_id FROM oauth_accounts WHERE user_id=$1 AND provider=$2 AND provider_user_id=$3 FOR SHARE")
+            .bind(user_id).bind(provider).bind(subject).fetch_optional(&mut *tx).await?;
+        if linked != Some(user_id) {
+            return Ok(None);
+        }
+        Some((org, provider))
+    } else {
+        None
+    };
     let user = sqlx::query_as::<_, User>("SELECT * FROM users WHERE id=$1 FOR SHARE")
         .bind(user_id)
         .fetch_optional(&mut *tx)
@@ -306,6 +354,10 @@ pub async fn rotate_authenticated_session(
     }
     let session = sqlx::query_as::<_, BrowserSession>("INSERT INTO sessions (id,user_id,user_agent,ip_address,expires_at) VALUES ($1,$2,$3,$4::inet,LEAST($5,clock_timestamp()+INTERVAL '365 days')) RETURNING id,user_id,expires_at,created_at")
         .bind(fresh).bind(user_id).bind(user_agent).bind(ip_address).bind(expires_at).fetch_one(&mut *tx).await?;
+    if let Some((org, provider)) = sso {
+        sqlx::query("INSERT INTO audit_log(org_id,actor_id,action,target_type,target_id,metadata) VALUES($1,$2,'org.sso_login','user',$2,$3)")
+            .bind(org).bind(user_id).bind(serde_json::json!({"provider":provider})).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     Ok(Some(session))
 }

@@ -1,6 +1,11 @@
 //! Browser-bound single-use OAuth admission. Provider exchange stays outside transactions.
 
+pub mod oidc;
 pub mod providers;
+
+pub fn known_provider(provider: &str) -> bool {
+    providers::provider_meta(provider).is_some() || oidc::provider(provider).is_some()
+}
 
 use codeyard_db_identity::users::transitions::AccountAdmission;
 
@@ -56,6 +61,20 @@ pub async fn begin(
     verifier: &str,
     return_to: &str,
 ) -> Result<String, OAuthError> {
+    if let Some(configured) = oidc::provider(provider) {
+        require_setup(pool).await?;
+        return configured
+            .begin(
+                pool,
+                redirect,
+                browser_nonce,
+                state_token,
+                verifier,
+                return_to,
+            )
+            .await
+            .map_err(|_| OAuthError::StateUnavailable);
+    }
     let meta = providers::provider_meta(provider).ok_or(OAuthError::UnknownProvider)?;
     let (client, _) = providers::provider_credentials(provider).ok_or(OAuthError::Disabled)?;
     require_setup(pool).await?;
@@ -100,6 +119,23 @@ pub async fn complete(
         redirect,
         session,
     } = callback;
+    if let Some(configured) = oidc::provider(provider) {
+        validate_callback(code, token)?;
+        require_setup(pool).await?;
+        let (profile, return_to) = configured
+            .complete(pool, code, token, browser_nonce, redirect)
+            .await
+            .map_err(|_| OAuthError::ProviderFailed)?;
+        return admit_profile(
+            pool,
+            provider,
+            profile,
+            session,
+            return_to,
+            Some(&configured.organization),
+        )
+        .await;
+    }
     let meta = providers::provider_meta(provider).ok_or(OAuthError::UnknownProvider)?;
     let (client_id, secret) =
         providers::provider_credentials(provider).ok_or(OAuthError::Disabled)?;
@@ -138,6 +174,17 @@ pub async fn complete(
     )
     .await
     .map_err(|_| OAuthError::ProviderFailed)?;
+    admit_profile(pool, provider, profile, session, stored.return_to, None).await
+}
+
+async fn admit_profile(
+    pool: &DbPool,
+    provider: &str,
+    profile: providers::OAuthProfile,
+    session: SessionContext<'_>,
+    return_to: String,
+    organization: Option<&str>,
+) -> Result<(AuthenticatedAccount, String), OAuthError> {
     let base = providers::username_from_profile(profile.name.as_deref(), &profile.provider_user_id);
     let name = profile.name.as_deref().filter(|name| name.len() <= 255);
     let user = match codeyard_db_identity::users::transitions::admit_oauth_account(
@@ -156,8 +203,19 @@ pub async fn complete(
         AccountAdmission::Conflict => return Err(OAuthError::Conflict),
         _ => return Err(OAuthError::Denied),
     };
-    let session_id = crate::sessions::issue_authenticated_session(pool, session, user.id, None)
-        .await
-        .map_err(OAuthError::AccountAdmittedSessionFailed)?;
-    Ok((AuthenticatedAccount { user, session_id }, stored.return_to))
+    let credential = match organization {
+        Some(organization) => {
+            codeyard_db_identity::users::sessions::SessionCredential::OrganizationOidc {
+                organization,
+                provider,
+                subject: &profile.provider_user_id,
+            }
+        }
+        None => codeyard_db_identity::users::sessions::SessionCredential::OAuth,
+    };
+    let session_id =
+        crate::sessions::issue_authenticated_session(pool, session, user.id, credential)
+            .await
+            .map_err(OAuthError::AccountAdmittedSessionFailed)?;
+    Ok((AuthenticatedAccount { user, session_id }, return_to))
 }
