@@ -291,3 +291,12 @@ pub async fn change(
     tx.commit().await?;
     Ok(changed)
 }
+
+pub async fn request_key(pool: &SqlitePool, team: bool, id: i64) -> Result<Option<(i64, i64)>> {
+    let sql = if team {
+        "SELECT pull_request_id,team_id FROM pr_team_reviewers WHERE id=$1"
+    } else {
+        "SELECT pull_request_id,user_id FROM pr_reviewers WHERE id=$1"
+    };
+    Ok(sqlx::query_as(sql).bind(id).fetch_optional(pool).await?)
+}

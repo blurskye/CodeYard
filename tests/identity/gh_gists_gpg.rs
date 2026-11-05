@@ -106,6 +106,29 @@ async fn contract(pg: bool) {
     .await;
     let (_, public) = send(&router, "POST", "/api/v3/gists", write, Some(input), 201).await;
     let id = public["id"].as_str().unwrap();
+    let rooted = public["node_id"].as_str().unwrap();
+    let gist = codeyard_db_repos::gists::get(f.pool(), id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        codeyard_model::node_id::scoped_root(rooted),
+        Some(gist.repo_id)
+    );
+    for node_id in [rooted.to_owned(), codeyard_model::node_id::git("GIST", id)] {
+        let (_, node) = send(&router,"POST","/api/graphql",read,Some(json!({
+            "query":"query($id:ID!){node(id:$id){id ... on Gist{name}}}","variables":{"id":node_id}
+        })),200).await;
+        assert!(node.get("errors").is_none(), "{node}");
+        assert_eq!(node["data"]["node"]["id"], rooted);
+        assert_eq!(node["data"]["node"]["name"], id);
+    }
+    let (_, refused) = send(&router,"POST","/api/graphql",read,Some(json!({
+        "query":"query($id:ID!){node(id:$id){id}}","variables":{"id":codeyard_model::node_id::scoped("GIST",gist.repo_id + 10000,gist.repo_id).unwrap()}
+    })),200).await;
+    assert!(refused["data"]["node"].is_null(), "{refused}");
+    assert_eq!(refused["errors"][0]["type"], "NOT_FOUND", "{refused}");
+
     assert!(public["html_url"]
         .as_str()
         .unwrap()

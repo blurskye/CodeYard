@@ -42,7 +42,7 @@ fn app_value(app: &codeyard_db_actions::checks::Publisher) -> Value {
         login: app.owner_login.clone(),
         site_admin: app.owner_is_admin,
     };
-    json!({"id":app.id,"node_id":codeyard_model::node_id::encode("A", app.id),"client_id":app.client_id,"name":app.name,"description":null,"owner":payloads::person(&owner),"external_url":app.homepage,"html_url":app.homepage,"created_at":app.created_at,"updated_at":app.created_at,"permissions":{"checks":"write","metadata":"read"},"events":["check_run","check_suite"]})
+    json!({"id":app.id,"node_id":codeyard_model::node_id::scoped("A", app.owner_id, app.id),"client_id":app.client_id,"name":app.name,"description":null,"owner":payloads::person(&owner),"external_url":app.homepage,"html_url":app.homepage,"created_at":app.created_at,"updated_at":app.created_at,"permissions":{"checks":"write","metadata":"read"},"events":["check_run","check_suite"]})
 }
 
 /// The app that publishes workflow run check suites, acting as the Actions bot account.
@@ -67,7 +67,7 @@ pub async fn actions_app(
         codeyard_webui::encode_component(&repo.name)
     );
     Ok(
-        json!({"id":ACTIONS_APP_ID,"slug":"github-actions","node_id":codeyard_model::node_id::encode("A",ACTIONS_APP_ID),"name":"GitHub Actions","description":"Workflow runs","owner":payloads::user(&bot),"external_url":url,"html_url":url,"created_at":bot.created_at,"updated_at":bot.created_at,"permissions":{"actions":"write","checks":"write","contents":"write","metadata":"read","statuses":"write"},"events":["check_run","check_suite","push","pull_request","workflow_dispatch"]}),
+        json!({"id":ACTIONS_APP_ID,"slug":"github-actions","node_id":codeyard_model::node_id::scoped("A",bot.id,ACTIONS_APP_ID),"name":"GitHub Actions","description":"Workflow runs","owner":payloads::user(&bot),"external_url":url,"html_url":url,"created_at":bot.created_at,"updated_at":bot.created_at,"permissions":{"actions":"write","checks":"write","contents":"write","metadata":"read","statuses":"write"},"events":["check_run","check_suite","push","pull_request","workflow_dispatch"]}),
     )
 }
 

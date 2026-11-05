@@ -970,6 +970,11 @@ Node ids for every kind except repositories, users and orgs move to the msgpack 
 `[0, root id, id]`, which GitHub uses and Codeyard already uses for discussion comments, so
 a moved repository needs one forwarding entry, not one per comment. The
 `{kind}_{base64 id}` form keeps resolving.
+Project fields, items and drafts use the project account's root, including items linked
+from another owner's repository. Issue type and field definitions use their account root;
+field values, workflows, environments, gists and review requests use their repository root.
+Review requests have stable row identities; user and team requests retain their separate
+uniqueness constraints. A stored protection rule retains its App owner's ID after App removal.
 Recorded issue-transfer redirects also validate former roots for issues, comments and
 their events and reactions. Every read and write still checks the current repository.
 

@@ -95,6 +95,7 @@ native_operation!(codeyard_db_core::queries::postgres::action_settings::reposito
 #[derive(sqlx::FromRow)]
 pub struct Policy {
     pub id: i64,
+    pub owner_id: i64,
     pub data: String,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,

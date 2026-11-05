@@ -189,7 +189,7 @@ pub fn organization_invitation(
         id: 0,
         site_admin: false,
     });
-    json!({"id": invitation.id, "node_id": codeyard_model::node_id::encode("OI", invitation.id),
+    json!({"id": invitation.id, "node_id": codeyard_model::node_id::scoped("OI",org.id,invitation.id),
         "login": recipient.map(|user| &user.username), "email": invitation.email,
         "role": if invitation.role == "owner" { "admin" } else { "direct_member" },
         "created_at": time(invitation.created_at), "failed_at": optional_time(invitation.failed_at), "failed_reason": invitation.failed_reason,
@@ -231,7 +231,7 @@ pub fn repository_activity(
                 site_admin: false,
             })
         });
-    json!({"id":activity.id,"node_id":codeyard_model::node_id::encode("RAC",activity.id),"before":activity.before_sha,"after":activity.after_sha,"ref":activity.reference,"timestamp":time(activity.created_at),"activity_type":activity.activity_type,"actor":actor})
+    json!({"id":activity.id,"node_id":codeyard_model::node_id::scoped("RAC",activity.repo_id,activity.id),"before":activity.before_sha,"after":activity.after_sha,"ref":activity.reference,"timestamp":time(activity.created_at),"activity_type":activity.activity_type,"actor":actor})
 }
 
 pub fn autolink(link: &codeyard_db_repos::repositories::autolinks::Autolink) -> Value {
@@ -256,7 +256,7 @@ pub fn repository_invitation(
     inviter: &Person,
     invitee: &Person,
 ) -> Value {
-    json!({"id":invitation.id, "node_id":codeyard_model::node_id::encode("RI",invitation.id),
+    json!({"id":invitation.id, "node_id":codeyard_model::node_id::scoped("RI",invitation.repo_id,invitation.id),
         "url":codeyard_model::urls::api_url(&format!("/user/repository_invitations/{}",invitation.id)),
         "html_url":format!("{}/invitations", repo["html_url"].as_str().unwrap_or("")),
         "repository":repo, "inviter":simple_person(inviter), "invitee":simple_person(invitee),
@@ -347,7 +347,7 @@ pub fn deployment(
 ) -> Value {
     let base = repo_url(owner, repo);
     let url = format!("{base}/deployments/{}", deployment.id);
-    json!({"id": deployment.id, "node_id": codeyard_model::node_id::encode("DE", deployment.id), "url": url,
+    json!({"id": deployment.id, "node_id": codeyard_model::node_id::scoped("DE",deployment.repo_id,deployment.id), "url": url,
         "sha": deployment.sha, "ref": deployment.reference, "task": deployment.task, "payload": payload,
         "original_environment": deployment.original_environment, "environment": deployment.environment,
         "description": deployment.description, "creator": creator, "created_at": time(deployment.created_at),
@@ -358,6 +358,7 @@ pub fn deployment(
 
 pub fn deployment_status(
     status: &codeyard_db_actions::deployments::Status,
+    repo_id: i64,
     creator: Option<Value>,
     owner: &str,
     repo: &str,
@@ -370,7 +371,7 @@ pub fn deployment_status(
     } else {
         &status.log_url
     };
-    let mut value = json!({"id": status.id, "node_id": codeyard_model::node_id::encode("DES", status.id), "state": status.state,
+    let mut value = json!({"id": status.id, "node_id": codeyard_model::node_id::scoped("DES", repo_id, status.id), "state": status.state,
         "url": format!("{deployment}/statuses/{}", status.id), "creator": creator, "description": status.description,
         "environment": status.environment, "target_url": target,
         "created_at": time(status.created_at), "updated_at": time(status.created_at),
@@ -410,7 +411,7 @@ pub fn environment(
 ) -> Value {
     let name = codeyard_webui::encode_component(&environment.name);
     let mut rules = Vec::new();
-    let rule = |kind: &str| json!({"id": environment.id, "node_id": codeyard_model::node_id::encode("G", environment.id), "type": kind});
+    let rule = |kind: &str| json!({"id": environment.id, "node_id": codeyard_model::node_id::scoped("G",environment.repo_id,environment.id), "type": kind});
     if environment.wait_timer > 0 {
         let mut value = rule("wait_timer");
         value["wait_timer"] = json!(environment.wait_timer);
@@ -429,7 +430,7 @@ pub fn environment(
     if environment.branch_policy.is_some() {
         rules.push(rule("branch_policy"));
     }
-    json!({"id": environment.id, "node_id": codeyard_model::node_id::encode("EN", environment.id), "name": environment.name,
+    json!({"id": environment.id, "node_id": codeyard_model::node_id::scoped("EN",environment.repo_id,environment.id), "name": environment.name,
         "url": format!("{}/environments/{name}", repo_url(owner, repo)),
         "html_url": format!("{}/settings?tab=secrets&environment={name}", repository_url(owner, repo)),
         "created_at": time(environment.created_at), "updated_at": time(environment.updated_at),
@@ -607,7 +608,7 @@ pub fn project(
     creator: Value,
 ) -> Value {
     json!({
-        "id": project.id, "node_id": codeyard_model::node_id::encode("PVT", project.id),
+        "id": project.id, "node_id": codeyard_model::node_id::scoped("PVT", project.owner_id, project.id),
         "owner": owner, "creator": creator, "number": project.number,
         "title": project.title, "description": project.description,
         "short_description": project.description, "public": project.public,
@@ -628,7 +629,7 @@ pub fn project_field(
         "iteration" => "PVTIF",
         _ => "PVTF",
     };
-    let mut value = json!({"id": field.id, "node_id": codeyard_model::node_id::encode(prefix, field.id),
+    let mut value = json!({"id": field.id, "node_id": codeyard_model::node_id::scoped(prefix, field.owner_id, field.id),
         "name": field.name, "data_type": field.data_type, "project_url": project_url,
         "created_at": time(field.created_at), "updated_at": time(field.updated_at)});
     let rich_text =
@@ -659,7 +660,7 @@ pub fn project_item(
     creator: Value,
     content: Value,
 ) -> Value {
-    json!({"id": item.id, "node_id": codeyard_model::node_id::encode("PVTI",item.id),
+    json!({"id": item.id, "node_id": codeyard_model::node_id::scoped("PVTI",item.owner_id,item.id),
         "project_url": project_url, "item_url": format!("{project_url}/items/{}", item.id),
         "content_type": item.content_type(), "content": content, "creator": creator,
         "created_at": time(item.created_at), "updated_at": time(item.updated_at),
@@ -667,7 +668,7 @@ pub fn project_item(
 }
 
 pub fn project_draft(item: &codeyard_db_repos::projects::Item, creator: Value) -> Value {
-    json!({"id": item.id, "node_id": codeyard_model::node_id::encode("DI",item.id), "title": item.draft_title,
+    json!({"id": item.id, "node_id": codeyard_model::node_id::scoped("DI",item.owner_id,item.id), "title": item.draft_title,
         "body": item.draft_body, "user": creator, "created_at": time(item.created_at), "updated_at": time(item.updated_at)})
 }
 
@@ -681,7 +682,7 @@ pub fn project_view(
     let mut value = serde_json::to_value(config)?;
     let map = value.as_object_mut().expect("view configuration object");
     map.extend(
-        json!({"id": view.id, "number": view.number, "node_id": codeyard_model::node_id::encode("PVTV",view.id),
+        json!({"id": view.id, "number": view.number, "node_id": codeyard_model::node_id::scoped("PVTV",view.owner_id,view.id),
         "project_url": project_url, "html_url": html_url, "creator": creator,
         "created_at": time(view.created_at), "updated_at": time(view.updated_at)})
         .as_object()
@@ -1122,13 +1123,16 @@ pub fn issue_suggestion(
 }
 
 pub fn issue_type(attribute: &codeyard_db_repos::issue_attributes::Attribute) -> Value {
-    json!({"id":attribute.id,"node_id":node_id::encode("IT",attribute.id),"name":attribute.name,"description":attribute.description,"color":attribute.color,"is_enabled":attribute.is_enabled,"created_at":time(attribute.created_at),"updated_at":time(attribute.updated_at)})
+    json!({"id":attribute.id,"node_id":attribute.owner_id().and_then(|root| node_id::scoped("IT",root,attribute.id)),"name":attribute.name,"description":attribute.description,"color":attribute.color,"is_enabled":attribute.is_enabled,"created_at":time(attribute.created_at),"updated_at":time(attribute.updated_at)})
 }
 pub fn issue_field(attribute: &codeyard_db_repos::issue_attributes::Attribute) -> Value {
     let options=matches!(attribute.data_type.as_deref(),Some("single_select"|"multi_select")).then(||attribute.options.iter().map(|option|json!({"id":option.id,"name":option.name,"description":option.description,"color":option.color,"priority":option.priority})).collect::<Vec<_>>());
-    json!({"id":attribute.id,"node_id":node_id::encode("IF",attribute.id),"name":attribute.name,"description":attribute.description,"data_type":attribute.data_type,"visibility":attribute.visibility,"options":options,"created_at":time(attribute.created_at),"updated_at":time(attribute.updated_at)})
+    json!({"id":attribute.id,"node_id":attribute.owner_id().and_then(|root| node_id::scoped("IF",root,attribute.id)),"name":attribute.name,"description":attribute.description,"data_type":attribute.data_type,"visibility":attribute.visibility,"options":options,"created_at":time(attribute.created_at),"updated_at":time(attribute.updated_at)})
 }
-pub fn issue_field_value(field: &codeyard_db_repos::issue_attributes::FieldValue) -> Value {
+pub fn issue_field_value(
+    field: &codeyard_db_repos::issue_attributes::FieldValue,
+    repo: i64,
+) -> Value {
     let attribute = &field.attribute;
     let option = |id: i64| {
         attribute
@@ -1162,7 +1166,7 @@ pub fn issue_field_value(field: &codeyard_db_repos::issue_attributes::FieldValue
     } else {
         field.value.clone()
     };
-    json!({"issue_field_id":attribute.id,"issue_field_name":attribute.name,"node_id":node_id::encode("IFV",field.id),"data_type":attribute.data_type,"value":value,"single_select_option":single,"multi_select_options":multi})
+    json!({"issue_field_id":attribute.id,"issue_field_name":attribute.name,"node_id":node_id::scoped("IFV",repo,field.id),"data_type":attribute.data_type,"value":value,"single_select_option":single,"multi_select_options":multi})
 }
 
 pub fn issue_event(
@@ -2162,7 +2166,7 @@ pub fn action_workflow(
     let query = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("workflow", &workflow.path)
         .finish();
-    json!({"id":workflow.id,"node_id":node_id::encode("WF",workflow.id),"name":workflow.name,"path":workflow.path,"state":workflow.state,"url":url,"html_url":format!("{}/actions?{query}",repository_url(owner,repo)),"badge_url":format!("{url}/badge.svg"),"created_at":time(workflow.created_at),"updated_at":time(workflow.updated_at)})
+    json!({"id":workflow.id,"node_id":node_id::scoped("WF",workflow.repo_id,workflow.id),"name":workflow.name,"path":workflow.path,"state":workflow.state,"url":url,"html_url":format!("{}/actions?{query}",repository_url(owner,repo)),"badge_url":format!("{url}/badge.svg"),"created_at":time(workflow.created_at),"updated_at":time(workflow.updated_at)})
 }
 
 /// Artifact metadata uses the same durable object and run identifiers as runtime downloads.
@@ -2245,7 +2249,7 @@ pub fn action_run(
     let title = bounded_text(title, 1024);
     let (status, conclusion) = codeyard_db_actions::action_runs::run_state(run);
     let mut value = json!({
-        "id":id,"node_id":node_id::encode("WR",id),"head_branch":(!branch.is_empty()).then_some(branch),
+        "id":id,"node_id":node_id::scoped("WR",run.repo_id,id),"head_branch":(!branch.is_empty()).then_some(branch),
         "run_number":run.workflow_run_number,"run_attempt":run.workflow_run_attempt.unwrap_or(1),"display_title":title,
         "event":run.event,"status":status,"conclusion":conclusion,"head_sha":run.head_sha.as_deref().unwrap_or(""),
         "path":run.workflow_path,"workflow_id":workflow_id,"url":url,
@@ -2286,7 +2290,7 @@ pub fn action_job(
         .append_pair("view", "logs")
         .append_pair("workflow_job", &job.name)
         .finish();
-    json!({"id":job.id,"node_id":node_id::encode("J",job.id),"run_id":run_id,"run_attempt":run.workflow_run_attempt.unwrap_or(1),
+    json!({"id":job.id,"node_id":node_id::scoped("J",run.repo_id,job.id),"run_id":run_id,"run_attempt":run.workflow_run_attempt.unwrap_or(1),
         "run_url":format!("{api}/actions/runs/{run_id}"),"head_sha":run.head_sha,"workflow_name":job.workflow_name,
         "head_branch":branch,"name":job.name,"url":format!("{api}/actions/jobs/{}",job.id),
         "html_url":format!("{}/{}/{}/actions?{query}",link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(repo)),

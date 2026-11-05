@@ -81,11 +81,13 @@ pub(crate) async fn document(
 async fn status_document(
     state: &AppState,
     status: &Status,
+    repo_id: i64,
     owner: &str,
     repo: &str,
 ) -> Result<Value> {
     Ok(codeyard_webhooks::payloads::deployment_status(
         status,
+        repo_id,
         creator(state, status.creator_id).await?,
         owner,
         repo,
@@ -309,7 +311,9 @@ async fn statuses(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-            return Ok(Json(status_document(&state, &row, owner, name).await?).into_response());
+            return Ok(
+                Json(status_document(&state, &row, repo.id, owner, name).await?).into_response(),
+            );
         }
         let (offset, limit) = page.window()?;
         let rows = codeyard_db_actions::deployments::statuses(
@@ -324,7 +328,7 @@ async fn statuses(
         let has_next = rows.len() > limit;
         let mut values = Vec::new();
         for row in rows.into_iter().take(limit) {
-            values.push(status_document(&state, &row, owner, name).await?);
+            values.push(status_document(&state, &row, repo.id, owner, name).await?);
         }
         return page.response(&uri, values, has_next);
     }
@@ -345,7 +349,7 @@ async fn statuses(
     .map_err(write_error)?;
     let mut result = None;
     for (deployment, status) in statuses {
-        let value = status_document(&state, &status, owner, name).await?;
+        let value = status_document(&state, &status, repo.id, owner, name).await?;
         if status.deployment_id == saved.id {
             result = Some(value.clone());
         }

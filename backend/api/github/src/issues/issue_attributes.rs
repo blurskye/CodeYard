@@ -89,7 +89,7 @@ async fn list(
             .iter()
             .skip(offset)
             .take(limit)
-            .map(codeyard_webhooks::payloads::issue_field_value)
+            .map(|value| codeyard_webhooks::payloads::issue_field_value(value, repo.id))
             .collect(),
         next,
     )
@@ -131,7 +131,7 @@ async fn save(
     Ok(Json(Value::Array(
         values
             .iter()
-            .map(codeyard_webhooks::payloads::issue_field_value)
+            .map(|value| codeyard_webhooks::payloads::issue_field_value(value, repo.id))
             .collect(),
     )))
 }

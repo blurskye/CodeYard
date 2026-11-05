@@ -292,7 +292,11 @@ fn document(policy: &Policy, params: &Params, organization: Option<&str>) -> Res
             )
         };
     value["id"] = json!(policy.id);
-    value["node_id"] = json!(codeyard_model::node_id::encode("AP", policy.id));
+    value["node_id"] = json!(codeyard_model::node_id::scoped(
+        "AP",
+        policy.owner_id,
+        policy.id
+    ));
     value["target"] = json!("actions");
     value["source_type"] = json!(source_type);
     value["source"] = json!(source);

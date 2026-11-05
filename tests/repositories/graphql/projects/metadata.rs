@@ -192,6 +192,14 @@ async fn metadata_contract(pg: bool) {
     )
     .await
     .unwrap();
+    let project_node = |id| {
+        let project = projects
+            .iter()
+            .chain(std::iter::once(&unlinked))
+            .find(|project| project.id == id)
+            .unwrap();
+        codeyard_model::node_id::scoped("PVT", project.owner_id, id).unwrap()
+    };
     for (text, key, owner, expected) in [
         (
             document!("RepositoryProjectV2List"),
@@ -229,7 +237,7 @@ async fn metadata_contract(pg: bool) {
                 .collect::<Vec<_>>(),
             expected
                 .iter()
-                .map(|id| codeyard_model::node_id::encode("PVT", *id))
+                .map(|id| project_node(*id))
                 .collect::<Vec<_>>()
         );
         for n in nodes {
@@ -237,7 +245,7 @@ async fn metadata_contract(pg: bool) {
             let project = projects
                 .iter()
                 .chain(std::iter::once(&unlinked))
-                .find(|p| n["id"] == codeyard_model::node_id::encode("PVT", p.id))
+                .find(|p| n["id"] == project_node(p.id))
                 .unwrap();
             let prefix = if project.owner_kind == "org" {
                 "/orgs/project-metadata-org/projects/"
@@ -268,7 +276,7 @@ async fn metadata_contract(pg: bool) {
         let second = send(&router, token, &small, next).await;
         assert_eq!(
             second[key]["projectsV2"]["nodes"][0]["id"],
-            codeyard_model::node_id::encode("PVT", expected[1])
+            project_node(expected[1])
         );
     }
     // The named User field uses the same connection as viewer.
@@ -362,7 +370,7 @@ async fn metadata_contract(pg: bool) {
         let item = &items[0];
         assert_eq!(
             updated[alias]["item"]["id"],
-            codeyard_model::node_id::encode("PVTI", item.id)
+            codeyard_model::node_id::scoped("PVTI", item.owner_id, item.id).unwrap()
         );
         assert!(match content {
             store::Content::Issue(id) => item.issue_id == Some(id),
@@ -415,7 +423,12 @@ async fn metadata_contract(pg: bool) {
         assert_eq!(items["totalCount"], 1);
         assert_eq!(
             items["nodes"][0]["id"],
-            codeyard_model::node_id::encode("PVTI", new_items[index].0)
+            codeyard_model::node_id::scoped(
+                "PVTI",
+                if index == 0 { alice } else { org.id },
+                new_items[index].0
+            )
+            .unwrap()
         );
         assert_eq!(
             items["nodes"][0]["status"],
@@ -453,10 +466,9 @@ async fn metadata_contract(pg: bool) {
             .as_array()
             .unwrap()
             .iter()
-            .any(
-                |n| n["id"] == codeyard_model::node_id::encode("PVTI", unset.id)
-                    && n["status"].is_null()
-            ));
+            .any(|n| n["id"]
+                == codeyard_model::node_id::scoped("PVTI", unset.owner_id, unset.id).unwrap()
+                && n["status"].is_null()));
     }
     let mut denied_inputs = inputs;
     denied_inputs["input_002"] = json!({"projectId":codeyard_model::node_id::encode("PVT",projects[0].id),"itemId":codeyard_model::node_id::encode("PVTI",new_items[0].0)});

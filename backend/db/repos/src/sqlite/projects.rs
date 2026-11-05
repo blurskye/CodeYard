@@ -137,7 +137,7 @@ pub async fn create(
     sqlx::query("INSERT INTO project_fields(project_id,name,data_type,configuration,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5)")
         .bind(project.id).bind(&input.name).bind(&input.data_type).bind(input.configuration()?).bind(now).execute(&mut *tx).await?;
     let fields: Vec<Field> =
-        sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")
+        sqlx::query_as("SELECT *, (SELECT owner_id FROM projects WHERE id=project_fields.project_id) AS owner_id FROM project_fields WHERE project_id=$1 ORDER BY id")
             .bind(project.id)
             .fetch_all(&mut *tx)
             .await?;
@@ -242,7 +242,7 @@ pub async fn delete(
     write_project(&mut tx, actor, credential, project).await?;
     // What the actor could see comes back, so the deletion's answer can still describe it.
     let removed = ProjectContents {
-        fields: sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")
+        fields: sqlx::query_as("SELECT *, (SELECT owner_id FROM projects WHERE id=project_fields.project_id) AS owner_id FROM project_fields WHERE project_id=$1 ORDER BY id")
             .bind(project)
             .fetch_all(&mut *tx)
             .await?,
@@ -281,7 +281,7 @@ pub async fn fields_at(
 ) -> Result<Vec<Field>> {
     let mut tx = pool.begin().await?;
     readable_at(&mut tx, viewer, project, include_deleted).await?;
-    let fields = sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")
+    let fields = sqlx::query_as("SELECT *, (SELECT owner_id FROM projects WHERE id=project_fields.project_id) AS owner_id FROM project_fields WHERE project_id=$1 ORDER BY id")
         .bind(project)
         .fetch_all(&mut *tx)
         .await?;
@@ -315,7 +315,7 @@ pub async fn add_field(
             .any(|name| name.eq_ignore_ascii_case(&input.name)),
         Refusal::Invalid
     );
-    let field = sqlx::query_as("INSERT INTO project_fields(project_id,name,data_type,configuration,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5) ON CONFLICT(project_id,name) DO NOTHING RETURNING *")
+    let field = sqlx::query_as("INSERT INTO project_fields(project_id,name,data_type,configuration,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5) ON CONFLICT(project_id,name) DO NOTHING RETURNING *, (SELECT owner_id FROM projects WHERE id=$1) AS owner_id")
         .bind(project).bind(&input.name).bind(&input.data_type).bind(config).bind(chrono::Utc::now()).fetch_optional(&mut *tx).await?.ok_or(Refusal::Invalid)?;
     sqlx::query("UPDATE projects SET updated_at=$2 WHERE id=$1")
         .bind(project)

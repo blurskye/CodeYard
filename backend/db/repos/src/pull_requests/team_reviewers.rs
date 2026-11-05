@@ -26,7 +26,7 @@ pub struct RequestWindow {
 }
 
 pub(crate) fn request_roster_sql(prefix: &str, teams: &str, readable: &str) -> String {
-    format!("SELECT user_id,team_id,as_code_owner,kind,sort_name FROM (SELECT q.user_id,CAST(NULL AS BIGINT) AS team_id,q.as_code_owner,0 AS kind,author.username AS sort_name FROM pr_reviewers q JOIN users author ON author.id=q.user_id WHERE q.pull_request_id={prefix}3 UNION ALL SELECT CAST(NULL AS BIGINT),q.team_id,q.as_code_owner,1,t.name FROM pr_team_reviewers q JOIN teams t ON t.id=q.team_id WHERE q.pull_request_id={prefix}3) requests WHERE (team_id IS NULL OR team_id IN (SELECT id FROM ({teams}) visible)) AND EXISTS(SELECT 1 FROM pull_requests p JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id={prefix}2 WHERE p.id={prefix}3 AND p.repo_id={prefix}1 AND {readable}) AND (CAST({prefix}4 AS BOOLEAN) IS NULL OR (team_id IS NOT NULL)={prefix}4) AND (CAST({prefix}5 AS BIGINT) IS NULL OR COALESCE(user_id,team_id)={prefix}5)")
+    format!("SELECT id,user_id,team_id,as_code_owner,kind,sort_name FROM (SELECT q.id,q.user_id,CAST(NULL AS BIGINT) AS team_id,q.as_code_owner,0 AS kind,author.username AS sort_name FROM pr_reviewers q JOIN users author ON author.id=q.user_id WHERE q.pull_request_id={prefix}3 UNION ALL SELECT q.id,CAST(NULL AS BIGINT),q.team_id,q.as_code_owner,1,t.name FROM pr_team_reviewers q JOIN teams t ON t.id=q.team_id WHERE q.pull_request_id={prefix}3) requests WHERE (team_id IS NULL OR team_id IN (SELECT id FROM ({teams}) visible)) AND EXISTS(SELECT 1 FROM pull_requests p JOIN repositories r ON r.id=p.repo_id LEFT JOIN users u ON u.id={prefix}2 WHERE p.id={prefix}3 AND p.repo_id={prefix}1 AND {readable}) AND (CAST({prefix}4 AS BOOLEAN) IS NULL OR (team_id IS NOT NULL)={prefix}4) AND (CAST({prefix}5 AS BIGINT) IS NULL OR COALESCE(user_id,team_id)={prefix}5)")
 }
 native_operation!(crate::postgres::pull_requests::team_reviewers::request_page,
     crate::sqlite::pull_requests::team_reviewers::request_page,
@@ -59,3 +59,8 @@ native_operation!(crate::postgres::pull_requests::team_reviewers::members,
 native_operation!(crate::postgres::pull_requests::team_reviewers::change,
     crate::sqlite::pull_requests::team_reviewers::change,
     fn change(pool: &DbPool, actor: i64, pull: i64, slugs: &[String], action: ReviewTeamAction, expected: Option<&codeyard_db_core::models::PullRequest>) -> Result<Vec<Team>>);
+
+/// Locate a request by its stable row identity before applying the existing live pull policy.
+native_operation!(crate::postgres::pull_requests::team_reviewers::request_key,
+    crate::sqlite::pull_requests::team_reviewers::request_key,
+    fn request_key(pool: &DbPool, team: bool, id: i64) -> Result<Option<(i64, i64)>>);

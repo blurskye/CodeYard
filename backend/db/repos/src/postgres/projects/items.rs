@@ -26,7 +26,7 @@ pub async fn item_links(
     Ok(links)
 }
 
-pub(super) const ITEM: &str = "SELECT i.id,i.project_id,i.creator_id,COALESCE(issues.repo_id,pr.repo_id,i.repo_id) AS repo_id,i.issue_id,i.pull_request_id,i.draft_title,i.draft_body,i.field_values,i.archived,i.archived_at,i.position,i.created_at,i.updated_at,COALESCE(issues.title,pr.title,i.draft_title) AS title,COALESCE(issues.state,pr.state,'open') AS state FROM project_items i LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id";
+pub(super) const ITEM: &str = "SELECT i.id,i.project_id,(SELECT owner_id FROM projects WHERE id=i.project_id) AS owner_id,i.creator_id,COALESCE(issues.repo_id,pr.repo_id,i.repo_id) AS repo_id,i.issue_id,i.pull_request_id,i.draft_title,i.draft_body,i.field_values,i.archived,i.archived_at,i.position,i.created_at,i.updated_at,COALESCE(issues.title,pr.title,i.draft_title) AS title,COALESCE(issues.state,pr.state,'open') AS state FROM project_items i LEFT JOIN issues ON issues.id=i.issue_id LEFT JOIN pull_requests pr ON pr.id=i.pull_request_id";
 
 pub(super) async fn repository_read(
     tx: &mut Transaction<'_, Postgres>,
@@ -107,7 +107,7 @@ pub async fn delete_field(
             .fetch_optional(&mut *tx)
             .await?;
     let name = name.ok_or(Refusal::Invalid)?;
-    let views: Vec<View> = sqlx::query_as("SELECT * FROM project_views WHERE project_id=$1")
+    let views: Vec<View> = sqlx::query_as("SELECT *, (SELECT owner_id FROM projects WHERE id=project_views.project_id) AS owner_id FROM project_views WHERE project_id=$1")
         .bind(project)
         .fetch_all(&mut *tx)
         .await?;
@@ -376,7 +376,7 @@ pub async fn update_item(
     );
     let mut tx = pool.begin().await?;
     let existing = writable_item(&mut tx, actor, credential, project, item).await?;
-    let fields: Vec<Field> = sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1")
+    let fields: Vec<Field> = sqlx::query_as("SELECT *, (SELECT owner_id FROM projects WHERE id=project_fields.project_id) AS owner_id FROM project_fields WHERE project_id=$1")
         .bind(project)
         .fetch_all(&mut *tx)
         .await?;
@@ -444,7 +444,7 @@ pub async fn create_view(
 ) -> Result<View> {
     let mut tx = pool.begin().await?;
     write_project(&mut tx, actor, credential, project).await?;
-    let fields = sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")
+    let fields = sqlx::query_as("SELECT *, (SELECT owner_id FROM projects WHERE id=project_fields.project_id) AS owner_id FROM project_fields WHERE project_id=$1 ORDER BY id")
         .bind(project)
         .fetch_all(&mut *tx)
         .await?;
@@ -462,7 +462,7 @@ pub async fn create_view(
     }
     input.validate(&fields)?;
     let now = chrono::Utc::now();
-    let view = sqlx::query_as("INSERT INTO project_views(project_id,number,creator_id,configuration,created_at,updated_at) SELECT $1,COALESCE(MAX(number),0)+1,$2,$3,$4,$4 FROM project_views WHERE project_id=$1 RETURNING *")
+    let view = sqlx::query_as("INSERT INTO project_views(project_id,number,creator_id,configuration,created_at,updated_at) SELECT $1,COALESCE(MAX(number),0)+1,$2,$3,$4,$4 FROM project_views WHERE project_id=$1 RETURNING *, (SELECT owner_id FROM projects WHERE id=$1) AS owner_id")
         .bind(project).bind(actor).bind(serde_json::to_string(&input)?).bind(now).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(view)
@@ -471,7 +471,7 @@ pub async fn create_view(
 pub async fn views(pool: &PgPool, viewer: Option<i64>, project: i64) -> Result<Vec<View>> {
     let mut tx = pool.begin().await?;
     readable(&mut tx, viewer, project).await?;
-    let views = sqlx::query_as("SELECT * FROM project_views WHERE project_id=$1 ORDER BY number")
+    let views = sqlx::query_as("SELECT *, (SELECT owner_id FROM projects WHERE id=project_views.project_id) AS owner_id FROM project_views WHERE project_id=$1 ORDER BY number")
         .bind(project)
         .fetch_all(&mut *tx)
         .await?;

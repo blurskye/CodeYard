@@ -141,7 +141,10 @@ async fn object(ruleset: Ruleset, request: &RequestContext) -> Result<Value> {
     for rule in &ruleset.definition.rules {
         rules.push(json!({"__typename":"RepositoryRule","type":upper(rule.name())?}));
     }
-    let mut value = json!({"__typename":"RepositoryRuleset","id":node_id::encode("RRS",ruleset.id),"databaseId":ruleset.id,
+    let root = match ruleset.owner {
+        Owner::Organization(id) | Owner::Repository(id) => id,
+    };
+    let mut value = json!({"__typename":"RepositoryRuleset","id":node_id::scoped("RRS",root,ruleset.id),"databaseId":ruleset.id,
         "name":ruleset.definition.name,"target":upper(ruleset.definition.target)?,"enforcement":upper(ruleset.definition.enforcement)?,
         "source":source,"createdAt":ruleset.created_at,"updatedAt":ruleset.updated_at,"_rules":rules});
     match ruleset.owner {

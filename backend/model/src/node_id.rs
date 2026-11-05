@@ -58,6 +58,24 @@ pub fn decode(value: &str) -> Option<(&str, i64)> {
             | "DE"
             | "DES"
             | "DPR"
+            | "G"
+            | "RAC"
+            | "RI"
+            | "IF"
+            | "IFV"
+            | "WF"
+            | "WR"
+            | "J"
+            | "A"
+            | "APP"
+            | "AIR"
+            | "AP"
+            | "MIG"
+            | "CR"
+            | "GIST"
+            | "GC"
+            | "RR"
+            | "RRT"
     ) {
         return None;
     }
@@ -236,20 +254,21 @@ pub fn decode_discussion_comment(value: &str) -> Option<(i64, i64)> {
     decode_messagepack(&bytes)
 }
 
-/// Review requests use their actual composite primary key, not a synthesized database row ID.
-pub fn review_request(pull: i64, team: bool, target: i64) -> String {
-    let bytes = [
-        pull.to_be_bytes().as_slice(),
-        &[u8::from(team)],
-        target.to_be_bytes().as_slice(),
-    ]
-    .concat();
-    format!("RR_{}", URL_SAFE_NO_PAD.encode(bytes))
-}
-
+/// The former composite request IDs remain readable; issuance uses rooted row identities.
 pub fn decode_review_request(value: &str) -> Option<(i64, bool, i64)> {
+    if value.len() > 128 {
+        return None;
+    }
     let bytes = URL_SAFE_NO_PAD.decode(value.strip_prefix("RR_")?).ok()?;
-    if bytes.len() != 17 || bytes[8] > 1 {
+    if bytes.len() != 17 {
+        let (pull, target) = std::str::from_utf8(&bytes).ok()?.split_once('/')?;
+        let pull = pull.parse::<i64>().ok()?;
+        let target = target.parse::<i64>().ok()?;
+        codeyard_support::cells::Prefix::for_id(pull).ok()?;
+        codeyard_support::cells::Prefix::for_id(target).ok()?;
+        return Some((pull, false, target));
+    }
+    if bytes[8] > 1 {
         return None;
     }
     let pull = i64::from_be_bytes(bytes[..8].try_into().ok()?);
@@ -272,8 +291,17 @@ mod tests {
     use crate::node_id::decode;
     use crate::node_id::decode_review_request;
     use crate::node_id::encode;
-    use crate::node_id::review_request;
     use base64::Engine;
+
+    fn review_request(pull: i64, team: bool, target: i64) -> String {
+        let bytes = [
+            pull.to_be_bytes().as_slice(),
+            &[u8::from(team)],
+            target.to_be_bytes().as_slice(),
+        ]
+        .concat();
+        format!("RR_{}", super::URL_SAFE_NO_PAD.encode(bytes))
+    }
 
     #[test]
     fn node_ids_round_trip_without_changing_rest_ids() {
@@ -286,6 +314,25 @@ mod tests {
             for id in [1, i64::MAX] {
                 assert_eq!(decode(&encode(kind, id)), Some((kind, id)));
             }
+        }
+    }
+
+    #[test]
+    fn all_numeric_child_families_retain_their_explicit_root() {
+        let root = *codeyard_support::cells::Prefix::new(1).ids().start();
+        let id = *codeyard_support::cells::Prefix::new(2).ids().start();
+        for kind in [
+            "PVT", "PVTF", "PVTSSF", "PVTIF", "PVTI", "PVTV", "DI", "IT", "IF", "IFV", "RRS", "OI",
+            "RI", "RAC", "EN", "G", "GBP", "DE", "DES", "DPR", "WF", "WR", "J", "A", "APP", "AIR",
+            "AP", "MIG", "CR", "GIST", "GC", "RR", "RRT",
+        ] {
+            let value = super::scoped(kind, root, id).unwrap();
+            assert_eq!(super::scoped_root(&value), Some(root), "{kind}");
+            assert_eq!(
+                super::routed(&value),
+                Some(super::Routed { kind, root, id })
+            );
+            assert_eq!(decode(&value), Some((kind, id)));
         }
     }
 
@@ -321,9 +368,7 @@ mod tests {
             assert!(super::routed(&super::git_object(kind, root, "invalid")).is_none());
         }
         assert_eq!(
-            super::routed(&super::review_request(root, true, 3))
-                .unwrap()
-                .root,
+            super::routed(&review_request(root, true, 3)).unwrap().root,
             root
         );
         assert_eq!(

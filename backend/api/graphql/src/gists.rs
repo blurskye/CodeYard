@@ -22,22 +22,32 @@ async fn authorize(request: &RequestContext) -> Result<()> {
 }
 
 fn object(gist: &Gist) -> Value {
-    json!({"__typename":"Gist","id":node_id::git("GIST",&gist.id),"name":gist.id,"description":gist.description,"isPublic":gist.is_public,"updatedAt":gist.updated_at})
+    json!({"__typename":"Gist","id":node_id::scoped("GIST",gist.repo_id,gist.repo_id),"name":gist.id,"description":gist.description,"isPublic":gist.is_public,"updatedAt":gist.updated_at})
 }
 
 /// The gist a REST `node_id` names. Like the REST read, its ID is enough to read a secret gist.
-pub(super) async fn node(key: &str, request: &RequestContext) -> Result<Value> {
+pub(super) async fn node(id: &str, request: &RequestContext) -> Result<Value> {
+    if id.len() > 128 {
+        return Err(missing());
+    }
     authorize(request).await?;
-    let id = URL_SAFE_NO_PAD
-        .decode(key)
-        .ok()
-        .and_then(|bytes| String::from_utf8(bytes).ok())
-        .ok_or_else(missing)?;
-    let gist = codeyard_db_repos::gists::get(&request.state.pool, &id)
-        .await
-        .map_err(unavailable)?
-        .filter(|gist| gist.ready)
-        .ok_or_else(missing)?;
+    let gist = if let Some(("GIST", repo)) = node_id::decode(id) {
+        codeyard_db_repos::gists::by_repository(&request.state.pool, repo)
+            .await
+            .map_err(unavailable)?
+    } else {
+        let key = id.strip_prefix("GIST_").ok_or_else(missing)?;
+        let name = URL_SAFE_NO_PAD
+            .decode(key)
+            .ok()
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .ok_or_else(missing)?;
+        codeyard_db_repos::gists::get(&request.state.pool, &name)
+            .await
+            .map_err(unavailable)?
+    }
+    .filter(|gist| gist.ready)
+    .ok_or_else(missing)?;
     Ok(object(&gist))
 }
 

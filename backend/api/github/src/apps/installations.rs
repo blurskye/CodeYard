@@ -78,7 +78,7 @@ pub(crate) fn app_value(
     installations: i64,
 ) -> Result<Value> {
     Ok(
-        json!({"id":app.id,"slug":app.slug,"node_id":codeyard_model::node_id::encode("APP",app.id),"owner":payloads::user(owner),"name":app.name,"description":app.description,"external_url":app.homepage,"html_url":format!("{}/apps/{}",codeyard_model::http_config::link_origin(),app.slug),"created_at":app.created_at,"updated_at":app.created_at,"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"installations_count":installations,"client_id":app.client_id}),
+        json!({"id":app.id,"slug":app.slug,"node_id":codeyard_model::node_id::scoped("APP",owner.id,app.id),"owner":payloads::user(owner),"name":app.name,"description":app.description,"external_url":app.homepage,"html_url":format!("{}/apps/{}",codeyard_model::http_config::link_origin(),app.slug),"created_at":app.created_at,"updated_at":app.created_at,"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"installations_count":installations,"client_id":app.client_id}),
     )
 }
 pub(crate) async fn document(state: &AppState, installation: &Installation) -> Result<Value> {
@@ -129,7 +129,7 @@ pub(super) async fn installation_requests(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-        values.push(json!({"id":request.id,"node_id":codeyard_model::node_id::encode("AIR",request.id),"account":account(&state,&installation).await?,"requester":payloads::user(&requester),"created_at":request.created_at}));
+        values.push(json!({"id":request.id,"node_id":codeyard_model::node_id::scoped("AIR",request.org_id,request.id),"account":account(&state,&installation).await?,"requester":payloads::user(&requester),"created_at":request.created_at}));
     }
     page.response(&uri, values, has_next)
 }

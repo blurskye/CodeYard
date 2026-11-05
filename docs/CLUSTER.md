@@ -753,8 +753,10 @@ pages/forms reuse home CSRF and cached identity without local credentials; their
 checks pass. Cold collaborator targets have directory-verified home metadata
 lookup before the invitation transaction; this follow-up passes source checks.
 
-Rooted node readers and common repository/team projections pass source checks; remaining
-node-family issuance is unfinished. Range reservations and stopped-cell `cell renew-range
+Rooted node readers and common repository/team projections pass source checks. Project,
+workflow, environment, App, gist and review-request issuance is written but unchecked;
+synthetic node families remain open. Review requests share one reader and stable row IDs.
+Range reservations and stopped-cell `cell renew-range
 --directory-address <address> --directory-key <public key>` are source-checked, committed
 owner follow-ups. Renewal preserves stable homes and existing rows. Issuer history keeps
 pending OAuth/device codes usable. Automatic renewal is deferred.

@@ -17,7 +17,7 @@ pub(crate) fn issue_type(
     item: &codeyard_db_repos::issue_attributes::Attribute,
     repo: i64,
 ) -> Value {
-    json!({"__typename":"IssueType","_repo":repo,"_scope":"issues","id":node_id::encode("IT",item.id),"name":item.name,"description":item.description,"color":item.color.as_deref().unwrap_or("gray").to_uppercase()})
+    json!({"__typename":"IssueType","_repo":repo,"_scope":"issues","id":item.owner_id().and_then(|root| node_id::scoped("IT",root,item.id)),"name":item.name,"description":item.description,"color":item.color.as_deref().unwrap_or("gray").to_uppercase()})
 }
 
 pub(crate) async fn type_node(id: i64, request: &RequestContext) -> Result<Value> {

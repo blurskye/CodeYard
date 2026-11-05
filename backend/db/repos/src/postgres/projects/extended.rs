@@ -93,7 +93,7 @@ pub async fn field_by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<
 
 async fn field_by_id_once(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Field> {
     let mut tx = read_snapshot(pool).await?;
-    let field: Field = sqlx::query_as("SELECT * FROM project_fields WHERE id=$1")
+    let field: Field = sqlx::query_as("SELECT *, (SELECT owner_id FROM projects WHERE id=project_fields.project_id) AS owner_id FROM project_fields WHERE id=$1")
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?
@@ -280,7 +280,7 @@ pub async fn copy(
     let now = chrono::Utc::now();
     let result: Project = sqlx::query_as("INSERT INTO projects(owner_user_id,owner_org_id,number,creator_id,title,description,readme,public,created_at,updated_at) SELECT $1,$2,COALESCE(MAX(number),0)+1,$3,$4,$5,$6,false,$7,$7 FROM projects WHERE owner_kind=$8 AND owner_id=$9 RETURNING *").bind(if kind=="user" {Some(id)} else {None}).bind(if kind=="org" {Some(id)} else {None}).bind(actor).bind(title).bind(&original.description).bind(&original.readme).bind(now).bind(kind).bind(id).fetch_one(&mut *tx).await?;
     let fields: Vec<Field> =
-        sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")
+        sqlx::query_as("SELECT *, (SELECT owner_id FROM projects WHERE id=project_fields.project_id) AS owner_id FROM project_fields WHERE project_id=$1 ORDER BY id")
             .bind(source)
             .fetch_all(&mut *tx)
             .await?;
@@ -290,7 +290,7 @@ pub async fn copy(
         mapping.insert(field.id, id);
     }
     let views: Vec<crate::projects::View> =
-        sqlx::query_as("SELECT * FROM project_views WHERE project_id=$1 ORDER BY number")
+        sqlx::query_as("SELECT *, (SELECT owner_id FROM projects WHERE id=project_views.project_id) AS owner_id FROM project_views WHERE project_id=$1 ORDER BY number")
             .bind(source)
             .fetch_all(&mut *tx)
             .await?;

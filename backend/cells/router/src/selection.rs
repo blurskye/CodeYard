@@ -155,12 +155,14 @@ impl Routes {
         let scoped = codeyard_model::node_id::scoped_root(value).is_some();
         let kind = match node.kind {
             "I" | "PR" | "IC" | "PC" | "PRR" | "PRRC" | "D" | "DIC" | "L" | "M" | "REA" | "RE"
-            | "RA" | "CS" | "CSU" | "CRU" | "IE" | "S" | "ART" | "CC" | "IT" | "LB"
+            | "RA" | "CS" | "CSU" | "CRU" | "IE" | "S" | "ART" | "CC" | "LB" | "EN" | "G"
+            | "DE" | "DES" | "DPR" | "GBP" | "RAC" | "RI" | "IFV" | "WF" | "WR" | "J" | "CR"
+            | "GIST" | "GC" | "RR" | "RRT"
                 if scoped =>
             {
                 Some(ObjectKind::Repository)
             }
-            "T" if scoped => Some(ObjectKind::Organization),
+            "T" | "OI" | "AIR" if scoped => Some(ObjectKind::Organization),
             "R" | "REF" | "C" | "B" | "TAG" | "SCR" | "STAT" | "DC" => Some(ObjectKind::Repository),
             "U" => Some(ObjectKind::User),
             "O" => Some(ObjectKind::Organization),

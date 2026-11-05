@@ -156,17 +156,22 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     shutdown and capacity measurements need a writable delegated cgroup.
     Stage 2 directory claims/TLS/cache, routing, scoped credentials, stable homes, stubs,
     common rooted IDs, native claim publication, transactional claim cleanup, bounded capacity
-    reports and foreign GraphQL quota ownership pass workspace dea3424d0b424e2aab4b6a6c42aca06d,
-    Clippy c56d800c7de14f34820c16f71fce6436 and WASM 120a086a0c724fd29b78f1130255a2a0.
+    reports and foreign GraphQL quota ownership pass workspace bb56c210807b48338ec9987c8b7472c8,
+    Clippy 769b632f8bba481485b42948058bb200 and WASM 1c95951358e9455fb98c704e454e1bef.
     Generated GraphQL is unchanged. Range renewal is a committed, deferred owner follow-up.
-    Runtime retry 616868dc57e7437c85afe790dcf2161a runs an earlier snapshot: changed libraries
-    pass; CI 220 passes with 19 existing cgroup-dependent ignores; cluster is 230/one and
-    database 179/two. Pull requests pass 324 with two existing cgroup-dependent ignores;
-    seven of the nine selected repository contracts pass and the exhaustive GraphQL contracts
-    are running. The foreign GraphQL quota and browser fixture fixes are source-checked.
-    New native publication, cleanup/restart and capacity tests await runtime. The real two-cell
-    public gh/Git e2e round is written and awaits its first run. Remote membership pointers and
-    remaining node families are unfinished. No stage 2 completion is claimed.
+    Earlier runtime 616868dc57e7437c85afe790dcf2161a passes 400 changed-library tests,
+    CI 220 with 19 existing cgroup-dependent ignores, pull requests 324 with two existing
+    cgroup-dependent ignores, and all nine selected repository contracts. Cluster is 230/one
+    and database 179/two; their quota and browser-fixture fixes pass source checks.
+    Runtime eb1c71056db64586b3b41c713e7bf631 covers those fixes, native publication,
+    cleanup/restart, capacity and the new public two-cell gh/Git round; it is building.
+    Numeric child IDs for projects, issue types/fields, workflows, environments, Apps, gists
+    and review requests now carry their actual account or repository root in unchecked source.
+    Review-request projections share one reader; both baseline schemas retain stable request
+    row IDs and protection-rule App owners. Project output assertions now expect rooted IDs;
+    former input IDs remain accepted as the architecture requires. New HTTP tests reject
+    forged project, draft, gist and team-review roots. Remote membership pointers and synthetic
+    node-family completion remain open. No stage 2 completion is claimed.
     Stages 3 to 6 are not built. Automatic user moves and org regional presence remain
     documented owner decisions.
     Owner follow-ups: foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded

@@ -7,15 +7,6 @@ use crate::Result;
 use codeyard_repos_core::repositories::store::repo_store;
 use serde_json::json;
 use serde_json::Value;
-pub(super) async fn review_request(
-    pull: &codeyard_db_core::models::PullRequest,
-    reviewer: &codeyard_db_core::models::User,
-    request: &RequestContext,
-) -> Result<Value> {
-    Ok(
-        json!({"__typename":"ReviewRequest","_repo":pull.repo_id,"_scope":"pull-requests","id":codeyard_model::node_id::git("RR",&format!("{}/{}",pull.id,reviewer.id)),"databaseId":null,"pullRequest":crate::issue::pull_object(pull),"requestedReviewer":crate::user::actor_by_id(reviewer.id,request).await?}),
-    )
-}
 
 async fn mergeable(
     repo: &codeyard_db_core::models::Repository,
@@ -216,24 +207,7 @@ pub(super) async fn resolve(
             }
             Ok(page.finish(nodes))
         }
-        "reviewRequests" => {
-            let reviewers = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
-                &request.state.pool,
-                pull.id,
-            )
-            .await
-            .map_err(unavailable)?;
-            let page = crate::connection::Page::new(args, reviewers.len() as i64)?;
-            let mut nodes = vec![];
-            for row in reviewers
-                .into_iter()
-                .skip(page.offset as usize)
-                .take(page.limit as usize)
-            {
-                nodes.push(review_request(&pull, &row, request).await?);
-            }
-            Ok(page.finish(nodes))
-        }
+        "reviewRequests" => crate::review_requests::list(args, request, pull.id).await,
         "mergeable" => Ok(json!(match pull.mergeable {
             Some(true) => "MERGEABLE",
             Some(false) => "CONFLICTING",

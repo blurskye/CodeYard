@@ -409,6 +409,7 @@ native_operation!(crate::postgres::pull_requests::reviews::list_pull_request_rev
 
 #[derive(sqlx::FromRow)]
 pub struct ReviewRequestOrigin {
+    pub id: i64,
     pub user_id: Option<i64>,
     pub team_id: Option<i64>,
     pub as_code_owner: bool,

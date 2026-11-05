@@ -212,6 +212,23 @@ async fn contract(pg: bool) {
         "review-org"
     );
     let request_node = requests["nodes"][0]["id"].as_str().unwrap().to_owned();
+    let request_identity = codeyard_model::node_id::routed(&request_node).unwrap();
+    assert_eq!(request_identity.kind, "RRT");
+    let repository_root = codeyard_model::node_id::routed(&pull_node).unwrap().root;
+    assert_eq!(request_identity.root, repository_root);
+    let forged =
+        codeyard_model::node_id::scoped("RRT", repository_root + 10000, request_identity.id)
+            .unwrap();
+    let refused = graphql(
+        &router,
+        &auth[0],
+        "query($id:ID!){node(id:$id){id}}",
+        json!({"id":forged}),
+    )
+    .await;
+    assert!(refused["data"]["node"].is_null(), "{refused}");
+    assert_eq!(refused["errors"][0]["type"], "NOT_FOUND", "{refused}");
+
     let node = graphql(&router,&auth[0],"query($id:ID!){node(id:$id){__typename ... on ReviewRequest{asCodeOwner requestedReviewer{... on Team{slug}}}}}",json!({"id":request_node})).await;
     assert!(node.get("errors").is_none(), "{node}");
     assert_eq!(node["data"]["node"]["__typename"], "ReviewRequest");

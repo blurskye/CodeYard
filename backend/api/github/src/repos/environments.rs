@@ -221,8 +221,8 @@ async fn environment(
     )
 }
 
-fn branch_document(branch: &Branch) -> Value {
-    json!({"id": branch.id, "node_id": codeyard_model::node_id::encode("GBP", branch.id), "name": branch.name, "type": branch.kind})
+fn branch_document(branch: &Branch, repo: i64) -> Value {
+    json!({"id": branch.id, "node_id": codeyard_model::node_id::scoped("GBP", repo, branch.id), "name": branch.name, "type": branch.kind})
 }
 
 #[derive(Deserialize)]
@@ -265,7 +265,7 @@ async fn policies(
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;
-            return Ok(Json(branch_document(&branch)).into_response());
+            return Ok(Json(branch_document(&branch, repo.id)).into_response());
         }
         let (offset, limit) = page.window()?;
         let rows = codeyard_db_actions::environments::branches(
@@ -279,7 +279,7 @@ async fn policies(
         let total = codeyard_db_actions::environments::branch_count(&state.pool, env.id)
             .await
             .map_err(Error::unavailable)?;
-        return Ok((page.headers(&uri, rows.len() > limit)?, Json(json!({"total_count": total, "branch_policies": rows.iter().take(limit).map(branch_document).collect::<Vec<_>>()}))).into_response());
+        return Ok((page.headers(&uri, rows.len() > limit)?, Json(json!({"total_count": total, "branch_policies": rows.iter().take(limit).map(|branch| branch_document(branch, repo.id)).collect::<Vec<_>>()}))).into_response());
     }
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     if method == Method::DELETE {
@@ -334,7 +334,7 @@ async fn policies(
         )
             .into_response());
     }
-    Ok(Json(branch_document(&branch)).into_response())
+    Ok(Json(branch_document(&branch, repo.id)).into_response())
 }
 
 pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

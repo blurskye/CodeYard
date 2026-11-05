@@ -95,10 +95,9 @@ async fn objects(
     };
     let mut nodes = Vec::new();
     for origin in origins {
-        let (team, id, reviewer) = match (origin.user_id, origin.team_id) {
+        let (team, reviewer) = match (origin.user_id, origin.team_id) {
             (Some(id), None) => (
                 false,
-                id,
                 users
                     .get(&id)
                     .filter(|user| !user.is_banned)
@@ -108,7 +107,6 @@ async fn objects(
             ),
             (None, Some(id)) => (
                 true,
-                id,
                 match teams.get(&id) {
                     Some(team) => team_object(team, request).await?,
                     None => Value::Null,
@@ -116,7 +114,7 @@ async fn objects(
             ),
             _ => return Err(missing()),
         };
-        let node = json!({"__typename":"ReviewRequest","_repo":pull.repo_id,"_scope":"pull-requests","_pull":pull.id,"id":node_id::review_request(pull.id,team,id),
+        let node = json!({"__typename":"ReviewRequest","_repo":pull.repo_id,"_scope":"pull-requests","_pull":pull.id,"id":node_id::scoped(if team { "RRT" } else { "RR" },pull.repo_id,origin.id),
             "databaseId":null,"asCodeOwner":origin.as_code_owner,"requestedReviewer":reviewer});
         request.charge_value(&node)?;
         nodes.push(node);
@@ -178,7 +176,21 @@ pub(super) async fn list(ctx: &Arguments, request: &RequestContext, id: i64) -> 
 }
 
 pub(super) async fn node(id: &str, request: &RequestContext) -> Result<Value> {
-    let (id, team, target) = node_id::decode_review_request(id).ok_or_else(missing)?;
+    let numeric = node_id::decode(id);
+    let (id, team, target) = if let Some((kind @ ("RR" | "RRT"), row)) = numeric {
+        let team = kind == "RRT";
+        let (pull, target) = codeyard_db_repos::pull_requests::team_reviewers::request_key(
+            &request.state.pool,
+            team,
+            row,
+        )
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
+        (pull, team, target)
+    } else {
+        node_id::decode_review_request(id).ok_or_else(missing)?
+    };
     let pull = pull(id, request).await?;
     let mut window = window(&pull, request).await?;
     window.target = Some((team, target));
@@ -191,6 +203,11 @@ pub(super) async fn node(id: &str, request: &RequestContext) -> Result<Value> {
     .await
     .map_err(unavailable)?
     .1;
+    // A removal followed by a new request must not resolve the removed row's ID.
+    let rows: Vec<_> = rows
+        .into_iter()
+        .filter(|origin| numeric.is_none_or(|(_, id)| origin.id == id))
+        .collect();
     objects(&pull, &rows, window.viewer, request)
         .await?
         .into_iter()

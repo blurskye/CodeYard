@@ -34,6 +34,7 @@ pub(crate) fn waiting_sql(pg: bool, run: &str) -> String {
 #[derive(Debug, sqlx::FromRow)]
 pub struct Rule {
     pub id: i64,
+    pub app_owner_id: i64,
     pub environment_id: i64,
     pub app_id: i64,
     pub slug: String,

@@ -679,10 +679,11 @@ CREATE TABLE IF NOT EXISTS pr_assignees (
 );
 
 CREATE TABLE IF NOT EXISTS pr_reviewers (
+    id BIGSERIAL PRIMARY KEY,
     pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     as_code_owner BOOLEAN NOT NULL DEFAULT FALSE,
-    PRIMARY KEY (pull_request_id, user_id)
+    UNIQUE(pull_request_id, user_id)
 );
 
 -- What changed on an issue or pull request, shown between its comments.
@@ -3280,10 +3281,11 @@ CREATE TABLE organization_settings (
 
 -- pulls: team identities remain requests as membership changes.
 CREATE TABLE pr_team_reviewers (
+    id BIGSERIAL PRIMARY KEY,
     pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
     team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
     as_code_owner BOOLEAN NOT NULL DEFAULT FALSE,
-    PRIMARY KEY(pull_request_id, team_id)
+    UNIQUE(pull_request_id, team_id)
 );
 CREATE INDEX pr_team_reviewers_team ON pr_team_reviewers(team_id);
 
@@ -4056,6 +4058,7 @@ CREATE TABLE deployment_protection_rules (
     id BIGSERIAL PRIMARY KEY,
     environment_id BIGINT NOT NULL REFERENCES deployment_environments(id) ON DELETE CASCADE,
     app_id BIGINT NOT NULL,
+    app_owner_id BIGINT NOT NULL,
     slug TEXT NOT NULL,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     UNIQUE(environment_id,app_id)

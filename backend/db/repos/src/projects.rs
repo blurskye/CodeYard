@@ -216,6 +216,8 @@ pub struct Settings {
 pub struct Field {
     pub id: i64,
     pub project_id: i64,
+    /// Account root read from the owning project in the same query.
+    pub owner_id: i64,
     pub name: String,
     pub data_type: String,
     pub configuration: String,
@@ -400,6 +402,8 @@ pub(crate) fn validate_project(title: &str, description: Option<&str>) -> Result
 pub struct Item {
     pub id: i64,
     pub project_id: i64,
+    /// Account root read from the owning project in the same query.
+    pub owner_id: i64,
     pub creator_id: i64,
     pub repo_id: Option<i64>,
     pub issue_id: Option<i64>,
@@ -464,6 +468,8 @@ pub struct FieldUpdate {
 pub struct View {
     pub id: i64,
     pub project_id: i64,
+    /// Account root read from the owning project in the same query.
+    pub owner_id: i64,
     pub number: i64,
     pub creator_id: i64,
     pub configuration: String,

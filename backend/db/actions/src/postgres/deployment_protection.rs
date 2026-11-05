@@ -82,8 +82,8 @@ pub async fn create(
     let already: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM deployment_protection_rules WHERE environment_id=$1 AND app_id=$2 AND enabled)")
         .bind(environment).bind(app.id).fetch_one(&mut *tx).await?;
     anyhow::ensure!(already || count < 6, Refusal::Invalid);
-    let rule = sqlx::query_as("INSERT INTO deployment_protection_rules(environment_id,app_id,slug,enabled) VALUES($1,$2,$3,TRUE) ON CONFLICT(environment_id,app_id) DO UPDATE SET enabled=TRUE,slug=excluded.slug RETURNING *")
-        .bind(environment).bind(app.id).bind(app.slug).fetch_one(&mut *tx).await?;
+    let rule = sqlx::query_as("INSERT INTO deployment_protection_rules(environment_id,app_id,slug,app_owner_id,enabled) VALUES($1,$2,$3,$4,TRUE) ON CONFLICT(environment_id,app_id) DO UPDATE SET enabled=TRUE,slug=excluded.slug,app_owner_id=excluded.app_owner_id RETURNING *")
+        .bind(environment).bind(app.id).bind(app.slug).bind(app.owner_id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(rule)
 }

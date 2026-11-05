@@ -50,11 +50,11 @@ pub(super) fn write_error(error: anyhow::Error) -> Error {
     }
 }
 
-fn integration(id: i64, slug: &str) -> Value {
-    json!({"id":id,"slug":slug,"integration_url":api_url(&format!("/apps/{}", codeyard_webui::encode_component(slug))),"node_id":node_id::encode("APP", id)})
+fn integration(id: i64, slug: &str, owner: i64) -> Value {
+    json!({"id":id,"slug":slug,"integration_url":api_url(&format!("/apps/{}", codeyard_webui::encode_component(slug))),"node_id":node_id::scoped("APP", owner, id)})
 }
-fn document(rule: &Rule) -> Value {
-    json!({"id":rule.id,"node_id":node_id::encode("DPR",rule.id),"enabled":rule.enabled,"app":integration(rule.app_id,&rule.slug)})
+fn document(rule: &Rule, repo: i64) -> Value {
+    json!({"id":rule.id,"node_id":node_id::scoped("DPR",repo,rule.id),"enabled":rule.enabled,"app":integration(rule.app_id,&rule.slug,rule.app_owner_id)})
 }
 
 #[derive(Deserialize)]
@@ -103,10 +103,10 @@ async fn rules(
                 .iter()
                 .find(|rule| rule.id == id)
                 .ok_or_else(Error::missing)?;
-            return Ok(Json(document(rule)).into_response());
+            return Ok(Json(document(rule, repo.id)).into_response());
         }
         let (offset, limit) = page.window()?;
-        return Ok((page.headers(&uri, rules.len() > offset + limit)?, Json(json!({"total_count":rules.len(),"custom_deployment_protection_rules":rules.iter().skip(offset).take(limit).map(document).collect::<Vec<_>>()}))).into_response());
+        return Ok((page.headers(&uri, rules.len() > offset + limit)?, Json(json!({"total_count":rules.len(),"custom_deployment_protection_rules":rules.iter().skip(offset).take(limit).map(|rule| document(rule, repo.id)).collect::<Vec<_>>()}))).into_response());
     }
     let actor = authentication
         .ok_or_else(codeyard_identity::github_auth::required)?
@@ -131,7 +131,7 @@ async fn rules(
     let rule = protection::create(&state.pool, actor, repo.id, env.id, input.integration_id)
         .await
         .map_err(write_error)?;
-    Ok((StatusCode::CREATED, Json(document(&rule))).into_response())
+    Ok((StatusCode::CREATED, Json(document(&rule, repo.id))).into_response())
 }
 
 async fn integrations(
@@ -160,7 +160,7 @@ async fn integrations(
         .await
         .map_err(Error::unavailable)?;
     let (offset, limit) = page.window()?;
-    Ok((page.headers(&uri, apps.len() > offset + limit)?, Json(json!({"total_count":apps.len(),"available_custom_deployment_protection_rule_integrations":apps.iter().skip(offset).take(limit).map(|app| integration(app.id,&app.slug)).collect::<Vec<_>>()}))).into_response())
+    Ok((page.headers(&uri, apps.len() > offset + limit)?, Json(json!({"total_count":apps.len(),"available_custom_deployment_protection_rule_integrations":apps.iter().skip(offset).take(limit).map(|app| integration(app.id,&app.slug,app.owner_id)).collect::<Vec<_>>()}))).into_response())
 }
 
 #[derive(Deserialize)]

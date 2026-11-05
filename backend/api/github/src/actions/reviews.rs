@@ -103,7 +103,7 @@ async fn history(
         });
         let encoded = codeyard_webui::encode_component(&row.environment_name);
         let environment = json!({"id":row.environment_id,
-            "node_id":codeyard_model::node_id::encode("EN", row.environment_id),
+            "node_id":codeyard_model::node_id::scoped("EN", repo.id, row.environment_id),
             "name":row.environment_name,
             "url":format!("{}/environments/{encoded}", codeyard_model::urls::repo_url(&owner, &name)),
             "html_url":format!("{}/{}/{}/deployments/activity_log?environments_filter={encoded}", codeyard_model::http_config::link_origin(), codeyard_webui::encode_component(&owner), codeyard_webui::encode_component(&name))});

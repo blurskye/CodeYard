@@ -386,11 +386,11 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
     if id.starts_with("D_") || id.starts_with("DIC_") || id.starts_with("DC_") {
         return crate::discussions::node(id, request).await;
     }
-    if id.starts_with("RR_") {
+    if id.starts_with("RR_") || id.starts_with("RRT_") {
         return crate::review_requests::node(id, request).await;
     }
-    if let Some(key) = id.strip_prefix("GIST_") {
-        return crate::gists::node(key, request).await;
+    if id.starts_with("GIST_") {
+        return crate::gists::node(id, request).await;
     }
     // Numeric team IDs and content-addressed tree IDs share T but have disjoint byte shapes.
     if codeyard_model::node_id::decode(id).is_none()

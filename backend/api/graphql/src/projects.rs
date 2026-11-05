@@ -67,7 +67,7 @@ fn project_owner(
     }
 }
 fn project_object(p: &codeyard_db_repos::projects::Project) -> Value {
-    json!({"__typename":"ProjectV2","id":node_id::encode("PVT",p.id),"databaseId":p.id,"number":p.number,"title":p.title,"shortDescription":p.description,"readme":p.readme,"public":p.public,"closed":p.closed_at.is_some(),"closedAt":p.closed_at,"template":p.template,"createdAt":p.created_at,"updatedAt":p.updated_at,"_project":p.id,"_ownerKind":p.owner_kind,"_owner":p.owner_id,"_creator":p.creator_id})
+    json!({"__typename":"ProjectV2","id":node_id::scoped("PVT",p.owner_id,p.id),"databaseId":p.id,"number":p.number,"title":p.title,"shortDescription":p.description,"readme":p.readme,"public":p.public,"closed":p.closed_at.is_some(),"closedAt":p.closed_at,"template":p.template,"createdAt":p.created_at,"updatedAt":p.updated_at,"_project":p.id,"_ownerKind":p.owner_kind,"_owner":p.owner_id,"_creator":p.creator_id})
 }
 fn field_object(f: &codeyard_db_repos::projects::Field) -> Result<Value> {
     let config = codeyard_db_repos::projects::field_configuration(f).map_err(operation)?;
@@ -76,7 +76,7 @@ fn field_object(f: &codeyard_db_repos::projects::Field) -> Result<Value> {
         "iteration" => ("ProjectV2IterationField", "PVTIF"),
         _ => ("ProjectV2Field", "PVTF"),
     };
-    let mut value = json!({"__typename":ty,"id":node_id::encode(prefix,f.id),"databaseId":f.id,"name":f.name,"dataType":f.data_type.to_uppercase(),"isIssueField":false,"createdAt":f.created_at,"updatedAt":f.updated_at,"_project":f.project_id,"_options":config["options"]});
+    let mut value = json!({"__typename":ty,"id":node_id::scoped(prefix,f.owner_id,f.id),"databaseId":f.id,"name":f.name,"dataType":f.data_type.to_uppercase(),"isIssueField":false,"createdAt":f.created_at,"updatedAt":f.updated_at,"_project":f.project_id,"_options":config["options"]});
     if f.data_type == "iteration" {
         let mut active = Vec::new();
         let mut completed = Vec::new();
@@ -274,7 +274,7 @@ async fn built_in_values(
     Ok(values)
 }
 fn draft_object(item: &codeyard_db_repos::projects::Item) -> Value {
-    json!({"__typename":"DraftIssue","id":node_id::encode("DI",item.id),"title":item.draft_title,"body":item.draft_body.as_deref().unwrap_or(""),"createdAt":item.created_at,"updatedAt":item.updated_at,"_creator":item.creator_id,"_project":item.project_id})
+    json!({"__typename":"DraftIssue","id":node_id::scoped("DI",item.owner_id,item.id),"title":item.draft_title,"body":item.draft_body.as_deref().unwrap_or(""),"createdAt":item.created_at,"updatedAt":item.updated_at,"_creator":item.creator_id,"_project":item.project_id})
 }
 fn charge_item(item: &codeyard_db_repos::projects::Item, request: &RequestContext) -> Result<()> {
     request.charge(
@@ -329,7 +329,7 @@ async fn item_object(
         draft_object(item)
     };
     Ok(
-        json!({"__typename":"ProjectV2Item","id":node_id::encode("PVTI",item.id),"databaseId":item.id,"isArchived":item.archived,"createdAt":item.created_at,"updatedAt":item.updated_at,"content":content,"_project":item.project_id,"_creator":item.creator_id,"_item":item.id}),
+        json!({"__typename":"ProjectV2Item","id":node_id::scoped("PVTI",item.owner_id,item.id),"databaseId":item.id,"isArchived":item.archived,"createdAt":item.created_at,"updatedAt":item.updated_at,"content":content,"_project":item.project_id,"_creator":item.creator_id,"_item":item.id}),
     )
 }
 

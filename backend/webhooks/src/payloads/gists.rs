@@ -22,7 +22,7 @@ pub fn gist(gist: &Gist, owner: &User, files: Value) -> Value {
         http_clone_base().trim_end_matches('/'),
         gist.id
     );
-    json!({"id":gist.id,"node_id":node_id::git("GIST",&gist.id),"url":url,"forks_url":format!("{url}/forks"),"commits_url":format!("{url}/commits"),"comments_url":format!("{url}/comments"),"html_url":format!("{}/gists/{}",link_origin(),gist.id),"git_pull_url":git,"git_push_url":git,"files":files,"public":gist.is_public,"description":gist.description,"comments":gist.comments,"comments_enabled":true,"owner":user(owner),"user":null,"created_at":time(gist.created_at),"updated_at":time(gist.updated_at),"truncated":false})
+    json!({"id":gist.id,"node_id":node_id::scoped("GIST",gist.repo_id,gist.repo_id),"url":url,"forks_url":format!("{url}/forks"),"commits_url":format!("{url}/commits"),"comments_url":format!("{url}/comments"),"html_url":format!("{}/gists/{}",link_origin(),gist.id),"git_pull_url":git,"git_push_url":git,"files":files,"public":gist.is_public,"description":gist.description,"comments":gist.comments,"comments_enabled":true,"owner":user(owner),"user":null,"created_at":time(gist.created_at),"updated_at":time(gist.updated_at),"truncated":false})
 }
 /// The MIME type a gist file's metadata names. Raw responses send the downgraded
 /// `raw_content_type` instead, so that no file runs as script or markup on this origin.
@@ -82,5 +82,5 @@ pub fn gist_revision(
     )
 }
 pub fn gist_comment(id: &str, owner: i64, comment: &Comment, author: Option<&User>) -> Value {
-    json!({"id":comment.id,"node_id":node_id::encode("GC",comment.id),"url":api_url(&format!("/gists/{id}/comments/{}",comment.id)),"body":comment.body,"user":author.map(user),"author_association":if comment.user_id==Some(owner) {"OWNER"} else {"NONE"},"created_at":time(comment.created_at),"updated_at":time(comment.updated_at)})
+    json!({"id":comment.id,"node_id":node_id::scoped("GC",comment.repo_id,comment.id),"url":api_url(&format!("/gists/{id}/comments/{}",comment.id)),"body":comment.body,"user":author.map(user),"author_association":if comment.user_id==Some(owner) {"OWNER"} else {"NONE"},"created_at":time(comment.created_at),"updated_at":time(comment.updated_at)})
 }

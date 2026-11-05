@@ -138,7 +138,7 @@ pub async fn policies_page(
     } else {
         None
     };
-    let select = "SELECT p.id,p.data,p.created_at,p.updated_at,o.name AS organization FROM actions_policies p LEFT JOIN organizations o ON o.id=p.org_id";
+    let select = "SELECT p.id,COALESCE(p.repo_id,p.org_id) AS owner_id,p.data,p.created_at,p.updated_at,o.name AS organization FROM actions_policies p LEFT JOIN organizations o ON o.id=p.org_id";
     let (total, rows) = if let Some((total, ids)) = selected {
         let rows = sqlx::query_as(&format!(
             "{select} WHERE p.id IN (SELECT value FROM json_each(?1)) ORDER BY p.id"
@@ -191,7 +191,7 @@ pub async fn policies(
     .await?;
     ensure!(id.is_some() || change.is_some(), Refusal::Invalid);
     let mut rows: Vec<Policy> = if let Some(id) = id {
-        sqlx::query_as(&format!("SELECT id,data,created_at,updated_at FROM actions_policies WHERE {column}=?1 AND id=?2")).bind(scope_id).bind(id).fetch_all(&mut *tx).await?
+        sqlx::query_as(&format!("SELECT id,COALESCE(repo_id,org_id) AS owner_id,data,created_at,updated_at FROM actions_policies WHERE {column}=?1 AND id=?2")).bind(scope_id).bind(id).fetch_all(&mut *tx).await?
     } else {
         Vec::new()
     };
@@ -203,9 +203,9 @@ pub async fn policies(
                 input,
             )?;
             let row = if let Some(id) = id {
-                sqlx::query_as("UPDATE actions_policies SET data=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING id,data,created_at,updated_at").bind(id).bind(data.to_string()).fetch_one(&mut *tx).await?
+                sqlx::query_as("UPDATE actions_policies SET data=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING id,COALESCE(repo_id,org_id) AS owner_id,data,created_at,updated_at").bind(id).bind(data.to_string()).fetch_one(&mut *tx).await?
             } else {
-                sqlx::query_as(&format!("INSERT INTO actions_policies({column},data) VALUES(?1,?2) RETURNING id,data,created_at,updated_at")).bind(scope_id).bind(data.to_string()).fetch_one(&mut *tx).await?
+                sqlx::query_as(&format!("INSERT INTO actions_policies({column},data) VALUES(?1,?2) RETURNING id,COALESCE(repo_id,org_id) AS owner_id,data,created_at,updated_at")).bind(scope_id).bind(data.to_string()).fetch_one(&mut *tx).await?
             };
             rows = vec![row];
         } else {

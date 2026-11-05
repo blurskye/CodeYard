@@ -240,6 +240,7 @@ async fn cli_contract(pg: bool) {
     .await
     .unwrap()
     .id;
+    assert_eq!(pid, node_id::scoped("PVT", alice, project_id).unwrap());
     let org_project = codeyard_db_repos::projects::create(
         f.pool(),
         alice,
@@ -262,6 +263,47 @@ async fn cli_contract(pg: bool) {
     .await;
     let item = draft["addProjectV2DraftIssue"]["projectItem"]["id"].clone();
     let did = draft["addProjectV2DraftIssue"]["projectItem"]["content"]["id"].clone();
+    let draft_row = node_id::routed(did.as_str().unwrap()).unwrap().id;
+    let stored_fields = codeyard_db_repos::projects::fields(f.pool(), Some(alice), project_id)
+        .await
+        .unwrap();
+    for (kind, row) in [
+        ("PVT", project_id),
+        ("PVTF", stored_fields[0].id),
+        ("PVTI", draft_row),
+        ("DI", draft_row),
+    ] {
+        let rooted = node_id::scoped(kind, alice, row).unwrap();
+        let found = send(
+            &router,
+            token,
+            "query($id:ID!){node(id:$id){id}}",
+            json!({"id":rooted}),
+        )
+        .await;
+        assert_eq!(found["node"]["id"], rooted);
+        let (_, rejected) = call(
+            &router,
+            Some(token),
+            "query($id:ID!){node(id:$id){id}}",
+            json!({"id":node_id::scoped(kind, alice + 10000, row).unwrap()}),
+        )
+        .await;
+        assert!(rejected["data"]["node"].is_null(), "{rejected}");
+        assert_eq!(rejected["errors"][0]["type"], "NOT_FOUND", "{rejected}");
+    }
+    let (_, rejected) = call(&router, Some(token),
+        "mutation($input:UpdateProjectV2Input!){updateProjectV2(input:$input){projectV2{title}}}",
+        json!({"input":{"projectId":node_id::scoped("PVT",alice + 10000,project_id).unwrap(),"title":"forged root"}})).await;
+    assert!(rejected.get("errors").is_some(), "{rejected}");
+    assert_eq!(
+        codeyard_db_repos::projects::by_id(f.pool(), Some(alice), project_id)
+            .await
+            .unwrap()
+            .title,
+        "CLI plan"
+    );
+
     assert_eq!(
         draft["addProjectV2DraftIssue"]["projectItem"]["content"]["body"],
         "Draft body"

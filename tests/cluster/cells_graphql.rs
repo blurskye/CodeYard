@@ -234,7 +234,10 @@ async fn two_cells_split_queries_keep_node_positions_and_validate_before_ordered
         .bind("a".repeat(64))
         .bind(*Prefix::new(1).ids().start() + 99)
         .execute(&database.raw).await.unwrap();
-    for kind in ["I", "PR", "IC", "PC", "PRR", "PRRC", "D", "DIC", "L", "M"] {
+    for kind in [
+        "I", "PR", "IC", "PC", "PRR", "PRRC", "D", "DIC", "L", "M", "RR", "RRT", "EN", "G", "DE",
+        "DES", "DPR", "GBP", "RAC", "RI", "IFV", "WF", "WR", "J", "CR", "GIST", "GC",
+    ] {
         let id = node_id::scoped(kind, 99, 17).unwrap();
         assert_eq!(
             routes.by_node(&id).await.unwrap().unwrap().id,

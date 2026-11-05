@@ -55,7 +55,7 @@ pub async fn fields_window(
     readable(&mut tx, viewer, project).await?;
     let direction = if before < i64::MAX { "DESC" } else { "ASC" };
     let fields = sqlx::query_as(&format!(
-        "SELECT * FROM project_fields WHERE project_id=$1 AND id>$2 AND id<$3 ORDER BY id {direction} LIMIT $4",
+        "SELECT *, (SELECT owner_id FROM projects WHERE id=project_fields.project_id) AS owner_id FROM project_fields WHERE project_id=$1 AND id>$2 AND id<$3 ORDER BY id {direction} LIMIT $4",
     ))
     .bind(project)
     .bind(after)

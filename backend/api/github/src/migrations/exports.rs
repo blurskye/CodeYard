@@ -196,7 +196,7 @@ async fn document(
         codeyard_webhooks::payloads::user(&actor.user)
     };
     let mut value = json!({
-        "id": row.id, "node_id": codeyard_model::node_id::encode("MIG", row.id), "owner": owner, "guid": row.guid, "state": if expired { "failed" } else { &row.state },
+        "id": row.id, "node_id": row.owner_org_id.or(row.owner_user_id).and_then(|root| codeyard_model::node_id::scoped("MIG",root,row.id)), "owner": owner, "guid": row.guid, "state": if expired { "failed" } else { &row.state },
         "lock_repositories": options.lock_repositories, "exclude_metadata": options.exclude_metadata,
         "exclude_git_data": options.exclude_git_data, "exclude_attachments": options.exclude_attachments,
         "exclude_releases": options.exclude_releases, "exclude_owner_projects": options.exclude_owner_projects,

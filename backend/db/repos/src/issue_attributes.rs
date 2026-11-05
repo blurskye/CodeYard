@@ -40,6 +40,12 @@ pub struct Attribute {
     #[sqlx(skip)]
     pub options: Vec<SelectOption>,
 }
+impl Attribute {
+    /// Issue types and field definitions move with their owning account.
+    pub fn owner_id(&self) -> Option<i64> {
+        self.owner_user_id.or(self.owner_org_id)
+    }
+}
 #[derive(Serialize, Deserialize)]
 pub struct FieldValue {
     pub id: i64,

@@ -284,36 +284,7 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
         .await;
     }
     if kind == "RR" {
-        let value = std::str::from_utf8(&bytes).map_err(|_| missing())?;
-        let (pull, user) = value.split_once('/').ok_or_else(missing)?;
-        let pull = pull
-            .parse::<i64>()
-            .ok()
-            .filter(|id| *id > 0)
-            .ok_or_else(missing)?;
-        let user = user
-            .parse::<i64>()
-            .ok()
-            .filter(|id| *id > 0)
-            .ok_or_else(missing)?;
-        Box::pin(crate::node(&node_id::encode("PR", pull), request)).await?;
-        let row = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
-            &request.state.pool,
-            pull,
-        )
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(missing)?;
-        let reviewer = codeyard_db_repos::pull_requests::reviews::list_pull_request_reviewers(
-            &request.state.pool,
-            pull,
-        )
-        .await
-        .map_err(unavailable)?
-        .into_iter()
-        .find(|row| row.id == user)
-        .ok_or_else(missing)?;
-        return crate::pull_request::review_request(&row, &reviewer, request).await;
+        return crate::review_requests::node(value, request).await;
     }
     if kind == "REF" {
         let (id, name) = decode_reference(value).ok_or_else(missing)?;
