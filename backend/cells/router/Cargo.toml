@@ -6,6 +6,14 @@ license = "LGPL-3.0-or-later"
 
 [dependencies]
 anyhow.workspace = true
+axum.workspace = true
+bytes.workspace = true
+http-body.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+reqwest.workspace = true
+futures-util.workspace = true
 async-graphql.workspace = true
 async-graphql-value.workspace = true
 codeyard-github-graphql.workspace = true

@@ -26,6 +26,23 @@ impl Default for Config {
     }
 }
 
+/// A directory record validated before it can name a network target.
+#[derive(Clone, Debug)]
+pub struct ReadyCell(Arc<Cell>);
+impl std::ops::Deref for ReadyCell {
+    type Target = Cell;
+    fn deref(&self) -> &Cell {
+        &self.0
+    }
+}
+impl ReadyCell {
+    pub(crate) fn new(cell: Cell) -> Result<Self> {
+        let cell = cell.prepare().map_err(|_| Failure::Unavailable)?;
+        ensure!(cell.state != State::Disabled, Failure::Unavailable);
+        Ok(Self(Arc::new(cell)))
+    }
+}
+
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 enum RouteKey {
     Key([u8; 32]),
@@ -129,9 +146,9 @@ impl Routes {
             cache.bytes = 0;
         }
     }
-    pub async fn cell(&self, prefix: Prefix) -> Result<Option<Arc<Cell>>> {
+    pub async fn cell(&self, prefix: Prefix) -> Result<Option<ReadyCell>> {
         if let Some(Value::Cell(cell)) = self.get(RouteKey::Cell(prefix)) {
-            return Ok(Some(cell));
+            return Ok(Some(ReadyCell(cell)));
         }
         let Reply::Cell(cell) = self.directory.request(&Request::Cell { prefix }).await? else {
             anyhow::bail!(Failure::Unavailable);
@@ -139,9 +156,8 @@ impl Routes {
         let Some(cell) = cell else {
             return Ok(None);
         };
-        let cell = Arc::new(cell.prepare().map_err(|_| Failure::Unavailable)?);
-        ensure!(cell.state != State::Disabled, Failure::Unavailable);
-        self.put(RouteKey::Cell(prefix), Value::Cell(cell.clone()));
+        let cell = ReadyCell::new(cell)?;
+        self.put(RouteKey::Cell(prefix), Value::Cell(cell.0.clone()));
         Ok(Some(cell))
     }
     pub async fn location(&self, key: &Key) -> Result<Option<Location>> {
@@ -166,7 +182,7 @@ impl Routes {
         }
         Ok(location)
     }
-    pub async fn by_name(&self, name: &str) -> Result<Option<Arc<Cell>>> {
+    pub async fn by_name(&self, name: &str) -> Result<Option<ReadyCell>> {
         let key = Key::new(KeyKind::Name, name).map_err(|_| Failure::Invalid)?;
         let Some(location) = self.location(&key).await? else {
             return Ok(None);
@@ -177,7 +193,7 @@ impl Routes {
                 .ok_or(Failure::Unavailable)?,
         ))
     }
-    pub async fn by_object(&self, object: Object) -> Result<Option<Arc<Cell>>> {
+    pub async fn by_object(&self, object: Object) -> Result<Option<ReadyCell>> {
         object.validate().map_err(|_| Failure::Invalid)?;
         let key = RouteKey::Home(object.kind.as_str(), object.id);
         let cell = match self.get(key) {
@@ -197,7 +213,7 @@ impl Routes {
         Ok(Some(self.cell(cell).await?.ok_or(Failure::Unavailable)?))
     }
     /// Placement is never cached; the reservation checks the live cell again at commit.
-    pub async fn place(&self, region: &str) -> Result<Option<Arc<Cell>>> {
+    pub async fn place(&self, region: &str) -> Result<Option<ReadyCell>> {
         codeyard_model::cells::validate_region(region).map_err(|_| Failure::Invalid)?;
         let Reply::Cell(cell) = self
             .directory
@@ -216,7 +232,7 @@ impl Routes {
             cell.region == region && cell.state == State::Open,
             Failure::Unavailable
         );
-        Ok(Some(Arc::new(cell)))
+        Ok(Some(ReadyCell::new(cell)?))
     }
 }
 

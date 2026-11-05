@@ -163,6 +163,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     100 storage tests; the deadline and Python fixes await their rerun. Stage 1 finished-CI and load
     measurements are runtime pending, need a writable delegated cgroup. Other content read
     families remain on the primary; bulk retention remains open.
+    Router-owned GraphQL preflight and bounded HTTP forwarding are in progress; the generated
+    GraphQL crate remains unchanged. Public routing, foreign authorization and stubs are not built.
     Stage 2 ID initialization, credential framing, directory CLI and atomic directory claims
     with failure tests pass workspace, Clippy and WASM checks. Their runtime tests are pending.
     The pinned node-key TLS directory listener, read-only router keys and root-bearing node-ID

@@ -180,7 +180,7 @@ fn constant(
     operation: &OperationDefinition,
     variables: &async_graphql::Variables,
 ) -> Result<async_graphql::Value> {
-    Ok(value.clone().into_const_with(|name| {
+    value.clone().into_const_with(|name| {
         variables
             .get(&name)
             .cloned()
@@ -192,7 +192,7 @@ fn constant(
                     .and_then(|variable| variable.node.default_value().cloned())
             })
             .ok_or_else(|| anyhow::anyhow!("Missing variable"))
-    })?)
+    })
 }
 fn included(
     directives: &[Positioned<Directive>],

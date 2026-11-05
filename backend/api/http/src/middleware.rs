@@ -15,7 +15,6 @@ use axum::Extension;
 use axum::Json;
 use codeyard_app::app::AppState;
 use codeyard_model::http_config::WebConfig;
-use futures_util::Stream;
 use futures_util::StreamExt;
 use std::collections::HashSet;
 use std::io;
@@ -218,9 +217,6 @@ async fn bounded_mutation_body(state: Arc<AppState>, request: Request, next: Nex
 /// How long a download or search waits for a free slot before the request is refused.
 const SLOT_WAIT: Duration = Duration::from_secs(3);
 
-/// A client may take 30 seconds to start, plus this many bytes per second after that.
-const MIN_DOWNLOAD_RATE: u64 = 16 * 1024;
-
 /// Waits briefly for a slot so a short burst queues instead of failing at once.
 pub async fn wait_for_slot(
     slots: &Arc<tokio::sync::Semaphore>,
@@ -241,64 +237,7 @@ pub async fn wait_for_static_slot(
         .ok()
 }
 
-/// The producer owns the allocation or file permit. Its send deadline runs even
-/// when Hyper stops polling the response. Only one small chunk remains queued. A reader
-/// that falls below the minimum rate loses the download, so a trickle cannot hold a slot.
-pub fn download_body(
-    stream: impl Stream<Item = io::Result<bytes::Bytes>> + Send + 'static,
-) -> axum::body::Body {
-    let (sender, receiver) = tokio::sync::mpsc::channel(1);
-    let task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
-        let mut stream = Box::pin(stream);
-        let started = tokio::time::Instant::now();
-        let mut sent = 0_u64;
-        loop {
-            // A stalled source loses the download too, so it cannot hold the permit.
-            let chunk = tokio::select! {
-                _ = sender.closed() => return Ok(()),
-                chunk = tokio::time::timeout(Duration::from_secs(30), stream.next()) => match chunk {
-                    Ok(Some(chunk)) => chunk?,
-                    Ok(None) => return Ok(()),
-                    Err(_) => {
-                        return Err(io::Error::new(
-                            io::ErrorKind::TimedOut,
-                            "Download source stalled",
-                        ))
-                    }
-                },
-            };
-            let allowed = Duration::from_secs(30 + sent / MIN_DOWNLOAD_RATE);
-            let wait = allowed
-                .saturating_sub(started.elapsed())
-                .min(Duration::from_secs(30));
-            sent += chunk.len() as u64;
-            match tokio::time::timeout(wait, sender.send(chunk)).await {
-                Ok(Ok(())) => (),
-                Ok(Err(_)) => return Ok(()),
-                Err(_) => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "Download timed out",
-                    ))
-                }
-            }
-        }
-    }));
-    axum::body::Body::from_stream(futures_util::stream::try_unfold(
-        (receiver, task),
-        |(mut receiver, mut task)| async move {
-            match receiver.recv().await {
-                Some(chunk) => Ok(Some((chunk, (receiver, task)))),
-                None => {
-                    (&mut task)
-                        .await
-                        .map_err(|_| io::Error::other("Download task unavailable"))??;
-                    Ok::<_, io::Error>(None)
-                }
-            }
-        },
-    ))
-}
+pub use codeyard_cells_router::body::download_body;
 
 pub fn buffered_download_body(
     bytes: Vec<u8>,

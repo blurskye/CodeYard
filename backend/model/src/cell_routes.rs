@@ -33,6 +33,7 @@ impl Rule {
             }
         }
         match parts.as_slice() {
+            ["avatars", ":name"] => return Some(Self::Name("name".into())),
             ["health" | "ready"] => return Some(Self::Health),
             ["enter" | "login" | "session"] => return Some(Self::Login),
             ["register" | "setup"] => return Some(Self::Signup),
