@@ -23,13 +23,29 @@ native_operation!(crate::postgres::users::sessions::get_session,
     crate::sqlite::users::sessions::get_session,
     fn get_session(pool: &DbPool, session_id: &str) -> Result<Option<Session>>);
 
-native_operation!(crate::postgres::users::sessions::get_session_account,
-    crate::sqlite::users::sessions::get_session_account,
-    fn get_session_account(pool: &DbPool, session_id: &str) -> Result<Option<User>>);
+pub async fn get_session_account(pool: &DbPool, session_id: &str) -> Result<Option<User>> {
+    if foreign_session(pool, session_id) {
+        return Ok(
+            codeyard_db_core::cells::authorization::session(pool, session_id)
+                .await?
+                .map(|credential| credential.user),
+        );
+    }
+    match pool {
+        DbPool::Postgres(pool) => {
+            crate::postgres::users::sessions::get_session_account(pool, session_id).await
+        }
+        DbPool::Sqlite(pool) => {
+            crate::sqlite::users::sessions::get_session_account(pool, session_id).await
+        }
+    }
+}
 
-native_operation!(crate::postgres::users::sessions::get_session_user,
-    crate::sqlite::users::sessions::get_session_user,
-    fn get_session_user(pool: &DbPool, session_id: &str) -> Result<Option<User>>);
+pub async fn get_session_user(pool: &DbPool, session_id: &str) -> Result<Option<User>> {
+    Ok(get_session_account(pool, session_id)
+        .await?
+        .filter(|user| !user.must_change_password))
+}
 
 native_operation!(crate::postgres::users::sessions::delete_session,
     crate::sqlite::users::sessions::delete_session,
@@ -71,9 +87,26 @@ native_operation!(crate::postgres::users::sessions::consume_bound_oauth_state,
     redirect: &str,
 ) -> Result<Option<OAuthState>>);
 
-native_operation!(crate::postgres::users::sessions::get_browser_session,
-    crate::sqlite::users::sessions::get_browser_session,
-    fn get_browser_session(pool: &DbPool, id: &str) -> Result<Option<BrowserSession>>);
+pub async fn get_browser_session(pool: &DbPool, id: &str) -> Result<Option<BrowserSession>> {
+    if foreign_session(pool, id) {
+        return Ok(codeyard_db_core::cells::authorization::session(pool, id)
+            .await?
+            .and_then(|credential| {
+                Some(BrowserSession {
+                    id: id.to_owned(),
+                    user_id: Some(credential.user.id),
+                    expires_at: credential.answer.expires_at?,
+                    created_at: credential.user.created_at,
+                })
+            }));
+    }
+    match pool {
+        DbPool::Postgres(pool) => {
+            crate::postgres::users::sessions::get_browser_session(pool, id).await
+        }
+        DbPool::Sqlite(pool) => crate::sqlite::users::sessions::get_browser_session(pool, id).await,
+    }
+}
 
 /// The proof used to issue a session. Second factors are consumed with the session insert.
 #[derive(Clone, Copy)]
@@ -207,15 +240,53 @@ native_operation!(crate::postgres::users::sessions::create_browser_session,
     expires_at: DateTime<Utc>,
 ) -> Result<BrowserSession>);
 
-native_operation!(crate::postgres::users::sessions::get_or_create_csrf_token,
-    crate::sqlite::users::sessions::get_or_create_csrf_token,
-    fn get_or_create_csrf_token(
+pub async fn get_or_create_csrf_token(
     pool: &DbPool,
     id: &str,
     expected_user: Option<i64>,
     candidate: &str,
     ttl_seconds: i64,
-) -> Result<Option<String>>);
+) -> Result<Option<String>> {
+    if foreign_session(pool, id) {
+        return Ok(codeyard_db_core::cells::authorization::session(pool, id)
+            .await?
+            .and_then(|credential| match credential.answer.authority {
+                codeyard_db_core::cells::authorization::Authority::Session { csrf }
+                    if expected_user == Some(credential.user.id) =>
+                {
+                    Some(csrf)
+                }
+                _ => None,
+            }));
+    }
+    match pool {
+        DbPool::Postgres(pool) => {
+            crate::postgres::users::sessions::get_or_create_csrf_token(
+                pool,
+                id,
+                expected_user,
+                candidate,
+                ttl_seconds,
+            )
+            .await
+        }
+        DbPool::Sqlite(pool) => {
+            crate::sqlite::users::sessions::get_or_create_csrf_token(
+                pool,
+                id,
+                expected_user,
+                candidate,
+                ttl_seconds,
+            )
+            .await
+        }
+    }
+}
+
+fn foreign_session(pool: &DbPool, value: &str) -> bool {
+    codeyard_support::cells::Secret::cookie(value)
+        .is_ok_and(|secret| !pool.owns_prefix(secret.cell))
+}
 
 native_operation!(crate::postgres::users::sessions::remove_expired_identity_rows,
     crate::sqlite::users::sessions::remove_expired_identity_rows,

@@ -36,12 +36,26 @@ pub async fn live_session(
             .bind(actor)
             .fetch_optional(&mut *connection)
             .await?;
-    Ok(
-        sqlx::query_scalar("SELECT COALESCE($1::timestamptz>clock_timestamp(),FALSE)")
-            .bind(expiry)
-            .fetch_one(&mut *connection)
-            .await?,
+    let live: bool = sqlx::query_scalar("SELECT COALESCE($1::timestamptz>clock_timestamp(),FALSE)")
+        .bind(expiry)
+        .fetch_one(&mut *connection)
+        .await?;
+    if live {
+        return Ok(true);
+    }
+    // Native session rows cannot belong to stubs. Retain the cached home proof until commit.
+    let hash = codeyard_support::token_hash::token_hash(session);
+    Ok(crate::cells::authorization::postgres(
+        connection,
+        &crate::cells::authorization::Query {
+            kind: "session",
+            id: None,
+            hash: Some(&hash),
+            write: true,
+        },
     )
+    .await?
+    .is_some_and(|credential| credential.user.id == actor))
 }
 
 /// The caller retains account/role authority before locking its originating credential.

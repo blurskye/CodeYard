@@ -64,12 +64,6 @@ pub async fn get_session_account(pool: &PgPool, session_id: &str) -> Result<Opti
     Ok(user)
 }
 
-pub async fn get_session_user(pool: &PgPool, session_id: &str) -> Result<Option<User>> {
-    Ok(get_session_account(pool, session_id)
-        .await?
-        .filter(|user| !user.must_change_password))
-}
-
 pub async fn delete_session(pool: &PgPool, session_id: &str) -> Result<()> {
     let mut tx = pool.begin().await?;
     lock_browser_session(&mut tx, session_id).await?;

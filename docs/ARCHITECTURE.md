@@ -762,7 +762,9 @@ source-checked, as is stopped-cell renewal. Its local issuer-history/OAuth follo
 written; its follow-up cache/public-role batch passes Clippy and WASM, with workspace passing.
 Shared cell authorization RPC and native home answers are written but unchecked; public
 foreign token admission, original SSH-key lookup and publication are written but unchecked;
-foreign browser sessions and remote membership pointers are unfinished. Automatic renewal and
+foreign browser-session source now connects native pages/forms to cached home CSRF and
+transaction-time session checks, with both-engine HTTP and real TLS revocation tests;
+this follow-up is unchecked. Remote membership pointers remain unfinished. Automatic renewal and
 stages 3 to 6 are not built.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.

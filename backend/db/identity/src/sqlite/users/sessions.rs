@@ -64,12 +64,6 @@ pub async fn get_session_account(pool: &SqlitePool, session_id: &str) -> Result<
     Ok(user)
 }
 
-pub async fn get_session_user(pool: &SqlitePool, session_id: &str) -> Result<Option<User>> {
-    Ok(get_session_account(pool, session_id)
-        .await?
-        .filter(|user| !user.must_change_password))
-}
-
 pub async fn delete_session(pool: &SqlitePool, session_id: &str) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     sqlx::query("DELETE FROM sessions WHERE id = ?1")

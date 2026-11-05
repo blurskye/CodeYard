@@ -4,8 +4,24 @@ pub async fn live_session(
     actor: i64,
     session: &str,
 ) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1 AND user_id=?2 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))")
-        .bind(session).bind(actor).fetch_one(connection).await?)
+    let live: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sessions WHERE id=?1 AND user_id=?2 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))")
+        .bind(session).bind(actor).fetch_one(&mut *connection).await?;
+    if live {
+        return Ok(true);
+    }
+    // Native session rows cannot belong to stubs. Retain the cached home proof until commit.
+    let hash = codeyard_support::token_hash::token_hash(session);
+    Ok(crate::cells::authorization::sqlite(
+        connection,
+        &crate::cells::authorization::Query {
+            kind: "session",
+            id: None,
+            hash: Some(&hash),
+            write: true,
+        },
+    )
+    .await?
+    .is_some_and(|credential| credential.user.id == actor))
 }
 
 pub async fn credential_live(

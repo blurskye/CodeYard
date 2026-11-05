@@ -252,6 +252,55 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .unwrap();
     assert_eq!(response.status(), 200);
     assert!(!response.bytes().await.unwrap().is_empty());
+    // A browser from the home cell uses its own synchronizer at the resource cell.
+    let session_answer = authorization::authorize(
+        &zero.pool,
+        &Proof::Session {
+            home: Prefix::new(1),
+            value: session.clone(),
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let authorization::Authority::Session { csrf } = session_answer.authority else {
+        panic!("session authority")
+    };
+    let response = client
+        .post(format!("{}/api/repos/alice/private/issues", http.url()))
+        .header("cookie", format!("session_id={session}"))
+        .header("origin", http.url())
+        .header("x-csrf-token", &csrf)
+        .json(&serde_json::json!({"title":"foreign browser"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM sessions WHERE user_id=$1")
+            .bind(user.id)
+            .fetch_one(&zero.raw)
+            .await
+            .unwrap(),
+        0
+    );
+    codeyard_db_identity::users::sessions::delete_session(&one.pool, &session)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE foreign_credentials SET expires_at=validated_at WHERE kind='session'")
+        .execute(&zero.raw)
+        .await
+        .unwrap();
+    let response = client
+        .post(format!("{}/api/repos/alice/private/issues", http.url()))
+        .header("cookie", format!("session_id={session}"))
+        .header("origin", http.url())
+        .header("x-csrf-token", &csrf)
+        .json(&serde_json::json!({"title":"revoked home browser"}))
+        .send()
+        .await
+        .unwrap();
+    assert!(matches!(response.status().as_u16(), 401 | 403));
     // Resource-cell revocation is immediate, independent of a warm home answer.
     sqlx::query("DELETE FROM repo_access WHERE repo_id=$1 AND user_id=$2")
         .bind(repository.id)
@@ -327,7 +376,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .fetch_one(&zero.raw)
         .await
         .unwrap();
-    assert_eq!(count, 1);
+    assert_eq!(count, 2);
     drop(client);
     http.stop().await;
     // Cell-key revocation is live at the receiver, even when a route is cached.

@@ -51,7 +51,7 @@ pub(crate) async fn active_account(
     connection: &mut sqlx::SqliteConnection,
     actor: i64,
 ) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)")
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_stub AND NOT is_banned AND NOT must_change_password)")
         .bind(actor).fetch_one(connection).await?)
 }
 

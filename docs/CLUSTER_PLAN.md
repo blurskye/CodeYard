@@ -173,8 +173,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     registered RPC listeners and live cell-key tests are written but unchecked; foreign ingress
     and publication are now wired in source but unchecked. Typed foreign token grants, exact
     Git proofs and workflow checks have HTTP and SSH collaborator/revocation tests; their source
-    review and first combined check are next. Public foreign browser sessions, membership pointers
-    and two-cell gh/Git deployment remain unfinished. Member-list/count filters now cover
+    review and first combined check are next. Foreign browser-session pages/forms, home CSRF and transaction-time session expiry
+    are written with both-engine HTTP and real TLS revocation tests; this follow-up is unchecked.
+    Membership pointers and two-cell gh/Git deployment remain unfinished. Member-list/count filters now cover
     organizations and teams on both engines with database and HTTP assertions. Runtime job
     375fa054f4204225b5c57bb2b02cd059 covers the preceding committed snapshot. Automatic user
     moves and org regional presence are documented owner decisions.

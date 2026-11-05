@@ -27,8 +27,11 @@ impl Proof {
                 codeyard_support::tokens::is_hex_token(hash, 64),
                 "Invalid credential hash"
             ),
-            Self::Session { value, .. } => {
-                codeyard_support::cells::Secret::cookie(value)?;
+            Self::Session { home, value } => {
+                ensure!(
+                    codeyard_support::cells::Secret::cookie(value)?.cell == *home,
+                    "Invalid session home"
+                );
             }
             Self::Ssh { fingerprint } => {
                 codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Ssh, fingerprint)?;
@@ -130,7 +133,7 @@ impl Authority {
                 "Invalid job permissions"
             ),
             Self::Session { csrf } => ensure!(
-                !csrf.is_empty() && csrf.len() <= 128 && !csrf.chars().any(char::is_control),
+                codeyard_support::tokens::is_hex_token(csrf, 64),
                 "Invalid CSRF token"
             ),
             Self::Classic | Self::Ssh => {}
@@ -268,6 +271,8 @@ impl Answer {
                         && !matches!(self.authority, Authority::Session { .. } | Authority::Ssh),
                 Proof::Session { .. } =>
                     self.credential_id.is_none()
+                        && self.write
+                        && self.expires_at.is_some()
                         && matches!(self.authority, Authority::Session { .. }),
                 Proof::Ssh { .. } =>
                     self.credential_id.is_some() && matches!(self.authority, Authority::Ssh),
@@ -473,6 +478,21 @@ pub async fn lookup(pool: &DbPool, query: &Query<'_>) -> Result<Option<Credentia
         DbPool::Postgres(pool) => postgres(&mut *pool.acquire().await?, query).await,
         DbPool::Sqlite(pool) => sqlite(&mut *pool.acquire().await?, query).await,
     }
+}
+
+/// A session read uses the same exact credential hash as its transaction-time check.
+pub async fn session(pool: &DbPool, value: &str) -> Result<Option<Credential>> {
+    codeyard_support::cells::Secret::cookie(value)?;
+    lookup(
+        pool,
+        &Query {
+            kind: "session",
+            id: None,
+            hash: Some(&token_hash(value)),
+            write: false,
+        },
+    )
+    .await
 }
 
 pub struct Permission<'a> {

@@ -751,3 +751,5 @@ OAuth and device codes can finish after their original range is retired.
 Cell authorization RPC source uses `CELL_RPC_ADDRESS` with the pinned directory settings; register that listener with `cell directory register --rpc-address`. It shares the directory’s bounded TLS transport. Only live cell keys may request home answers; read-only router keys cannot. Configure `HTTP_TRUSTED_PROXY_IPS` on cell web nodes for the public routers’ addresses so client rate limits retain the original address. Home answers and RPC are unchecked, and foreign ingress and publication are still unfinished. App user-token export is not implemented yet.
 
 Foreign token and SSH admission, exact Git proofs and repository scope checks are now written but unchecked. HTTP tests cover a collaborator writing across cells and live resource/token revocation; SSH tests push and clone through the public listener. Foreign browser-session admission and remote membership pointers remain unfinished.
+
+Foreign browser sessions now have native page/form source wiring through the bounded home-answer cache. Their HTTP, CSRF and revocation acceptance is pending.

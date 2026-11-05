@@ -51,6 +51,178 @@ async fn count(pool: &DbPool, table: &str) -> i64 {
         DbPool::Sqlite(pool) => sqlx::query_scalar(&query).fetch_one(pool).await.unwrap(),
     }
 }
+async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
+    use axum::{
+        body::{to_bytes, Body},
+        http::Request,
+    };
+    use tower::ServiceExt;
+    let pool = database.pool();
+    let csrf = "e".repeat(64);
+    answer.credential_id = None;
+    answer.authority = Authority::Session { csrf: csrf.clone() };
+    let provider = Arc::new(Provider {
+        answer,
+        live: AtomicBool::new(true),
+        calls: AtomicUsize::new(0),
+    });
+    pool.set_foreign_authorization(provider.clone());
+    let value = format!("1.{}", "f".repeat(64));
+    let proof = Proof::Session {
+        home: Prefix::new(1),
+        value: value.clone(),
+    };
+    assert!(Proof::Session {
+        home: Prefix::new(2),
+        value: value.clone()
+    }
+    .validate()
+    .is_err());
+    let user = provider.answer.user.id;
+    database.complete_setup().await;
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("private.git");
+    git2::Repository::init_bare(&path).unwrap();
+    let repo = codeyard_db_repos::repositories::records::create_repository(
+        pool,
+        owner,
+        "private",
+        None,
+        true,
+        path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    codeyard_db_repos::repositories::access::grant_repo_access(
+        pool,
+        user,
+        repo.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    let app = database.router(root.path()).await;
+    let request = |method: &str, path: &str, supplied: &str| {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", "cell.test")
+            .header("origin", "http://cell.test")
+            .header("cookie", format!("session_id={value}"))
+            .header("x-csrf-token", supplied)
+            .header("content-type", "application/json")
+            .body(Body::from(
+                r#"{"title":"foreign browser","body":"from home"}"#,
+            ))
+            .unwrap()
+    };
+    let response = app
+        .clone()
+        .oneshot(request("GET", "/local/private/issues", &csrf))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let html = String::from_utf8(
+        to_bytes(response.into_body(), 2 * 1024 * 1024)
+            .await
+            .unwrap()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(
+        html.contains(&csrf),
+        "The resource page retains the home session's CSRF token"
+    );
+    assert_eq!(
+        codeyard_db_identity::users::sessions::get_session_user(pool, &value)
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        user
+    );
+    assert!(
+        codeyard_db_identity::users::sessions::get_or_create_csrf_token(
+            pool,
+            &value,
+            Some(owner),
+            &csrf,
+            60
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    let response = app
+        .clone()
+        .oneshot(request(
+            "POST",
+            "/api/repos/local/private/issues",
+            &"0".repeat(64),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 403);
+    let response = app
+        .clone()
+        .oneshot(request("POST", "/api/repos/local/private/issues", &csrf))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    assert_eq!(
+        database
+            .scalar(
+                "SELECT COUNT(*) FROM issues WHERE repo_id=$1 AND author_id=$2",
+                &[repo.id, user]
+            )
+            .await,
+        1
+    );
+    assert_eq!(count(pool, "sessions").await, 0);
+    assert!(codeyard_db_identity::users::profiles::save_profile(
+        pool,
+        user,
+        &codeyard_db_core::queries::users::accounts::AccountCredential::Session(&value),
+        &codeyard_db_identity::users::profiles::ProfilePatch {
+            display_name: Some("local overwrite"),
+            ..Default::default()
+        },
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        codeyard_db_identity::users::accounts::get_user_by_id(pool, user)
+            .await
+            .unwrap()
+            .unwrap()
+            .display_name,
+        provider.answer.user.display_name
+    );
+    provider.live.store(false, Ordering::SeqCst);
+    expire(pool).await;
+    assert!(authorization::authorize(pool, &proof)
+        .await
+        .unwrap()
+        .is_none());
+    assert!(
+        codeyard_db_identity::users::sessions::get_session_user(pool, &value)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let response = app
+        .oneshot(request("POST", "/api/repos/local/private/issues", &csrf))
+        .await
+        .unwrap();
+    assert!(matches!(response.status().as_u16(), 401 | 403));
+    assert_eq!(
+        database
+            .scalar("SELECT COUNT(*) FROM issues WHERE repo_id=$1", &[repo.id])
+            .await,
+        1
+    );
+}
+
 async fn contract(pg: bool) {
     let mut database = Database::empty(pg).await;
     let pool = database.pool();
@@ -162,6 +334,7 @@ async fn contract(pg: bool) {
     .await
     .is_err());
     assert_eq!(count(pool, "personal_access_tokens").await, 0);
+    sessions(&database, provider.answer.clone(), native.id).await;
     // If the cache write fails after metadata arrives, the account remains a stub with no credential.
     let mut half = provider.answer.clone();
     half.user.id += 20;

@@ -44,34 +44,38 @@ pub async fn stamp_client_address(
     next.run(request).await
 }
 
-/// Prime the home answer before any adapter looks up a supplied foreign token.
+/// Prime home answers before any adapter looks up a foreign token or browser session.
 /// Header parsing is shared with the router; resource authority stays in native handlers.
 pub async fn foreign_authorization(
     Extension(state): Extension<Arc<AppState>>,
     request: Request,
     next: Next,
 ) -> Response {
-    if state.pool.foreign_authorization().is_none()
-        || !request.headers().contains_key(header::AUTHORIZATION)
-    {
+    if state.pool.foreign_authorization().is_none() {
         return next.run(request).await;
     }
-    let hint = match codeyard_cells_router::selection::Credential::from_headers(
-        request.headers(),
-        "session_id",
-    ) {
-        Ok(Some(hint)) if !state.pool.owns_prefix(hint.prefix) => hint,
-        _ => return next.run(request).await,
+    use codeyard_db_core::cells::authorization::{authorize, Proof};
+    let token = if request.headers().contains_key(header::AUTHORIZATION) {
+        match codeyard_cells_router::selection::Credential::from_headers(
+            request.headers(),
+            "session_id",
+        ) {
+            Ok(Some(hint)) if !state.pool.owns_prefix(hint.prefix) => Some(Proof::Token {
+                home: hint.prefix,
+                hash: codeyard_support::token_hash::token_hash(hint.value()),
+            }),
+            _ => None,
+        }
+    } else {
+        None
     };
-    let proof = codeyard_db_core::cells::authorization::Proof::Token {
-        home: hint.prefix,
-        hash: codeyard_support::token_hash::token_hash(hint.value()),
-    };
-    if codeyard_db_core::cells::authorization::authorize(&state.pool, &proof)
-        .await
-        .is_err()
-    {
-        return codeyard_model::github_error::Error::unavailable(()).into_response();
+    let session = crate::session::extract_session(request.headers())
+        .filter(|(home, _)| !state.pool.owns_prefix(*home))
+        .map(|(home, value)| Proof::Session { home, value });
+    for proof in [token, session].into_iter().flatten() {
+        if authorize(&state.pool, &proof).await.is_err() {
+            return codeyard_model::github_error::Error::unavailable(()).into_response();
+        }
     }
     next.run(request).await
 }
