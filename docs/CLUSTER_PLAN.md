@@ -154,27 +154,23 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     automated durability acceptance passes. Hard reset is runtime pending, needs a disposable
     VM. Stage 1's 51 PgBouncer/replica/quorum e2e checks pass without skips; finished-CI
     shutdown and capacity measurements need a writable delegated cgroup.
-    Stage 2 ranges, framed credentials/sessions, directory claims/TLS/cache, HTTP/GraphQL
-    routing, stable homes, stubs and common rooted IDs pass source checks. Generated GraphQL
-    is unchanged. Range renewal is a committed, deferred owner follow-up; do not extend it.
-    The collected fixes pass workspace ecc385aac2974ab1b6f1c4be3c598a36, Clippy
-    47615cc65f914c2984ca924097d4e3df and WASM 46edcd9b678c4991986a3e0b211ccc05.
-    Runtime 375fa054f4204225b5c57bb2b02cd059 ran the earlier snapshot: libraries 533
-    passed/two failed; CI 206/14 with 19 existing environment-dependent ignores; cluster
-    230/one; database 176/five; repositories 309/nine. Git 42, identity 166 and all 51
-    PgBouncer/replica/quorum e2e checks pass without skips. Collected fixes cover fixtures,
-    both-engine stub projections/search, PostgreSQL cached JSON, login-name routing,
-    rooted-ID assertions and issue-transfer root redirects. Runtime retry
-    616868dc57e7437c85afe790dcf2161a covers changed crates/targets and the nine repository
-    failures; it is submitted.
-    Native signup/key claim publication, bounded stopped-cell publication and TLS failure/retry
-    tests and transactional directory-cleanup delivery are written but unchecked. Remote membership pointers, remaining node families and
-    the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
-    The publication batch's first check round reports one test-only Reqwest feature error;
-    explicit form encoding replaces it. Capacity reports, foreign GraphQL quota ownership,
-    SSR fixture repairs and a real two-cell public gh/Git round are the next unchecked source.
-    Automatic user moves and org regional presence remain documented owner decisions.
-    Owner follow-up: check foreign-cache expiry after PostgreSQL row-lock waits.
+    Stage 2 directory claims/TLS/cache, routing, scoped credentials, stable homes, stubs,
+    common rooted IDs, native claim publication, transactional claim cleanup, bounded capacity
+    reports and foreign GraphQL quota ownership pass workspace dea3424d0b424e2aab4b6a6c42aca06d,
+    Clippy c56d800c7de14f34820c16f71fce6436 and WASM 120a086a0c724fd29b78f1130255a2a0.
+    Generated GraphQL is unchanged. Range renewal is a committed, deferred owner follow-up.
+    Runtime retry 616868dc57e7437c85afe790dcf2161a runs an earlier snapshot: changed libraries
+    pass; CI 220 passes with 19 existing cgroup-dependent ignores; cluster is 230/one and
+    database 179/two. Pull requests pass 324 with two existing cgroup-dependent ignores;
+    seven of the nine selected repository contracts pass and the exhaustive GraphQL contracts
+    are running. The foreign GraphQL quota and browser fixture fixes are source-checked.
+    New native publication, cleanup/restart and capacity tests await runtime. The real two-cell
+    public gh/Git e2e round is written and awaits its first run. Remote membership pointers and
+    remaining node families are unfinished. No stage 2 completion is claimed.
+    Stages 3 to 6 are not built. Automatic user moves and org regional presence remain
+    documented owner decisions.
+    Owner follow-ups: foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded
+    expired directory-claim collection.
 
 ## Decisions that settle the open questions
 

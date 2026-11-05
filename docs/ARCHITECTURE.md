@@ -760,9 +760,10 @@ home-CSRF and native two-cell GraphQL follow-up passes workspace, Clippy and WAS
 Cold collaborator metadata lookup and retained invitation credentials also pass source
 checks. Runtime acceptance on an earlier snapshot passes Git, identity and all 51 targeted
 e2e checks. Collected query, routing, fixture and rooted-ID fixes pass source checks and
-await their runtime retry. Native signup/key claim publication is written but unchecked;
-remote membership pointers, remaining node families and two-cell gh/Git deployment are
-unfinished; stages 3 to 6 are not built. Range renewal is a deferred owner follow-up.
+await their runtime retry. Native signup/key claim publication, durable claim cleanup,
+capacity reporting and foreign GraphQL quotas pass source checks; their runtime tests are
+pending. Remote membership pointers and remaining node families are unfinished. The public
+two-cell gh/Git round is written but unexecuted; stages 3 to 6 are not built. Range renewal is a deferred owner follow-up.
 [Cluster readiness](CLUSTER_PLAN.md) records current check jobs and runtime gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.

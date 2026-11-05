@@ -717,8 +717,8 @@ The cell directory uses a separate PostgreSQL database. Initialize it with
 `cell directory register`, and enroll read-only router keys with
 `cell directory router-key --public-key <key>`. `cell directory serve` owns its node-key
 TLS listener; callers pin that public key. Cell mutations recheck live enrollment in their
-transaction. Native signup/key publication is written but unchecked; remote membership
-pointers and two-cell deployment acceptance remain unfinished.
+transaction. Native signup/key publication passes source checks; remote membership pointers
+and two-cell deployment acceptance remain unfinished.
 
 Directory-enrolled cells use PostgreSQL; copy standalone SQLite with `codeyard db copy`
 before enrollment. Nonzero cells require the directory and authorization RPC settings.
@@ -731,10 +731,10 @@ repository homes. A repeated page is safe. Native CLI user/key creation uses
 reserve and confirm directory claims before their native transaction commits; failed claims
 leave no usable local account or key. Claim removals are queued in `cell_outbox` in the
 native transaction and retried by owned web workers, so directory outages do not interrupt
-committed deletions or storage cleanup. This publication batch's first check round found one test-only form encoder error, now
-fixed in source. Cell capacity reporting and the real two-cell gh/Git round are also written
-but unchecked. Reports use bounded per-schema PostgreSQL counters and relation sizes;
-stale samples exclude new placements while existing account routes continue working.
+committed deletions or storage cleanup. The publication, capacity-report and foreign GraphQL quota source passes workspace, Clippy
+and WASM. New runtime tests and the public two-cell gh/Git round are pending. Reports use
+bounded per-schema PostgreSQL counters and relation sizes; stale samples exclude new
+placements while existing account routes continue working.
 
 The public role is `serve --roles router`, with `DIRECTORY_ADDRESS`,
 `DIRECTORY_PUBLIC_KEY` and `CELL_REGION`. It opens no cell database. Enroll its key before

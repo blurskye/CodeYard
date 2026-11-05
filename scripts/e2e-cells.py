@@ -50,6 +50,7 @@ class Deployment:
         self.logs = []
         self.keys = {}
         self.settings = {}
+        self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         values = ports(9)
         self.directory_address = f"127.0.0.1:{values[0]}"
         self.base = f"http://127.0.0.1:{values[1]}"
@@ -130,7 +131,7 @@ class Deployment:
         while time.monotonic() < deadline:
             assert self.processes[name].poll() is None, f"{name} stopped; see its server.log"
             try:
-                with urllib.request.urlopen(url + "/health", timeout=2) as response:
+                with self.http.open(url + "/health", timeout=2) as response:
                     if response.status == 200:
                         return
             except (OSError, urllib.error.HTTPError):
@@ -289,7 +290,7 @@ def acceptance(deployment):
         def http(path, token=None):
             request = urllib.request.Request(deployment.base + path, headers={"Accept": "application/json", **({"Authorization": "Bearer " + token} if token else {})})
             try:
-                response = urllib.request.urlopen(request, timeout=15)
+                response = deployment.http.open(request, timeout=15)
             except urllib.error.HTTPError as error:
                 response = error
             with response:
