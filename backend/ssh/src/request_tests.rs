@@ -411,3 +411,259 @@ async fn public_ssh_router_pins_native_cells_preserves_identity_and_rechecks_rou
         .unwrap();
     alice.finish().await;
 }
+
+struct ForeignHome {
+    user: codeyard_db_core::models::User,
+    fingerprint: String,
+    live: Arc<std::sync::atomic::AtomicBool>,
+}
+impl codeyard_db_core::cells::authorization::Home for ForeignHome {
+    fn authorize<'a>(
+        &'a self,
+        proof: &'a codeyard_db_core::cells::authorization::Proof,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<
+                    Output = Result<Option<codeyard_db_core::cells::authorization::Answer>>,
+                > + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            use codeyard_db_core::cells::authorization::{Answer, Authority, Proof};
+            Ok((self.live.load(std::sync::atomic::Ordering::SeqCst)
+                && matches!(proof,Proof::Ssh {fingerprint} if fingerprint==&self.fingerprint))
+            .then(|| Answer {
+                home: codeyard_support::cells::Prefix::new(1),
+                user: self.user.clone(),
+                credential_id: Some(self.user.id + 7),
+                write: true,
+                expires_at: None,
+                authority: Authority::Ssh,
+            }))
+        })
+    }
+}
+async fn git(arguments: &[&str], ssh: Option<&str>) -> std::process::Output {
+    let mut command = tokio::process::Command::new("git");
+    command
+        .args(arguments)
+        .kill_on_drop(true)
+        .env("GIT_TERMINAL_PROMPT", "0");
+    if let Some(ssh) = ssh {
+        command.env("GIT_SSH_COMMAND", ssh);
+    }
+    tokio::time::timeout(Duration::from_secs(45), command.output())
+        .await
+        .unwrap()
+        .unwrap()
+}
+#[tokio::test]
+async fn foreign_collaborator_pushes_and_clones_through_public_ssh_then_loses_access() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let root = tempfile::tempdir().unwrap();
+    let identity = PrivateKey::from(Ed25519Keypair::from_seed(&[61; 32]));
+    let authorization = Arc::new(RouterAuthorization {
+        key: identity.public_key().clone(),
+        enabled: Arc::new(AtomicBool::new(true)),
+    });
+    let alice = Fixture::with_router("alice", 62, Some(authorization.clone())).await;
+    let bob = Fixture::with_router("bob", 63, Some(authorization)).await;
+    let fingerprint = codeyard_db_identity::users::ssh_keys::calculate_fingerprint(
+        &bob.key.public_key().to_openssh().unwrap(),
+    )
+    .unwrap();
+    let mut remote = codeyard_db_identity::users::accounts::get_user_by_username(&bob.pool, "bob")
+        .await
+        .unwrap()
+        .unwrap();
+    remote.id = *codeyard_support::cells::Prefix::new(1).ids().start();
+    remote.home_cell = 1;
+    remote.email = None;
+    remote.password_hash = None;
+    remote.avatar_file_id = None;
+    remote.is_admin = false;
+    remote.email_verified = false;
+    let live = Arc::new(AtomicBool::new(true));
+    alice.pool.set_foreign_authorization(Arc::new(ForeignHome {
+        user: remote.clone(),
+        fingerprint: fingerprint.clone(),
+        live: live.clone(),
+    }));
+    // The unsigned key hint grants no repository access. The signed session revalidates it.
+    codeyard_db_core::cells::authorization::authorize(
+        &alice.pool,
+        &codeyard_db_core::cells::authorization::Proof::Ssh { fingerprint },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let repo =
+        codeyard_db_repos::repositories::records::get_repository(&alice.pool, "alice", "repo")
+            .await
+            .unwrap()
+            .unwrap();
+    codeyard_db_repos::repositories::access::grant_repo_access(
+        &alice.pool,
+        remote.id,
+        repo.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    let directory = Arc::new(RouterDirectory {
+        entries: vec![
+            route_entry("alice", &alice).await,
+            route_entry("bob", &bob).await,
+        ],
+    });
+    let handler = crate::router::Handler::new(directory, identity);
+    let mut router =
+        SshServer::with_handler(root.path().join("host").to_str().unwrap(), handler).unwrap();
+    let host = router.config.keys[0].public_key().to_openssh().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, stopped) = watch::channel(false);
+    let task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+        router.run_listener(listener, stopped).await
+    }));
+    let key = root.path().join("key");
+    std::fs::write(
+        &key,
+        bob.key
+            .to_openssh(russh::keys::ssh_key::LineEnding::LF)
+            .unwrap()
+            .as_bytes(),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&key, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let known = root.path().join("known_hosts");
+    std::fs::write(&known, format!("[127.0.0.1]:{} {host}\n", address.port())).unwrap();
+    let quote =
+        |path: &std::path::Path| format!("'{}'", path.to_str().unwrap().replace('\'', "'\\''"));
+    let ssh=format!("ssh -F /dev/null -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile={} -i {} -p {}",quote(&known),quote(&key),address.port());
+    let work = root.path().join("work");
+    let work = work.to_str().unwrap();
+    assert!(git(&["init", "--initial-branch=main", work], None)
+        .await
+        .status
+        .success());
+    assert!(git(
+        &[
+            "-C",
+            work,
+            "-c",
+            "user.name=bob",
+            "-c",
+            "user.email=bob@example.test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "first"
+        ],
+        None
+    )
+    .await
+    .status
+    .success());
+    let url = format!("ssh://git@127.0.0.1:{}/alice/repo.git", address.port());
+    let pushed = git(
+        &["-C", work, "push", &url, "HEAD:refs/heads/main"],
+        Some(&ssh),
+    )
+    .await;
+    assert!(
+        pushed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&pushed.stderr)
+    );
+    let cloned = root.path().join("clone");
+    let cloned = git(
+        &["clone", "--branch", "main", &url, cloned.to_str().unwrap()],
+        Some(&ssh),
+    )
+    .await;
+    assert!(
+        cloned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cloned.stderr)
+    );
+    let before = git2::Repository::open_bare(&repo.disk_path)
+        .unwrap()
+        .find_reference("refs/heads/main")
+        .unwrap()
+        .target()
+        .unwrap();
+    let codeyard_db_core::DbPool::Sqlite(raw) = &alice.pool else {
+        unreachable!()
+    };
+    sqlx::query("DELETE FROM repo_access WHERE repo_id=$1 AND user_id=$2")
+        .bind(repo.id)
+        .bind(remote.id)
+        .execute(raw)
+        .await
+        .unwrap();
+    assert!(git(
+        &[
+            "-C",
+            work,
+            "-c",
+            "user.name=bob",
+            "-c",
+            "user.email=bob@example.test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "second"
+        ],
+        None
+    )
+    .await
+    .status
+    .success());
+    assert!(!git(
+        &["-C", work, "push", &url, "HEAD:refs/heads/main"],
+        Some(&ssh)
+    )
+    .await
+    .status
+    .success());
+    codeyard_db_repos::repositories::access::grant_repo_access(
+        &alice.pool,
+        remote.id,
+        repo.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    live.store(false, Ordering::SeqCst);
+    sqlx::query("UPDATE foreign_credentials SET expires_at=validated_at")
+        .execute(raw)
+        .await
+        .unwrap();
+    assert!(!git(
+        &["-C", work, "push", &url, "HEAD:refs/heads/main"],
+        Some(&ssh)
+    )
+    .await
+    .status
+    .success());
+    assert_eq!(
+        git2::Repository::open_bare(&repo.disk_path)
+            .unwrap()
+            .find_reference("refs/heads/main")
+            .unwrap()
+            .target()
+            .unwrap(),
+        before
+    );
+    stop.send_replace(true);
+    tokio::time::timeout(Duration::from_secs(15), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    alice.finish().await;
+    bob.finish().await;
+}

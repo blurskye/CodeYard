@@ -761,7 +761,8 @@ Metadata-only root validation also passes checks. Successor-prefix reservations 
 source-checked, as is stopped-cell renewal. Its local issuer-history/OAuth follow-up is
 written; its follow-up cache/public-role batch passes Clippy and WASM, with workspace passing.
 Shared cell authorization RPC and native home answers are written but unchecked; public
-foreign credential admission and publication are unfinished. Automatic renewal and
+foreign token admission, original SSH-key lookup and publication are written but unchecked;
+foreign browser sessions and remote membership pointers are unfinished. Automatic renewal and
 stages 3 to 6 are not built.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.

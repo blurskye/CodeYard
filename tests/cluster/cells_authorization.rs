@@ -64,6 +64,17 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .await
     .unwrap()
     .unwrap();
+    let ssh_key = russh::keys::PrivateKey::from(
+        russh::keys::ssh_key::private::Ed25519Keypair::from_seed(&[77; 32]),
+    );
+    let ssh_key = codeyard_db_identity::users::ssh_keys::add_ssh_key(
+        &one.pool,
+        user.id,
+        "cell key",
+        &ssh_key.public_key().to_openssh().unwrap(),
+    )
+    .await
+    .unwrap();
     let server_key = NodeKey::generate();
     let zero_key = NodeKey::generate();
     let one_key = NodeKey::generate();
@@ -84,7 +95,10 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         kind: ObjectKind::User,
         id: user.id,
     };
-    let keys = [Key::new(KeyKind::Name, &user.username).unwrap()];
+    let keys = [
+        Key::new(KeyKind::Name, &user.username).unwrap(),
+        Key::new(KeyKind::Ssh, &ssh_key.fingerprint).unwrap(),
+    ];
     let nonce = "e".repeat(64);
     directory
         .reserve(&one_key.public_hex(), object, &keys, &nonce)
@@ -153,6 +167,17 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .unwrap()
             .is_stub
     );
+    let ssh_answer = authorization::authorize(
+        &zero.pool,
+        &Proof::Ssh {
+            fingerprint: ssh_key.fingerprint.clone(),
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(ssh_answer.user.id, user.id);
+    assert_eq!(ssh_answer.credential_id, Some(ssh_key.id));
     let seconds: f64 = sqlx::query_scalar(
         "SELECT EXTRACT(EPOCH FROM expires_at-validated_at)::float8 FROM foreign_credentials",
     )

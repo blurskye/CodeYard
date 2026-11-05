@@ -171,7 +171,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     answer cache and both-engine expiry/hostile-source/failure tests are written but unchecked;
     no foreign credential is accepted yet. Shared bounded node RPC, native home answers,
     registered RPC listeners and live cell-key tests are written but unchecked; foreign ingress
-    and publication still remain. Automatic user
+    and publication are now wired in source but unchecked. Typed foreign token grants, exact
+    Git proofs and workflow checks have HTTP and SSH collaborator/revocation tests; their source
+    review and first combined check are next. Public foreign browser sessions, membership pointers
+    and two-cell gh/Git deployment remain unfinished. Automatic user
     moves and org regional presence are documented owner decisions.
 
 ## Decisions that settle the open questions
