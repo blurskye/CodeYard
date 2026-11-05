@@ -114,6 +114,10 @@ async fn begin_write(
         view.voters.len(),
     )?;
     ensure!(
+        required as usize > view.voters.len() / 2,
+        "write quorum is below a majority of fixed voters"
+    );
+    ensure!(
         view.voters.iter().any(|voter| voter.node_id == primary
             && voter.term == term
             && voter.applied_version == view.committed_version),

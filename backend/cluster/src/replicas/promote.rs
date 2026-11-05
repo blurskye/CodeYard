@@ -346,7 +346,12 @@ pub async fn catch_up_voter(
         .context("repository disappeared during voter catch-up")?;
     let uuid = codeyard_repos_core::wire::repository_uuid(&row.disk_path)?;
     let path = codeyard_repos_core::context::term_path(&context.repos_path, uuid, view.term);
-    tokio::fs::create_dir_all(&path).await?;
+    let directory = path.clone();
+    codeyard_git::repository::process::blocking_until(
+        Instant::now() + Duration::from_secs(5),
+        move || Ok(codeyard_support::fs::durable_dir(&directory)?),
+    )
+    .await?;
     codeyard_repos_core::context::literal_directory(&context.repos_path, &path).await?;
     let guards = tokio::time::timeout(Duration::from_millis(500), async {
         let publication = codeyard_git::locks::publication(&path).await?;

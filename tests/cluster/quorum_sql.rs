@@ -1111,7 +1111,11 @@ async fn opt_in_and_timeout(pool: &DbPool) {
 }
 
 async fn coordinator_publication(pool: &DbPool) {
-    let f = setup(pool, 2, "2").await;
+    coordinator_publication_with_voters(pool, 2, "2").await;
+}
+
+async fn coordinator_publication_with_voters(pool: &DbPool, count: usize, setting: &str) {
+    let f = setup(pool, count, setting).await;
     let id = Uuid::new_v4().to_string();
     let prepared =
         codeyard_cluster_core::writes::begin(pool, f.repo, f.primary, 1, &id, &[change()])
@@ -1271,24 +1275,7 @@ async fn coordinator_admission(pool: &DbPool) {
 }
 
 async fn coordinator_three_voters(pool: &DbPool) {
-    let f = setup(pool, 3, "majority").await;
-    assert!(codeyard_cluster_core::writes::begin(
-        pool,
-        f.repo,
-        f.primary,
-        1,
-        &Uuid::new_v4().to_string(),
-        &[change()]
-    )
-    .await
-    .is_err());
-    assert!(
-        codeyard_db_cluster::cluster::writes::recovery_view(pool, f.repo)
-            .await
-            .unwrap()
-            .unfinished
-            .is_none()
-    );
+    coordinator_publication_with_voters(pool, 3, "majority").await;
 }
 
 async fn coordinator_duplicate_begin(pool: &DbPool) {

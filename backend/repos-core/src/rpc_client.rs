@@ -118,17 +118,18 @@ impl NodeContext {
         write: &codeyard_db_core::models::WriteRecord,
     ) -> anyhow::Result<()> {
         let limits = crate::git_transport::WriteLimits::load(self.database()?).await?;
-        tokio::time::timeout(
-            limits.timeout.min(std::time::Duration::from_secs(1)),
-            async {
-                anyhow::ensure!(write.decision == "abort", "write is not aborted");
-                self.remove_write_preparation(path, write, limits).await?;
-                // An unavailable voter cannot prevent local abort cleanup; its unserved
-                // preparation is discarded when that voter reconstructs its term.
-                let _ = self.write_followers(repository, write, false).await;
-                Ok(())
-            },
-        )
+        tokio::time::timeout(limits.timeout, async {
+            anyhow::ensure!(write.decision == "abort", "write is not aborted");
+            self.remove_write_preparation(path, write, limits).await?;
+            // SQL has decided abort. A remote cleanup failure cannot publish that write
+            // or keep its unfinished slot occupied after local cleanup is durable.
+            let _ = tokio::time::timeout(
+                limits.timeout.min(std::time::Duration::from_secs(1)),
+                self.write_followers(repository, write, false),
+            )
+            .await;
+            Ok(())
+        })
         .await?
     }
 

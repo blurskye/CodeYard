@@ -875,6 +875,9 @@ async fn new_repositories_use_all_voters(pool: &DbPool) {
             );
             assert_eq!(store.head_target().await.unwrap().as_deref(), Some(MAIN));
             if source.is_some() {
+                codeyard_cluster::replicas::promote::catch_up_voter(context, repo.id)
+                    .await
+                    .unwrap();
                 assert_eq!(store.refs().await.unwrap().get(MAIN), Some(&stores.old));
             } else {
                 assert!(store.refs().await.unwrap().is_empty());
@@ -1124,6 +1127,12 @@ async fn three_voters_keep_a_majority_and_recover_a_missed_write(pool: &DbPool) 
         .await
         .is_err());
     assert_eq!(stores.refs().await, before);
+    let aborted = last_write(pool, stores.fixture.repo).await;
+    assert_eq!(aborted.decision, "abort");
+    assert!(
+        aborted.finished,
+        "offline cleanup must not block the next write"
+    );
     stores.stop().await;
 }
 engine_pair!(

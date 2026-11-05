@@ -2856,6 +2856,36 @@ t_cluster_quorum_other_publishers() {
     done
 }
 
+t_cluster_quorum_no_majority() {
+    local name=quorum-survival-http source=$RUN/work/quorum-survival-http
+    local primary node before expected deadline
+    local -a followers=()
+    primary=$(repo_node alice "$name") || return 1
+    git_with_token read -C "$source" fetch -q "$BASE/alice/$name.git" main || return 1
+    git_as alice -C "$source" merge --ff-only -q FETCH_HEAD || return 1
+    before=$(git_as alice -C "$source" rev-parse HEAD) || return 1
+    for node in store1 store2 store3; do
+        [[ $node != "$primary" ]] || continue
+        followers+=("$node")
+        stop_server "$node" || return 1
+    done
+    printf 'A majority must hold this commit\n' >"$source/majority.txt"
+    git_as alice -C "$source" add majority.txt || return 1
+    git_as alice -C "$source" commit -qm 'Require a durable majority' || return 1
+    expected=$(git_as alice -C "$source" rev-parse HEAD) || return 1
+    must_fail 'two stopped voters refuse a push' 'write quorum unavailable|remote rejected|503' \
+        git_with_token write -C "$source" push -q "$BASE/alice/$name.git" main || return 1
+    [[ $(git_with_token read ls-remote "$BASE/alice/$name.git" refs/heads/main | cut -f1) == "$before" ]] || return 1
+    start_server "${followers[0]}" || return 1
+    deadline=$((SECONDS + 60))
+    until git_with_token write -C "$source" push -q "$BASE/alice/$name.git" main; do
+        ((SECONDS < deadline)) || { echo 'One stopped voter prevented a majority write' >&2; return 1; }
+        sleep 1
+    done
+    [[ $(git_with_token read ls-remote "$BASE/alice/$name.git" refs/heads/main | cut -f1) == "$expected" ]] || return 1
+    start_server "${followers[1]}" || return 1
+}
+
 t_cluster_storage_loss() {
     local name=quorum-survival-http source=$RUN/work/quorum-survival-http expected primary pid mode destination deadline
     for mode in clone push; do
@@ -3272,6 +3302,7 @@ run_quorum_round() {
     step -f 'quorum: issue second client token' t_github_token
     step -f -i 'quorum: three voters keep HTTP and SSH acknowledged pushes after SIGKILL' t_cluster_quorum_primary_loss
     step -f -i 'quorum: editor, branch and merge publications survive primary SIGKILL' t_cluster_quorum_other_publishers
+    step -f -i 'quorum: two stopped voters refuse a push; one stopped voter permits it' t_cluster_quorum_no_majority
     ROUND_BLOCKED=0
     step -i 'quorum: every owned node stops cleanly' t_cluster_shutdown store1 store2 web1
     terminate_servers
