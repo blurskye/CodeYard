@@ -440,7 +440,7 @@ configure_node() {
     mkdir -p "$NODE_DIR/home" "$NODE_DIR/repos"
     : >"$RUN/.env"
     case $node in
-        web1) roles=web,ssh ;;
+        web1 | web2) roles=web,ssh ;;
         store1 | store2) roles=storage ;;
         ci1 | r1 | r2) roles=runner ;;
     esac
@@ -578,8 +578,8 @@ start_server() { # inline: starts a node and waits for its actual services
             return 1
         fi
         case $node in
-            server | web1)
-                if curl -q --noproxy '*' -fsS --max-time 2 -o "$dir/health.json" "$BASE/health" 2>/dev/null; then
+            server | web1 | web2)
+                if curl -q --noproxy '*' -fsS --max-time 2 -o "$dir/health.json" "http://127.0.0.1:${HTTP_PORTS[$node]}/health" 2>/dev/null; then
                     grep -q '"status":"ok"' "$dir/health.json" && ready=1
                 fi ;;
             store1 | store2)
@@ -1801,7 +1801,7 @@ t_github_clients() {
     [[ -z $CI_RUNS_UNAVAILABLE ]] || skip=(--skip-runs "$CI_RUNS_UNAVAILABLE")
     local check_postgres=0
     if [[ $ROUND == postgres || $ROUND == cluster ]]; then check_postgres=1; fi
-    E2E_CHECK_PG_RESTART=$check_postgres "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" "${skip[@]}" || rc=$?
+    E2E_CHECK_PG_RESTART=$check_postgres E2E_STOP_WEB_PID=${E2E_STOP_WEB_PID:-} "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" "${skip[@]}" || rc=$?
     id=$(get gh_run_id)
     [[ $id =~ ^[0-9a-f-]{36}$ ]]
     if [[ $ROUND == sqlite ]]; then
@@ -2716,6 +2716,32 @@ t_cluster_approve_worker() {
     done
 }
 
+t_cluster_github_clients() {
+    local ticket old_pid=${SERVER_PIDS[web1]} rc=0
+    local -a ports
+    read -r -a ports < <(free_ports 2)
+    HTTP_PORTS[web2]=${ports[0]} SSH_PORTS[web2]=${ports[1]}
+    IROH_PORTS[web2]=$(free_ports 1 udp)
+    ticket=$(cluster_cli web1 invite --roles web,ssh) || return 1
+    CLUSTER_JOIN_TOKEN=$ticket cluster_cli web2 join --name web2 || return 1
+    BASE=http://127.0.0.1:${HTTP_PORTS[web2]}
+    SSH_URL=ssh://git@127.0.0.1:${SSH_PORTS[web2]}
+    start_server web2 || return 1
+    CLUSTER_NODES+=(web2)
+    # The helper drives real gh and Git clients through web2, kills web1 during
+    # traffic, and verifies every acknowledged issue and clone afterward.
+    E2E_STOP_WEB_PID=$old_pid t_github_clients || rc=$?
+    if ! kill -0 "$old_pid" 2>/dev/null; then
+        wait "$old_pid" 2>/dev/null || true
+        unset 'SERVER_PIDS[web1]'
+        start_server web1 || rc=1
+    else
+        BASE=http://127.0.0.1:${HTTP_PORTS[web1]}
+        SSH_URL=ssh://git@127.0.0.1:${SSH_PORTS[web1]}
+    fi
+    ((rc == 0))
+}
+
 # Run last: existing legacy repositories keep their fixtures; these new repositories
 # exercise the two-voter path with real pushes and process death immediately after ack.
 t_cluster_quorum_primary_loss() {
@@ -2791,6 +2817,10 @@ t_cluster_shutdown() { # inline: attempt every stop even when one fails
         stop_server "$node" || failed=1
         t_log_clean "$node" || failed=1
     done
+    if [[ -n ${SERVER_PIDS[web2]:-} ]]; then
+        stop_server web2 || failed=1
+        t_log_clean web2 || failed=1
+    fi
     ((failed == 0))
 }
 
@@ -2986,7 +3016,7 @@ run_cluster_round() {
     step -f 'ci: ci1 runs it; logs, page and commit status reach web1' t_cluster_ci_result
     step 'ci: fork waits for approval, runs on ci1 without secrets' t_cluster_fork_ci
     step 'organization: created for real GitHub clients' t_org
-    step 'real clients: GHES gh, native github-script and webhooks through web1 and remote storage' t_github_clients
+    step 'web loss: real gh and Git continue through web2 while web1 dies' t_cluster_github_clients
     step -f 'replica: setting 2 keeps a current copy on store2' t_replica_create
     step -f 'failure: revoke store1 to hold automatic takeover during fallback checks' cluster_cli web1 revoke store1
     step -i 'failure: store1 exits cleanly on SIGTERM' stop_server store1

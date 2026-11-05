@@ -8,6 +8,7 @@ No API responses, Git data, workflow results or webhook documents are mocked.
 import argparse
 import base64
 import contextlib
+import concurrent.futures
 import gzip
 import hashlib
 import hmac
@@ -17,6 +18,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import signal
 import shutil
 import socket
 import ssl
@@ -112,6 +114,7 @@ class Client:
         self.skip_runs = skip_runs
         self.skips = []
         self.command_number = 0
+        self.log_lock = threading.Lock()
         self.base = base
         self.directory = directory
         self.clone = directory / "clone"
@@ -144,8 +147,9 @@ class Client:
         diagnostic = result.stdout + result.stderr
         for value in [*self.credentials.values(), SECRET]:
             diagnostic = diagnostic.replace(value, "[redacted]")
-        self.command_number += 1
-        log = self.directory / f"command-{self.command_number:03}.log"
+        with self.log_lock:
+            self.command_number += 1
+            log = self.directory / f"command-{self.command_number:03}.log"
         log.write_text(f"{' '.join(map(str, argv))}\nexit: {result.returncode}\n{diagnostic}")
         if result.returncode not in ok:
             # GH_DEBUG=api fills stderr with request traces; the error text is what is left.
@@ -268,6 +272,48 @@ class Client:
             assert self.api(f"repos/{REPO}", who="bob")["permissions"]["push"] is True
         with self.check("gh repo view as collaborator"):
             assert self.data("repo", "view", HOST + "/" + REPO, "--json", "viewerPermission", who="bob")["viewerPermission"] == "WRITE"
+
+    def web_loss(self):
+        value = os.environ.get("E2E_STOP_WEB_PID", "")
+        if not value:
+            return
+        pid = int(value)
+        assert pid > 1
+        with self.check("gh and Git survive losing the other web node"):
+            acknowledged = threading.Event()
+            lost = threading.Event()
+            def issues():
+                numbers = []
+                for index in range(12):
+                    result = self.gh("issue", "create", "-R", REPO, "--title",
+                                     f"Web loss acknowledged {index}", "--body", "Survives web1")
+                    numbers.append(int(result.stdout.strip().rstrip("/").rsplit("/", 1)[1]))
+                    acknowledged.set()
+                    if index == 0:
+                        assert lost.wait(timeout=65), "web-loss action did not finish"
+                return numbers
+            def clones():
+                for index in range(3):
+                    path = self.directory / f"web-loss-clone-{index}"
+                    self.git("clone", "--quiet", f"{self.base}/{REPO}.git", str(path), git_auth=True)
+                    self.git("-C", path, "fsck", "--full")
+                    if index == 0:
+                        assert lost.wait(timeout=65), "web-loss action did not finish"
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as workers:
+                writes = workers.submit(issues)
+                reads = workers.submit(clones)
+                try:
+                    assert acknowledged.wait(timeout=60), "gh did not acknowledge a write before web loss"
+                    os.kill(pid, signal.SIGKILL)
+                finally:
+                    lost.set()
+                numbers = writes.result(timeout=180)
+                reads.result(timeout=180)
+            assert len(set(numbers)) == 12
+            for index, number in enumerate(numbers):
+                issue = self.api(f"repos/{REPO}/issues/{number}")
+                assert issue["title"] == f"Web loss acknowledged {index}"
+                assert issue["body"] == "Survives web1"
 
     def issues(self):
         with self.check("gh issue create"):
@@ -1058,7 +1104,7 @@ def main():
             "config": {"url": f"http://127.0.0.1:{receiver.server_port}/deliveries", "content_type": "json", "secret": secret}}))
         assert hook["active"] is True and hook["id"] > 0, hook
         try:
-            for operation in (client.repositories, client.issues, client.pulls, client.releases,
+            for operation in (client.repositories, client.web_loss, client.issues, client.pulls, client.releases,
                               client.apis_and_values, client.workflows):
                 with client.check(operation.__name__ + " setup and remaining checks"):
                     operation()

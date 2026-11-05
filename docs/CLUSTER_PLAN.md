@@ -59,7 +59,7 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 | A1 | `scripts/e2e.sh` cluster round | green | pending builder acceptance |
 | A2 | Push over HTTP and SSH, `kill -9` the storage primary the moment the push returns | within 2 minutes `git clone` has the commit, no `--force` | final cluster e2e step written; runtime pending |
 | A3 | Upload a package or CI artifact through web node 1, download it through web node 2 | same bytes | cross-node HTTP regression written; runtime pending |
-| A4 | Stop one web node while clients run `gh` and `git` | other nodes keep serving, sessions survive, no half-written state | pending builder acceptance |
+| A4 | Stop one web node while clients run `gh` and `git` | other nodes keep serving, sessions survive, no half-written state | gh/Git process-loss step and browser-session regression written; runtime pending |
 | A5 | Kill a storage node during a clone and a push | clear error to the client, no changed refs, clone retries from a copy | pending builder acceptance |
 | A6 | Fill a storage node's disk | placement skips it, writes fail cleanly, no corrupt repository | pending builder acceptance |
 | A7 | Restart PostgreSQL under load | `/ready` goes 503 then 200, nodes reconnect without restart, no lost acknowledged write | owned-database crash step written; runtime pending |
