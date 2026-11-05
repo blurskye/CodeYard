@@ -3,4 +3,5 @@
 
 pub mod config;
 
+pub(crate) mod router;
 pub(crate) mod runtime;

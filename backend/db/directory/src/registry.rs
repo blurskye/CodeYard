@@ -113,6 +113,26 @@ impl Directory {
         }).await
     }
 
+    pub async fn router_key_for(&self, peer: &str, key: &str) -> Result<bool> {
+        self.run(async {
+            ensure!(
+                codeyard_support::tokens::is_hex_token(key, 64),
+                Refusal::Invalid
+            );
+            let mut tx = self.begin().await?;
+            super::read_owner(&mut tx, peer).await?;
+            let found: Option<String> = sqlx::query_scalar(
+                "SELECT public_key FROM directory_router_keys WHERE public_key=$1 FOR SHARE",
+            )
+            .bind(key.to_ascii_lowercase())
+            .fetch_optional(&mut *tx)
+            .await?;
+            tx.commit().await?;
+            Ok(found.is_some())
+        })
+        .await
+    }
+
     /// The key is authenticated by node-key TLS, never taken from request JSON.
     pub async fn authorize_read(&self, peer: &str) -> Result<()> {
         self.run(async {

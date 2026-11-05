@@ -70,7 +70,7 @@ impl Drop for ChannelState {
 const MAX_ACTIVE_GIT_CHANNELS: usize = 8;
 
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum AuthOutcome {
+pub enum AuthOutcome {
     Accepted,
     Unavailable,
 }
@@ -80,7 +80,18 @@ enum KeyIdentity {
     Deploy(i64),
 }
 
+/// Only directory-enrolled routers may carry an already verified client key.
+pub trait RouterAuthorization: Send + Sync {
+    fn authorize<'a>(
+        &'a self,
+        key: &'a PublicKey,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<bool>> + Send + 'a>>;
+}
+
 pub struct GitSshHandler {
+    pub(crate) router_authorization: Option<Arc<dyn RouterAuthorization>>,
+    router_peer: Option<PublicKey>,
+    router_client_key: Option<String>,
     pool: DbPool,
     user: Option<User>,
     key_id: Option<i64>,
@@ -102,6 +113,9 @@ pub struct GitSshHandler {
 impl GitSshHandler {
     pub fn new(pool: DbPool, rate_limiter: RateLimiter, ci_service: Arc<CiRuns>) -> Self {
         Self {
+            router_authorization: None,
+            router_peer: None,
+            router_client_key: None,
             pool,
             user: None,
             key_id: None,
@@ -131,6 +145,16 @@ impl GitSshHandler {
 
     pub(super) fn set_authenticated_signal(&mut self, signal: oneshot::Sender<AuthOutcome>) {
         self.authenticated = Some(signal);
+    }
+
+    async fn router_live(&self, key: &PublicKey) -> Result<bool> {
+        match &self.router_authorization {
+            Some(authorizer) => {
+                tokio::time::timeout(std::time::Duration::from_secs(5), authorizer.authorize(key))
+                    .await?
+            }
+            None => Ok(false),
+        }
     }
 
     /// Refuses a request that is not supported (shell, subsystem, pty).
@@ -300,6 +324,7 @@ impl russh::server::Server for GitSshHandler {
             self.ci_service.clone(),
         );
         client.git_tasks = self.git_tasks.clone();
+        client.router_authorization = self.router_authorization.clone();
         client.id = self.id;
         client.client_ip = addr.map(|address| address.ip());
         client
@@ -329,9 +354,16 @@ impl russh::server::Handler for GitSshHandler {
 
     async fn auth_publickey_offered(
         &mut self,
-        _user: &str,
+        user: &str,
         public_key: &PublicKey,
     ) -> Result<Auth, Self::Error> {
+        if user == "codeyard-router" {
+            return Ok(if self.router_live(public_key).await? {
+                Auth::Accept
+            } else {
+                Auth::reject()
+            });
+        }
         match tokio::time::timeout(
             std::time::Duration::from_secs(5),
             self.key_identity(public_key),
@@ -351,12 +383,24 @@ impl russh::server::Handler for GitSshHandler {
 
     async fn auth_publickey(
         &mut self,
-        _user: &str,
+        user: &str,
         public_key: &PublicKey,
     ) -> Result<Auth, Self::Error> {
+        self.router_peer = None;
+        self.router_client_key = None;
         self.user = None;
         self.key_id = None;
         self.deploy_key = None;
+        if user == "codeyard-router" {
+            if !self.router_live(public_key).await? {
+                return self.reject_key().await;
+            }
+            self.router_peer = Some(public_key.clone());
+            if let Some(signal) = self.authenticated.take() {
+                let _ = signal.send(AuthOutcome::Accepted);
+            }
+            return Ok(Auth::Accept);
+        }
         // Re-read after signature verification; an unsigned offer is never authority.
         let identity = match tokio::time::timeout(
             std::time::Duration::from_secs(5),
@@ -446,6 +490,45 @@ impl russh::server::Handler for GitSshHandler {
         variable_value: &str,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        if variable_name == "CODEYARD_SSH_KEY" {
+            let accepted = if let Some(peer) = self.router_peer.clone() {
+                if !self.router_live(&peer).await? || variable_value.len() > 16384 {
+                    false
+                } else if let Some(existing) = &self.router_client_key {
+                    existing == variable_value
+                } else if let Ok(key) = PublicKey::from_openssh(variable_value) {
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(5),
+                        self.key_identity(&key),
+                    )
+                    .await??
+                    {
+                        Some(KeyIdentity::Account(user, id)) => {
+                            self.user = Some(*user);
+                            self.key_id = Some(id);
+                            self.router_client_key = Some(variable_value.to_owned());
+                            true
+                        }
+                        Some(KeyIdentity::Deploy(id)) => {
+                            self.deploy_key = Some(id);
+                            self.router_client_key = Some(variable_value.to_owned());
+                            true
+                        }
+                        None => false,
+                    }
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if accepted {
+                let _ = session.channel_success(channel);
+            } else {
+                let _ = session.channel_failure(channel);
+            }
+            return Ok(());
+        }
         let accepted = self
             .channels
             .get_mut(&u32::from(channel))
@@ -509,6 +592,12 @@ impl russh::server::Handler for GitSshHandler {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        if let Some(peer) = &self.router_peer {
+            if !self.router_live(peer).await? {
+                self.refuse_command(channel, session, "Router key revoked");
+                return Ok(());
+            }
+        }
         if let Some(context) = &self.ci_service.cluster {
             let node = tokio::time::timeout(
                 std::time::Duration::from_secs(2),

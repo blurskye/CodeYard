@@ -117,7 +117,7 @@ fn canonical_ip(ip: IpAddr) -> IpAddr {
 
 /// Shuts the socket down when dropped. A cancelled connection drops its russh session task
 /// without ending that task, so this is the handle that closes the connection.
-struct ShutdownOnDrop(std::net::TcpStream);
+pub(crate) struct ShutdownOnDrop(pub(crate) std::net::TcpStream);
 
 impl Drop for ShutdownOnDrop {
     fn drop(&mut self) {
@@ -344,7 +344,9 @@ impl Drop for PreAuthSlot {
 /// Splits off a second handle to the socket. The login deadline shuts the socket
 /// down through it: russh handles disconnect requests only after key exchange, so a
 /// stalled exchange would otherwise keep its socket open.
-fn duplicate_socket(stream: TcpStream) -> std::io::Result<(TcpStream, std::net::TcpStream)> {
+pub(crate) fn duplicate_socket(
+    stream: TcpStream,
+) -> std::io::Result<(TcpStream, std::net::TcpStream)> {
     let stream = stream.into_std()?;
     let control = stream.try_clone()?;
     Ok((TcpStream::from_std(stream)?, control))
@@ -352,12 +354,12 @@ fn duplicate_socket(stream: TcpStream) -> std::io::Result<(TcpStream, std::net::
 
 /// Serves one client from the accepted socket until its session ends. The client
 /// must authenticate before `deadline`, or its socket is shut down.
-async fn serve_connection(
+async fn serve_connection<H: ConnectionHandler + 'static>(
     config: Arc<Config>,
     mut stream: TcpStream,
     peer: SocketAddr,
     trusted_proxy_ips: Arc<HashSet<IpAddr>>,
-    mut handler: GitSshHandler,
+    mut handler: H,
     slot: PreAuthSlot,
     deadline: tokio::time::Instant,
 ) {
@@ -433,14 +435,61 @@ async fn serve_connection(
     }
 }
 
-pub struct SshServer {
+fn server_config(private_key: PrivateKey) -> Config {
+    Config {
+        inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
+        window_size: 2 * 1024 * 1024,
+        maximum_packet_size: 32 * 1024,
+        channel_buffer_size: 2,
+        auth_rejection_time: std::time::Duration::from_secs(3),
+        auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
+        keys: vec![private_key],
+        // Only keys authenticate; clients should not offer a password.
+        methods: russh::MethodSet::from(&[russh::MethodKind::PublicKey][..]),
+        ..Default::default()
+    }
+}
+
+/// Connection admission and shutdown are shared by native Git and router sessions.
+pub trait ConnectionHandler:
+    russh::server::Handler<Error = anyhow::Error> + russh::server::Server<Handler = Self> + Sized + Send
+{
+    fn set_client_ip(&mut self, ip: IpAddr);
+    fn set_authenticated_signal(&mut self, signal: oneshot::Sender<AuthOutcome>);
+    fn client_is_blocked(&self) -> impl std::future::Future<Output = bool> + Send;
+    fn drain(&self) -> impl std::future::Future<Output = ()> + Send;
+}
+impl ConnectionHandler for GitSshHandler {
+    fn set_client_ip(&mut self, ip: IpAddr) {
+        GitSshHandler::set_client_ip(self, ip);
+    }
+    fn set_authenticated_signal(&mut self, signal: oneshot::Sender<AuthOutcome>) {
+        GitSshHandler::set_authenticated_signal(self, signal);
+    }
+    async fn client_is_blocked(&self) -> bool {
+        GitSshHandler::client_is_blocked(self).await
+    }
+    async fn drain(&self) {
+        self.git_tasks.drain().await;
+    }
+}
+
+pub struct SshServer<H = GitSshHandler> {
     config: Arc<Config>,
-    handler: GitSshHandler,
+    handler: H,
     trusted_proxy_ips: Arc<HashSet<IpAddr>>,
     admission: PreAuthAdmission,
 }
 
 impl SshServer {
+    pub fn with_router_authorization(
+        mut self,
+        authorization: Arc<dyn crate::handler::RouterAuthorization>,
+    ) -> Self {
+        self.handler.router_authorization = Some(authorization);
+        self
+    }
+
     pub async fn new(
         pool: DbPool,
         host_key_path: Option<&str>,
@@ -524,18 +573,7 @@ impl SshServer {
             open_host_key_file(path)?;
         }
 
-        let config = Config {
-            inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
-            window_size: 2 * 1024 * 1024,
-            maximum_packet_size: 32 * 1024,
-            channel_buffer_size: 2,
-            auth_rejection_time: std::time::Duration::from_secs(3),
-            auth_rejection_time_initial: Some(std::time::Duration::from_secs(0)),
-            keys: vec![private_key],
-            // Only keys authenticate; clients should not offer a password.
-            methods: russh::MethodSet::from(&[russh::MethodKind::PublicKey][..]),
-            ..Default::default()
-        };
+        let config = server_config(private_key);
 
         let rate_limiter = RateLimiter::new();
         let handler = GitSshHandler::new(pool, rate_limiter, ci_service);
@@ -545,6 +583,38 @@ impl SshServer {
             config: Arc::new(config),
             handler,
             trusted_proxy_ips,
+            admission: PreAuthAdmission::default(),
+        })
+    }
+}
+
+impl<H: ConnectionHandler + 'static> SshServer<H> {
+    pub fn with_handler(host_key_path: &str, handler: H) -> Result<Self> {
+        use std::io::Read;
+        let key = match open_host_key_file(host_key_path) {
+            Ok(file) => {
+                let mut pem = String::new();
+                file.take(1024 * 1024).read_to_string(&mut pem)?;
+                russh::keys::decode_secret_key(&pem, None)?
+            }
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                let key = new_host_key();
+                write_host_key_file(
+                    host_key_path,
+                    &key.to_openssh(russh::keys::ssh_key::LineEnding::LF)?,
+                )?;
+                key
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(Self {
+            config: Arc::new(server_config(key)),
+            handler,
+            trusted_proxy_ips: Arc::new(configured_trusted_proxy_ips()?),
             admission: PreAuthAdmission::default(),
         })
     }
@@ -599,7 +669,7 @@ impl SshServer {
         info!("SSH server stopped accepting connections");
         tokio::join!(
             async { while connections.join_next().await.is_some() {} },
-            self.handler.git_tasks.drain(),
+            self.handler.drain(),
         );
         Ok(())
     }

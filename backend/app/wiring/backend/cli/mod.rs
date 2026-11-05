@@ -228,6 +228,44 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
     {
         return crate::backend::cli::cells::run_directory(action, &cli.state_dir).await;
     }
+    if let Commands::Serve {
+        roles,
+        cluster,
+        http_addr,
+        ssh_addr,
+        ssh_mode,
+        host_key,
+        directory_address,
+        directory_key,
+        region,
+        ..
+    } = &cli.command
+    {
+        if roles.router_only() {
+            anyhow::ensure!(!cluster, "A router has no cell cluster or database");
+            anyhow::ensure!(
+                *ssh_mode != codeyard_support::ssh_mode::SshMode::Openssh,
+                "The router terminates SSH itself; use builtin, auto or disabled"
+            );
+            let directory = crate::backend::node::router::DirectorySettings::from_options(
+                *directory_address,
+                directory_key.as_deref(),
+            )?
+            .ok_or_else(|| {
+                anyhow::anyhow!("A router requires DIRECTORY_ADDRESS and DIRECTORY_PUBLIC_KEY")
+            })?;
+            return crate::backend::node::router::serve(crate::backend::node::router::Config {
+                directory,
+                region: region.clone(),
+                state: cli.state_dir.clone(),
+                host_key: host_key.clone(),
+                http: *http_addr,
+                ssh: (*ssh_mode != codeyard_support::ssh_mode::SshMode::Disabled)
+                    .then_some(*ssh_addr),
+            })
+            .await;
+        }
+    }
     let configured_database_url = database_url_from_env()?;
     // Making a key and joining a cluster work on a machine with no database.
     if let Commands::Cluster { action } = &cli.command {
@@ -328,6 +366,9 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
             Commands::Serve {
                 roles,
                 cluster,
+                directory_address,
+                directory_key,
+                region: _,
                 ssh_mode,
                 ssh_socket,
                 ssh_git_user,
@@ -345,6 +386,10 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                 crate::backend::node::runtime::serve(
                     pool.clone(),
                     crate::backend::node::config::ServeConfig {
+                        directory: crate::backend::node::router::DirectorySettings::from_options(
+                            directory_address,
+                            directory_key.as_deref(),
+                        )?,
                         roles,
                         repos_path: cli.repos_path,
                         state_dir: cli.state_dir,

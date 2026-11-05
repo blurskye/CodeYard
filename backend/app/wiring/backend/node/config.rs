@@ -3,6 +3,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 pub struct ServeConfig {
+    pub directory: Option<super::router::DirectorySettings>,
     pub roles: NodeRoles,
     pub repos_path: PathBuf,
     pub state_dir: PathBuf,

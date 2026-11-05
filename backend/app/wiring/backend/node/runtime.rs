@@ -581,6 +581,11 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
                     ci_runs.clone(),
                 )
                 .await?;
+                if let Some(settings) = &config.directory {
+                    server = server.with_router_authorization(Arc::new(
+                        super::router::Directory::new(settings, &config.state_dir)?,
+                    ));
+                }
                 info!(address = %config.ssh_addr, "built-in SSH listening");
                 tokio::try_join!(server.run(config.ssh_addr, stop.clone()), web_server).map(|_| ())
             }

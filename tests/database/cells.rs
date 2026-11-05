@@ -215,15 +215,14 @@ async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_parti
             .await
             .unwrap(),
     );
-    let router =
-        codeyard_api_rest::create_router(std::sync::Arc::new(codeyard_app::app::AppState::new(
-            database.pool.clone(),
-            root.path().join("repos"),
-            storage,
-            None,
-            codeyard_ci::config::CiConfig::default(),
-            None,
-        )));
+    let router = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
+        database.pool.clone(),
+        root.path().join("repos"),
+        storage,
+        None,
+        codeyard_ci::config::CiConfig::default(),
+        None,
+    ));
     let browser =
         crate::support::http_client::Client::login(&router, &database.pool, first.id).await;
     let issued = browser

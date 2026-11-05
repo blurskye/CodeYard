@@ -29,6 +29,18 @@ pub(super) enum Commands {
         #[arg(long, env = "GITSERV_NODE_ROLES", default_value = "server,runner")]
         roles: codeyard_model::node_roles::NodeRoles,
 
+        /// Pinned directory endpoint for a router or cell SSH gateway
+        #[arg(long, env = "DIRECTORY_ADDRESS")]
+        directory_address: Option<SocketAddr>,
+
+        /// Directory public node key (64 hex characters)
+        #[arg(long, env = "DIRECTORY_PUBLIC_KEY")]
+        directory_key: Option<String>,
+
+        /// Region used by router placement
+        #[arg(long, env = "CELL_REGION", default_value = "local")]
+        region: String,
+
         /// Turn cluster mode on first (PostgreSQL only), so this node can take the web,
         /// storage and ssh roles. Same as running `cluster enable` before `serve`.
         #[arg(long)]

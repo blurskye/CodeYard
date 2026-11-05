@@ -13,6 +13,7 @@ pub enum NodeRole {
     Storage,
     Ssh,
     Runner,
+    Router,
 }
 
 impl NodeRole {
@@ -23,6 +24,7 @@ impl NodeRole {
             Self::Storage => "storage",
             Self::Ssh => "ssh",
             Self::Runner => "runner",
+            Self::Router => "router",
         }
     }
 }
@@ -46,6 +48,10 @@ impl NodeRoles {
         self.0.iter().map(|role| role.as_str().to_owned()).collect()
     }
 
+    pub fn router_only(&self) -> bool {
+        self.0.len() == 1 && self.contains(NodeRole::Router)
+    }
+
     pub fn worker_only(&self) -> bool {
         self.0.len() == 1 && self.contains(NodeRole::Runner)
     }
@@ -63,7 +69,9 @@ impl NodeRoles {
     /// Whether users connect to this node. Web and SSH can use local or remote
     /// repository storage; a node without them only serves other nodes.
     pub fn faces_users(&self) -> bool {
-        self.contains(NodeRole::Web) || self.contains(NodeRole::Ssh)
+        self.contains(NodeRole::Web)
+            || self.contains(NodeRole::Ssh)
+            || self.contains(NodeRole::Router)
     }
 }
 
@@ -123,8 +131,9 @@ impl FromStr for NodeRoles {
                 "storage" => &[NodeRole::Storage],
                 "ssh" => &[NodeRole::Ssh],
                 "runner" => &[NodeRole::Runner],
+                "router" => &[NodeRole::Router],
                 _ => anyhow::bail!(
-                    "Unknown role; expected server or runner (web, storage and ssh in cluster mode)"
+                    "Unknown role; expected server, runner or router (web, storage and ssh in cluster mode)"
                 ),
             };
             ensure!(names.insert(name), "Duplicate role");
@@ -132,6 +141,10 @@ impl FromStr for NodeRoles {
                 ensure!(roles.insert(*role), "Duplicate role");
             }
         }
+        ensure!(
+            !roles.contains(&NodeRole::Router) || roles.len() == 1,
+            "The router role runs alone without a cell database"
+        );
         Ok(Self(roles))
     }
 }
@@ -139,6 +152,19 @@ impl FromStr for NodeRoles {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn router_runs_alone_without_cell_services() {
+        let roles: NodeRoles = "router".parse().unwrap();
+        assert!(roles.router_only());
+        assert!(roles.faces_users());
+        assert!(!roles.single_node());
+        assert!(!roles.worker_only());
+        assert_eq!(roles.to_string(), "router");
+        for mixed in ["router,server", "router,runner", "router,web", "router,ssh"] {
+            assert!(mixed.parse::<NodeRoles>().is_err());
+        }
+    }
 
     #[test]
     fn roles_are_independently_composable_not_authority() {
