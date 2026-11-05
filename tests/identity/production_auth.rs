@@ -134,12 +134,14 @@ impl Database {
             .expect("reconnect owned schema")
             .into()
     }
-    async fn block_namespace(&self) -> Transaction<'static, Postgres> {
+    async fn block_setup(&self) -> Transaction<'static, Postgres> {
         let mut tx = self.raw.begin().await.unwrap();
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),37003)")
-            .execute(&mut *tx)
-            .await
-            .unwrap();
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':setup',0))",
+        )
+        .execute(&mut *tx)
+        .await
+        .unwrap();
         tx
     }
     async fn block_account(&self, user: i64) -> Transaction<'static, Postgres> {
@@ -172,7 +174,7 @@ impl Database {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn setup_competitors_have_one_transactional_admin_and_mode() {
     let fixture = Database::new().await;
-    let blocker = fixture.block_namespace().await;
+    let blocker = fixture.block_setup().await;
     let a_pool = fixture.pool.clone();
     let b_pool = fixture.pool.clone();
     let a = tokio::spawn(async move {
@@ -1352,10 +1354,59 @@ async fn token_insert_waiting_behind_password_revocation_is_refused() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn unrelated_names_and_email_addresses_enroll_without_waiting() {
+    let mut fixture = Database::new().await;
+    fixture.setup("public").await;
+    let mut blocker = fixture.raw.begin().await.unwrap();
+    codeyard_db_identity::postgres::users::transitions::lock_namespace(&mut blocker, "BLOCKED")
+        .await
+        .unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':email:blocked@example.test',0))")
+        .execute(&mut *blocker).await.unwrap();
+    let p = fixture.pool.clone();
+    let name = tokio::spawn(async move {
+        transitions::register_password(&p, "blocked", None, PHC, None)
+            .await
+            .unwrap()
+    });
+    let p = fixture.pool.clone();
+    let email = tokio::spawn(async move {
+        transitions::register_password(&p, "email_waiter", Some("BLOCKED@example.test"), PHC, None)
+            .await
+            .unwrap()
+    });
+    fixture.wait_for_blocked(2).await;
+    let free = tokio::time::timeout(
+        StdDuration::from_secs(3),
+        transitions::register_password(
+            &fixture.pool,
+            "independent",
+            Some("free@example.test"),
+            PHC,
+            None,
+        ),
+    )
+    .await
+    .expect("unrelated enrollment must not share either reservation")
+    .unwrap();
+    assert!(matches!(free, AccountAdmission::User(_)));
+    blocker.commit().await.unwrap();
+    assert!(matches!(name.await.unwrap(), AccountAdmission::User(_)));
+    assert!(matches!(email.await.unwrap(), AccountAdmission::User(_)));
+    fixture.finish().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_oauth_parallel_enrollment_has_no_orphan_user_or_second_link() {
     let fixture = Database::new().await;
     fixture.setup("public").await;
-    let blocker = fixture.block_namespace().await;
+    let mut blocker = fixture.raw.begin().await.unwrap();
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':namespace:same',0))",
+    )
+    .execute(&mut *blocker)
+    .await
+    .unwrap();
     let p = fixture.pool.clone();
     let q = fixture.pool.clone();
     let one = tokio::spawn(async move {

@@ -157,7 +157,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     configurable pools. Object-store log chunks, current-copy clone distribution and
     issue/PR replica reads pass workspace, Clippy and WASM checks. Focused library,
     CI/database/cluster and PgBouncer/replica/quorum acceptance is running.
-    Remaining read families, bulk retention and valid load measurements are open.
+    Namespace, email and attestation locks are now scoped in source; their runtime
+    acceptance and the updated source check round are pending. Remaining read families,
+    bulk retention and valid load measurements are open.
     Stages 2 to 6 are not built. Individual users may move automatically to
     their working region in stage 6. Organizations retain one write home and gain read
     presence across regions in stages 5 and 6; see the architecture acceptance lists.

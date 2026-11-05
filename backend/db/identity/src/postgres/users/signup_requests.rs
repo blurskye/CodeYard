@@ -128,7 +128,6 @@ pub async fn approve_signup_request(
     let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::lock_accounts(&mut tx, &[reviewer_user_id]).await?;
-    crate::postgres::users::transitions::lock_namespace(&mut tx).await?;
     require_reviewer(&mut tx, &reviewer).await?;
 
     let signup_request = sqlx::query_as::<_, SignupRequest>(
@@ -142,6 +141,8 @@ pub async fn approve_signup_request(
     if signup_request.status != "pending" {
         return Err(ReviewError::Processed.into());
     }
+
+    crate::postgres::users::transitions::lock_namespace(&mut tx, &signup_request.username).await?;
 
     // Leave a conflicting request pending for an explicit rejection.
     if crate::postgres::users::transitions::organization_name_exists(

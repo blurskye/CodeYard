@@ -60,7 +60,8 @@ pub async fn convert(
         return Ok(None);
     };
     crate::postgres::users::transitions::lock_accounts(&mut tx, &[actor]).await?;
-    crate::postgres::users::transitions::lock_namespace(&mut tx).await?;
+    crate::postgres::users::transitions::lock_namespace(&mut tx, &format!("{}[bot]", app.slug))
+        .await?;
     // Account -> session -> grant, matching logout/account revocation and its FK cascades.
     if !crate::postgres::users::transitions::active_session(&mut tx, actor, &session).await? {
         return Ok(None);

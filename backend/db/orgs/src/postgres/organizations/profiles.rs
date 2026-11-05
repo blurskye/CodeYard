@@ -28,7 +28,8 @@ pub async fn create_organization(
         &[actor],
     )
     .await?;
-    codeyard_db_identity::postgres::users::transitions::lock_namespace(&mut tx).await?;
+    codeyard_db_identity::postgres::users::transitions::lock_namespace(&mut tx, &input.slug)
+        .await?;
     if !active(&mut tx, actor).await? {
         return Ok(Denied);
     }

@@ -92,16 +92,19 @@ async fn node(db: &Database, root: &Path, name: &str, role: &str) -> Node {
     }
 }
 async fn router(db: &Database, root: &Path, context: &NodeContext) -> axum::Router {
-    let storage = ObjectStore::on_nodes(
-        root,
-        codeyard_repos_core::objects::Store::new(context.clone()),
-    )
-    .await
-    .unwrap();
+    let storage = Arc::new(
+        ObjectStore::on_nodes(
+            root,
+            codeyard_repos_core::objects::Store::new(context.clone()),
+        )
+        .await
+        .unwrap(),
+    );
+    db.pool().set_log_objects(storage.clone());
     codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
         db.pool().clone(),
         context.repos_path.clone(),
-        Arc::new(storage),
+        storage,
         None,
         CiConfig::default(),
         Some(context.clone()),
@@ -216,10 +219,74 @@ async fn uploaded_files_survive_web_and_storage_loss_and_drain_without_s3_on_bot
             2
         );
         assert_eq!(download(&reader, &upload).await, bytes);
+        let repo = codeyard_db_repos::repositories::records::create_repository(
+            db.pool(),
+            user,
+            "logs",
+            None,
+            true,
+            "/fixture.git",
+        )
+        .await
+        .unwrap();
+        let sha = "1".repeat(40);
+        let workflow = ".github/workflows/logs.yml";
+        codeyard_db_actions::ci::enqueue_ci_run(
+            db.pool(),
+            codeyard_db_actions::ci::NewCiRun {
+                repo_id: repo.id,
+                triggered_by_id: user,
+                pipeline: "logs",
+                event: "workflow_dispatch",
+                pull_request_id: None,
+                branch: "main",
+                head_sha: &sha,
+                workflow_path: workflow,
+                workflow_blobs: &json!({workflow: sha}),
+                workflow_inputs: None,
+                environment: None,
+                manual: false,
+            },
+            &[user],
+        )
+        .await
+        .unwrap();
+        let run = codeyard_db_actions::ci::claim_ci_run(
+            db.pool(),
+            "log-worker",
+            "local",
+            &[user],
+            &CiConfig::default().platform_labels(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(codeyard_db_actions::ci::append_ci_logs(
+            db.pool(),
+            run.id,
+            "log-worker",
+            0,
+            &[codeyard_model::ci::LogLine {
+                stage: workflow.into(),
+                line: "stored before storage loss".into(),
+                level: "info".into(),
+                job_id: None,
+                step_number: None,
+            }],
+        )
+        .await
+        .unwrap());
+        // The CI chunk uses the same replicated object publication as uploaded files.
+        assert_eq!(db.scalar("SELECT COUNT(*) FROM storage_object_copies WHERE ready=1 AND object_key LIKE 'ci-logs/%'", &[]).await, 2);
         // No local cache or running uploader is needed on the second web node.
         drop(writer);
         nodes[2].listener.take().unwrap().stop().await;
         assert_eq!(download(&reader, &upload).await, bytes);
+        let logs = codeyard_db_actions::ci::list_ci_logs(db.pool(), run.id, 100)
+            .await
+            .unwrap();
+        assert_eq!(logs.len(), 1);
+        assert_eq!(logs[0].line, "stored before storage loss");
         let file = codeyard_db_repos::files::get_owned_file(
             db.pool(),
             upload["file_id"].as_str().unwrap().parse().unwrap(),

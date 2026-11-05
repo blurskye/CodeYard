@@ -67,7 +67,8 @@ pub async fn register(
 ) -> Result<Option<App>> {
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::lock_accounts(&mut tx, &[actor]).await?;
-    crate::postgres::users::transitions::lock_namespace(&mut tx).await?;
+    crate::postgres::users::transitions::lock_namespace(&mut tx, &format!("{}[bot]", app.slug))
+        .await?;
     let registered = register_in_connection(&mut tx, actor, session, app, secret_hash).await?;
     tx.commit().await?;
     Ok(registered)

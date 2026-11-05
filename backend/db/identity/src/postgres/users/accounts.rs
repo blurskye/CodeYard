@@ -8,7 +8,7 @@ use codeyard_db_core::pool::PgPool;
 
 pub async fn create_user(pool: &PgPool, username: &str, email: Option<&str>) -> Result<User> {
     let mut tx = pool.begin().await?;
-    crate::postgres::users::transitions::lock_namespace(&mut tx).await?;
+    crate::postgres::users::transitions::lock_namespace(&mut tx, username).await?;
     crate::postgres::users::transitions::require_user_namespace(&mut tx, username).await?;
     let result = sqlx::query_as::<_, User>(
         r#"
@@ -43,7 +43,7 @@ pub async fn create_user_with_password_and_flags(
     must_change_password: bool,
 ) -> Result<User> {
     let mut tx = pool.begin().await?;
-    crate::postgres::users::transitions::lock_namespace(&mut tx).await?;
+    crate::postgres::users::transitions::lock_namespace(&mut tx, username).await?;
     crate::postgres::users::transitions::require_user_namespace(&mut tx, username).await?;
     let result = sqlx::query_as::<_, User>(
         r#"
@@ -237,7 +237,7 @@ pub async fn create_user_from_oauth(
     display_name: Option<&str>,
 ) -> Result<User> {
     let mut tx = pool.begin().await?;
-    crate::postgres::users::transitions::lock_namespace(&mut tx).await?;
+    crate::postgres::users::transitions::lock_namespace(&mut tx, username).await?;
     crate::postgres::users::transitions::require_user_namespace(&mut tx, username).await?;
     let result = sqlx::query_as::<_, User>(
         r#"

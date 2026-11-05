@@ -1678,7 +1678,9 @@ CREATE UNIQUE INDEX idx_user_emails_address ON user_emails(lower(email));
 -- Primary and secondary enrollment must agree on an address's owner.
 CREATE FUNCTION guard_primary_email() RETURNS TRIGGER AS $$
 BEGIN
-    PERFORM pg_advisory_xact_lock(hashtext(current_schema()),37004);
+    IF NEW.email IS NOT NULL THEN
+        PERFORM pg_advisory_xact_lock(hashtextextended(COALESCE(current_schema(),'') || ':email:' || lower(NEW.email),0));
+    END IF;
     IF EXISTS (SELECT 1 FROM user_emails WHERE lower(email)=lower(NEW.email) AND user_id<>NEW.id)
         OR EXISTS (SELECT 1 FROM users WHERE lower(email)=lower(NEW.email) AND id<>NEW.id) THEN
         RAISE EXCEPTION 'Email address is already registered' USING ERRCODE='23505';

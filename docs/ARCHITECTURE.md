@@ -764,7 +764,9 @@ Two findings set the order of work:
   acceptance to three voters and every ref publisher; VM hard-reset acceptance remains
   an operator check.
 - **One large cell still needs work.** Account authority locks are scoped by account,
-  organizations use row locks, and package reads use snapshots without package locks.
+  organizations use row locks, names and email addresses reserve their own keys, and
+  package reads use snapshots without package locks. Attestation and metadata changes
+  serialize by owner; orphan collection locks only candidate bundle rows.
   Notification hints use bounded cursor polling and the pool is configurable. CI logs
   use compressed objects with metadata in `ci_log_chunks`; uploads recheck the worker
   before committing their pointer. Stage 1 acceptance and measured capacity remain open.

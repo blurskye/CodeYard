@@ -56,7 +56,7 @@ pub async fn respond(
         false
     };
     let response = read_routing::scope(&state.pool, read && !pinned, work).await;
-    if !read && response.status().is_success() {
+    if !read && (response.status().is_success() || response.status().is_redirection()) {
         if let Some(credential) = &credential {
             if read_routing::primary_required(&state.pool, borrowed(credential), true)
                 .await

@@ -39,10 +39,9 @@ pub async fn change_emails(
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::require_account_exclusive(&mut tx, user, credential)
         .await?;
-    // Primary writes take this same lock in their trigger, after locking their account row.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')),37004)")
-        .execute(&mut *tx)
-        .await?;
+    // Lock the complete address set before changing any, matching the primary trigger.
+    let addresses: Vec<&str> = emails.iter().map(String::as_str).collect();
+    crate::postgres::users::transitions::lock_emails(&mut tx, &addresses).await?;
     let primary: Option<String> = sqlx::query_scalar("SELECT email FROM users WHERE id=$1")
         .bind(user)
         .fetch_one(&mut *tx)

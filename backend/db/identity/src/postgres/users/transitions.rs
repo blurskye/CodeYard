@@ -23,11 +23,20 @@ pub async fn lock_accounts(connection: &mut PgConnection, accounts: &[i64]) -> R
     account_locks(connection, accounts, false).await
 }
 
-pub async fn lock_namespace(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
-    // Account locks precede namespace reservation, which is shared by user and org names.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')), 37003)")
-        .execute(&mut **tx)
-        .await?;
+pub async fn lock_namespace(tx: &mut Transaction<'_, Postgres>, name: &str) -> Result<()> {
+    // Setup excludes all initial accounts, including bot creation. Once setup completes,
+    // normal namespace reservations never take the setup lock.
+    let completed: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM node_configuration WHERE id=1 AND setup_completed)",
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    if !completed {
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(COALESCE(current_schema(),'') || ':setup',0))")
+            .execute(&mut **tx).await?;
+    }
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(COALESCE(current_schema(),'') || ':namespace:' || lower($1 COLLATE \"C\"),0))")
+        .bind(name).execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -44,14 +53,28 @@ pub(crate) async fn organization_name_exists(
     )
 }
 
+/// Address locks are shared by primary and secondary enrollment, in hash order.
+pub(crate) async fn lock_emails(connection: &mut PgConnection, emails: &[&str]) -> Result<()> {
+    let keys: Vec<i64> = sqlx::query_scalar(
+        "SELECT DISTINCT hashtextextended(COALESCE(current_schema(),'') || ':email:' || lower(email),0) AS key FROM unnest($1::text[]) email ORDER BY key",
+    ).bind(emails).fetch_all(&mut *connection).await?;
+    for key in keys {
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(key)
+            .execute(&mut *connection)
+            .await?;
+    }
+    Ok(())
+}
+
 pub(crate) async fn email_owned(
     tx: &mut Transaction<'_, Postgres>,
     email: Option<&str>,
     except: i64,
 ) -> Result<bool> {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')),37004)")
-        .execute(&mut **tx)
-        .await?;
+    if let Some(email) = email {
+        lock_emails(tx, &[email]).await?;
+    }
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email)=lower($1) AND id<>$2) OR EXISTS(SELECT 1 FROM user_emails WHERE lower(email)=lower($1) AND user_id<>$2)")
         .bind(email).bind(except).fetch_one(&mut **tx).await?)
 }
@@ -288,7 +311,7 @@ pub async fn complete_setup(
     if let Some((user, _)) = recovery {
         lock_accounts(&mut tx, &[user]).await?;
     }
-    lock_namespace(&mut tx).await?;
+    lock_namespace(&mut tx, username).await?;
     let completed = sqlx::query_scalar::<_, bool>(
         "SELECT setup_completed FROM node_configuration WHERE id = 1 FOR UPDATE",
     )
@@ -339,9 +362,9 @@ pub async fn create_cli_user(
     email: Option<&str>,
 ) -> Result<AccountAdmission> {
     let mut tx = pool.begin().await?;
-    lock_namespace(&mut tx).await?;
+    lock_namespace(&mut tx, username).await?;
     let completed = sqlx::query_scalar::<_, bool>(
-        "SELECT setup_completed FROM node_configuration WHERE id=1 FOR UPDATE",
+        "SELECT setup_completed FROM node_configuration WHERE id=1 FOR SHARE",
     )
     .fetch_optional(&mut *tx)
     .await?
@@ -371,7 +394,7 @@ pub async fn bootstrap_admin(
     mode: &str,
 ) -> Result<SetupClaim> {
     let mut tx = pool.begin().await?;
-    lock_namespace(&mut tx).await?;
+    lock_namespace(&mut tx, username).await?;
     let completed = sqlx::query_scalar::<_, bool>(
         "SELECT setup_completed FROM node_configuration WHERE id=1 FOR UPDATE",
     )
@@ -568,9 +591,9 @@ pub async fn register_password(
     if let Some((actor, _, _)) = administrator {
         lock_accounts(&mut tx, &[actor]).await?;
     }
-    lock_namespace(&mut tx).await?;
+    lock_namespace(&mut tx, username).await?;
     let config = sqlx::query_as::<_, NodeConfiguration>(
-        "SELECT * FROM node_configuration WHERE id=1 FOR UPDATE",
+        "SELECT * FROM node_configuration WHERE id=1 FOR SHARE",
     )
     .fetch_optional(&mut *tx)
     .await?;
@@ -648,9 +671,9 @@ pub async fn admit_oauth_account(
     if let Some(user) = linked_account {
         lock_accounts(&mut tx, &[user]).await?;
     }
-    lock_namespace(&mut tx).await?;
+    lock_namespace(&mut tx, username_base).await?;
     let config = sqlx::query_as::<_, NodeConfiguration>(
-        "SELECT * FROM node_configuration WHERE id=1 FOR UPDATE",
+        "SELECT * FROM node_configuration WHERE id=1 FOR SHARE",
     )
     .fetch_optional(&mut *tx)
     .await?;
@@ -680,6 +703,7 @@ pub async fn admit_oauth_account(
         } else if suffix > 0 {
             name = format!("{base}_{suffix}");
         }
+        lock_namespace(&mut tx, &name).await?;
         if organization_name_exists(&mut tx, &name).await? {
             continue;
         }

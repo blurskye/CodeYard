@@ -22,12 +22,11 @@ pub(crate) mod pages;
 
 type Tx<'a> = Transaction<'a, Postgres>;
 
-async fn begin(pool: &PgPool) -> Result<Tx<'_>> {
+async fn begin(pool: &PgPool, org: Option<i64>) -> Result<Tx<'_>> {
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock(723947121)")
-        .execute(&mut *tx)
-        .await?;
-    codeyard_db_core::queries::postgres::attestations::lock(&mut tx).await?;
+    if let Some(org) = org {
+        codeyard_db_core::queries::postgres::attestations::lock(&mut tx, "org", org).await?;
+    }
     Ok(tx)
 }
 
@@ -203,7 +202,7 @@ pub async fn deployment(
     input: &DeploymentInput,
 ) -> Result<Mutation> {
     input.validate()?;
-    let mut tx = begin(pool).await?;
+    let mut tx = begin(pool, Some(org)).await?;
     credential(&mut tx, actor).await?;
     let mut admission = Admission::new(actor);
     let (repo, attestation) = targets(&mut tx, &mut admission, org, &input.deployment.artifact, 1)
@@ -236,7 +235,7 @@ pub async fn storage(
     input: &StorageInput,
 ) -> Result<Mutation> {
     input.validate()?;
-    let mut tx = begin(pool).await?;
+    let mut tx = begin(pool, Some(org)).await?;
     credential(&mut tx, actor).await?;
     let mut admission = Admission::new(actor);
     let targets = targets(&mut tx, &mut admission, org, &input.artifact, 1001).await?;
@@ -366,7 +365,7 @@ pub async fn cluster(
     input: &ClusterInput,
 ) -> Result<Mutation> {
     input.validate(cluster, 1000)?;
-    let mut tx = begin(pool).await?;
+    let mut tx = begin(pool, Some(org)).await?;
     credential(&mut tx, actor).await?;
     let mut admission = Admission::new(actor);
     let mutation = apply(&mut tx, &mut admission, org, cluster, input).await?;
@@ -422,7 +421,7 @@ pub async fn enqueue(
     input.validate(cluster, 5000)?;
     let mut input = input.clone();
     input.partial_success = true;
-    let mut tx = begin(pool).await?;
+    let mut tx = begin(pool, Some(org)).await?;
     credential(&mut tx, actor).await?;
     let mut admission = Admission::new(actor);
     let (accepted, errors) = prepare(&mut tx, &mut admission, org, cluster, &input).await?;
@@ -465,13 +464,14 @@ pub async fn job(
 }
 
 pub async fn process_job(pool: &PgPool, id: Option<i64>) -> Result<bool> {
-    let mut tx = begin(pool).await?;
+    let mut tx = begin(pool, None).await?;
     let job: Option<Job> = sqlx::query_as("SELECT * FROM artifact_metadata_jobs WHERE status='pending' AND (CAST($1 AS BIGINT) IS NULL OR id=$1) ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED").bind(id).fetch_optional(&mut *tx).await?;
     let Some(job) = job else {
         prune_jobs(&mut tx, None).await?;
         tx.commit().await?;
         return Ok(false);
     };
+    codeyard_db_core::queries::postgres::attestations::lock(&mut tx, "org", job.org_id).await?;
     let actor = Actor {
         user: job.actor_id,
         token: job.token_id,
@@ -508,7 +508,7 @@ pub async fn process_job(pool: &PgPool, id: Option<i64>) -> Result<bool> {
             } else {
                 "Artifact metadata processing failed".to_owned()
             };
-            let mut tx = begin(pool).await?;
+            let mut tx = begin(pool, Some(job.org_id)).await?;
             let scope = Some((job.actor_id, job.org_id, job.scoped_repo));
             sqlx::query("UPDATE artifact_metadata_jobs SET status='failed',started_at=$2,errors=$3,input='',completed_at=clock_timestamp() WHERE id=$1 AND status='pending'").bind(job.id).bind(started).bind(json!([{"cause":message}]).to_string()).execute(&mut *tx).await?;
             prune_jobs(&mut tx, scope).await?;

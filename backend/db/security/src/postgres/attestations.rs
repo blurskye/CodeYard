@@ -10,15 +10,15 @@ use sqlx::Postgres;
 use sqlx::Transaction;
 
 async fn begin(pool: &PgPool) -> Result<Transaction<'_, Postgres>> {
-    let mut tx = pool.begin().await?;
-    lock(&mut tx).await?;
-    Ok(tx)
+    Ok(pool.begin().await?)
 }
 
 pub async fn collect(pool: &PgPool) -> Result<u64> {
     let mut tx = begin(pool).await?;
-    let count = sqlx::query("DELETE FROM attestation_bundles WHERE hash IN (SELECT b.hash FROM attestation_bundles b WHERE NOT EXISTS(SELECT 1 FROM artifact_attestations a WHERE a.bundle_hash=b.hash) ORDER BY b.hash LIMIT 100)")
-        .execute(&mut *tx).await?.rows_affected();
+    let hashes: Vec<String> = sqlx::query_scalar("SELECT b.hash FROM attestation_bundles b WHERE NOT EXISTS(SELECT 1 FROM artifact_attestations a WHERE a.bundle_hash=b.hash) ORDER BY b.hash LIMIT 100 FOR UPDATE OF b SKIP LOCKED")
+        .fetch_all(&mut *tx).await?;
+    let count = sqlx::query("DELETE FROM attestation_bundles b WHERE hash=ANY($1) AND NOT EXISTS(SELECT 1 FROM artifact_attestations a WHERE a.bundle_hash=b.hash)")
+        .bind(&hashes).execute(&mut *tx).await?.rows_affected();
     tx.commit().await?;
     Ok(count)
 }
@@ -33,6 +33,9 @@ pub async fn create(
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = begin(pool).await?;
+    let owner =
+        codeyard_db_core::queries::postgres::attestations::repository_owner(&mut tx, repo).await?;
+    lock(&mut tx, &owner.0, owner.1).await?;
     anyhow::ensure!(
         codeyard_db_core::queries::postgres::discussions::lock_write_authority(
             &mut tx, actor, repo
@@ -48,8 +51,14 @@ pub async fn create(
             .await?,
         Refusal::Denied
     );
+    anyhow::ensure!(
+        codeyard_db_core::queries::postgres::attestations::repository_owner(&mut tx, repo).await?
+            == owner,
+        Refusal::Missing
+    );
+    // Retain the bundle row until its association commits; collection skips this publisher.
     sqlx::query(
-        "INSERT INTO attestation_bundles(hash,bundle) VALUES($1,$2) ON CONFLICT(hash) DO NOTHING",
+        "INSERT INTO attestation_bundles(hash,bundle) VALUES($1,$2) ON CONFLICT(hash) DO UPDATE SET hash=excluded.hash",
     )
     .bind(&bundle.hash)
     .bind(&bundle.json)
@@ -139,6 +148,10 @@ pub async fn delete(
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = begin(pool).await?;
+    match owner {
+        Owner::Organization(id) => lock(&mut tx, "org", id).await?,
+        Owner::User(id) => lock(&mut tx, "user", id).await?,
+    }
     codeyard_db_identity::postgres::credentials::require_account(&mut tx, &credential)
         .await
         .map_err(|error| {

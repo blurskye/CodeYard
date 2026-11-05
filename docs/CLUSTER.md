@@ -699,9 +699,11 @@ cores on the same events protocol.
 Account restrictions (bans, suspensions, demotions) take PostgreSQL advisory locks keyed
 by schema and account ID. Authority readers take shared locks and restrictions take
 exclusive ones. A write that touches several accounts locks them in sorted order, so
-unrelated accounts never wait on each other. Two global locks remain: one for the user
-and organization name namespace and initial setup, and one for email ownership across
-users and secondary emails.
+unrelated accounts never wait on each other. Names reserve only their case-folded user
+and organization namespace key; email ownership reserves only the affected addresses,
+in sorted order. The setup exclusion is used only before setup completes. Attestation
+and artifact metadata changes serialize within their owner, and bundle collection locks
+only its bounded candidate rows. These lock changes await runtime acceptance.
 
 A CI claim returns at most 128 compatible runs (1 to 1024 in the configuration), but the
 database may still examine a very large queued backlog to find them, and a claim restarts

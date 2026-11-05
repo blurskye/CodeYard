@@ -23,7 +23,7 @@ pub async fn issue(
         .await?;
     } else {
         // Initial bot creation participates in setup's account-count exclusion.
-        codeyard_db_identity::postgres::users::transitions::lock_namespace(&mut tx).await?;
+        codeyard_db_identity::postgres::users::transitions::lock_namespace(&mut tx, BOT).await?;
     }
     let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM ci_runs WHERE id=$1")
         .bind(run_id)
