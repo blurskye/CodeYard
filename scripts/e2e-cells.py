@@ -268,6 +268,12 @@ def acceptance(deployment):
         assert client.api("user/repos?per_page=1&page=1", who="bob")[0]["full_name"] == "alice/shared"
         assert client.api("user/repos?per_page=1&page=2", who="bob")[0]["full_name"] == "bob/other"
         client.checked("gh api user/repos discovers the remote collaborator repository through its home pointer")
+        deployment.web("bob", "req", "GET", "/", "--no-scripts", "--contains", "/alice/shared")
+        dashboard = json.loads(deployment.web("bob", "req", "GET", "/",
+            "--accept", "application/vnd.codeyard.page+json", "--print", "body"))["page"]["model"]["Home"]
+        assert dashboard["shared_count"] == 1, dashboard
+        assert dashboard["shared"][0]["repository"]["name"] == "shared", dashboard
+        client.checked("the home dashboard shows the foreign private repository in raw HTML and hydration data")
 
         def ssh_environment(who):
             return {"GIT_SSH_COMMAND": shlex.join(["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
@@ -326,6 +332,8 @@ def acceptance(deployment):
                 return response.status, body
         deployment.stop("one")
         assert http("/api/v3/repos/bob/other", tokens["alice"])[0] == 503
+        unavailable, body = http("/bob/other")
+        assert unavailable == 503 and "cell is unavailable" in json.loads(body)["message"], body
         assert client.api("repos/alice/shared")["name"] == "shared"
         deployment.start("one", "serve")
         deployment.wait("one", deployment.native[1][0])
