@@ -173,9 +173,11 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     registered RPC listeners and live cell-key tests are written but unchecked; foreign ingress
     and publication are now wired in source but unchecked. Typed foreign token grants, exact
     Git proofs and workflow checks have HTTP and SSH collaborator/revocation tests; their source
-    review and first combined check are next. Foreign browser-session pages/forms, home CSRF and transaction-time session expiry
+    source passes workspace 441a2d1ff80140b0b39da8fcbe7d7e82, Clippy
+    8cbbf2fc77154f0fbdf007222605db4d and WASM 92880ee5cb534d41b01aa5b26782d841. Foreign browser-session pages/forms, home CSRF and transaction-time session expiry
     are written with both-engine HTTP and real TLS revocation tests; this follow-up is unchecked.
-    Membership pointers and two-cell gh/Git deployment remain unfinished. Member-list/count filters now cover
+    Native signup/key claim publication, membership pointers and two-cell gh/Git deployment
+    remain unfinished. Member-list/count filters now cover
     organizations and teams on both engines with database and HTTP assertions. Runtime job
     375fa054f4204225b5c57bb2b02cd059 covers the preceding committed snapshot. Native two-cell GraphQL
     acceptance now includes one real split repository/node query with foreign home authorization; unchecked. Automatic user

@@ -280,12 +280,13 @@ only after rechecking active membership. Private nodes enroll an existing member
 A majority of the fixed storage voters must hold each acknowledged ref change.
 Additional copies are asynchronous and become current after the sync loop catches them up.
 With explicit `write_quorum=1`, losing the primary before that catch-up can lose a push.
-Read-only requests fall back to a current copy when the primary cannot be reached. A node that holds a current copy of every member
-of a fork family takes the family over once its primary has been offline for a minute; a
+Read-only requests fall back to a current copy when the primary cannot be reached. A node
+that holds a current copy of every member of a fork family takes the family over once its primary has been offline for a minute; a
 family with a behind or missing copy waits for `codeyard cluster promote --force`.
 The write quorum selects up to three storage voters and uses PostgreSQL decisions, with
 canonical refs and fenced term directories. Empty initialization and repository copies
-use that coordinator too. Clone and fetch reads use current copies; regional routing remains future work.
+use that coordinator too. Clone and fetch reads use current copies; regional routing remains
+future work.
 Cluster files use two checksum-checked storage-node copies, or shared S3 when configured.
 Cluster backup reuses replica snapshots and object placement. Restore imports a fenced
 database, installs each original storage identity, and completes through offline verification;

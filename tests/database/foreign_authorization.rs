@@ -198,6 +198,42 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
             .display_name,
         provider.answer.user.display_name
     );
+    database
+        .execute(
+            "DELETE FROM repo_access WHERE repo_id=$1 AND user_id=$2",
+            &[repo.id, user],
+        )
+        .await;
+    let invitation = codeyard_db_repos::repositories::collaborators::add(
+        pool,
+        owner,
+        repo.id,
+        &provider.answer.user.username,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
+    let codeyard_db_repos::repositories::collaborators::Added::Invited(invitation) = invitation
+    else {
+        panic!("A new collaborator must receive an invitation");
+    };
+    codeyard_db_repos::repositories::collaborators::respond(
+        pool,
+        (user, value.clone()),
+        invitation.id,
+        true,
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        database
+            .scalar(
+                "SELECT access_level FROM repo_access WHERE repo_id=$1 AND user_id=$2",
+                &[repo.id, user]
+            )
+            .await,
+        3
+    );
     provider.live.store(false, Ordering::SeqCst);
     expire(pool).await;
     assert!(authorization::authorize(pool, &proof)

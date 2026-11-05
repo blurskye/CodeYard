@@ -102,7 +102,7 @@ async fn active_account_locked(
         "FOR SHARE"
     };
     Ok(sqlx::query_scalar(&format!(
-        "SELECT NOT is_stub AND NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 {lock}"
+        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 {lock}"
     ))
     .bind(actor)
     .fetch_optional(connection)
