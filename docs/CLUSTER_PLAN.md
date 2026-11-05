@@ -172,7 +172,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     CI reports 206 passed, 14 failed and 19 existing environment-dependent ignores.
     Both-engine Actions projections retain/reject the stub marker, and PostgreSQL cached
     JSON fields are parenthesized before concatenation; these fixes and a native/stub
-    variable regression are unchecked. Remaining integration targets are running.
+    variable regression are unchecked. Cluster reports 230 passed/one failed; database
+    reports 176 passed/five failed, with no ignores. Name routing and stub search filters
+    are fixed in source; web-bundle, unreserved-prefix and orphan-table fixtures are updated.
+    Git, identity, repositories and e2e are still running.
     Native signup/key claim publication, remote membership pointers, remaining node families
     and the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
     Check suites/runs, artifacts and pull-request stacks now issue rooted IDs, with HTTP resolution/forged-root and projection assertions on both engines.

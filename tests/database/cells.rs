@@ -199,6 +199,7 @@ async fn renew(root: &Path, url: &str, address: std::net::SocketAddr, key: &str)
 
 #[tokio::test]
 async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_partial_activation() {
+    crate::support::fake_webui_bundle::install();
     use codeyard_model::cells::{Cell, State};
     use codeyard_support::node_identity::{load_or_create, NodeKey};
     let mut database = PostgresDatabase::new().await;

@@ -146,11 +146,11 @@ async fn directory_cli_owns_a_separate_baseline_and_bounds_pages_and_placement()
     );
     directory.report_load(&b, 0, 50).await.unwrap();
     assert!(directory.choose_cell("a").await.unwrap().is_none());
-    let mut collision = cell(2, 'b');
+    let mut collision = cell(3, 'b');
     collision.name = "collision".into();
     assert!(directory.register_cell(collision).await.is_err());
     assert!(
-        directory.cell(Prefix::new(2)).await.unwrap().is_none(),
+        directory.cell(Prefix::new(3)).await.unwrap().is_none(),
         "key conflict rolls back the cell too"
     );
     directory.close().await;

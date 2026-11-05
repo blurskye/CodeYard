@@ -2257,7 +2257,13 @@ async fn sqlite_current_ledger_skips_foreign_key_scan() {
         .execute(&mut *connection)
         .await
         .unwrap();
-    sqlx::query("INSERT INTO sessions(id,user_id,expires_at) VALUES ('orphan',-1,'2099-01-01T00:00:00.000000Z')")
+    // Credential-owner guards reject orphan sessions even with foreign keys disabled.
+    // Use an unrelated table to exercise only the migration ledger's scan policy.
+    sqlx::query("CREATE TABLE stray(id INTEGER PRIMARY KEY, parent INTEGER REFERENCES stray(id))")
+        .execute(&mut *connection)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO stray(id,parent) VALUES(1,99)")
         .execute(&mut *connection)
         .await
         .unwrap();
