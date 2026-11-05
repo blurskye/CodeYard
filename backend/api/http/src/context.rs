@@ -41,7 +41,7 @@ async fn csrf_token_for_session(
     state: &AppState,
     browser_session: &codeyard_db_core::models::BrowserSession,
 ) -> anyhow::Result<Option<String>> {
-    let candidate = crate::session::generate_session_id();
+    let candidate = codeyard_support::crypto::random_hex();
     let ttl = CSRF_TTL_SECONDS
         .min((browser_session.expires_at - chrono::Utc::now()).num_seconds())
         .max(1);
@@ -59,8 +59,7 @@ pub(crate) async fn csrf_token_for_existing_session(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<String, ExistingCsrfError> {
-    let id = crate::session::extract_local_session_id(&state.pool, headers)
-        .ok_or(ExistingCsrfError::Missing)?;
+    let id = crate::session::extract_session_id(headers).ok_or(ExistingCsrfError::Missing)?;
     let session = codeyard_db_identity::users::sessions::get_browser_session(&state.pool, &id)
         .await
         .map_err(|_| ExistingCsrfError::Unavailable)?
@@ -121,7 +120,7 @@ impl PageContext {
         let private_mode = config.as_ref().is_some_and(|c| c.is_private());
 
         // Do not treat a failed lookup as anonymous, or a missing setup row as an outage.
-        let supplied_id = crate::session::extract_local_session_id(&state.pool, &headers);
+        let supplied_id = crate::session::extract_session_id(&headers);
         let existing_session = match supplied_id.as_deref() {
             Some(id) => codeyard_db_identity::users::sessions::get_browser_session(&state.pool, id)
                 .await
@@ -204,7 +203,8 @@ impl PageContext {
                         Err(_) => return Err(unavailable()),
                     }
                     // Never adopt an attacker-supplied unknown cookie ID.
-                    let id = crate::session::generate_session_id();
+                    let id = codeyard_identity::sessions::fresh_id(&state.pool)
+                        .map_err(|_| unavailable())?;
                     let agent = crate::session::extract_user_agent(&headers);
                     let s = codeyard_db_identity::users::sessions::create_browser_session(
                         &state.pool,
@@ -222,7 +222,6 @@ impl PageContext {
                             crate::session::build_session_cookie(
                                 &id,
                                 crate::session::session_duration_days(),
-                                state.pool.cell_prefix(),
                             )
                             .map_err(|_| unavailable())?,
                         ),

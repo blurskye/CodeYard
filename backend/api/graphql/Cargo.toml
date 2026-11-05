@@ -26,6 +26,7 @@ codeyard-db-identity.workspace = true
 codeyard-db-repos.workspace = true
 codeyard-git.workspace = true
 codeyard-github-graphql.workspace = true
+codeyard-cells-router.workspace = true
 codeyard-identity.workspace = true
 codeyard-model.workspace = true
 codeyard-notifications.workspace = true

@@ -189,8 +189,13 @@ pub(crate) async fn auth_post(
     }
     // Preserve the initiating anonymous identifier: identity rotates it and
     // invalidates its CSRF atomically.
-    let session_request =
-        crate::auth::session::LoginSessionRequest::from_headers(&ctx.state.pool, &ctx.headers);
+    let session_request = match crate::auth::session::LoginSessionRequest::from_headers(
+        &ctx.state.pool,
+        &ctx.headers,
+    ) {
+        Ok(request) => request,
+        Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Sign-in unavailable"),
+    };
     let email = optional_field(&form, "email");
     let account = PasswordAccount {
         username: field(&form, "username"),
@@ -275,7 +280,6 @@ pub(crate) async fn auth_post(
                 Some(id) => codeyard_api_http::session::build_session_cookie(
                     &id,
                     codeyard_api_http::session::session_duration_days(),
-                    ctx.state.pool.cell_prefix(),
                 )
                 .ok()
                 .and_then(|cookie| append_auth_cookie(redirect, &cookie).ok())

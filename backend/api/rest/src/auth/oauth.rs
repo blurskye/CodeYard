@@ -148,17 +148,17 @@ pub async fn oauth_redirect(
         }
     }
     // Always replace the browser nonce; only the latest flow in this browser completes.
-    let nonce = codeyard_api_http::session::generate_session_id();
+    let nonce = codeyard_support::crypto::random_hex();
     let token = match state
         .pool
         .cell_prefix()
-        .cookie(&codeyard_api_http::session::generate_session_id())
+        .cookie(&codeyard_support::crypto::random_hex())
     {
         Ok(token) => token,
         Err(_) => return failure(OAuthError::StateUnavailable, &provider),
     };
     let verifier = if codeyard_identity::oauth::providers::supports_pkce(&provider) {
-        codeyard_api_http::session::generate_session_id()
+        codeyard_support::crypto::random_hex()
     } else {
         String::new()
     };
@@ -234,7 +234,10 @@ pub async fn oauth_callback(
         );
     };
     let redirect = format!("{origin}/login/oauth/{provider}/callback");
-    let initiating = LoginSessionRequest::from_headers(&state.pool, &headers);
+    let initiating = match LoginSessionRequest::from_headers(&state.pool, &headers) {
+        Ok(request) => request,
+        Err(_) => return failure(OAuthError::StateUnavailable, &provider),
+    };
     match codeyard_identity::oauth::complete(
         &state.pool,
         codeyard_identity::oauth::Callback {
@@ -252,7 +255,6 @@ pub async fn oauth_callback(
             let cookie = match codeyard_api_http::session::build_session_cookie(
                 &authenticated.session_id,
                 codeyard_api_http::session::session_duration_days(),
-                state.pool.cell_prefix(),
             ) {
                 Ok(cookie) => cookie,
                 Err(_) => return failure(OAuthError::StateUnavailable, &provider),

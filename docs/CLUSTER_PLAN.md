@@ -169,8 +169,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     codec pass workspace, Clippy and WASM checks. Runtime tests are pending. A bounded route
     cache and the native cookie/device-form follow-up also pass all three checks; their failure
     tests and the earlier stage 1 fixes are next in the combined runtime job.
-    The public router, foreign authorization and stubs are
-    not built. Stages 3 to 6 are not built.
+    The route catalogue, shared HTTP parsers and GraphQL preflight/planning source are
+    written but unchecked. Session storage also retains the complete scoped cookie value
+    on both engines. The generated GraphQL crate remains unchanged; preflight uses its public
+    API from the router crate. The public proxy, foreign authorization and stubs are not built. Stages 3 to 6 are not built.
     Individual users may move automatically to
     their working region in stage 6. Organizations retain one write home and gain read
     presence across regions in stages 5 and 6; see the architecture acceptance lists.

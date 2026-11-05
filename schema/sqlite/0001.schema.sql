@@ -123,7 +123,7 @@ CREATE TABLE oauth_accounts (
 
 CREATE TABLE sessions (
     ordinal INTEGER PRIMARY KEY AUTOINCREMENT,
-    id TEXT NOT NULL UNIQUE CHECK (length(id)<=64),
+    id TEXT NOT NULL UNIQUE CHECK (length(id)<=70),
     read_primary_until BIGINT NOT NULL DEFAULT 0,
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (user_id IS NULL OR typeof(user_id)='integer'),
     user_agent TEXT,
@@ -135,7 +135,7 @@ CREATE TABLE sessions (
 );
 
 CREATE TABLE anonymous_sessions (
-    id TEXT NOT NULL PRIMARY KEY CHECK (length(id)<=64),
+    id TEXT NOT NULL PRIMARY KEY CHECK (length(id)<=70),
     user_agent TEXT,
     ip_address TEXT,
     expires_at TEXT NOT NULL,

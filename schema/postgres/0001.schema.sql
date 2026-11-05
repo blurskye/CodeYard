@@ -142,7 +142,7 @@ CREATE TABLE IF NOT EXISTS oauth_accounts (
 CREATE INDEX IF NOT EXISTS idx_oauth_accounts_user_id ON oauth_accounts(user_id);
 
 CREATE TABLE IF NOT EXISTS sessions (
-    id VARCHAR(64) PRIMARY KEY,
+    id VARCHAR(70) PRIMARY KEY,
     read_primary_until BIGINT NOT NULL DEFAULT 0,
     ordinal BIGSERIAL NOT NULL UNIQUE,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -159,7 +159,7 @@ CREATE INDEX idx_sessions_user_ordinal ON sessions(user_id,ordinal DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
 
 CREATE TABLE IF NOT EXISTS anonymous_sessions (
-    id VARCHAR(64) PRIMARY KEY,
+    id VARCHAR(70) PRIMARY KEY,
     user_agent TEXT,
     ip_address INET,
     expires_at TIMESTAMPTZ NOT NULL,

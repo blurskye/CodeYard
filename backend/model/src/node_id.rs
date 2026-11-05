@@ -138,7 +138,16 @@ pub fn routed(value: &str) -> Option<Routed<'_>> {
         codeyard_support::cells::Prefix::for_id(id).ok()?;
         return Some(Routed { kind, root, id });
     }
-    let (kind, id) = decode(value)?;
+    let (mut kind, mut id) = decode(value)?;
+    // The former IC form tagged issue/pull comments in the low bit. Its cell
+    // comes from the actual row ID, before that display tag was applied.
+    if kind == "IC" {
+        kind = if id % 2 == 0 { "IC" } else { "PC" };
+        id /= 2;
+        if id == 0 {
+            return None;
+        }
+    }
     Some(Routed { kind, root: id, id })
 }
 
@@ -251,6 +260,10 @@ mod tests {
             super::decode_discussion_comment(&super::discussion_comment(root, id)),
             Some((root, id))
         );
+        for (tag, kind) in [(0, "IC"), (1, "PC")] {
+            let encoded = encode("IC", id * 2 + tag);
+            assert_eq!(routed(&encoded).unwrap(), Routed { kind, root: id, id });
+        }
         assert!(scoped("IC", 0, id).is_none());
         assert!(scoped("IC", root, codeyard_support::cells::MAX_ID + 1).is_none());
         for raw in [

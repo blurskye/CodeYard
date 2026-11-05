@@ -191,7 +191,7 @@ pub async fn rotate_authenticated_session(
     ip_address: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> Result<Option<BrowserSession>> {
-    if !is_hex_token(fresh, 64) || old == Some(fresh) {
+    if codeyard_support::cells::Secret::cookie(fresh).is_err() || old == Some(fresh) {
         anyhow::bail!("Authenticated session requires a fresh random identifier");
     }
     let mut tx = pool.begin().await?;
@@ -369,7 +369,7 @@ pub async fn create_browser_session(
     ip_address: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> Result<BrowserSession> {
-    if !is_hex_token(id, 64) {
+    if codeyard_support::cells::Secret::cookie(id).is_err() {
         anyhow::bail!("Session requires a random identifier");
     }
     let mut tx = pool.begin().await?;
@@ -438,7 +438,10 @@ pub async fn get_or_create_csrf_token(
     candidate: &str,
     ttl_seconds: i64,
 ) -> Result<Option<String>> {
-    if !is_hex_token(id, 64) || !is_hex_token(candidate, 64) || !(1..=7200).contains(&ttl_seconds) {
+    if codeyard_support::cells::Secret::cookie(id).is_err()
+        || !is_hex_token(candidate, 64)
+        || !(1..=7200).contains(&ttl_seconds)
+    {
         anyhow::bail!("Invalid CSRF token input");
     }
     // Page loads nearly always find the current token stored already. A plain read

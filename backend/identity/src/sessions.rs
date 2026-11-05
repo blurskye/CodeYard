@@ -2,6 +2,12 @@ use chrono::{DateTime, Utc};
 use codeyard_db_core::models::User;
 use codeyard_db_core::DbPool;
 
+/// A newly issued identifier includes its origin prefix in durable storage.
+pub fn fresh_id(pool: &DbPool) -> Result<String, codeyard_support::cells::Invalid> {
+    pool.cell_prefix()
+        .cookie(&codeyard_support::crypto::random_hex())
+}
+
 /// The adapter distinguishes absent from invalid/ambiguous supplied identifiers.
 /// No cookie/header parsing or transport-specific error lives here.
 pub enum InitiatingSession<'a> {

@@ -760,7 +760,8 @@ Stage 2 ID initialization, credential framing, directory queries and operator co
 workspace, Clippy and WASM checks. The directory TLS transport and shared root-bearing
 node-ID codec, route cache and native cookie/device-form follow-up also pass these checks;
 runtime tests are pending;
-the public router, foreign authorization and stubs are not built;
+public route metadata and GraphQL preflight/planning are written but unchecked;
+the public proxy, foreign authorization and stubs are not built;
 stages 3 to 6 are not built.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
 numbers remain assumptions until stage 1 measures a real cell.

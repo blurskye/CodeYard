@@ -44,25 +44,19 @@ pub fn session_duration_days() -> i64 {
         .unwrap_or(30)
 }
 
-pub fn generate_session_id() -> String {
-    codeyard_support::crypto::random_hex()
-}
-
 pub fn build_session_cookie(
     session_id: &str,
     max_age_days: i64,
-    cell: Prefix,
 ) -> Result<String, codeyard_support::cells::Invalid> {
-    build_session_cookie_for(session_id, max_age_days.clamp(0, 365) * 24 * 60 * 60, cell)
+    build_session_cookie_for(session_id, max_age_days.clamp(0, 365) * 24 * 60 * 60)
 }
 
 /// A session cookie that lasts `max_age_seconds`, for reissuing an existing session.
 pub(crate) fn build_session_cookie_for(
     session_id: &str,
     max_age_seconds: i64,
-    cell: Prefix,
 ) -> Result<String, codeyard_support::cells::Invalid> {
-    let session_id = cell.cookie(session_id)?;
+    Secret::cookie(session_id)?;
     let name = session_cookie_name();
     let mut cookie = format!(
         "{name}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
@@ -112,21 +106,12 @@ pub(crate) fn session_cookie_name() -> &'static str {
 
 pub fn extract_session(headers: &HeaderMap) -> Option<(Prefix, String)> {
     let value = named_cookie(headers, session_cookie_name(), 70)?;
-    let parsed = Secret::cookie(&value).ok()?;
-    Some((parsed.cell, parsed.secret.to_owned()))
+    let cell = Secret::cookie(&value).ok()?.cell;
+    Some((cell, value))
 }
 
 pub fn extract_session_id(headers: &HeaderMap) -> Option<String> {
-    extract_session(headers).map(|(_, secret)| secret)
-}
-
-pub fn extract_local_session_id(
-    pool: &codeyard_db_core::DbPool,
-    headers: &HeaderMap,
-) -> Option<String> {
-    extract_session(headers)
-        .filter(|(cell, _)| *cell == pool.cell_prefix())
-        .map(|(_, secret)| secret)
+    extract_session(headers).map(|(_, value)| value)
 }
 
 pub fn has_session_cookie(headers: &HeaderMap) -> bool {
@@ -187,7 +172,7 @@ pub async fn get_optional_user(
     pool: &codeyard_db_core::DbPool,
     headers: &HeaderMap,
 ) -> Result<Option<codeyard_db_core::models::User>, (StatusCode, Json<ApiError>)> {
-    let Some(session_id) = extract_local_session_id(pool, headers) else {
+    let Some(session_id) = extract_session_id(headers) else {
         return Ok(None);
     };
     let user = codeyard_db_identity::users::sessions::get_session_account(pool, &session_id)
@@ -214,7 +199,7 @@ mod tests {
     #[test]
     fn cookie_parser_rejects_ambiguous_or_unbounded_identifiers() {
         let mut headers = HeaderMap::new();
-        let id = generate_session_id();
+        let id = codeyard_support::crypto::random_hex();
         assert_eq!(id.len(), 64);
         headers.insert(
             header::COOKIE,
@@ -227,7 +212,7 @@ mod tests {
         );
         assert_eq!(
             extract_session(&headers),
-            Some((Prefix::new(1), id.clone()))
+            Some((Prefix::new(1), format!("1.{id}")))
         );
         headers.insert(
             header::COOKIE,
@@ -245,7 +230,7 @@ mod tests {
         headers.append(header::COOKIE, format!("session_id={id}").parse().unwrap());
         assert!(extract_session_id(&headers).is_none());
         assert!(has_session_cookie(&headers));
-        let cookie = build_session_cookie(&id, i64::MAX, Prefix::ZERO).unwrap();
+        let cookie = build_session_cookie(&id, i64::MAX).unwrap();
         assert!(cookie.contains("Max-Age=31536000"));
     }
 

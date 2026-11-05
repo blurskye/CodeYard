@@ -100,14 +100,15 @@ pub async fn primary_required(
     credential: Credential<'_>,
     write: bool,
 ) -> Result<bool> {
+    let valid = match &credential {
+        Credential::Session(value) => codeyard_support::cells::Secret::cookie(value).is_ok(),
+        Credential::Token(value) => codeyard_support::tokens::is_hex_token(value, 64),
+    };
     let (table, key, value) = match credential {
         Credential::Session(value) => ("sessions", "id", value),
         Credential::Token(value) => ("personal_access_tokens", "token_hash", value),
     };
-    ensure!(
-        value.len() == 64 && value.bytes().all(|byte| byte.is_ascii_hexdigit()),
-        "invalid routing credential"
-    );
+    ensure!(valid, "invalid routing credential");
     let read = |clock: &str| {
         format!(
             "SELECT EXISTS(SELECT 1 FROM {table} WHERE {key}=$1 AND read_primary_until>{clock})"

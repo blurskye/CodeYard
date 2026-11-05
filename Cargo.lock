@@ -9360,6 +9360,7 @@ dependencies = [
  "codeyard-api-http",
  "codeyard-app",
  "codeyard-ci-engine",
+ "codeyard-cells-router",
  "codeyard-db-actions",
  "codeyard-db-core",
  "codeyard-db-identity",
@@ -10346,6 +10347,9 @@ name = "codeyard-cells-router"
 version = "0.1.5"
 dependencies = [
  "anyhow",
+ "async-graphql",
+ "async-graphql-value",
+ "codeyard-github-graphql",
  "codeyard-cluster-core",
  "codeyard-db-directory",
  "codeyard-model",

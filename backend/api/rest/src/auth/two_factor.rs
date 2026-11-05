@@ -69,8 +69,13 @@ pub(crate) async fn sign_in_post(
             StatusCode::BAD_REQUEST,
         );
     }
-    let session_request =
-        crate::auth::session::LoginSessionRequest::from_headers(&ctx.state.pool, &ctx.headers);
+    let session_request = match crate::auth::session::LoginSessionRequest::from_headers(
+        &ctx.state.pool,
+        &ctx.headers,
+    ) {
+        Ok(request) => request,
+        Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Sign-in unavailable"),
+    };
     let result = codeyard_identity::login::second_factor_login(
         &ctx.state.pool,
         ctx.state.secret_encryptor.as_deref(),
@@ -85,7 +90,6 @@ pub(crate) async fn sign_in_post(
             codeyard_api_http::session::build_session_cookie(
                 &authenticated.session_id,
                 codeyard_api_http::session::session_duration_days(),
-                ctx.state.pool.cell_prefix(),
             )
             .ok()
             .and_then(|cookie| append_auth_cookie(redirect_target, &cookie).ok())

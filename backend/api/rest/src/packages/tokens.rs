@@ -163,10 +163,7 @@ pub(super) async fn exchange(
     }
     let write = resources.values().any(|actions| actions.contains("push"));
     let resources = serde_json::to_string(&resources).map_err(|error| Error::db(error.into()))?;
-    let value = format!(
-        "cyp_registry_{}",
-        codeyard_api_http::session::generate_session_id()
-    );
+    let value = format!("cyp_registry_{}", codeyard_support::crypto::random_hex());
     codeyard_db_repos::packages::issue_registry_token(
         &state.pool,
         &token_hash(&value),

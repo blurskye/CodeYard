@@ -11,8 +11,11 @@ async fn contract(pg: bool) {
     let root = tempfile::tempdir().unwrap();
     let router = database.router(root.path()).await;
     let mut client = Client::login(&router, database.pool(), actor).await;
-    let random = client.session.clone();
-    client.session = Prefix::ZERO.cookie(&random).unwrap();
+    let stored = client.session.clone();
+    let random = codeyard_support::cells::Secret::cookie(&stored)
+        .unwrap()
+        .secret
+        .to_owned();
     let local = client
         .exchange("GET", "/settings", "text/plain", Vec::new())
         .await;
@@ -37,20 +40,20 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(logout.status, StatusCode::FORBIDDEN);
     assert_eq!(
-        codeyard_db_identity::users::sessions::get_session_account(database.pool(), &random)
+        codeyard_db_identity::users::sessions::get_session_account(database.pool(), &stored)
             .await
             .unwrap()
             .unwrap()
             .id,
         actor
     );
-    client.session = Prefix::ZERO.cookie(&random).unwrap();
+    client.session = stored.clone();
     let local_logout = client
         .exchange("POST", "/logout", "application/x-www-form-urlencoded", body)
         .await;
     assert_eq!(local_logout.status, StatusCode::SEE_OTHER);
     assert!(
-        codeyard_db_identity::users::sessions::get_session_account(database.pool(), &random)
+        codeyard_db_identity::users::sessions::get_session_account(database.pool(), &stored)
             .await
             .unwrap()
             .is_none()
