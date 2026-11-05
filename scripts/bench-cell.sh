@@ -116,7 +116,7 @@ try:
                PUBLIC_URL=base, PUBLIC_HTTP_CLONE_BASE=base, COOKIE_SECURE='false',
                SECRETS_MASTER_KEY=secrets.token_hex(32), RUST_LOG='warn',
                CI_EXECUTION_MODE='local', CI_ACTIONS_BINARY=str(actions),
-               CI_MAX_ACTIVE_RUNS='4', CI_RUN_TIMEOUT_SECONDS='120',
+               CI_MAX_ACTIVE_RUNS='4', CI_RUN_TIMEOUT_SECONDS='120', PAGE_RENDER_WAITERS='512',
                WEBUI_DIST=str(pathlib.Path(os.environ.get('WEBUI_DIST', root / 'dist/webui')).resolve()))
     if os.environ.get('CI_PROCESS_CGROUP_ROOT'):
         env['CI_PROCESS_CGROUP_ROOT'] = os.environ['CI_PROCESS_CGROUP_ROOT']
@@ -160,7 +160,7 @@ try:
                           base + '/api/v3' + path], stdout=subprocess.PIPE)
         return json.loads(result.stdout)
 
-    print('Preparing 50 organizations and REST issue fixtures; readers are 500 concurrent clients.', flush=True)
+    print('Preparing 50 organizations and REST issue fixtures; readers are 500 concurrent clients with 512 page-render waiters.', flush=True)
     for index in range(50):
         org = f'bench-org-{index}'
         # Organization creation has no REST endpoint; use its native CSRF form.

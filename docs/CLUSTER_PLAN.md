@@ -9,10 +9,10 @@ keeps the longer plan for cells; this file comes first and does not repeat it.
 Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspace,
 Clippy and WASM checks pass, including the fault tests and full-disk placement fix.
 Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed, 19 ignored) and Helm rendering pass.
-Storage checks pass (99 passed, 3 ignored). The cluster run has three remaining failures:
-interrupted-restore diagnostics, full-disk fixture ownership and one SQLite deadline.
-The browser app builds; debug-symbol size and an end-to-end fixture path are corrected
-in source and await rerun. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
+Storage checks pass (99 passed, 3 ignored). The cluster run passes 220 checks with one full-disk fixture ownership failure;
+its executable ownership correction passes source checks and awaits rerun. Cluster backup
+and restore pass. The browser app builds; asset replacement and debug-symbol size
+corrections await runtime verification. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
 Cluster mode stays hidden behind
 `CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.
@@ -29,22 +29,22 @@ The experimental write path uses two storage voters, PostgreSQL decisions and a 
 journal. Cluster files use two storage-node copies or optional shared S3. Repository initialization
 and copy now use the same quorum path; source checks pass and runtime tests are pending.
 
-Not complete: drain and failover acceptance, backup and restore verification,
-rolling upgrades and measured load limits.
+Not complete: drain and failover acceptance, browser acceptance, rolling upgrades
+and measured load limits.
 
 Current acceptance status:
 
 - 1: hiding-switch CLI refusal checks pass.
 - 2: storage-node copies, capacity, loss, retry, drain and private access pass HTTP checks on both engines; native startup without S3 passes.
-- 3: quorum initialization, copy, default selection, voter replacement and primary-loss checks pass; full-disk and one SQLite deadline check await rerun.
+- 3: quorum initialization, copy, default selection, voter replacement and primary-loss checks pass; full-disk retry awaits rerun.
 - 4: drain REST, authority and promotion checks pass; native and hydrated browser checks await execution.
 - 5: quorum, drain, bounded scraping and acquisition waiter metrics pass HTTP acceptance.
 - 6: bounded invitations and environment-only provisioning pass library and REST checks.
 - 7: policy forms, lease leader, pause, dry run and storage rules pass on both database engines.
 - 8: mover reservations, bandwidth limits and busy-reader retirement retry pass.
-- 9: pool and Helm checks pass; PgBouncer Git fixtures await rerun. The 500-reader debug benchmark failed and finished-CI load needs a delegated cgroup.
+- 9: pool, Helm and the 17-check PgBouncer session round pass. The 500-reader debug benchmark failed and finished-CI load needs a delegated cgroup.
 - 10: previous-release target needs confirmation before compatibility work.
-- 11: primary snapshots, object copies, fenced import and per-node restore pass source checks; runtime pending.
+- 11: primary snapshots, object copies, interrupted fenced import and per-node restore pass CLI acceptance.
 - 12: cross-node REST account/IP, audit, OIDC membership and private enrollment CLI checks pass; OIDC also passes across web processes with five-minute skew.
 
 ## A. Checks on what exists

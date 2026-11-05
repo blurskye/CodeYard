@@ -449,12 +449,15 @@ configure_node() {
         "GITSERV_STATE_DIR=$NODE_DIR/state" "REPOS_PATH=$NODE_DIR/repos" "HOST_KEY_PATH=$NODE_DIR/host_key"
         "HTTP_ADDR=127.0.0.1:${HTTP_PORTS[$node]:-0}" "SSH_ADDR=127.0.0.1:${SSH_PORTS[$node]:-0}" "SSH_MODE=builtin"
         "GITSERV_NODE_ROLES=$roles" "CODEYARD_EXPERIMENTAL_CLUSTER=1"
-        "PUBLIC_URL=${ACTION_OBJECTS_ORIGIN:-$BASE}" "PUBLIC_HTTP_CLONE_BASE=$BASE" "COOKIE_SECURE=false"
+        "PUBLIC_URL=${ACTION_OBJECTS_ORIGIN:-$BASE}" "PUBLIC_HTTP_CLONE_BASE=$BASE" "PUBLIC_SSH_CLONE_BASE=$SSH_URL" "COOKIE_SECURE=false"
         "WEBUI_DIST=$WEBUI_DIST"
         "CI_EXECUTION_MODE=local" "CI_ACT_BINARY=$ACT" "CI_ACTIONS_BINARY=$ACTIONS_BIN"
         "CI_GITHUB_ACTION_FALLBACK=true"
         "CI_MAX_ACTIVE_RUNS=2" "CI_RUN_TIMEOUT_SECONDS=300" "WEBHOOKS_ALLOW_PRIVATE=true"
     )
+    if [[ -n ${CI_PROCESS_CGROUP_ROOT:-} ]]; then
+        NODE_ENV+=("CI_PROCESS_CGROUP_ROOT=$CI_PROCESS_CGROUP_ROOT")
+    fi
     # The gh sweep's accounts start CI runs and register after the server starts, so this
     # disposable server trusts every account to run CI.
     if [[ ${E2E_GH_SWEEP:-0} == 1 ]]; then NODE_ENV+=("CI_TRUSTED_ACTOR_IDS=$(seq -s, 1 500)"); fi
@@ -3190,7 +3193,7 @@ preflight() {
 # CI runs cannot execute here, or nothing.
 ci_runs_unavailable() {
     local current probe
-    current=/sys/fs/cgroup/$(sed -n 's|^0::/||p' /proc/self/cgroup)
+    current=${CI_PROCESS_CGROUP_ROOT:-/sys/fs/cgroup/$(sed -n 's|^0::/||p' /proc/self/cgroup)}
     if [[ $(stat -f -c %T "$current" 2>/dev/null) != cgroup2fs ]]; then
         echo 'needs a unified cgroup v2 for local CI runs'
     elif [[ ! -w $current/cgroup.procs ]] || ! probe=$(mktemp -d "$current/codeyard-e2e-XXXXXX" 2>/dev/null); then

@@ -42,6 +42,10 @@ and the rest) open the node connection in either mode; they do not change the mo
   Their immutable address includes the declared SHA256. A web node keeps only staging/cache
   bytes; reads can use either storage copy. Every core must select the same backend.
   Single-node mode still defaults to local disk. This backend awaits builder verification.
+- **Public clone URLs on every core node.** Set `PUBLIC_HTTP_CLONE_BASE` and
+  `PUBLIC_SSH_CLONE_BASE` to the public web and SSH frontends, including on storage
+  nodes. Signed webhook payloads use these addresses even when that node does not
+  serve public SSH itself.
 - **UDP or TCP between the nodes.** Nodes talk over QUIC on `IROH_BIND` (default
   `0.0.0.0:7444`). Direct connections are the default and there is no relay unless you
   set `IROH_RELAY`. Behind NAT or a container port mapping, tell the other nodes where to
@@ -568,7 +572,8 @@ rounds crash that owned database during `gh issue create`, check `/ready` goes 5
 200 without restarting Codeyard, and verify every acknowledged issue remains. They never
 restart an external database. `E2E_REQUIRE_PG_RESTART=1` makes a missing owned fixture a
 failure. Helm lint and render checks pass, including the pool-size setting and credential
-isolation. The PostgreSQL crash and session-pool checks await execution.
+isolation. The session-pool round passes all 17 Git and HTTP checks. PostgreSQL crash acceptance
+still needs the complete cluster round.
 
 ## One-cell benchmark
 
@@ -578,7 +583,8 @@ and PostgreSQL client tools. Local CI needs the delegated cgroup described in
 [CI_LOCAL_RUNNER.md](CI_LOCAL_RUNNER.md); `CI_PROCESS_CGROUP_ROOT` selects it. The database role needs `CREATEDB`. `BENCH_BINARY` and `WEBUI_DIST` override artifact
 paths; `BENCH_SECONDS` sets the measurement duration (10–300, default 30).
 
-The script starts one disposable server with four local CI slots, creates 50 organizations
+The script starts one disposable server with four local CI slots and 512 page-render
+waiters for its 500-reader burst (the production default remains 64), creates 50 organizations
 via the native form (there is no REST creation endpoint), and creates public repositories
 and issues through REST. During Git and reader traffic all 50 organizations issue an
 invitation at once. It runs 500 concurrent anonymous page-reader slots and 50 initial REST issue-list reads
