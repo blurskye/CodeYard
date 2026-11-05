@@ -58,7 +58,7 @@ class Deployment:
         self.native = [(f"http://127.0.0.1:{values[3]}", values[4], values[5]),
                        (f"http://127.0.0.1:{values[6]}", values[7], values[8])]
         self.env = {name: value for name, value in os.environ.items()
-                    if not name.startswith(("GIT_", "GH_", "GITHUB_", "DATABASE_", "DIRECTORY_", "NODE_", "CLUSTER_"))}
+                    if not name.startswith(("GIT_", "GH_", "GITHUB_", "DATABASE_", "DIRECTORY_", "NODE_", "CLUSTER_", "IROH_"))}
         self.env.update(COOKIE_SECURE="false", PUBLIC_URL=self.base,
                         PUBLIC_HTTP_CLONE_BASE=self.base,
                         PUBLIC_SSH_CLONE_BASE=f"ssh://git@127.0.0.1:{self.ssh}",
@@ -172,7 +172,7 @@ class Deployment:
             web, ssh, rpc = self.native[index]
             self.settings[name].update(DIRECTORY_ADDRESS=self.directory_address,
                 DIRECTORY_PUBLIC_KEY=self.keys["directory"]["NODE_PUBLIC_KEY"],
-                CELL_RPC_ADDRESS=f"127.0.0.1:{rpc}", GITSERV_NODE_ROLES="server",
+                CELL_RPC_ADDRESS=f"127.0.0.1:{rpc}", GITSERV_NODE_ROLES="server", IROH_BIND="127.0.0.1:0",
                 HTTP_ADDR=web.removeprefix("http://"), SSH_ADDR=f"127.0.0.1:{ssh}", HTTP_TRUSTED_PROXY_IPS="127.0.0.1")
             self.start(name, "serve")
             self.wait(name, web)

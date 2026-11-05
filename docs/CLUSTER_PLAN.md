@@ -171,7 +171,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     the shared live-session fix is written. Both exhaustive GraphQL contracts pass. PgBouncer,
     replica and quorum e2e pass; the new cells round fails at native cell-1 startup, before
     client acceptance, and its cleanup step is skipped. The fixture now prints a bounded
-    child-log tail on startup failure; the next runtime round will expose the cause.
+    child-log tail on startup failure. Runtime 3c645a8bdabd457ba45e70efff05b20b exposes a
+    fixture collision on the default UDP port 7444; each native process now gets an ephemeral
+    loopback listener and drops inherited transport settings. All 300 selected library tests
+    pass without skips; integration targets are building.
     Numeric child IDs and remote membership delivery/REST discovery pass workspace
     95564883b4604fb5bbd2968e4c6c5188, Clippy dc45e3525fc74aaabc0f286151667188 and WASM
     ba06675531a94ac0a434f8822c9a23ca. Both baselines retain stable review-request row IDs
@@ -191,9 +194,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     unchecked batch reads remote native dashboard/org lists through authorized page models
     with the original cookie, shares all row/byte budgets, and filters private stub orgs on
     both engines. Tests cover HTML/model output and session revocation during a remote wait.
-    Native home lists pass workspace 3558f18d0b6b4127a35692a5a1ddb414 and WASM
-    2b6662dfec0c47709de59dd2ab1b2ae3. Clippy 61436b90a5524d909e663bc000b9c1b2 found one
-    range-check lint, corrected for the combined recheck. Runtime acceptance remains open.
+    Native home lists and their shared budgets pass workspace 7b8a449676274b2284d8c67447439d70,
+    Clippy 95d21a9f9bb94eb9aa6ff3a8b6a9ae82 and WASM 05c22273aa1e4ad2a864829dcfb7c222.
+    Runtime acceptance remains open.
     No stage 2 completion is claimed.
     Stages 3 to 6 are not built. Automatic user moves and org regional presence remain
     documented owner decisions.
