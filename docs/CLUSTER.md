@@ -580,9 +580,10 @@ two-connection transaction pool and checks login, issues, SSH/HTTP push and clon
 round also runs by default. It stops both processes and drops its database on exit; set
 `E2E_KEEP=1` to retain logs (the private pool configuration contains database credentials).
 
-For a complete cluster, use PgBouncer **session** pooling: serving advisory locks and
-notification listeners own sessions. Budget backend connections for every process's
-configured pool plus these dedicated sessions. The small transaction-pool round above
+For a complete cluster, use PgBouncer **session** pooling: serving and maintenance
+leases retain database sessions. Notifications use cursor polling and retain none.
+Budget backend connections for every process's primary pool, optional read pool and
+these dedicated lease sessions. The small transaction-pool round above
 checks ordinary API/Git traffic only. Run the session setup with
 `E2E_PGBOUNCER_MODE=session E2E_DATABASES=pgbouncer bash scripts/e2e.sh`.
 
@@ -674,8 +675,10 @@ two seconds. Authentication, permission checks and writes stay on primary; the s
 credential's reads stay there for five seconds after a write. Other content families still
 use primary. Workspace, Clippy and WASM checks pass; replica runtime acceptance is
 pending.
-`DATABASE_POOL_SIZE` sets each process's PostgreSQL pool (1–1,000, default 20), with
-a five-second acquisition deadline and connection validation before reuse. Lost
+`DATABASE_POOL_SIZE` sets each process's primary pool and optional read pool separately
+(1–1,000 each, default 20); metrics include both. The primary has a five-second
+acquisition deadline; replica selection and acquisition have a two-second deadline.
+Both validate connections before reuse. Lost
 connections reconnect through `DATABASE_URL`; writes with an uncertain result are
 not automatically replayed. The debug load workload completed its 500-reader traffic
 and 50 simultaneous invitations, but CI jobs failed without cgroup delegation. There

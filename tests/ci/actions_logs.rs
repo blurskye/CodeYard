@@ -104,6 +104,14 @@ pub(super) async fn contract(
         missing(api, &location.replace("/project/", "/other/")).await;
         last = location;
     }
+    // A valid delegated URL must refuse object bytes that no longer match SQL metadata.
+    f.execute(
+        "UPDATE ci_log_chunks SET object_digest='0000000000000000000000000000000000000000000000000000000000000000' WHERE run_id=$1",
+        &[run],
+    ).await;
+    let (status, _, body) = request(api, "GET", &last, None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(!String::from_utf8_lossy(&body).contains("observed output"));
     missing(api, &last.replace("/steps/0/", "/steps/1/")).await;
     f.execute(
         "UPDATE actions_log_downloads SET expires_at=0 WHERE run_id=$1",

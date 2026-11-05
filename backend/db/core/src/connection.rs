@@ -193,7 +193,13 @@ impl DbPool {
     /// Open connections, including idle connections, for this process.
     pub fn size(&self) -> u32 {
         match self {
-            Self::Postgres(pool) => pool.size(),
+            Self::Postgres(pool) => {
+                let replica = pool
+                    .read_replica
+                    .read()
+                    .unwrap_or_else(|error| error.into_inner());
+                pool.size() + replica.as_ref().map_or(0, |replica| replica.size())
+            }
             Self::Sqlite(pool) => pool.size(),
         }
     }
@@ -201,7 +207,13 @@ impl DbPool {
     /// Requests waiting to obtain a connection from this process's application pool.
     pub fn waiters(&self) -> usize {
         match self {
-            Self::Postgres(pool) => pool.waiters(),
+            Self::Postgres(pool) => {
+                let replica = pool
+                    .read_replica
+                    .read()
+                    .unwrap_or_else(|error| error.into_inner());
+                pool.waiters() + replica.as_ref().map_or(0, |replica| replica.waiters())
+            }
             Self::Sqlite(pool) => pool.waiters(),
         }
     }
@@ -226,9 +238,10 @@ impl DbPool {
                         .unwrap_or_else(|error| error.into_inner())
                         .clone();
                     if let Some(replica) = replica {
-                        replica.close().await;
+                        tokio::join!(pool.close(), replica.close());
+                    } else {
+                        pool.close().await;
                     }
-                    pool.close().await;
                 }
                 Self::Sqlite(pool) => pool.close().await,
             }
@@ -265,6 +278,32 @@ mod shutdown_tests {
         assert!(
             (Duration::from_secs(10)..=Duration::from_millis(10_002)).contains(&start.elapsed())
         );
+        drop(held);
+    }
+    #[tokio::test]
+    async fn both_postgres_pools_close_when_the_replica_has_a_stuck_reader() {
+        let url = std::env::var("GITSERV_TEST_DATABASE_URL")
+            .expect("builder-test.sh supplies PostgreSQL");
+        let primary: crate::pool::PgPool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap()
+            .into();
+        let replica: crate::pool::PgPool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&url)
+            .await
+            .unwrap()
+            .into();
+        *primary.read_replica.write().unwrap() = Some(replica.clone());
+        let pool = DbPool::Postgres(primary.clone());
+        let held = replica.acquire().await.unwrap();
+        assert_eq!(pool.size(), primary.size() + replica.size());
+        tokio::time::pause();
+        pool.close().await;
+        assert!(primary.is_closed());
+        assert!(replica.is_closed());
         drop(held);
     }
 }
