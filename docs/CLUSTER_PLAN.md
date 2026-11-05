@@ -157,14 +157,16 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 2 ranges, framed credentials/sessions, directory claims/TLS/cache, HTTP/GraphQL
     routing, stable homes, stubs and common rooted IDs pass source checks. Generated GraphQL
     is unchanged. Range renewal is a committed, deferred owner follow-up; do not extend it.
-    The last source round passes workspace f78a4a1f7d344f04822977b0aa180990, Clippy
-    45eb885b846949d39b1a4973faa8e89e and WASM 761e04b62cdf4670a5e8b84135462d15.
+    The collected fixes pass workspace ecc385aac2974ab1b6f1c4be3c598a36, Clippy
+    47615cc65f914c2984ca924097d4e3df and WASM 46edcd9b678c4991986a3e0b211ccc05.
     Runtime 375fa054f4204225b5c57bb2b02cd059 ran the earlier snapshot: libraries 533
     passed/two failed; CI 206/14 with 19 existing environment-dependent ignores; cluster
     230/one; database 176/five; repositories 309/nine. Git 42, identity 166 and all 51
     PgBouncer/replica/quorum e2e checks pass without skips. Collected fixes cover fixtures,
     both-engine stub projections/search, PostgreSQL cached JSON, login-name routing,
-    rooted-ID assertions and issue-transfer root redirects. Their combined check is next.
+    rooted-ID assertions and issue-transfer root redirects. Runtime retry
+    616868dc57e7437c85afe790dcf2161a covers changed crates/targets and the nine repository
+    failures; it is submitted.
     Native signup/key claim publication, remote membership pointers, remaining node families
     and the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
     Automatic user moves and org regional presence remain documented owner decisions.
