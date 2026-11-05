@@ -178,6 +178,29 @@ async fn contract(pg: bool) {
     let path = format!("{base}/check-runs/{id}");
     assert_eq!(run["check_suite"]["id"], suite_id);
     assert_eq!(run["output"]["annotations_count"], 2);
+    for (kind, row, ty) in [("CSU", suite_id, "CheckSuite"), ("CRU", id, "CheckRun")] {
+        for (root, valid) in [(repo.id, true), (repo.id + 1000, false)] {
+            let node = codeyard_model::node_id::scoped(kind, root, row).unwrap();
+            let response = router.clone().oneshot(Request::builder()
+                .method("POST").uri("/api/graphql")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {auth}"))
+                .body(Body::from(json!({"query":"query($id:ID!){node(id:$id){id __typename}}", "variables":{"id":node}}).to_string())).unwrap()
+            ).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            let body: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 1048576).await.unwrap())
+                    .unwrap();
+            if valid {
+                assert!(body.get("errors").is_none(), "{body}");
+                assert_eq!(body["data"]["node"]["id"], node);
+                assert_eq!(body["data"]["node"]["__typename"], ty);
+            } else {
+                assert!(body["data"]["node"].is_null(), "{body}");
+                assert!(body["errors"].is_array(), "{body}");
+            }
+        }
+    }
     let (_, found) = send(
         &router,
         "checks/get",

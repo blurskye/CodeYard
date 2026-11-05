@@ -90,6 +90,10 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{stack}");
     assert_eq!(stack["base"]["ref"], "main");
+    assert_eq!(
+        stack["node_id"],
+        codeyard_model::node_id::scoped("S", repo.id, stack["id"].as_i64().unwrap()).unwrap()
+    );
     assert_eq!(stack["pull_requests"][1]["number"], bn);
     assert_eq!(stack["open"], true);
     let number = stack["number"].as_i64().unwrap();

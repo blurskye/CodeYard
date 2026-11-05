@@ -2253,7 +2253,7 @@ pub fn action_run(
         "created_at":time(run.created_at),"updated_at":time(run.updated_at),
         "head_commit":head_commit,"head_repository":head_repository,"repository":repository,
         "jobs_url":format!("{url}/jobs"),"logs_url":format!("{url}/logs"),
-        "check_suite_id":suite,"check_suite_node_id":suite.map(|id|codeyard_model::node_id::encode("CSU",id)),
+        "check_suite_id":suite,"check_suite_node_id":suite.map(|id|codeyard_model::node_id::scoped("CSU",run.repo_id,id)),
         "check_suite_url":suite.map(|id|format!("{api}/check-suites/{id}")),
         "cancel_url":format!("{url}/cancel"),"rerun_url":format!("{url}/rerun"),"artifacts_url":format!("{url}/artifacts"),
         "workflow_url":format!("{api}/actions/workflows/{workflow_id}"),"pull_requests":pull_requests,
@@ -2309,7 +2309,7 @@ pub fn action_artifact(
         if !run.is_fork { value["head_repository_id"]=json!(run.repo_id); }
         value
     });
-    json!({"id":object.id,"node_id":node_id::encode("ART",object.id),"name":object.name,"size_in_bytes":object.size,"url":url,"archive_download_url":format!("{url}/zip"),"expired":object.expires_at<=chrono::Utc::now().timestamp(),"created_at":timestamp(object.created_at),"updated_at":timestamp(object.created_at),"expires_at":timestamp(object.expires_at),"digest":null,"workflow_run":workflow})
+    json!({"id":object.id,"node_id":node_id::scoped("ART",object.repo_id,object.id),"name":object.name,"size_in_bytes":object.size,"url":url,"archive_download_url":format!("{url}/zip"),"expired":object.expires_at<=chrono::Utc::now().timestamp(),"created_at":timestamp(object.created_at),"updated_at":timestamp(object.created_at),"expires_at":timestamp(object.expires_at),"digest":null,"workflow_run":workflow})
 }
 
 /// Secret alert documents are shared with the REST API; only authorized callers open the value.

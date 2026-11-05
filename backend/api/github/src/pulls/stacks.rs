@@ -56,7 +56,7 @@ async fn document(
         pulls.push(if detail{crate::pulls::document(state,headers,repo,owner,pull,false).await?}else{json!({"number":pull.number,"state":if pull.state=="merged"{"closed"}else{&pull.state},"draft":pull.is_draft,"merged_at":pull.merged_at,"head":{"ref":pull.head_branch,"sha":pull.head_sha}})});
     }
     Ok(
-        json!({"id":meta.id,"number":meta.number,"node_id":node_id::encode("S",meta.id),"url":format!("{}/stacks/{}",repo_url(owner,&repo.name),meta.number),"base":{"ref":meta.base_branch},"open":members.iter().any(|p|p.state=="open"),"created_at":meta.created_at,"pull_requests":pulls}),
+        json!({"id":meta.id,"number":meta.number,"node_id":node_id::scoped("S",repo.id,meta.id),"url":format!("{}/stacks/{}",repo_url(owner,&repo.name),meta.number),"base":{"ref":meta.base_branch},"open":members.iter().any(|p|p.state=="open"),"created_at":meta.created_at,"pull_requests":pulls}),
     )
 }
 #[derive(Deserialize)]

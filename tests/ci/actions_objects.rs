@@ -242,6 +242,10 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(body["workflow_run"]["id"], main.id);
+    assert_eq!(
+        body["node_id"],
+        codeyard_model::node_id::scoped("ART", main.repo_id, first).unwrap()
+    );
     assert_eq!(body["size_in_bytes"], 22);
     assert_eq!(body["expired"], false);
     for suffix in [

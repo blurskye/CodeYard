@@ -10,7 +10,7 @@ use serde_json::json;
 use serde_json::Value;
 
 fn suite_object(repo: i64, id: i64) -> Value {
-    json!({"__typename":"CheckSuite","id":node_id::encode("CSU",id),"_repo":repo,"_scope":"checks","_suite":id})
+    json!({"__typename":"CheckSuite","id":node_id::scoped("CSU",repo,id),"_repo":repo,"_scope":"checks","_suite":id})
 }
 fn run_object(
     run: &codeyard_db_actions::checks::Run,
@@ -21,7 +21,7 @@ fn run_object(
     request.charge(
         serde_json::to_vec(&run.data.0).map_err(unavailable)?.len() + run.name.len() + 256,
     )?;
-    let mut value = json!({"__typename":"CheckRun","id":node_id::encode("CRU",run.id),"databaseId":run.id,"_repo":run.repo_id,"_scope":"checks","_oid":oid,"_run":run.id,"_suite":run.suite_id,
+    let mut value = json!({"__typename":"CheckRun","id":node_id::scoped("CRU",run.repo_id,run.id),"databaseId":run.id,"_repo":run.repo_id,"_scope":"checks","_oid":oid,"_run":run.id,"_suite":run.suite_id,
         "name":run.name,"status":run.status.to_uppercase(),"conclusion":run.conclusion.as_ref().map(|value| value.to_uppercase()),"startedAt":run.data.started_at,"completedAt":run.data.completed_at,"detailsUrl":run.data.details_url,"externalId":run.data.external_id});
     if output {
         value["summary"] = json!(run.data.summary);
