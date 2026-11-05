@@ -637,7 +637,7 @@ pub fn repository_condition(
     }
     let field = |path: &str| {
         if postgres {
-            format!("(fc.answer)::jsonb#>>'{{{}}}'", path.replace('.', ","))
+            format!("((fc.answer)::jsonb#>>'{{{}}}')", path.replace('.', ","))
         } else {
             format!("json_extract(fc.answer,'$.{path}')")
         }

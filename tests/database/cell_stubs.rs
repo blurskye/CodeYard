@@ -337,6 +337,38 @@ async fn contract(pg: bool) {
             .await
             .unwrap()
     );
+    // Collaborator projections evaluate the real stub marker, including the admin case.
+    let session = "b".repeat(64);
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+    assert!(
+        codeyard_db_actions::variables::list(pool, native.id, &credential, local.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    for admin in [false, true] {
+        assert!(
+            mutate(
+                pool,
+                &format!("UPDATE users SET is_admin={admin} WHERE id=$1"),
+                native.id
+            )
+            .await
+        );
+        assert!(matches!(
+            codeyard_db_actions::variables::list(pool, native.id, &credential, repository.id).await,
+            Err(codeyard_db_actions::variables::VariableError::Denied)
+        ));
+    }
+    assert!(
+        mutate(
+            pool,
+            "UPDATE users SET is_admin=FALSE WHERE id=$1",
+            native.id
+        )
+        .await
+    );
     let mut hostile_path = repository.clone();
     hostile_path.disk_path = git_path.to_str().unwrap().into();
     let store = codeyard_repos_core::repositories::store::repo_store(&hostile_path, None);

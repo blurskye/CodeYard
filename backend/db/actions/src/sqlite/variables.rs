@@ -11,7 +11,7 @@ pub(crate) async fn is_collaborator(
     actor: i64,
     repo: i64,
 ) -> sqlx::Result<bool> {
-    sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM (SELECT id,owner_kind,owner_user_id,owner_org_id,is_gist,TRUE AS is_private FROM repositories WHERE id=?2) r JOIN users u ON u.id=?1 WHERE NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({})>=1))", codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
+    sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM (SELECT id,owner_kind,owner_user_id,owner_org_id,is_gist,is_stub,TRUE AS is_private FROM repositories WHERE id=?2) r JOIN users u ON u.id=?1 WHERE NOT r.is_stub AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({})>=1))", codeyard_db_core::queries::sqlite::repositories::access::USER_REPO_ACCESS_SQL))
         .bind(actor)
         .bind(repo)
         .fetch_one(&mut **tx)

@@ -169,7 +169,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     earlier snapshot, including the cluster/Git/OAuth fixture fixes from failed job 049.
     Its libraries report 533 passed, two failed, no ignores. Missing HTTP home/stub fixture
     fields and the SSH fixture's non-UUID storage path are fixed in unchecked source;
-    integration targets are still compiling.
+    CI reports 206 passed, 14 failed and 19 existing environment-dependent ignores.
+    Both-engine Actions projections retain/reject the stub marker, and PostgreSQL cached
+    JSON fields are parenthesized before concatenation; these fixes and a native/stub
+    variable regression are unchecked. Remaining integration targets are running.
     Native signup/key claim publication, remote membership pointers, remaining node families
     and the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
     Check suites/runs, artifacts and pull-request stacks now issue rooted IDs, with HTTP resolution/forged-root and projection assertions on both engines.
