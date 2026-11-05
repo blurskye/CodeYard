@@ -24,6 +24,7 @@ pub struct Pool<DB: Database> {
     cell_identity: Arc<AtomicU32>,
     cell_prefixes: Arc<std::sync::RwLock<Vec<codeyard_support::cells::Prefix>>>,
     pub(crate) read_replica: Arc<std::sync::RwLock<Option<PgPool>>>,
+    directory: Arc<std::sync::RwLock<Option<crate::cells::directory::Provider>>>,
     foreign_authorization: Arc<std::sync::RwLock<Option<crate::cells::authorization::Provider>>>,
     log_objects: Arc<std::sync::RwLock<Option<std::sync::Weak<dyn crate::ci_logs::LogObjects>>>>,
 }
@@ -44,6 +45,7 @@ impl<DB: Database> Clone for Pool<DB> {
             read_replica: self.read_replica.clone(),
             log_objects: self.log_objects.clone(),
             foreign_authorization: self.foreign_authorization.clone(),
+            directory: self.directory.clone(),
         }
     }
 }
@@ -59,6 +61,7 @@ impl<DB: Database> From<sqlx::Pool<DB>> for Pool<DB> {
             read_replica: Arc::default(),
             log_objects: Arc::default(),
             foreign_authorization: Arc::default(),
+            directory: Arc::default(),
         }
     }
 }
@@ -113,6 +116,12 @@ impl<DB: Database> Pool<DB> {
     }
     pub(crate) fn same_pool(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.waiting, &other.waiting)
+    }
+    pub fn set_directory(&self, provider: crate::cells::directory::Provider) {
+        *self.directory.write().unwrap_or_else(|error| error.into_inner()) = Some(provider);
+    }
+    pub fn directory(&self) -> Option<crate::cells::directory::Provider> {
+        self.directory.read().unwrap_or_else(|error| error.into_inner()).clone()
     }
     pub fn set_foreign_authorization(&self, provider: crate::cells::authorization::Provider) {
         *self

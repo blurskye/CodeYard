@@ -176,6 +176,18 @@ impl DbPool {
             Self::Sqlite(pool) => pool.cell_prefix(),
         }
     }
+    pub fn set_directory(&self, provider: crate::cells::directory::Provider) {
+        match self {
+            Self::Postgres(pool) => pool.set_directory(provider),
+            Self::Sqlite(pool) => pool.set_directory(provider),
+        }
+    }
+    pub fn directory(&self) -> Option<crate::cells::directory::Provider> {
+        match self {
+            Self::Postgres(pool) => pool.directory(),
+            Self::Sqlite(pool) => pool.directory(),
+        }
+    }
     pub fn set_foreign_authorization(&self, provider: crate::cells::authorization::Provider) {
         match self {
             Self::Postgres(pool) => pool.set_foreign_authorization(provider),

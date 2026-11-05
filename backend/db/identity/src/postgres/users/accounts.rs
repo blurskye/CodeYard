@@ -22,6 +22,10 @@ pub async fn create_user(pool: &PgPool, username: &str, email: Option<&str>) -> 
     .bind(email)
     .fetch_one(&mut *tx)
     .await?;
+    anyhow::ensure!(
+        codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &result).await?,
+        codeyard_db_core::cells::directory::Refusal::Conflict
+    );
     tx.commit().await?;
     Ok(result)
 }
@@ -61,6 +65,10 @@ pub async fn create_user_with_password_and_flags(
     .bind(must_change_password)
     .fetch_one(&mut *tx)
     .await?;
+    anyhow::ensure!(
+        codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &result).await?,
+        codeyard_db_core::cells::directory::Refusal::Conflict
+    );
     tx.commit().await?;
     Ok(result)
 }
@@ -256,6 +264,10 @@ pub async fn create_user_from_oauth(
     .bind(email.is_some())
     .fetch_one(&mut *tx)
     .await?;
+    anyhow::ensure!(
+        codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &result).await?,
+        codeyard_db_core::cells::directory::Refusal::Conflict
+    );
     tx.commit().await?;
     Ok(result)
 }

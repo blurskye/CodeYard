@@ -192,6 +192,8 @@ pub async fn approve_signup_request(
         .bind(reviewer_user_id).bind(user.id).bind(serde_json::json!({"username":user.username})).execute(&mut *tx).await?;
     queue_decision_email(&mut tx, user.email.as_deref(), &user.username, true).await?;
 
+    anyhow::ensure!(codeyard_db_core::cells::directory::postgres::user(pool, &mut tx, &user).await?, ReviewError::Conflict);
+    require_reviewer(&mut tx, &reviewer).await?;
     tx.commit().await?;
     Ok(user)
 }

@@ -32,12 +32,9 @@ impl Claim {
     }
 }
 
-fn checked(object: Object, keys: &[Key], nonce: &str) -> Result<(Vec<Key>, String)> {
+fn checked_keys(object: Object, keys: &[Key]) -> Result<Vec<Key>> {
     object.validate().map_err(|_| Refusal::Invalid)?;
-    ensure!(
-        keys.len() <= 1000 && codeyard_support::tokens::is_hex_token(nonce, 64),
-        Refusal::Invalid
-    );
+    ensure!(keys.len() <= 1000, Refusal::Invalid);
     ensure!(
         keys.iter().all(|key| key.belongs_to(object.kind)),
         Refusal::Invalid
@@ -45,14 +42,33 @@ fn checked(object: Object, keys: &[Key], nonce: &str) -> Result<(Vec<Key>, Strin
     let mut keys = keys.to_vec();
     keys.sort_by_key(|key| (key.shard(), key.kind().as_str(), key.hash()));
     keys.dedup();
-    Ok((keys, token_hash(nonce)))
+    Ok(keys)
+}
+fn checked(object: Object, keys: &[Key], nonce: &str) -> Result<(Vec<Key>, String)> {
+    ensure!(codeyard_support::tokens::is_hex_token(nonce, 64), Refusal::Invalid);
+    Ok((checked_keys(object, keys)?, token_hash(nonce)))
 }
 
+async fn locked_home(tx: &mut Transaction<'_, Postgres>, object: Object) -> Result<Option<Home>> {
+    Ok(sqlx::query_as("SELECT home_cell,active,claim_count,nonce_hash,COALESCE(expires_at>clock_timestamp(),false) AS live,expires_at FROM directory_objects WHERE kind=$1 AND id=$2 FOR UPDATE")
+        .bind(object.kind.as_str()).bind(object.id).fetch_optional(&mut **tx).await?)
+}
 async fn home(tx: &mut Transaction<'_, Postgres>, object: Object, cell: Prefix) -> Result<Home> {
-    let row: Home = sqlx::query_as("SELECT home_cell,active,claim_count,nonce_hash,COALESCE(expires_at>clock_timestamp(),false) AS live,expires_at FROM directory_objects WHERE kind=$1 AND id=$2 FOR UPDATE")
-        .bind(object.kind.as_str()).bind(object.id).fetch_optional(&mut **tx).await?.ok_or(Refusal::Denied)?;
+    let row = locked_home(tx, object).await?.ok_or(Refusal::Denied)?;
     ensure!(row.home_cell == i32::from(cell.get()), Refusal::Denied);
     Ok(row)
+}
+
+async fn removal_home(tx: &mut Transaction<'_, Postgres>, object: Object, cell: Prefix) -> Result<()> {
+    let owner = locked_home(tx, object).await?.map(|row| row.home_cell);
+    let owner = match owner {
+        Some(owner) => Some(owner),
+        None => sqlx::query_scalar("SELECT cell_id FROM directory_cell_prefixes WHERE prefix=$1")
+            .bind(i32::from(Prefix::for_id(object.id).map_err(|_| Refusal::Invalid)?.get()))
+            .fetch_optional(&mut **tx).await?,
+    };
+    ensure!(owner == Some(i32::from(cell.get())), Refusal::Denied);
+    Ok(())
 }
 
 async fn claim(tx: &mut Transaction<'_, Postgres>, key: &Key) -> Result<Claim> {
@@ -131,6 +147,40 @@ impl Directory {
             }
             sqlx::query("UPDATE directory_objects SET active=true,expires_at=NULL WHERE kind=$1 AND id=$2")
                 .bind(object.kind.as_str()).bind(object.id).execute(&mut *tx).await?;
+            tx.commit().await?;
+            Ok(())
+        }).await
+    }
+
+    /// Removing a key never removes a replacement owned by another object.
+    pub async fn release(&self, peer: &str, object: Object, keys: &[Key]) -> Result<()> {
+        self.run(async {
+            let keys = checked_keys(object, keys)?;
+            let mut tx = self.begin().await?;
+            let cell = super::owner(&mut tx, peer, false).await?;
+            removal_home(&mut tx, object, cell).await?;
+            for key in keys {
+                sqlx::query("DELETE FROM directory_claims WHERE shard=$1 AND kind=$2 AND key_hash=$3 AND value=$4 AND object_kind=$5 AND object_id=$6")
+                    .bind(key.shard()).bind(key.kind().as_str()).bind(key.hash().to_vec())
+                    .bind(key.value()).bind(object.kind.as_str()).bind(object.id)
+                    .execute(&mut *tx).await?;
+            }
+            tx.commit().await?;
+            Ok(())
+        }).await
+    }
+
+    /// Used only after native deletion, or while the native namespace lock proves an orphan.
+    pub async fn forget(&self, peer: &str, object: Object) -> Result<()> {
+        self.run(async {
+            object.validate().map_err(|_| Refusal::Invalid)?;
+            let mut tx = self.begin().await?;
+            let cell = super::owner(&mut tx, peer, false).await?;
+            removal_home(&mut tx, object, cell).await?;
+            // The schema bounds an object's keys to 1000; its existing FK removes them together.
+            sqlx::query("DELETE FROM directory_objects WHERE kind=$1 AND id=$2 AND home_cell=$3")
+                .bind(object.kind.as_str()).bind(object.id).bind(i32::from(cell.get()))
+                .execute(&mut *tx).await?;
             tx.commit().await?;
             Ok(())
         }).await

@@ -17,6 +17,10 @@ pub async fn create_user(pool: &SqlitePool, username: &str, email: Option<&str>)
     .bind(email)
     .fetch_one(&mut *tx)
     .await?;
+    anyhow::ensure!(
+        codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
+        codeyard_db_core::cells::directory::Refusal::Conflict
+    );
     tx.commit().await?;
     Ok(user)
 }
@@ -43,6 +47,10 @@ pub async fn create_user_with_password_and_flags(
     let user = sqlx::query_as(&format!("INSERT INTO users(home_cell,username,email,password_hash,is_admin,must_change_password) VALUES ({cell_home},?1,?2,?3,?4,?5) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
         .bind(username).bind(email).bind(password_hash).bind(is_admin).bind(must_change_password)
         .fetch_one(&mut *tx).await?;
+    anyhow::ensure!(
+        codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
+        codeyard_db_core::cells::directory::Refusal::Conflict
+    );
     tx.commit().await?;
     Ok(user)
 }
@@ -207,6 +215,10 @@ pub async fn create_user_from_oauth(
     crate::sqlite::users::transitions::require_user_namespace(&mut tx, username).await?;
     let user = sqlx::query_as(&format!("INSERT INTO users(home_cell,username,email,display_name,email_verified) VALUES ({cell_home},?1,?2,?3,?4) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
         .bind(username).bind(email).bind(display_name).bind(email.is_some()).fetch_one(&mut *tx).await?;
+    anyhow::ensure!(
+        codeyard_db_core::cells::directory::sqlite::user(pool, &mut tx, &user).await?,
+        codeyard_db_core::cells::directory::Refusal::Conflict
+    );
     tx.commit().await?;
     Ok(user)
 }
