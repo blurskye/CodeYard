@@ -40,6 +40,7 @@ tailwind_help=$("$TAILWIND" --help 2>&1 || true)
 
 css_tmp=$(mktemp)
 staging=
+pending_file=
 dx_pid=
 cleanup() {
     local status=$?
@@ -48,6 +49,7 @@ cleanup() {
         kill -TERM "$dx_pid" 2>/dev/null || true
         wait "$dx_pid" 2>/dev/null || true
     fi
+    [[ -z $pending_file ]] || rm -f -- "$pending_file"
     [[ -z $staging ]] || rm -rf -- "$staging"
     rm -f "$css_tmp"
     exit "$status"
@@ -118,7 +120,7 @@ args=(build --platform web --package codeyard --bin codeyard --no-default-featur
 if [[ $MODE == release ]]; then
     args+=(--release)
 fi
-"$DX" "${args[@]}" &
+CARGO_PROFILE_WASM_DEV_DEBUG=0 "$DX" "${args[@]}" &
 dx_pid=$!
 if wait "$dx_pid"; then
     dx_pid=
@@ -142,8 +144,21 @@ if [[ ! -e $OUT && ! -L $OUT ]]; then
     fi
 fi
 require_bundle "$OUT"
-cp -R "$PUBLIC/." "$OUT/" --no-clobber
-index=$(mktemp "$OUT/.index.XXXXXX")
-cp "$PUBLIC/index.html" "$index"
-mv -T -- "$index" "$OUT/index.html"
+# Dioxus also emits stable filenames. Replace each complete file atomically;
+# assets absent from the new bundle stay available for older hashed references.
+while IFS= read -r -d '' file; do
+    [[ $file != "$PUBLIC/index.html" ]] || continue
+    relative=${file#"$PUBLIC/"}
+    target=$OUT/$relative
+    parent=$(dirname "$target")
+    mkdir -p "$parent"
+    pending_file=$(mktemp "$parent/.asset.XXXXXX")
+    cp --preserve=mode -- "$file" "$pending_file"
+    mv -T -- "$pending_file" "$target"
+    pending_file=
+done < <(find "$PUBLIC" -type f -print0)
+pending_file=$(mktemp "$OUT/.index.XXXXXX")
+cp --preserve=mode -- "$PUBLIC/index.html" "$pending_file"
+mv -T -- "$pending_file" "$OUT/index.html"
+pending_file=
 find "$OUT" -type f -printf '%10s  %P\n' | sort -k2

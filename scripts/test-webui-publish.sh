@@ -43,6 +43,7 @@ public=$CARGO_TARGET_DIR/dx/codeyard/debug/web/public
 mkdir -p "$public/assets"
 printf '%s\n' "$BUNDLE_VERSION" >"$public/index.html"
 printf '%s\n' "$BUNDLE_VERSION" >"$public/assets/$BUNDLE_VERSION.data"
+printf '%s\n' "$BUNDLE_VERSION" >"$public/assets/shared.data"
 [[ ${FAIL_BUILD:-0} != 1 ]] || exit 7
 DX
 chmod +x "$fixture/tools/"*
@@ -66,11 +67,13 @@ build
 [[ -f $WEBUI_DIST/.codeyard-webui-bundle && $(cat "$WEBUI_DIST/index.html") == first ]]
 BUNDLE_VERSION=second FAIL_BUILD=1 fails
 [[ $(cat "$WEBUI_DIST/index.html") == first && ! -e $WEBUI_DIST/assets/second.data ]]
+[[ $(cat "$WEBUI_DIST/assets/shared.data") == first ]]
 BAD_GRAPH=1 fails
 grep -q 'Browser dependency graph imports native authority: sqlx' "$fixture/build.log"
 [[ $(cat "$WEBUI_DIST/index.html") == first ]]
 BUNDLE_VERSION=second build
 [[ $(cat "$WEBUI_DIST/index.html") == second ]]
 [[ -f $WEBUI_DIST/assets/first.data && -f $WEBUI_DIST/assets/second.data ]]
+[[ $(cat "$WEBUI_DIST/assets/shared.data") == second ]]
 [[ -z $(find "$fixture" -maxdepth 1 -type d -name '.webui.*' -print) ]]
 echo 'Bundle publication preserves unknown data, retries failed builds and retains old assets.'

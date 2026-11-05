@@ -82,6 +82,17 @@ async fn enter_private_root(root: &std::path::Path) {
     for name in ["tmp", "full"] {
         std::fs::create_dir(sandbox.join(name)).unwrap();
     }
+    // The Git broker validates its executable's ancestors as well. A bind of
+    // the host Nix store retains unmapped root ownership, so copy this trusted
+    // tool into the fixture's mapped root instead of relaxing that validation.
+    let tools = sandbox.join("tools");
+    std::fs::create_dir(&tools).unwrap();
+    let git = codeyard_git::repository::process::executable().unwrap();
+    assert!(std::fs::metadata(&git).unwrap().len() <= 64 * 1024 * 1024);
+    std::fs::copy(git, tools.join("git")).unwrap();
+    let mut paths = vec![std::path::PathBuf::from("/tools")];
+    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
+    let path = std::env::join_paths(paths).unwrap();
     let mut command = tokio::process::Command::new("mount");
     command.arg("--no-mtab");
     let output = run({
@@ -108,6 +119,7 @@ async fn enter_private_root(root: &std::path::Path) {
         .env("CODEYARD_OWNED_FULL_DISK", "/full")
         .env("CODEYARD_FULL_DISK_PRIVATE_ROOT", "1")
         .env("TMPDIR", "/tmp")
+        .env("PATH", path)
         .exec();
     panic!("enter owned full-disk fixture: {error}");
 }

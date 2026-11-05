@@ -1179,8 +1179,12 @@ t_protection() {
     as alice req POST "/api/repos/alice/proj/pulls/$pr/merge" --accept json --status 409 \
         --json "{\"expected_head\":\"$head\",\"expected_base\":\"$tip\"}" \
         --contains-raw 'approving review'
-    as bob req POST "/api/repos/alice/proj/pulls/$pr/reviews" --accept json --status 403,404 \
+    # Public readers may review, but their approval cannot satisfy this writer rule.
+    as bob req POST "/api/repos/alice/proj/pulls/$pr/reviews" --accept json --status 200,201 \
         --json "{\"state\":\"approved\",\"commit_sha\":\"$head\"}"
+    as alice req POST "/api/repos/alice/proj/pulls/$pr/merge" --accept json --status 409 \
+        --json "{\"expected_head\":\"$head\",\"expected_base\":\"$tip\"}" \
+        --contains-raw 'approving review'
     as alice req POST /api/repos/alice/proj/collaborators --accept json --status 200,201 \
         --json '{"username":"bob","access_level":"write"}'
     as bob req POST "/api/repos/alice/proj/pulls/$pr/reviews" --accept json --status 200,201 \
