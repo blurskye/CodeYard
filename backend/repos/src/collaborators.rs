@@ -90,11 +90,28 @@ pub async fn list(
 }
 pub async fn add(
     pool: &codeyard_db_core::DbPool,
-    actor: i64,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: AccessLevel,
 ) -> Result<Added, Error> {
+    let actor = actor.into();
+    codeyard_identity::repository_access::credential_user(pool, &actor, true)
+        .await
+        .map_err(|error| {
+            if error.is::<codeyard_support::credentials::AccountRestricted>() {
+                Error::Denied
+            } else {
+                Error::Unavailable
+            }
+        })?;
+    codeyard_identity::repository_access::check_admin(pool, repo_id, actor.user_id)
+        .await
+        .map_err(access_error)?;
+    codeyard_identity::cells::resolve_user(pool, username)
+        .await
+        .map_err(|_| Error::Unavailable)?
+        .ok_or(Error::NotFound)?;
     codeyard_db_repos::repositories::collaborators::add(pool, actor, repo_id, username, permission)
         .await
         .map_err(database_error)

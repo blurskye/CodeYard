@@ -2158,7 +2158,7 @@ async fn mutate(
                 })?;
             codeyard_repos::collaborators::add(
                 pool,
-                actor.id,
+                ctx.database_actor(actor.id),
                 repository.id,
                 &field(form, "username"),
                 permission,

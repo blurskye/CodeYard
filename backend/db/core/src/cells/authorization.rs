@@ -235,11 +235,7 @@ pub struct Answer {
 impl Answer {
     /// Home-cell metadata is limited to the fields a stub may retain.
     pub fn redact(&mut self) {
-        self.user.email = None;
-        self.user.password_hash = None;
-        self.user.avatar_file_id = None;
-        self.user.is_admin = false;
-        self.user.email_verified = false;
+        redact_user(&mut self.user);
     }
     fn validate(&self, pool: &DbPool, proof: &Proof) -> Result<()> {
         ensure!(
@@ -248,14 +244,7 @@ impl Answer {
                 && !self.user.is_stub,
             "Invalid foreign account home"
         );
-        ensure!(
-            self.user.email.is_none()
-                && self.user.password_hash.is_none()
-                && self.user.avatar_file_id.is_none()
-                && !self.user.is_admin
-                && !self.user.email_verified,
-            "Foreign account includes private metadata"
-        );
+        validate_public_user(&self.user)?;
         ensure!(
             !self.user.is_banned && !self.user.must_change_password,
             "Foreign account is restricted"
@@ -282,10 +271,30 @@ impl Answer {
         self.authority.validate()
     }
 }
+pub fn redact_user(user: &mut User) {
+    user.email = None;
+    user.password_hash = None;
+    user.avatar_file_id = None;
+    user.is_admin = false;
+    user.email_verified = false;
+}
+pub fn validate_public_user(user: &User) -> Result<()> {
+    ensure!(
+        user.email.is_none()
+            && user.password_hash.is_none()
+            && user.avatar_file_id.is_none()
+            && !user.is_admin
+            && !user.email_verified,
+        "Foreign account includes private metadata"
+    );
+    Ok(())
+}
+
 /// The provider authenticates the answering node and verifies its directory ownership.
 /// It never grants resource membership or repository authority.
 pub trait Home: Send + Sync {
     fn authorize<'a>(&'a self, proof: &'a Proof) -> BoxFuture<'a, Result<Option<Answer>>>;
+    fn user<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Option<User>>>;
 }
 pub type Provider = Arc<dyn Home>;
 

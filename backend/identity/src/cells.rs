@@ -10,6 +10,28 @@ pub struct Local {
     pub pool: DbPool,
 }
 impl Home for Local {
+    fn user<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<codeyard_db_core::models::User>>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            let user =
+                codeyard_db_identity::users::accounts::get_user_by_username(&self.pool, name)
+                    .await?;
+            Ok(user
+                .filter(|user| {
+                    !user.is_stub
+                        && !user.is_banned
+                        && !user.must_change_password
+                        && user.home_cell == i32::from(self.pool.cell_id().get())
+                })
+                .map(|mut user| {
+                    codeyard_db_core::cells::authorization::redact_user(&mut user);
+                    user
+                }))
+        })
+    }
     fn authorize<'a>(
         &'a self,
         proof: &'a Proof,
@@ -220,4 +242,40 @@ impl Local {
         answer.redact();
         Ok(Some(answer))
     }
+}
+
+/// Resolve a mutation target once and retain its public metadata as a local foreign-key row.
+/// Authority is still checked by the resource's writing transaction.
+pub async fn resolve_user(
+    pool: &DbPool,
+    name: &str,
+) -> Result<Option<codeyard_db_core::models::User>> {
+    if codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, name).is_err() {
+        return Ok(None);
+    }
+    if let Some(user) =
+        codeyard_db_identity::users::accounts::get_user_by_username(pool, name).await?
+    {
+        return Ok(Some(user));
+    }
+    let Some(home) = pool.foreign_authorization() else {
+        return Ok(None);
+    };
+    let Some(user) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), home.user(name)).await??
+    else {
+        return Ok(None);
+    };
+    codeyard_db_core::cells::authorization::validate_public_user(&user)?;
+    anyhow::ensure!(
+        user.username == name && !user.is_stub,
+        "Invalid foreign account metadata"
+    );
+    let source = codeyard_support::cells::Prefix::try_from(i64::from(user.home_cell))?;
+    codeyard_db_core::cells::stubs::user(pool, source, &user).await?;
+    Ok(
+        codeyard_db_identity::users::accounts::get_user_by_username(pool, name)
+            .await?
+            .filter(|stored| stored.id == user.id && stored.home_cell == user.home_cell),
+    )
 }

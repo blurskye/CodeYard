@@ -24,13 +24,26 @@ async fn admin(tx: &mut Transaction<'_, Postgres>, actor: i64, repo: i64) -> Res
 
 pub async fn add(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<codeyard_db_core::queries::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: AccessLevel,
 ) -> Result<Added> {
+    let authority = actor.into();
+    let actor = authority.user_id;
     let mut tx = pool.begin().await?;
     admin(&mut tx, actor, repo_id).await?;
+    anyhow::ensure!(
+        codeyard_db_core::queries::postgres::credentials::writes(
+            &mut tx,
+            &authority,
+            Some(repo_id),
+            None,
+            "administration",
+        )
+        .await?,
+        Refusal::Denied
+    );
     anyhow::ensure!((1..=5).contains(&(permission as i16)), Refusal::Denied);
     let user=sqlx::query_as::<_,User>("SELECT * FROM users WHERE username=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE").bind(username).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
     anyhow::ensure!(

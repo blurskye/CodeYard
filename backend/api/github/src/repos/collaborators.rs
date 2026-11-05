@@ -203,16 +203,20 @@ async fn add(
     OptionalJson(input): OptionalJson<Add>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth
-        .ok_or_else(codeyard_identity::github_auth::required)?
-        .user;
+    let actor = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let input = input.unwrap_or_default();
     let level =
         codeyard_repos::collaborators::permission(input.permission.as_deref().unwrap_or("push"))
             .ok_or_else(|| Error::invalid("Invalid permission"))?;
-    match codeyard_repos::collaborators::add(&state.pool, actor.id, repo.id, &username, level)
-        .await
-        .map_err(member_error)?
+    match codeyard_repos::collaborators::add(
+        &state.pool,
+        actor.database_actor(),
+        repo.id,
+        &username,
+        level,
+    )
+    .await
+    .map_err(member_error)?
     {
         codeyard_db_repos::repositories::collaborators::Added::Updated => {
             Ok(StatusCode::NO_CONTENT.into_response())

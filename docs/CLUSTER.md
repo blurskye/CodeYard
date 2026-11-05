@@ -753,3 +753,5 @@ Cell authorization RPC source uses `CELL_RPC_ADDRESS` with the pinned directory 
 Foreign token and SSH admission, exact Git proofs and repository scope checks are now written but unchecked. HTTP tests cover a collaborator writing across cells and live resource/token revocation; SSH tests push and clone through the public listener. Foreign browser-session admission and remote membership pointers remain unfinished.
 
 Foreign browser sessions now have native page/form source wiring through the bounded home-answer cache. Their HTTP, CSRF and revocation acceptance is pending.
+
+Cold foreign collaborator targets now have source wiring for directory-verified home metadata lookup before local invitation creation; runtime acceptance is pending.

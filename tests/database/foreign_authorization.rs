@@ -15,6 +15,18 @@ struct Provider {
     calls: AtomicUsize,
 }
 impl Home for Provider {
+    fn user<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::models::User>>>
+    {
+        Box::pin(async move {
+            Ok(
+                (self.live.load(Ordering::SeqCst) && self.answer.user.username == name)
+                    .then(|| self.answer.user.clone()),
+            )
+        })
+    }
     fn authorize<'a>(
         &'a self,
         _proof: &'a Proof,
@@ -240,6 +252,38 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
         .await
         .unwrap()
         .is_none());
+    codeyard_db_repos::repositories::access::grant_repo_access(
+        pool,
+        user,
+        repo.id,
+        codeyard_db_core::models::AccessLevel::Admin,
+    )
+    .await
+    .unwrap();
+    let target = database.actor("queued-target").await;
+    let error = codeyard_db_repos::repositories::collaborators::add(
+        pool,
+        (user, value.clone()),
+        repo.id,
+        "queued-target",
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .err()
+    .expect("An expired session cannot enqueue an invitation");
+    assert!(matches!(
+        error.downcast_ref::<codeyard_db_repos::repositories::collaborators::Refusal>(),
+        Some(codeyard_db_repos::repositories::collaborators::Refusal::Denied)
+    ));
+    assert_eq!(
+        database
+            .scalar(
+                "SELECT COUNT(*) FROM repository_invitations WHERE invitee_id=$1",
+                &[target]
+            )
+            .await,
+        0
+    );
     // A queued operation retaining the formerly valid identity must fail at the effect too.
     assert!(codeyard_db_repos::issues::create_issue_with_metadata(
         pool,
@@ -298,6 +342,13 @@ async fn contract(pg: bool) {
         calls: AtomicUsize::new(0),
     });
     pool.set_foreign_authorization(provider.clone());
+    let metadata = codeyard_identity::cells::resolve_user(pool, &remote.username)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(metadata.is_stub && metadata.email.is_none() && metadata.password_hash.is_none());
+    assert_eq!(metadata.id, remote.id);
+    assert_eq!(count(pool, "foreign_credentials").await, 0);
     let proof = Proof::Token {
         home: Prefix::new(1),
         hash: "a".repeat(64),
@@ -381,6 +432,26 @@ async fn contract(pg: bool) {
     .await
     .is_err());
     assert_eq!(count(pool, "personal_access_tokens").await, 0);
+    let mut private_metadata = provider.answer.clone();
+    private_metadata.user.id += 30;
+    private_metadata.user.username = "private-metadata".into();
+    private_metadata.user.email = Some("private@example.test".into());
+    pool.set_foreign_authorization(Arc::new(Provider {
+        answer: private_metadata.clone(),
+        live: AtomicBool::new(true),
+        calls: AtomicUsize::new(0),
+    }));
+    assert!(
+        codeyard_identity::cells::resolve_user(pool, "private-metadata")
+            .await
+            .is_err()
+    );
+    assert!(
+        codeyard_db_identity::users::accounts::get_user_by_id(pool, private_metadata.user.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
     sessions(&database, provider.answer.clone(), native.id).await;
     // If the cache write fails after metadata arrives, the account remains a stub with no credential.
     let mut half = provider.answer.clone();

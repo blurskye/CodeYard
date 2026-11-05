@@ -177,7 +177,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     8cbbf2fc77154f0fbdf007222605db4d and WASM 92880ee5cb534d41b01aa5b26782d841. Foreign browser-session pages/forms, home CSRF and transaction-time session expiry
     are written with both-engine HTTP and real TLS revocation tests; this follow-up is unchecked.
     Native signup/key claim publication, membership pointers and two-cell gh/Git deployment
-    remain unfinished. Member-list/count filters now cover
+    remain unfinished. Cold collaborator names now resolve through bounded public home metadata
+    RPC; native and GitHub invitation admission retain their credentials in the writing transaction.
+    Both-engine metadata and real HTTP cold-invitation tests are written but unchecked.
+    Member-list/count filters now cover
     organizations and teams on both engines with database and HTTP assertions. Runtime job
     375fa054f4204225b5c57bb2b02cd059 covers the preceding committed snapshot. Native two-cell GraphQL
     acceptance now includes one real split repository/node query with foreign home authorization; unchecked. Automatic user

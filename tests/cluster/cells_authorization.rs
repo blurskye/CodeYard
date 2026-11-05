@@ -146,6 +146,106 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     zero.pool.set_foreign_authorization(Arc::new(
         accounts::Remote::new(zero_key.clone(), directory_client(zero_key.clone())).unwrap(),
     ));
+    codeyard_db_cluster::node_config::upsert_node_configuration(&zero.pool, "public", true)
+        .await
+        .unwrap();
+    let alice = codeyard_db_identity::users::accounts::create_user(&zero.pool, "alice", None)
+        .await
+        .unwrap();
+    let alice_session = codeyard_identity::sessions::fresh_id(&zero.pool).unwrap();
+    codeyard_db_identity::users::sessions::create_session(
+        &zero.pool,
+        &alice_session,
+        alice.id,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let alice_token = Prefix::ZERO
+        .token(codeyard_support::tokens::PAT_PREFIX, &"b".repeat(64))
+        .unwrap();
+    codeyard_db_identity::users::tokens::create_token(
+        &zero.pool,
+        alice.id,
+        &alice_session,
+        "owner",
+        &token_hash(&alice_token),
+        "write",
+        None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("private.git");
+    git2::Repository::init_bare(&path).unwrap();
+    let repository = codeyard_db_repos::repositories::records::create_repository(
+        &zero.pool,
+        alice.id,
+        "private",
+        None,
+        true,
+        path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    let storage = Arc::new(
+        codeyard_storage::ObjectStore::open(root.path(), None)
+            .await
+            .unwrap(),
+    );
+    let app = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
+        zero.pool.clone(),
+        root.path().into(),
+        storage,
+        None,
+        Default::default(),
+        None,
+    ));
+    let mut http = super::cells_frontend::Server::start(app).await;
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap();
+    assert!(
+        codeyard_db_identity::users::accounts::get_user_by_id(&zero.pool, user.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let response = client
+        .put(format!(
+            "{}/api/v3/repos/alice/private/collaborators/bob",
+            http.url()
+        ))
+        .bearer_auth(&alice_token)
+        .json(&serde_json::json!({"permission":"push"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 201);
+    let invitation: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(invitation["invitee"]["login"], "bob");
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM foreign_credentials")
+            .fetch_one(&zero.raw)
+            .await
+            .unwrap(),
+        0
+    );
+    let response = client
+        .patch(format!(
+            "{}/api/v3/user/repository_invitations/{}",
+            http.url(),
+            invitation["id"]
+        ))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
     let proof = Proof::Token {
         home: Prefix::new(1),
         hash: token_hash(&value),
@@ -185,51 +285,6 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .await
     .unwrap();
     assert!((0.0..60.0).contains(&seconds));
-    codeyard_db_cluster::node_config::upsert_node_configuration(&zero.pool, "public", true)
-        .await
-        .unwrap();
-    let alice = codeyard_db_identity::users::accounts::create_user(&zero.pool, "alice", None)
-        .await
-        .unwrap();
-    let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("private.git");
-    git2::Repository::init_bare(&path).unwrap();
-    let repository = codeyard_db_repos::repositories::records::create_repository(
-        &zero.pool,
-        alice.id,
-        "private",
-        None,
-        true,
-        path.to_str().unwrap(),
-    )
-    .await
-    .unwrap();
-    codeyard_db_repos::repositories::access::grant_repo_access(
-        &zero.pool,
-        user.id,
-        repository.id,
-        codeyard_db_core::models::AccessLevel::Write,
-    )
-    .await
-    .unwrap();
-    let storage = Arc::new(
-        codeyard_storage::ObjectStore::open(root.path(), None)
-            .await
-            .unwrap(),
-    );
-    let app = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
-        zero.pool.clone(),
-        root.path().into(),
-        storage,
-        None,
-        Default::default(),
-        None,
-    ));
-    let mut http = super::cells_frontend::Server::start(app).await;
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
-        .build()
-        .unwrap();
     let response = client
         .post(format!("{}/api/v3/repos/alice/private/issues", http.url()))
         .bearer_auth(&value)
@@ -386,6 +441,13 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap();
     assert!(authorization::authorize(&zero.pool, &proof).await.is_err());
+    assert!(zero
+        .pool
+        .foreign_authorization()
+        .unwrap()
+        .user("bob")
+        .await
+        .is_err());
     home.stop().await;
     directory_listener.stop().await;
     directory.close().await;

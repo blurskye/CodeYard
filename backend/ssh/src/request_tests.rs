@@ -418,6 +418,23 @@ struct ForeignHome {
     live: Arc<std::sync::atomic::AtomicBool>,
 }
 impl codeyard_db_core::cells::authorization::Home for ForeignHome {
+    fn user<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<Option<codeyard_db_core::models::User>>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            Ok(
+                (self.live.load(std::sync::atomic::Ordering::SeqCst) && self.user.username == name)
+                    .then(|| self.user.clone()),
+            )
+        })
+    }
     fn authorize<'a>(
         &'a self,
         proof: &'a codeyard_db_core::cells::authorization::Proof,

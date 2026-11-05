@@ -369,6 +369,14 @@ pub async fn change_collaborator(
     username: &str,
     permission: Option<codeyard_db_core::models::AccessLevel>,
 ) -> std::result::Result<User, AccessError> {
+    let actor = actor.into();
+    check_admin(pool, repo_id, actor.user_id).await?;
+    if permission.is_some() {
+        crate::cells::resolve_user(pool, username)
+            .await
+            .map_err(|_| AccessError::Unavailable)?
+            .ok_or(AccessError::NotFound)?;
+    }
     let change = codeyard_db_repos::repositories::access::change_personal_repository_collaborator(
         pool, actor, repo_id, username, permission,
     )

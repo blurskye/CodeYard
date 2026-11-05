@@ -53,7 +53,7 @@ pub struct Collaborator {
 
 native_operation!(crate::postgres::repositories::collaborators::add,
     crate::sqlite::repositories::collaborators::add,
-    fn add(pool: &DbPool, actor: i64, repo_id: i64, username: &str, permission: AccessLevel) -> Result<Added>);
+    fn add(pool: &DbPool, actor: impl Into<codeyard_db_core::queries::credentials::Actor>, repo_id: i64, username: &str, permission: AccessLevel) -> Result<Added>);
 native_operation!(crate::postgres::repositories::collaborators::remove,
     crate::sqlite::repositories::collaborators::remove,
     fn remove(pool: &DbPool, actor: i64, repo_id: i64, username: &str) -> Result<()>);
