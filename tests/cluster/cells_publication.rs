@@ -29,6 +29,15 @@ fn cell(prefix: Prefix, key: &NodeKey, server: &Server) -> Cell {
         maximum_write_rate: 10_000,
     }
 }
+async fn published_objects(directory: &PostgresDatabase, object: Object) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM directory_objects WHERE kind=$1 AND id=$2 AND active")
+        .bind(object.kind.as_str())
+        .bind(object.id)
+        .fetch_one(&directory.raw)
+        .await
+        .unwrap()
+}
+
 async fn signup(
     client: &reqwest::Client,
     server: &Server,
@@ -362,10 +371,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
         kind: ObjectKind::Repository,
         id: repository["id"].as_i64().unwrap(),
     };
-    assert_eq!(
-        directory.object_home(repository_object).await.unwrap(),
-        Some(Prefix::ZERO)
-    );
+    assert_eq!(published_objects(&registry, repository_object).await, 1);
     api(
         &client,
         &alice,
@@ -376,10 +382,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
         204,
     )
     .await;
-    assert_eq!(
-        directory.object_home(repository_object).await.unwrap(),
-        None
-    );
+    assert_eq!(published_objects(&registry, repository_object).await, 0);
 
     let public_key =
         "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
@@ -612,7 +615,7 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
         directory.lookup(&name).await.unwrap().unwrap().object.id,
         retried.id
     );
-    assert_eq!(directory.object_home(previous.object).await.unwrap(), None);
+    assert_eq!(published_objects(&registry, previous.object).await, 0);
     zero.pool.set_directory(Arc::new(zero_client)).unwrap();
     let mut revoked = directory.cell(Prefix::ZERO).await.unwrap().unwrap();
     revoked.node_keys = vec![NodeKey::generate().public_hex()];
