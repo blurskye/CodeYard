@@ -20,46 +20,91 @@ pub(super) async fn organizations(
     request.require_oauth_scope("read:org")?;
     crate::connection::validate(ctx)?;
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
-    let mut rows = codeyard_db_orgs::organizations::discovery::list_organizations(
-        &request.state.pool,
-        Some(id),
-        id == request.auth.user.id,
-        0,
-        0,
-        i64::MAX,
-    )
-    .await
-    .map_err(unavailable)?;
-    request.charge(
-        rows.iter()
-            .map(|org| {
-                org.name.len()
-                    + org.display_name.as_ref().map_or(0, |text| text.len())
-                    + org.description.as_ref().map_or(0, |text| text.len())
-                    + org.billing_email.as_ref().map_or(0, |text| text.len())
-                    + 128
-            })
-            .sum(),
-    )?;
+    let config = codeyard_db_core::cells::memberships::Config::default();
+    let mut budget =
+        codeyard_db_core::cells::memberships::Budget::new(config).map_err(unavailable)?;
+    let mut nodes = Vec::new();
+    let mut after = 0;
+    loop {
+        let rows = codeyard_db_orgs::organizations::discovery::list_organizations(
+            &request.state.pool,
+            Some(id),
+            id == request.auth.user.id,
+            after,
+            0,
+            config.page_size as i64,
+        )
+        .await
+        .map_err(unavailable)?;
+        let done = rows.len() < config.page_size;
+        for org in rows {
+            after = org.id;
+            let node = crate::user::organization(&org);
+            budget.add(&node).map_err(unavailable)?;
+            request.charge(serde_json::to_vec(&node).map_err(unavailable)?.len())?;
+            nodes.push(node);
+        }
+        if done {
+            break;
+        }
+    }
+    if id == request.auth.user.id {
+        if let Some(remote) = codeyard_app::api_shared::github::memberships::remote(
+            &request.state.pool,
+            &request.auth,
+            &request.headers,
+            codeyard_db_core::cells::memberships::List::GraphqlOrganizations,
+            Vec::new(),
+            config.maximum_scan,
+        )
+        .await
+        .map_err(unavailable)?
+        {
+            for mut node in remote {
+                let (_, id) = node["id"]
+                    .as_str()
+                    .and_then(codeyard_model::node_id::decode)
+                    .ok_or_else(missing)?;
+                node["databaseId"] = json!(id);
+                node["_membership"] = json!(true);
+                budget.add(&node).map_err(unavailable)?;
+                request.charge(serde_json::to_vec(&node).map_err(unavailable)?.len())?;
+                nodes.push(node);
+            }
+            codeyard_app::api_shared::github::memberships::recheck(
+                &request.state.pool,
+                &request.auth,
+            )
+            .await
+            .map_err(unavailable)?;
+        }
+    }
+    nodes.sort_by_key(|node| node["databaseId"].as_i64());
+    nodes.dedup_by_key(|node| node["databaseId"].as_i64());
     if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
         let order = order.object()?;
         match order.try_get("field")?.enum_name()? {
-            "LOGIN" => rows.sort_by_cached_key(|org| (org.name.to_lowercase(), org.id)),
-            "CREATED_AT" => rows.sort_by_key(|org| (org.created_at, org.id)),
+            "LOGIN" => nodes.sort_by_cached_key(|node| {
+                (
+                    node["login"].as_str().unwrap_or("").to_lowercase(),
+                    node["databaseId"].as_i64(),
+                )
+            }),
+            "CREATED_AT" => nodes.sort_by_cached_key(|node| {
+                (
+                    node["createdAt"]
+                        .as_str()
+                        .and_then(|date| chrono::DateTime::parse_from_rfc3339(date).ok()),
+                    node["databaseId"].as_i64(),
+                )
+            }),
             _ => return Err(async_graphql::Error::new("Unsupported organization order")),
         }
         if order.try_get("direction")?.enum_name()? == "DESC" {
-            rows.reverse();
+            nodes.reverse();
         }
     }
-    let page = crate::connection::Page::new(ctx, rows.len() as i64)?;
-    let nodes = rows
-        .iter()
-        .skip(page.offset as usize)
-        .take(page.limit as usize)
-        .map(crate::user::organization)
-        .collect();
-    Ok(page.finish(nodes))
+    crate::connection::slice(ctx, nodes)
 }
 
 fn query<'a>(

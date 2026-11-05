@@ -93,7 +93,7 @@ pub(super) fn issue_change_error(
 
 /// Every mutation validates explicit root hints before any domain operation runs.
 /// ID fields retain their schema-coerced values; free text is never interpreted as an ID.
-async fn validate_input_roots(args: &Arguments, request: &RequestContext) -> Result<()> {
+pub(super) async fn validate_input_roots(args: &Arguments, request: &RequestContext) -> Result<()> {
     let Some(input) = args.args.get("input") else {
         return Ok(());
     };
@@ -145,7 +145,6 @@ pub(super) async fn resolve(
     args: &Arguments,
     request: &RequestContext,
 ) -> Result<Value> {
-    validate_input_roots(args, request).await?;
     if field.contains("Discussion") {
         return boxed(|| crate::discussions::mutation(field, args, request)).await;
     }

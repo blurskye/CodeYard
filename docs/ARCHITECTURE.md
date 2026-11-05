@@ -762,13 +762,18 @@ checks. Runtime acceptance on an earlier snapshot passes Git, identity and all 5
 e2e checks. Collected query, routing, fixture and rooted-ID fixes pass source checks and
 await their runtime retry. Native signup/key claim publication, durable claim cleanup,
 capacity reporting, foreign GraphQL quotas and remote membership pointers pass source checks.
-The current runtime retry passes 334 selected library, 234 cluster, 42 Git and 166 identity
-checks. Two browser-page database tests still fail; their package-session fix is written.
+The earlier runtime passes 334 selected library, 234 cluster, 42 Git and 166 identity
+checks. Both browser-page database retries now pass on SQLite and PostgreSQL.
 Computed project-field IDs, GraphQL home organization discovery and numeric foreign invitation
 targets pass source checks. Native home lists now share bounded reads of existing authorized
 page models with original browser sessions; workspace, Clippy and WASM pass, while runtime
 is pending. Public two-cell gh/Git acceptance remains open; stages 3 to 6 are not built.
 Range renewal is a deferred owner follow-up.
+Runtime 3c645 passes 300 selected library tests and the selected membership, browser,
+gist, reviewer and CI contracts. Cluster passes 233 with one GraphQL discovery failure;
+project tests expose a mutation preflight bypass on both engines. Their collected fix
+moves discovery into its actual list owner and runs root validation before every mutation
+family; source checks are next. The cells fixture now isolates its UDP listeners.
 [Cluster readiness](CLUSTER_PLAN.md) records current check jobs and runtime gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.

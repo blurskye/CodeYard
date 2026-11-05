@@ -461,7 +461,10 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap();
     assert!(listed.get("errors").is_none(), "{listed}");
-    assert_eq!(listed["data"]["viewer"]["organizations"]["totalCount"], 1);
+    assert_eq!(
+        listed["data"]["viewer"]["organizations"]["totalCount"], 1,
+        "{listed}"
+    );
     assert_eq!(
         listed["data"]["viewer"]["organizations"]["nodes"][0]["login"],
         "pointer-org"
@@ -469,6 +472,31 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     assert!(
         listed["data"]["viewer"]["organizations"]["nodes"][0]["viewerCanCreateProjects"]
             .is_boolean()
+    );
+    let paged: serde_json::Value = client
+        .post(format!("{}/api/graphql", bob_http.url()))
+        .bearer_auth(&value)
+        .json(&serde_json::json!({"query":"{viewer{empty:organizations(first:0){totalCount nodes{id}} sorted:organizations(first:1,orderBy:{field:LOGIN,direction:DESC}){totalCount nodes{login} pageInfo{hasNextPage}}}}"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(paged.get("errors").is_none(), "{paged}");
+    assert_eq!(paged["data"]["viewer"]["empty"]["totalCount"], 1, "{paged}");
+    assert_eq!(
+        paged["data"]["viewer"]["empty"]["nodes"],
+        serde_json::json!([]),
+        "{paged}"
+    );
+    assert_eq!(
+        paged["data"]["viewer"]["sorted"]["nodes"][0]["login"], "pointer-org",
+        "{paged}"
+    );
+    assert_eq!(
+        paged["data"]["viewer"]["sorted"]["pageInfo"]["hasNextPage"], false,
+        "{paged}"
     );
     let browser: serde_json::Value = client
         .get(format!("{}/settings/organizations", bob_http.url()))

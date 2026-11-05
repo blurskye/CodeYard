@@ -386,6 +386,7 @@ impl Object {
                 .require_live(&request.state.pool)
                 .await
                 .map_err(|error| error.graphql())?;
+            crate::mutations::validate_input_roots(arguments, request).await?;
         }
         if let Some(repo) = self.0.get("_repo").and_then(Value::as_i64).or_else(|| {
             (ty == "Repository")

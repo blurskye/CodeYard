@@ -800,67 +800,6 @@ async fn resolve_at(
             )
             .await
             .map_err(operation)?)),
-            "organizations" if target == actor => {
-                let mut after = 0;
-                let mut nodes = Vec::new();
-                loop {
-                    let page = codeyard_db_orgs::organizations::OrganizationPage::new(after, 100)
-                        .map_err(|_| missing())?;
-                    let codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(
-                        orgs,
-                    ) = codeyard_db_orgs::organizations::profiles::list_actor_organizations(
-                        pool, actor, page,
-                    )
-                    .await
-                    .map_err(unavailable)?
-                    else {
-                        return Err(missing());
-                    };
-                    if orgs.is_empty() {
-                        break;
-                    }
-                    for org in &orgs {
-                        nodes.push(crate::user::organization_by_id(org.id, request).await?);
-                        after = org.id;
-                    }
-                    if nodes.len()
-                        > codeyard_db_core::cells::memberships::Config::default().maximum_scan
-                    {
-                        return Err(Error::new("Organization membership scan exceeds its limit"));
-                    }
-                    if orgs.len() < 100 {
-                        break;
-                    }
-                }
-                let config = codeyard_db_core::cells::memberships::Config::default();
-                if let Some(remote) = codeyard_app::api_shared::github::memberships::remote(
-                    pool,
-                    &request.auth,
-                    &request.headers,
-                    codeyard_db_core::cells::memberships::List::GraphqlOrganizations,
-                    Vec::new(),
-                    config.maximum_scan,
-                )
-                .await
-                .map_err(unavailable)?
-                {
-                    for mut node in remote {
-                        let (_, id) = node["id"]
-                            .as_str()
-                            .and_then(node_id::decode)
-                            .ok_or_else(missing)?;
-                        node["databaseId"] = json!(id);
-                        node["_membership"] = json!(true);
-                        nodes.push(node);
-                    }
-                    if nodes.len() > config.maximum_scan {
-                        return Err(Error::new("Organization membership scan exceeds its limit"));
-                    }
-                    nodes.sort_by_key(|node| node["databaseId"].as_i64());
-                    nodes.dedup_by_key(|node| node["databaseId"].as_i64());
-                }
-                crate::connection::slice(ctx, nodes)
-            }
             _ => Err(Error::new("Unsupported project owner field")),
         };
     }

@@ -321,6 +321,27 @@ async fn contract(pg: bool) {
         .page(&format!("/review-org/proj/pulls/{number}"))
         .await;
     assert!(!html.contains("Private team draft"));
+    let pull_identity = codeyard_model::node_id::routed(&pull_node).unwrap();
+    for (field, input_type) in [
+        ("requestReviews", "RequestReviewsInput"),
+        ("rerequestReviews", "RerequestReviewsInput"),
+    ] {
+        let mutation =
+            format!("mutation($input:{input_type}!){{{field}(input:$input){{clientMutationId}}}}");
+        let refused = graphql(
+            &router,
+            &auth[0],
+            &mutation,
+            json!({"input":{"pullRequestId":codeyard_model::node_id::scoped("PR",repo.id + 10000,pull_identity.id).unwrap(),"teamIds":[parent["node_id"]]}}),
+        )
+        .await;
+        assert_eq!(refused["errors"][0]["type"], "NOT_FOUND", "{refused}");
+        let unchanged = graphql(&router, &auth[0], query, json!({"number":number})).await;
+        assert_eq!(
+            unchanged["data"]["repository"]["pullRequest"]["reviewRequests"]["totalCount"], 1,
+            "{unchanged}"
+        );
+    }
     let mutation = "mutation($input:RerequestReviewsInput!){rerequestReviews(input:$input){clientMutationId actor{login} pullRequest{reviewRequests(first:10){totalCount nodes{asCodeOwner requestedReviewer{... on Team{slug}}}}}}}";
     let rerequest = graphql(&router,&auth[0],mutation,json!({"input":{"pullRequestId":pull_node,"teamIds":[parent["node_id"]],"clientMutationId":"team-again"}})).await;
     assert!(rerequest.get("errors").is_none(), "{rerequest}");

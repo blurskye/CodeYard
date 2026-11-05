@@ -174,7 +174,14 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     child-log tail on startup failure. Runtime 3c645a8bdabd457ba45e70efff05b20b exposes a
     fixture collision on the default UDP port 7444; each native process now gets an ephemeral
     loopback listener and drops inherited transport settings. All 300 selected library tests
-    pass without skips; integration targets are building.
+    pass without skips. Cluster passes 233 with one GraphQL organization discovery failure;
+    both membership, foreign browser, gist and team-reviewer contracts pass on both engines,
+    as do both selected CI contracts. Project tests pass four and fail two forged-root
+    mutation checks. The collected source fix moves discovery into the existing list
+    resolver, removes the unreachable project duplicate and runs shared root preflight
+    before every mutation family. HTTP regressions also cover zero-sized/sorted foreign
+    organization pages and forged roots in both review-request mutations. Source checks
+    are next.
     Numeric child IDs and remote membership delivery/REST discovery pass workspace
     95564883b4604fb5bbd2968e4c6c5188, Clippy dc45e3525fc74aaabc0f286151667188 and WASM
     ba06675531a94ac0a434f8822c9a23ca. Both baselines retain stable review-request row IDs

@@ -779,3 +779,6 @@ Both engines exclude stub organizations from private indexes and creation choice
 follow-up passes workspace, Clippy and WASM; its HTML, page-model, revocation-during-read
 and hostile-limit tests await runtime. The two-cell client round also checks native cell-1
 Git storage through HTTP and SSH pushes/clones and explicit scoped-ID bounds.
+The browser package-session retries pass on both engines. GraphQL discovery now uses
+the actual organization-list resolver, and every mutation family shares rooted-ID
+preflight; these runtime fixes await source checks.
