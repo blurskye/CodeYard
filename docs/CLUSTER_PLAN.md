@@ -150,34 +150,25 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
 12. **Production controls.** Per-account and per-IP rate limits, SAML or OIDC login for
     organizations, an audit log for organization and site actions, and the abuse controls
     in [ABUSE_PREVENTION.md](ABUSE_PREVENTION.md), all checked in the cluster round.
-13. **Cells.** Stages 0 to 6 of the architecture document, in order, each with its own
-    acceptance list. The owner lifted the A16 gate on 2026-11-05. Stage 0 automated
-    durability checks pass; its VM hard-reset check remains open. Stage 1 reuses scoped authority and package locks, notification polling,
-    configurable pools. Object-store log chunks, current-copy clone distribution and
-    issue/PR replica reads and scoped namespace/email/attestation locks pass workspace,
-    Clippy and WASM checks. Initial CI, database, cluster, PgBouncer and quorum acceptance
-    passes. The CI-engine library lock rerun passes; durable log delivery exceeded an old
-    SQL-only test deadline, and the replica client check found a Python name error after startup was fixed.
-    The fixture fix, scoped object reservations, cache-policy row locks and removal of the
-    experimental gate pass source checks. The rerun passes all 226 cluster, 168 database and
-    100 storage tests; the deadline and Python fixes await their rerun. Stage 1 finished-CI and load
-    measurements are runtime pending, need a writable delegated cgroup. Other content read
-    families remain on the primary; bulk retention remains open.
-    Router-owned GraphQL preflight and bounded HTTP forwarding are in progress; the generated
-    GraphQL crate remains unchanged. Public routing, foreign authorization and stubs are not built.
-    Stage 2 ID initialization, credential framing, directory CLI and atomic directory claims
-    with failure tests pass workspace, Clippy and WASM checks. Their runtime tests are pending.
-    The pinned node-key TLS directory listener, read-only router keys and root-bearing node-ID
-    codec pass workspace, Clippy and WASM checks. Runtime tests are pending. A bounded route
-    cache and the native cookie/device-form follow-up also pass all three checks; their failure
-    tests and the earlier stage 1 fixes are next in the combined runtime job.
-    The route catalogue, shared HTTP parsers and GraphQL preflight/planning source are
-    written but unchecked. Session storage also retains the complete scoped cookie value
-    on both engines. The generated GraphQL crate remains unchanged; preflight uses its public
-    API from the router crate. The public proxy, foreign authorization and stubs are not built. Stages 3 to 6 are not built.
-    Individual users may move automatically to
-    their working region in stage 6. Organizations retain one write home and gain read
-    presence across regions in stages 5 and 6; see the architecture acceptance lists.
+13. **Cells.** Stages 0 to 6 in architecture order; the owner lifted A16 on 2026-11-05.
+    Stage 0 is committed and checked; hard-reset acceptance is runtime pending, needs a
+    disposable VM. Stage 1 source checks pass for scoped locks, object-store CI logs,
+    current-copy clones and issue/PR replica routing. PgBouncer and quorum e2e previously
+    passed. The latest acceptance rerun passes CI (220); quorum, SSO, upload and token-test
+    failures are under investigation. Its replica e2e result is still pending. Finished-CI
+    shutdown and load measurements are runtime pending, need a writable delegated cgroup.
+    Other content read families remain on primary; bulk retention remains open.
+    Stage 2 ranges, credential framing, directory registry/claims, pinned TLS exchanges,
+    read-only router keys and bounded route caches pass source checks. Route declarations,
+    router-owned GraphQL preflight and full scoped session storage pass workspace and WASM;
+    Clippy found an unused import after HTTP streaming extraction, now removed in source.
+    Generated GraphQL remains unchanged. Catalogue selection and bounded GraphQL dispatch,
+    including mixed-cell nodes and ordered mutations, are written but unchecked. Two real
+    HTTP cells and TLS-directory tests cover the dispatch source; these tests have not run.
+    Token tests that pinned the former unprefixed length now assert the scoped format; the
+    directory CLI fixture now supplies the capacity it asserts. Runtime rechecks are pending.
+    The public proxy role, foreign authorization, stubs and stages 3 to 6 remain unimplemented.
+    Automatic individual moves and org regional presence are documented owner decisions.
 
 ## Decisions that settle the open questions
 

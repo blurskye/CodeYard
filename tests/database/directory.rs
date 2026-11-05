@@ -76,6 +76,10 @@ async fn directory_cli_owns_a_separate_baseline_and_bounds_pages_and_placement()
                 "http://127.0.0.1:3000/",
                 "--node-key",
                 key,
+                "--maximum-database-bytes",
+                "1000",
+                "--maximum-write-rate",
+                "100",
                 "--open",
             ],
         )

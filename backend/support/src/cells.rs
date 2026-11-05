@@ -47,7 +47,7 @@ impl Prefix {
         Ok(Self((id >> SEQUENCE_BITS) as u16))
     }
 
-    /// Cookies carry their routing prefix outside the stored random session ID.
+    /// The complete cookie value, including its prefix, is the stored session identity.
     pub fn cookie(self, secret: &str) -> Result<String, Invalid> {
         validate_secret(secret)?;
         Ok(format!("{self}.{secret}"))

@@ -33,7 +33,10 @@ async fn model(client: &Client, path: &str) -> Model {
 /// The token value a page shows once.
 fn value(html: &str) -> String {
     let start = html.find("cy_fgpat_").expect("a token value");
-    html[start..start + 73].to_owned()
+    html[start..]
+        .chars()
+        .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
+        .collect()
 }
 
 /// The status of an API request made with `token`, and whether it named OAuth scopes.
@@ -195,7 +198,11 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, 200, "{}", reply.text());
     let first = value(&reply.text());
-    assert!(first[9..].chars().all(|c| c.is_ascii_hexdigit()));
+    let framed =
+        codeyard_support::cells::Secret::token(&first, codeyard_support::tokens::FGPAT_PREFIX)
+            .unwrap();
+    assert_eq!(framed.cell, codeyard_support::cells::Prefix::ZERO);
+    assert_eq!(framed.secret.len(), 64);
     let row = codeyard_db_identity::fine_grained_tokens::list_before(f.pool(), alice, None)
         .await
         .unwrap()

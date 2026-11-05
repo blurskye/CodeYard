@@ -183,16 +183,9 @@ impl Routes {
         Ok(location)
     }
     pub async fn by_name(&self, name: &str) -> Result<Option<ReadyCell>> {
-        let key = Key::new(KeyKind::Name, name).map_err(|_| Failure::Invalid)?;
-        let Some(location) = self.location(&key).await? else {
-            return Ok(None);
-        };
-        Ok(Some(
-            self.cell(location.cell)
-                .await?
-                .ok_or(Failure::Unavailable)?,
-        ))
+        self.by_key(KeyKind::Name, name).await
     }
+
     pub async fn by_object(&self, object: Object) -> Result<Option<ReadyCell>> {
         object.validate().map_err(|_| Failure::Invalid)?;
         let key = RouteKey::Home(object.kind.as_str(), object.id);

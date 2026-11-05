@@ -433,7 +433,7 @@ window is the time since the last sync, about 5 seconds plus the transfer.
 
 ### Quorum promotion
 
-The promotion rules above describe asynchronous replication. With experimental
+The promotion rules above describe asynchronous replication. With
 `write_quorum` enabled, `--force` is refused. Promotion fences the whole fork family
 in new `terms/<uuid>/<term>/<uuid>.git` directories; retired directories are never reused.
 The CLI attempts canonical recovery on its local voter. A pending-recovery error means
@@ -719,3 +719,7 @@ The cell directory source uses a separate PostgreSQL database. Initialize it wit
 TLS listener; callers pin that public key. Cell mutations recheck live cell enrollment
 in their transaction. This transport is not yet connected to public routing or signup;
 multiple cells are not yet a usable deployment.
+
+Router source now includes bounded HTTP streaming and GraphQL field dispatch using the
+application route catalogue. These paths are not exposed by a public router role yet;
+foreign credentials and stubs remain unfinished. The generated schema crate is unchanged.

@@ -257,6 +257,8 @@ argon2 = { version = "=0.5.3", features = ["std"] }
 tokio-util = { version = "0.7", features = ["io", "rt"] }
 http-body-util = "0.1"
 http-body = "1"
+matchit = "0.7"
+percent-encoding = "2"
 hyper = { version = "1", features = ["http1", "server"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 tokio-rustls = "0.26"

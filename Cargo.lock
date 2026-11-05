@@ -10363,6 +10363,8 @@ dependencies = [
  "hyper",
  "hyper-util",
  "reqwest",
+ "matchit",
+ "percent-encoding",
  "iroh",
  "serde",
  "serde_json",

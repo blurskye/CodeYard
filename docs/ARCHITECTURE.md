@@ -749,22 +749,15 @@ the round rather than skipping it.
 
 ## 3. Scaling out: cells behind a router (plan, not built)
 
-Stage 0 reuses the durability work from cluster plan items 3 and 11. Stage 1 already
-has account and package lock scoping, cursor polling and configurable pools. Its new
-object-store log chunks, current-copy clone distribution and issue/PR read routing are
-written and pass workspace, Clippy and WASM checks. Initial CI, database, cluster,
-PgBouncer and quorum acceptance passes. The rerun passes the CI-engine library, all 226
-cluster tests, 168 database tests and 100 storage tests; a log-delivery deadline fix and
-replica-client Python fix still await rerun.
-Stage 2 ID initialization, credential framing, directory queries and operator commands pass
-workspace, Clippy and WASM checks. The directory TLS transport and shared root-bearing
-node-ID codec, route cache and native cookie/device-form follow-up also pass these checks;
-runtime tests are pending;
-public route metadata and GraphQL preflight/planning are written but unchecked;
-the public proxy, foreign authorization and stubs are not built;
-stages 3 to 6 are not built.
-The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
-numbers remain assumptions until stage 1 measures a real cell.
+Stage 0 reuses cluster plan items 3 and 11 and is committed; hard-reset acceptance needs
+an operator VM. Stage 1 source checks pass, but runtime acceptance and capacity measurements
+remain open. Stage 2 range allocation, credential framing, directory registry and authenticated
+transport are built and source-checked. Route metadata, shared GraphQL preflight and scoped
+session storage pass workspace and WASM; an HTTP import cleanup awaits Clippy recheck.
+Catalogue selection and HTTP/GraphQL forwarding source is in progress. The public router
+role, foreign authorization and stubs are not built; stages 3 to 6 are not built.
+The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
+assumptions until stage 1 measures a real cell.
 
 Two findings set the order of work:
 

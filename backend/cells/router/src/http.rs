@@ -372,7 +372,7 @@ mod tests {
             state: State::Open,
             web_urls: vec![format!("http://{address}")],
             ssh_addresses: vec![],
-            node_keys: vec![],
+            node_keys: vec!["a".repeat(64)],
             database_bytes: 0,
             write_rate: 0,
             maximum_database_bytes: 100,

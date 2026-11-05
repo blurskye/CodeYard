@@ -202,7 +202,11 @@ async fn contract(pg: bool) {
         json!({"issues":"read"}),
     )
     .await;
-    assert!(public.starts_with("cy_fgpat_") && public.len() == 73);
+    let framed =
+        codeyard_support::cells::Secret::token(&public, codeyard_support::tokens::FGPAT_PREFIX)
+            .unwrap();
+    assert_eq!(framed.cell, codeyard_support::cells::Prefix::ZERO);
+    assert_eq!(framed.secret.len(), 64);
 
     // REST: what each selection reaches. Outside the token a private repository is missing.
     for (token, path, expected) in [
