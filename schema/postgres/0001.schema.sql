@@ -2136,10 +2136,12 @@ CREATE TABLE actions_workflows (
 
 -- graphql
 CREATE TABLE graphql_rate_limits (
-    token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
+    token_id BIGINT PRIMARY KEY,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     used INTEGER NOT NULL CHECK (used BETWEEN 1 AND 5000),
     reset_at TIMESTAMPTZ NOT NULL
 );
+CREATE INDEX graphql_rate_limits_expiry ON graphql_rate_limits(reset_at);
 CREATE INDEX ci_runs_workflow_run ON ci_runs(workflow_run_id,workflow_run_attempt);
 CREATE INDEX ci_runs_logical_latest ON ci_runs(repo_id,(COALESCE(workflow_run_id,id)) DESC,id DESC);
 

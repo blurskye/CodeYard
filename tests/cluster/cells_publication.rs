@@ -25,8 +25,8 @@ fn cell(prefix: Prefix, key: &NodeKey, server: &Server) -> Cell {
         node_keys: vec![key.public_hex()],
         database_bytes: 0,
         write_rate: 0,
-        maximum_database_bytes: 1000,
-        maximum_write_rate: 100,
+        maximum_database_bytes: 4_000_000_000_000,
+        maximum_write_rate: 10_000,
     }
 }
 async fn signup(
@@ -54,17 +54,17 @@ async fn signup(
     .unwrap()
     .unwrap();
     let cookie = codeyard_api_http::session::build_session_cookie(&session, 1).unwrap();
+    let mut form = url::form_urlencoded::Serializer::new(String::new());
+    form.extend_pairs([
+        ("username", name), ("email", email), ("password", "a-long-test-password"),
+        ("confirm_password", "a-long-test-password"), ("csrf_token", csrf.as_str()),
+    ]);
     client
         .post(format!("{}/register", server.url()))
         .header("cookie", cookie.split(';').next().unwrap())
         .header("origin", server.url())
-        .form(&[
-            ("username", name),
-            ("email", email),
-            ("password", "a-long-test-password"),
-            ("confirm_password", "a-long-test-password"),
-            ("csrf_token", &csrf),
-        ])
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(form.finish())
         .send()
         .await
         .unwrap()
@@ -193,6 +193,16 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
     one.pool
         .set_directory(Arc::new(connect(one_key.clone())))
         .unwrap();
+    let (stop_capacity, _) = tokio::sync::watch::channel(false);
+    let mut capacity_workers = Vec::new();
+    for (database, key) in [(&zero, &zero_key), (&one, &one_key)] {
+        capacity_workers.push(tokio::spawn(codeyard_cells_router::capacity::run(
+            database.pool.clone(),
+            connect(key.clone()),
+            Default::default(),
+            stop_capacity.subscribe(),
+        )));
+    }
     for database in [&zero, &one] {
         let DbPool::Postgres(pool) = &database.pool else {
             unreachable!()
@@ -646,6 +656,13 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
         200,
     )
     .await;
+    stop_capacity.send_replace(true);
+    for worker in capacity_workers {
+        tokio::time::timeout(std::time::Duration::from_secs(3), worker)
+            .await
+            .unwrap()
+            .unwrap();
+    }
     alice.stop().await;
     bob.stop().await;
     directory.close().await;
@@ -670,4 +687,122 @@ async fn sqlite_stays_standalone_and_refuses_directory_enrollment() {
         .unwrap();
     assert_eq!(user.home_cell, 0);
     sqlite.close().await;
+}
+
+#[tokio::test]
+async fn capacity_reports_restore_fresh_placement_and_revoked_cells_cannot_refresh_it() {
+    let mut registry = PostgresDatabase::unmigrated().await;
+    let directory = Directory::connect(&registry.connection_url(), Default::default())
+        .await
+        .unwrap();
+    directory.migrate().await.unwrap();
+    let mut native = PostgresDatabase::new().await;
+    let member = NodeKey::generate();
+    let server = NodeKey::generate();
+    directory
+        .register_cell(Cell {
+            id: Prefix::ZERO,
+            name: "capacity".into(),
+            region: "a".into(),
+            state: State::Open,
+            web_urls: vec!["http://127.0.0.1:3000".into()],
+            ssh_addresses: vec![],
+            rpc_addresses: vec![],
+            node_keys: vec![member.public_hex()],
+            database_bytes: 0,
+            write_rate: 0,
+            maximum_database_bytes: 4_000_000_000_000,
+            maximum_write_rate: 10_000,
+        })
+        .await
+        .unwrap();
+    sqlx::query("UPDATE directory_cells SET observed_at=clock_timestamp()-INTERVAL '1 hour'")
+        .execute(&registry.raw)
+        .await
+        .unwrap();
+    assert!(directory.choose_cell("a").await.unwrap().is_none());
+    let listener = Listener::bind(
+        directory.clone(),
+        &server,
+        "127.0.0.1:0".parse().unwrap(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let client = Client::new(
+        member,
+        listener.address,
+        server.public_key(),
+        Default::default(),
+    )
+    .unwrap();
+    assert!(
+        client
+            .request(&codeyard_cells_router::directory::Request::Reserve {
+                object: Object {
+                    kind: ObjectKind::User,
+                    id: 1
+                },
+                keys: vec![Key::new(KeyKind::Name, "stale-user").unwrap()],
+                nonce: "d".repeat(64),
+            })
+            .await
+            .is_err(),
+        "a stale capacity answer cannot admit a new account"
+    );
+    let DbPool::Postgres(pool) = &native.pool else {
+        unreachable!()
+    };
+    assert!(
+        codeyard_db_core::cells::capacity::sample(pool, 1)
+            .await
+            .is_err(),
+        "catalog reads are bounded"
+    );
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let worker = tokio::spawn(codeyard_cells_router::capacity::run(
+        native.pool.clone(),
+        client.clone(),
+        codeyard_cells_router::capacity::Config {
+            sample_seconds: 1,
+            ..Default::default()
+        },
+        stopped,
+    ));
+    let selected = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        loop {
+            if let Some(cell) = directory.choose_cell("a").await.unwrap() {
+                break cell;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(selected.id, Prefix::ZERO);
+    assert!(selected.database_bytes > 0);
+    stop.send_replace(true);
+    tokio::time::timeout(std::time::Duration::from_secs(3), worker)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut revoked = selected;
+    revoked.node_keys = vec![NodeKey::generate().public_hex()];
+    directory.register_cell(revoked).await.unwrap();
+    sqlx::query("UPDATE directory_cells SET observed_at=clock_timestamp()-INTERVAL '1 hour'")
+        .execute(&registry.raw)
+        .await
+        .unwrap();
+    assert!(client
+        .request(&codeyard_cells_router::directory::Request::ReportLoad {
+            database_bytes: 0,
+            write_rate: 0
+        })
+        .await
+        .is_err());
+    assert!(directory.choose_cell("a").await.unwrap().is_none());
+    listener.stop().await;
+    directory.close().await;
+    native.finish().await;
+    registry.finish().await;
 }

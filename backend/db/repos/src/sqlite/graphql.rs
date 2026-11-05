@@ -76,7 +76,25 @@ pub async fn status(
         .await?)
 }
 
-pub async fn admit_query(pool: &SqlitePool, token: i64) -> Result<Option<RateLimit>> {
-    Ok(sqlx::query_as("INSERT INTO graphql_rate_limits(token_id,used,reset_at) VALUES(?1,1,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 hour')) ON CONFLICT(token_id) DO UPDATE SET used=CASE WHEN graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') THEN 1 ELSE graphql_rate_limits.used+1 END,reset_at=CASE WHEN graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 hour') ELSE graphql_rate_limits.reset_at END WHERE graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') OR graphql_rate_limits.used<?2 RETURNING used,reset_at")
-        .bind(token).bind(crate::graphql::QUERY_LIMIT).fetch_optional(pool).await?)
+pub async fn admit_query(
+    pool: &SqlitePool,
+    actor: &codeyard_db_core::queries::credentials::Actor,
+) -> Result<Option<RateLimit>> {
+    let credential = actor
+        .credential()
+        .ok_or(codeyard_support::credentials::AccountRestricted)?;
+    let token = actor
+        .token_id()
+        .ok_or(codeyard_support::credentials::AccountRestricted)?;
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    codeyard_db_identity::sqlite::users::transitions::require_read_account(
+        &mut tx,
+        actor.user_id,
+        &credential,
+    )
+    .await?;
+    let result = sqlx::query_as("INSERT INTO graphql_rate_limits(token_id,user_id,used,reset_at) VALUES(?1,?3,1,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 hour')) ON CONFLICT(token_id) DO UPDATE SET used=CASE WHEN graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') THEN 1 ELSE graphql_rate_limits.used+1 END,reset_at=CASE WHEN graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 hour') ELSE graphql_rate_limits.reset_at END WHERE graphql_rate_limits.user_id=excluded.user_id AND (graphql_rate_limits.reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') OR graphql_rate_limits.used<?2) RETURNING used,reset_at")
+        .bind(token).bind(crate::graphql::QUERY_LIMIT).bind(actor.user_id).fetch_optional(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(result)
 }

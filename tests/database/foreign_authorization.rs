@@ -93,15 +93,14 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
     let user = provider.answer.user.id;
     database.complete_setup().await;
     let root = tempfile::tempdir().unwrap();
-    let path = root.path().join("private.git");
-    git2::Repository::init_bare(&path).unwrap();
-    let repo = codeyard_db_repos::repositories::records::create_repository(
-        pool,
-        owner,
+    let repo = codeyard_repos_core::repositories::lifecycle::provision(
+        (pool, None),
+        root.path(),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(owner),
         "private",
         None,
         true,
-        path.to_str().unwrap(),
+        None,
     )
     .await
     .unwrap();
@@ -133,7 +132,7 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
         .oneshot(request("GET", "/local/private/issues", &csrf))
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
+    let status = response.status();
     let html = String::from_utf8(
         to_bytes(response.into_body(), 2 * 1024 * 1024)
             .await
@@ -141,6 +140,7 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
             .to_vec(),
     )
     .unwrap();
+    assert_eq!(status, 200, "{html}");
     assert!(
         html.contains(&csrf),
         "The resource page retains the home session's CSRF token"
@@ -357,6 +357,7 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
 }
 
 async fn contract(pg: bool) {
+    crate::support::fake_webui_bundle::install();
     let mut database = Database::empty(pg).await;
     let pool = database.pool();
     let native = codeyard_db_identity::users::accounts::create_user(pool, "local", None)
@@ -408,6 +409,42 @@ async fn contract(pg: bool) {
     assert_eq!(count(pool, "sessions").await, 0);
     assert_eq!(count(pool, "ssh_keys").await, 0);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
+    let foreign_hash = "a".repeat(64);
+    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::ForeignToken(
+        provider.answer.credential_id.unwrap(),
+        &foreign_hash,
+    );
+    let actor: codeyard_db_core::queries::credentials::Actor = (remote.id, &credential).into();
+    assert_eq!(
+        codeyard_db_repos::graphql::admit_query(pool, &actor)
+            .await
+            .unwrap()
+            .unwrap()
+            .used,
+        1
+    );
+    assert_eq!(
+        count(pool, "personal_access_tokens").await,
+        0,
+        "a foreign quota never creates a local token"
+    );
+    let forged = codeyard_db_core::queries::credentials::Actor {
+        user_id: native.id,
+        credential: actor.credential.clone(),
+    };
+    assert!(codeyard_db_repos::graphql::admit_query(pool, &forged)
+        .await
+        .is_err());
+    database
+        .execute(
+            "UPDATE graphql_rate_limits SET used=5000 WHERE token_id=$1",
+            &[provider.answer.credential_id.unwrap()],
+        )
+        .await;
+    assert!(codeyard_db_repos::graphql::admit_query(pool, &actor)
+        .await
+        .unwrap()
+        .is_none());
     provider.live.store(false, Ordering::SeqCst);
     assert!(authorization::authorize(pool, &proof)
         .await
@@ -420,6 +457,12 @@ async fn contract(pg: bool) {
         .unwrap()
         .is_none());
     assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert!(
+        codeyard_db_repos::graphql::admit_query(pool, &actor)
+            .await
+            .is_err(),
+        "an expired home proof cannot mutate its quota"
+    );
     assert!(authorization::authorize(
         pool,
         &Proof::Token {

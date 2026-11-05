@@ -299,8 +299,10 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
-    let body: Value = response.json().await.unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, 200, "{body}");
+    let body: Value = serde_json::from_str(&body).unwrap();
     assert!(body.get("errors").is_none(), "{body}");
     assert_eq!(body["data"]["left"]["name"], "repo");
     assert_eq!(body["data"]["right"]["name"], "repo");

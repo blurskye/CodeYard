@@ -452,10 +452,11 @@ const MAX_ANONYMOUS_SESSIONS: i64 = 100_000;
 /// rows and commits on its own, so no transaction spans the sweep.
 pub async fn remove_expired_identity_rows(pool: &SqlitePool) -> Result<u64> {
     const BATCH: i64 = 500;
-    const STATEMENTS: [&str; 6] = [
+    const STATEMENTS: [&str; 7] = [
         "DELETE FROM anonymous_sessions WHERE id IN (SELECT id FROM anonymous_sessions WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%f000Z','now') LIMIT ?1)",
         "DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%f000Z','now') LIMIT ?1)",
         "DELETE FROM oauth_states WHERE state IN (SELECT state FROM oauth_states WHERE expires_at <= strftime('%Y-%m-%dT%H:%M:%f000Z','now') LIMIT ?1)",
+        "DELETE FROM graphql_rate_limits WHERE token_id IN (SELECT token_id FROM graphql_rate_limits WHERE reset_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') LIMIT ?1)",
         // An App token lives an hour; its App and OAuth rows go with it by cascade.
         "DELETE FROM personal_access_tokens WHERE id IN (SELECT t.id FROM personal_access_tokens t JOIN github_app_tokens g ON g.token_id=t.id WHERE t.expires_at <= strftime('%Y-%m-%dT%H:%M:%f000Z','now') LIMIT ?1)",
         // Job credentials retain only the one-minute completion grace, never the run's history.

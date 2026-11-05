@@ -1059,7 +1059,7 @@ its repositories, switches the directory and forwarding entries, turns the sourc
 stubs and lifts the freeze. Ids do not change, and the source copy stays until the move is
 checked. Why: rebalancing matters only once cells fill unevenly, and logical replication
 cannot do it, since row filters see only a table's own columns. Cost: ownership rules for
-all 278 tables, kept complete for good, and a freeze of minutes for a normal account, hours
+all tables, kept complete for good, and a freeze of minutes for a normal account, hours
 for a very large org. Splitting an account by repository is rejected, since its teams and
 permissions would span cells; a single repository transferred to another cell uses the
 same rules (stage 3).

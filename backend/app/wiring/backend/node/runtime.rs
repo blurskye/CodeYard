@@ -402,13 +402,13 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             s3,
         )
         .await?;
-        let cell_rpc = match (&config.directory, config.cell_rpc_address) {
+        let (cell_rpc, capacity_client) = match (&config.directory, config.cell_rpc_address) {
             (None, None) => {
                 anyhow::ensure!(
                     pool.cell_id() == codeyard_support::cells::Prefix::ZERO,
                     "A nonzero cell requires directory settings and CELL_RPC_ADDRESS"
                 );
-                None
+                (None, None)
             }
             (Some(settings), Some(address)) => {
                 anyhow::ensure!(
@@ -428,11 +428,12 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
                     address,
                 )
                 .await?;
+                let capacity_client = directory.client.clone();
                 pool.set_directory(Arc::new(directory.client.clone()))?;
                 pool.set_foreign_authorization(Arc::new(
                     codeyard_cells_router::accounts::Remote::new(key, directory.client)?,
                 ));
-                Some(listener)
+                (Some(listener), Some(capacity_client))
             }
             _ => anyhow::bail!("A cell requires both directory settings and CELL_RPC_ADDRESS"),
         };
@@ -440,7 +441,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         if config.roles.contains(NodeRole::Web) {
             state.notification_broadcaster.start().await?;
         }
-        Ok::<_, anyhow::Error>((transport, repos_path, state, cell_rpc))
+        Ok::<_, anyhow::Error>((transport, repos_path, state, cell_rpc, capacity_client))
     };
     let prepared = tokio::select! {
         biased;
@@ -451,7 +452,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         }
         result = prepared => result,
     };
-    let (transport, repos_path, state, mut cell_rpc) = match prepared {
+    let (transport, repos_path, state, mut cell_rpc, capacity_client) = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
             if let Some(member) = &member {
@@ -570,6 +571,17 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         ))
     });
     // Durable inventory jobs are claimed transactionally; every web node may drain the queue.
+    let (stop_capacity, capacity_stop) = tokio::sync::watch::channel(false);
+    let capacity = capacity_client
+        .filter(|_| config.roles.contains(NodeRole::Web))
+        .map(|directory| {
+            tokio::spawn(codeyard_cells_router::capacity::run(
+                pool.clone(),
+                directory,
+                Default::default(),
+                capacity_stop,
+            ))
+        });
     let (stop_outbox, outbox_stop) = tokio::sync::watch::channel(false);
     let outbox = (config.roles.contains(NodeRole::Web) && pool.directory().is_some()).then(|| {
         tokio::spawn(codeyard_db_core::cells::outbox::run(
@@ -670,6 +682,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     stop_email.send_replace(true);
     stop_metadata.send_replace(true);
     stop_outbox.send_replace(true);
+    stop_capacity.send_replace(true);
     stop_secret_scanning.send_replace(true);
     stop_auto_merge.send_replace(true);
     stop_replicas.send_replace(true);
@@ -710,6 +723,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     drain_worker(email, deadline).await;
     drain_worker(metadata, deadline).await;
     drain_worker(outbox, deadline).await;
+    drain_worker(capacity, deadline).await;
     drain_worker(secret_scanning, deadline).await;
     // A merge may already have published Git. Stop between PRs, but never abort
     // its authoritative post-publication bookkeeping on the listener deadline.

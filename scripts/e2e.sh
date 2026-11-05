@@ -24,7 +24,7 @@
 # build done, the SQLite round takes a few minutes and the PostgreSQL round about ten.
 #
 # Settings (environment):
-#   E2E_DATABASES   rounds to run, default "sqlite postgres pgbouncer replica cluster quorum". PostgreSQL
+#   E2E_DATABASES   rounds to run, default "sqlite postgres pgbouncer replica cluster quorum cells". PostgreSQL
 #                   rounds need GITSERV_TEST_DATABASE_URL; if it
 #                   is missing the round fails, it is not skipped.
 #   E2E_PROFILE     release (default) or debug, for the server and the bundle.
@@ -55,7 +55,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT" || exit 2
 HELPER=$ROOT/scripts/e2e-web.py
 
-E2E_DATABASES=${E2E_DATABASES:-sqlite postgres pgbouncer replica cluster quorum}
+E2E_DATABASES=${E2E_DATABASES:-sqlite postgres pgbouncer replica cluster quorum cells}
 E2E_PROFILE=${E2E_PROFILE:-release}
 E2E_SKIP_BUILD=${E2E_SKIP_BUILD:-0}
 E2E_BUILD_ONLY=${E2E_BUILD_ONLY:-0}
@@ -3401,6 +3401,33 @@ ci_runs_unavailable() {
     fi
 }
 
+run_cells_round() {
+    ROUND=cells
+    ROUND_BLOCKED=0
+    STEP_NO=0
+    RUN=$WORK/cells
+    mkdir -p "$RUN"
+    step -f -i 'cells: disposable directory and two native databases' prepare_cells_databases
+    if [[ $ROUND_BLOCKED == 0 ]]; then
+        step -f 'cells: real public router, foreign gh and Git, revocation and outage acceptance' \
+            "$GITHUB_PYTHON" -I "$ROOT/scripts/e2e-cells.py" --run "$RUN" --binary "$BIN"
+    fi
+    step -i 'cells: remove the disposable databases' drop_pg
+}
+
+prepare_cells_databases() {
+    [[ -n ${GITSERV_TEST_DATABASE_URL:-} ]] || { echo 'Cells need GITSERV_TEST_DATABASE_URL' >&2; return 1; }
+    local createdb candidate kind url
+    createdb=$(pg_tool createdb) || return 1
+    for kind in DIRECTORY ZERO ONE; do
+        candidate=gitserv_cells_$(random_hex)
+        pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "$candidate" || return 1
+        PG_OWNED+=("$candidate")
+        url=$(pg_url "$candidate") || return 1
+        export "E2E_CELLS_${kind}_URL=$url"
+    done
+}
+
 summary() {
     local line status round name took pass=0 fail=0 skip=0
     echo
@@ -3431,6 +3458,8 @@ if [[ $E2E_BUILD_ONLY != 1 && $ROUND_BLOCKED == 0 ]]; then
     for database in $E2E_DATABASES; do
         if [[ $database == quorum ]]; then
             run_quorum_round
+        elif [[ $database == cells ]]; then
+            run_cells_round
         elif [[ $database == cluster ]]; then
             [[ ${E2E_GITHUB_ONLY:-0} == 1 || ${E2E_ACTIONS_ONLY:-0} == 1 ]] || run_cluster_round
         else

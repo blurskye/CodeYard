@@ -4,6 +4,7 @@ use anyhow::{ensure, Context, Result};
 use codeyard_support::cells::Prefix;
 use sqlx::PgConnection;
 pub mod authorization;
+pub mod capacity;
 pub mod directory;
 pub mod outbox;
 pub mod stubs;

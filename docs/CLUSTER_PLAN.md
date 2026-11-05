@@ -170,6 +170,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Native signup/key claim publication, bounded stopped-cell publication and TLS failure/retry
     tests and transactional directory-cleanup delivery are written but unchecked. Remote membership pointers, remaining node families and
     the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
+    The publication batch's first check round reports one test-only Reqwest feature error;
+    explicit form encoding replaces it. Capacity reports, foreign GraphQL quota ownership,
+    SSR fixture repairs and a real two-cell public gh/Git round are the next unchecked source.
     Automatic user moves and org regional presence remain documented owner decisions.
     Owner follow-up: check foreign-cache expiry after PostgreSQL row-lock waits.
 

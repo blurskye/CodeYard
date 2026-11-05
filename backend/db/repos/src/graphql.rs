@@ -102,4 +102,4 @@ native_operation!(crate::postgres::graphql::status,
 
 native_operation!(crate::postgres::graphql::admit_query,
     crate::sqlite::graphql::admit_query,
-    fn admit_query(pool: &DbPool, token: i64) -> Result<Option<RateLimit>>);
+    fn admit_query(pool: &DbPool, actor: &codeyard_db_core::queries::credentials::Actor) -> Result<Option<RateLimit>>);

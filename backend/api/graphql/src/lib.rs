@@ -600,33 +600,32 @@ async fn execute(
                 .into_response()
         }
     };
-    let rate =
-        match codeyard_db_repos::graphql::admit_query(&state.pool, authentication.token.id).await {
-            Ok(Some(rate)) => rate,
-            Ok(None) => {
-                return document(async_graphql::Response::from_errors(vec![
-                    async_graphql::ServerError::new("API rate limit exceeded", None),
-                ]))
-                .into_response()
-            }
-            Err(error) => {
-                return (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    document(async_graphql::Response::from_errors(vec![unavailable(
-                        error,
-                    )
-                    .into_server_error(async_graphql::Pos::default())])),
+    let actor = authentication.database_actor();
+    let rate = match codeyard_db_repos::graphql::admit_query(&state.pool, &actor).await {
+        Ok(Some(rate)) => rate,
+        Ok(None) => {
+            return document(async_graphql::Response::from_errors(vec![
+                async_graphql::ServerError::new("API rate limit exceeded", None),
+            ]))
+            .into_response()
+        }
+        Err(error) => {
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                document(async_graphql::Response::from_errors(vec![unavailable(
+                    error,
                 )
-                    .into_response()
-            }
-        };
+                .into_server_error(async_graphql::Pos::default())])),
+            )
+                .into_response()
+        }
+    };
     let read = body.parsed_query().is_ok_and(|document| {
         document.operations.iter().all(|(_, operation)| {
             operation.node.ty == async_graphql::parser::types::OperationType::Query
         })
     });
     let routing_state = state.clone();
-    let actor = authentication.database_actor();
     let query_timeout = state.graphql_query_timeout;
     let request = body.data(RequestContext {
         state,

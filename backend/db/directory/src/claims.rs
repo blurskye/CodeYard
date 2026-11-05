@@ -116,8 +116,8 @@ impl Directory {
                 ensure!(root.live && root.nonce_hash == nonce, Refusal::Conflict);
                 ensure!(object.kind == ObjectKind::Repository || keys.iter().filter(|key| key.kind()==KeyKind::Name).count()==1, Refusal::Invalid);
                 if object.kind != ObjectKind::Repository {
-                    let open: bool = sqlx::query_scalar("SELECT state='open' AND database_bytes::numeric<maximum_database_bytes::numeric/2 AND write_rate::numeric<maximum_write_rate::numeric/2 FROM directory_cells WHERE id=$1")
-                        .bind(i32::from(cell.get())).fetch_one(&mut *tx).await?;
+                    let open: bool = sqlx::query_scalar("SELECT state='open' AND database_bytes::numeric<maximum_database_bytes::numeric/2 AND write_rate::numeric<maximum_write_rate::numeric/2 FROM directory_cells WHERE id=$1 AND observed_at>clock_timestamp()-$2::bigint*INTERVAL '1 second'")
+                        .bind(i32::from(cell.get())).bind(self.config.stale_seconds).fetch_one(&mut *tx).await?;
                     ensure!(open, Refusal::Unavailable);
                 }
             }
