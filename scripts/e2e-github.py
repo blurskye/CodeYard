@@ -257,9 +257,11 @@ class Client:
         deadline = time.monotonic() + 30
         while pg(replica, f"SELECT pg_last_wal_replay_lsn()>='{lsn}'::pg_lsn") != "t":
             assert time.monotonic() < deadline, "owned replica did not catch up"
-        self.gh("issue", "view", number, "-R", repo)
         log = data.parent / "read-replica.log"
-        assert "FROM issues" in log.read_text(), "content query did not reach the replica"
+        deadline = time.monotonic() + 30
+        while "FROM issues" not in log.read_text():
+            self.gh("issue", "view", number, "-R", repo)
+            assert time.monotonic() < deadline, "content query did not reach the replica"
         self.checked("gh issue view uses the current read replica")
         pg(replica, "SELECT pg_wal_replay_pause()")
         try:

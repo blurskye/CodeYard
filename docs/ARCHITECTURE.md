@@ -156,7 +156,7 @@ API crates depend on the app library, and binary wiring composes them from above
 - **CI:** triggers call `CiRuns::trigger_run` → `ci::admission` pins the
   commit and workflow blobs → `db::ci::enqueue_ci_run`. Nodes with the
   `runner` role use `RunQueue` to claim runs (`claim_ci_run`,
-  `FOR UPDATE SKIP LOCKED` on PostgreSQL), run `act`, stream logs into compressed `ci_log_chunks`,
+  `FOR UPDATE SKIP LOCKED` on PostgreSQL), run `act`, stream compressed log objects with metadata in `ci_log_chunks`,
   heartbeat, and finish the run with a commit status. Each workflow uses
   `gitserv/workflow/<full path>` (including the filename extension); runs covering
   several workflows use `gitserv/pipeline/<pipeline>`. Older attempts cannot replace
@@ -398,7 +398,7 @@ where UDP is blocked (see `tls.rs`).
     `ReplicaPack`, so a copy holder can fetch packs from the primary. Role and claim
     refusals return `Invalid` and log only the operation and caller node name, not
     request contents.
-  - `codeyard/events/5`: CI claim, heartbeat, authenticated job/step observations, bounded job-tagged log batches and finish
+  - `codeyard/events/7`: CI claim, heartbeat, authenticated job/step observations, bounded job-tagged log batches and finish
     requests for database-free workers. Peers using an older generation fail ALPN
     negotiation before a request is decoded. Each stream carries a length-prefixed
     JSON request and reply using the same 8 MiB framing limit as repository RPC.
@@ -615,7 +615,7 @@ The node fans hints out in memory and ignores its own announcements. The signed-
 header owns one WebSocket and refreshes authorized page data on a hint or reconnect;
 there is no per-browser polling timer. Socket delivery checks the original live
 session and current repository access before loading content or counts. CI status
-and logs remain database reads.
+remains a database read; log reads load bounded metadata followed by checked object bytes.
 
 ### Schema additions
 
@@ -1021,7 +1021,7 @@ Cost: four PostgreSQL nodes per 10 million accounts.
   PgBouncer. `ci_log_chunks` holds object keys, checksums and bounded ranges; bytes use the
   local, S3 or storage-node object backend. Cleanup is reserved before upload and committed
   pointers cancel it; deletion retains objects for the seven-day restore window.
-  `DATABASE_READ_URL` routes issue/PR GET content to a physical replica only after checking
+  `DATABASE_READ_URL` routes issue/PR GET and GraphQL query content to a physical replica only after checking
   database identity and replay against the primary's WAL position. Credentials and writes
   stay on primary, including reads for five seconds after the same credential wrote.
   Missing, behind, promoted or stopped replicas use primary. Other content families remain

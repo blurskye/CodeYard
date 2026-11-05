@@ -28,11 +28,25 @@ pub async fn route(
     request: Request,
     next: Next,
 ) -> Response {
-    if !read_routing::has_replica(&state.pool) {
+    // GraphQL classifies its parsed operation before entering the same scope.
+    if request.uri().path() == "/api/graphql" {
         return next.run(request).await;
     }
     let read = matches!(*request.method(), Method::GET | Method::HEAD);
-    let credential = credential(request.headers());
+    let headers = request.headers().clone();
+    respond(&state, &headers, read, next.run(request)).await
+}
+
+pub async fn respond(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    read: bool,
+    work: impl std::future::Future<Output = Response>,
+) -> Response {
+    if !read_routing::has_replica(&state.pool) {
+        return work.await;
+    }
+    let credential = credential(headers);
     let pinned = if let Some(credential) = &credential {
         // A failed routing hint chooses primary. The handler still authenticates normally.
         read_routing::primary_required(&state.pool, borrowed(credential), !read)
@@ -41,7 +55,7 @@ pub async fn route(
     } else {
         false
     };
-    let response = read_routing::scope(&state.pool, read && !pinned, next.run(request)).await;
+    let response = read_routing::scope(&state.pool, read && !pinned, work).await;
     if !read && response.status().is_success() {
         if let Some(credential) = &credential {
             if read_routing::primary_required(&state.pool, borrowed(credential), true)

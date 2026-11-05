@@ -107,3 +107,20 @@ pub trait LogObjects: Send + Sync {
         length: usize,
     ) -> futures_util::future::BoxFuture<'a, Result<Vec<u8>>>;
 }
+
+/// One deadline covers every object and metadata page in a log operation.
+pub fn io_timeout() -> Result<std::time::Duration> {
+    let raw = match std::env::var("CI_LOG_IO_TIMEOUT_SECONDS") {
+        Ok(raw) => raw,
+        Err(std::env::VarError::NotPresent) => "30".to_owned(),
+        Err(_) => anyhow::bail!("invalid CI_LOG_IO_TIMEOUT_SECONDS"),
+    };
+    let seconds = raw
+        .parse::<u64>()
+        .map_err(|_| anyhow::anyhow!("invalid CI_LOG_IO_TIMEOUT_SECONDS"))?;
+    ensure!(
+        (1..=300).contains(&seconds),
+        "invalid CI_LOG_IO_TIMEOUT_SECONDS"
+    );
+    Ok(std::time::Duration::from_secs(seconds))
+}

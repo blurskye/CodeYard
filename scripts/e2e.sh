@@ -3124,12 +3124,12 @@ run_round() {
     step -f 'setup: first-run admin through the HTML form' t_setup
     step -f 'users: sign up, sign out and sign in through HTML forms' t_users
     if [[ $db == pgbouncer || $db == replica ]]; then
-        step -f 'repositories: create public and private repositories behind PgBouncer' t_repos
-        step -f 'ssh keys: created behind PgBouncer' t_ssh_keys
-        step -f 'tokens: created behind PgBouncer' t_tokens
-        step 'git: push through PgBouncer' t_push
-        step 'git: clone and HTTP push through PgBouncer' t_clone
-        step 'issues: create, read and comment through PgBouncer' t_issues
+        step -f "repositories: create public and private repositories with $db" t_repos
+        step -f "ssh keys: created with $db" t_ssh_keys
+        step -f "tokens: created with $db" t_tokens
+        step "git: push with $db" t_push
+        step "git: clone and HTTP push with $db" t_clone
+        step "issues: create, read and comment with $db" t_issues
         if [[ $db == replica ]]; then step 'replica: gh reads after writes, lag and stopped replica fallback' t_read_replica; fi
         ROUND_BLOCKED=0
         step 'log: the server log has no panic' t_log_clean

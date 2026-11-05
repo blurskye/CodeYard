@@ -205,7 +205,7 @@ pub(crate) struct StoredChunk {
     pub stored_bytes: i64,
 }
 
-pub(crate) async fn append(
+async fn append_within_deadline(
     pool: &codeyard_db_core::DbPool,
     run: i64,
     worker: &str,
@@ -270,7 +270,7 @@ pub(crate) async fn append(
     anyhow::bail!("CI log allocation changed; retry the batch")
 }
 
-pub(crate) async fn read_range(
+async fn read_range_within_deadline(
     pool: &codeyard_db_core::DbPool,
     run: i64,
     after: i64,
@@ -304,4 +304,35 @@ pub(crate) async fn read_range(
         range.extend(pool, chunks).await?;
     }
     Ok(range.finish())
+}
+
+pub(crate) async fn append(
+    pool: &codeyard_db_core::DbPool,
+    run: i64,
+    worker: &str,
+    sequence: i64,
+    lines: &[LogLine],
+) -> Result<bool> {
+    tokio::time::timeout(
+        codeyard_db_core::ci_logs::io_timeout()?,
+        append_within_deadline(pool, run, worker, sequence, lines),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("CI log I/O timed out"))?
+}
+
+pub(crate) async fn read_range(
+    pool: &codeyard_db_core::DbPool,
+    run: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
+    reverse: bool,
+) -> Result<Vec<CiLogLine>> {
+    tokio::time::timeout(
+        codeyard_db_core::ci_logs::io_timeout()?,
+        read_range_within_deadline(pool, run, after, before, limit, reverse),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("CI log I/O timed out"))?
 }

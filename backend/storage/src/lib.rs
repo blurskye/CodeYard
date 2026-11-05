@@ -522,7 +522,7 @@ impl codeyard_db_core::ci_logs::LogObjects for ObjectStore {
             };
             let permit = Arc::new(self.try_acquire_io()?);
             tokio::time::timeout(
-                Duration::from_secs(30),
+                codeyard_db_core::ci_logs::io_timeout()?,
                 self.put_bytes(&upload, bytes, permit),
             )
             .await??;
@@ -536,10 +536,11 @@ impl codeyard_db_core::ci_logs::LogObjects for ObjectStore {
     ) -> futures_util::future::BoxFuture<'a, Result<Vec<u8>>> {
         Box::pin(async move {
             anyhow::ensure!(length <= 2 * 1024 * 1024, "CI chunk exceeds storage limit");
-            Ok(
-                tokio::time::timeout(Duration::from_secs(30), self.read_object(key, length))
-                    .await??,
+            Ok(tokio::time::timeout(
+                codeyard_db_core::ci_logs::io_timeout()?,
+                self.read_object(key, length),
             )
+            .await??)
         })
     }
 }

@@ -1,9 +1,9 @@
 # CI API (Actions)
 
 Workflows in `.github/workflows/` run with `codeyard-actions` (the default) or `act` on nodes that have the
-`runner` role. Runs, jobs and logs are stored in the selected database
-(PostgreSQL or SQLite). Code: `backend/app/src/ci/` (admission, configuration, queue and
-worker), `backend/api/rest/src/ci/` (JSON and Actions page/native-form adapters).
+`runner` role. Runs, jobs and log metadata use the selected database
+(PostgreSQL or SQLite); compressed log bytes use the object store.
+Code: `backend/ci-engine/` (admission, queue and workers), `backend/ci/` (configuration), `backend/api/rest/src/ci/` (JSON and Actions page/native-form adapters).
 `api/ci/mod.rs` and `jobs/mod.rs` register their routes. `CiRuns` owns admission and
 control; separate runtime-owned `CiWorkers` owns execution/stale-sweep tasks.
 
@@ -192,9 +192,15 @@ per page. Other REST operations remain token-only. Cancellation uses the native
 run page's form or v3's workflow-run cancel operation. The old log, history,
 log-download, cancel and deployment routes are removed.
 
-Logs are stored as compressed incremental chunks in the database, not one row per
-line. The existing 100,000-line and 32 MiB limits and retention settings still apply.
-ZIP and text downloads are generated from those chunks. A job's final log batch is
+Logs use compressed incremental objects with keys, checksums and line ranges in
+`ci_log_chunks`. The local, S3 or storage-node backend stores their bytes; SQL no longer
+stores log payloads. The existing 100,000-line and 32 MiB limits and retention settings
+still apply. Uploads reserve cleanup before storing bytes and recheck the worker and
+active jobs before committing a pointer. A failed upload leaves totals unchanged;
+retries use the upload sequence to prevent duplicate lines. Deleting a chunk schedules
+its object for deletion after the seven-day restore window.
+ZIP and text downloads are generated from those chunks. `CI_LOG_IO_TIMEOUT_SECONDS`
+bounds the entire log read or batch write (default 30, range 1–300), including object I/O. A job's final log batch is
 stored before success is recorded; upload failure fails the run. A killed runner's
 stored chunks remain readable after the stale-worker sweep fails the run. Upgrade
 cores and runners together: sequenced log uploads use `codeyard/events/7`.

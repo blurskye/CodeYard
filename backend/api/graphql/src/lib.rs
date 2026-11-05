@@ -564,7 +564,7 @@ async fn execute(
         Ok(body) => body,
         Err(error) => return error.into_response(),
     };
-    let body = match crate::request::parse(body) {
+    let mut body = match crate::request::parse(body) {
         Ok(body) => body,
         Err(_) => {
             return (
@@ -594,6 +594,12 @@ async fn execute(
                     .into_response()
             }
         };
+    let read = body.parsed_query().is_ok_and(|document| {
+        document.operations.iter().all(|(_, operation)| {
+            operation.node.ty == async_graphql::parser::types::OperationType::Query
+        })
+    });
+    let routing_state = state.clone();
     let actor = authentication.database_actor();
     let query_timeout = state.graphql_query_timeout;
     let request = body.data(RequestContext {
@@ -608,25 +614,32 @@ async fn execute(
         mergeability: Default::default(),
         rate,
     });
-    let result =
-        match tokio::time::timeout(query_timeout, crate::schema::schema().execute(request)).await {
-            Ok(result) => result,
-            Err(_) => async_graphql::Response::from_errors(vec![async_graphql::ServerError::new(
-                "Query timed out; no success was confirmed",
-                None,
-            )]),
-        };
-    let mut response = document(result).into_response();
-    if let Some(scopes) = oauth_scopes {
-        response.headers_mut().insert(
-            "x-oauth-scopes",
-            scopes.parse().expect("validated OAuth scopes"),
-        );
-    }
-    response
-        .headers_mut()
-        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-    response
+    codeyard_api_http::read_routing::respond(&routing_state, &headers, read, async {
+        let result =
+            match tokio::time::timeout(query_timeout, crate::schema::schema().execute(request))
+                .await
+            {
+                Ok(result) => result,
+                Err(_) => {
+                    async_graphql::Response::from_errors(vec![async_graphql::ServerError::new(
+                        "Query timed out; no success was confirmed",
+                        None,
+                    )])
+                }
+            };
+        let mut response = document(result).into_response();
+        if let Some(scopes) = oauth_scopes {
+            response.headers_mut().insert(
+                "x-oauth-scopes",
+                scopes.parse().expect("validated OAuth scopes"),
+            );
+        }
+        response
+            .headers_mut()
+            .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+        response
+    })
+    .await
 }
 
 pub fn router() -> Router<Arc<AppState>> {
