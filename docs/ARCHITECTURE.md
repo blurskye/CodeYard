@@ -761,9 +761,12 @@ Cold collaborator metadata lookup and retained invitation credentials also pass 
 checks. Runtime acceptance on an earlier snapshot passes Git, identity and all 51 targeted
 e2e checks. Collected query, routing, fixture and rooted-ID fixes pass source checks and
 await their runtime retry. Native signup/key claim publication, durable claim cleanup,
-capacity reporting and foreign GraphQL quotas pass source checks; their runtime tests are
-pending. Remote membership pointers and remaining node families are unfinished. The public
-two-cell gh/Git round is written but unexecuted; stages 3 to 6 are not built. Range renewal is a deferred owner follow-up.
+capacity reporting, foreign GraphQL quotas and remote membership pointers pass source checks.
+The current runtime retry passes 334 selected library, 234 cluster, 42 Git and 166 identity
+checks. Two browser-page database tests still fail; their package-session fix is written.
+Computed project-field IDs, GraphQL home organization discovery and numeric foreign invitation
+targets are the next unchecked batch. Native home lists and public two-cell gh/Git acceptance
+remain open; stages 3 to 6 are not built. Range renewal is a deferred owner follow-up.
 [Cluster readiness](CLUSTER_PLAN.md) records current check jobs and runtime gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.
@@ -975,6 +978,7 @@ from another owner's repository. Issue type and field definitions use their acco
 field values, workflows, environments, gists and review requests use their repository root.
 GraphQL `databaseId` is null when a scoped ID exceeds its 32-bit field; schema-supported
 `fullDatabaseId` fields return the complete decimal ID. Internal lookups keep the full ID.
+Computed project fields carry their owning account and project in a bounded composite key.
 Review requests have stable row identities; user and team requests retain their separate
 uniqueness constraints. A stored protection rule retains its App owner's ID after App removal.
 Recorded issue-transfer redirects also validate former roots for issues, comments and
@@ -1005,8 +1009,8 @@ listing that forgets the filter shows a stub as an account.
   remote memberships for "my orgs" and "my repositories".
   Grant and delete triggers queue pointer events in the granting transaction. The home
   applies ordered events idempotently after checking the live sending key and directory
-  ownership. Pointers discover cells only: private REST lists call those cells' existing
-  handlers with the original credential and merge bounded, sorted pages. A stale pointer
+  ownership. Pointers discover cells only: private REST lists and GraphQL organization lists
+  call those cells' existing handlers with the original credential and merge bounded pages. A stale pointer
   never supplies permission; a resource-cell outage gives a service-unavailable error.
 
 ### Global features

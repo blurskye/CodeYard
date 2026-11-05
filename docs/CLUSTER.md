@@ -717,8 +717,8 @@ The cell directory uses a separate PostgreSQL database. Initialize it with
 `cell directory register`, and enroll read-only router keys with
 `cell directory router-key --public-key <key>`. `cell directory serve` owns its node-key
 TLS listener; callers pin that public key. Cell mutations recheck live enrollment in their
-transaction. Native signup/key publication passes source checks; remote membership pointers
-and two-cell deployment acceptance remain unfinished.
+transaction. Native signup/key publication and remote membership pointers pass source checks;
+two-cell deployment acceptance remains unfinished.
 
 Directory-enrolled cells use PostgreSQL; copy standalone SQLite with `codeyard db copy`
 before enrollment. Nonzero cells require the directory and authorization RPC settings.
@@ -753,10 +753,10 @@ pages/forms reuse home CSRF and cached identity without local credentials; their
 checks pass. Cold collaborator targets have directory-verified home metadata
 lookup before the invitation transaction; this follow-up passes source checks.
 
-Rooted node readers and common repository/team projections pass source checks. Project,
-workflow, environment, App, gist and review-request issuance passes workspace and WASM;
-its sole Clippy comment is corrected for recheck.
-Synthetic node families remain open. Review requests share one reader and stable row IDs.
+Rooted numeric node readers and projections pass workspace, Clippy and WASM, including
+GraphQL's nullable databaseId and complete fullDatabaseId output. Review requests share one
+reader and stable row IDs. Computed project fields now carry their owning account and project;
+that follow-up is unchecked.
 Range reservations and stopped-cell `cell renew-range
 --directory-address <address> --directory-key <public key>` are source-checked, committed
 owner follow-ups. Renewal preserves stable homes and existing rows. Issuer history keeps
@@ -770,5 +770,7 @@ carry ordered event IDs and never grant resource access. The receiving home rech
 cell key and both directory homes at commit; duplicate and older deliveries are harmless.
 Home REST repository/org listings fetch bounded pages through the resource cell's existing
 HTTP handlers with the original token, then recheck that token before answering. This batch
-and its HTTP/TLS, rollback, replay and gh pagination tests are unchecked. Native and GraphQL
-home listings still need this integration.
+passes source checks; its HTTP/TLS, rollback, replay and gh pagination tests await runtime.
+GraphQL organization discovery and cold numeric invitation targets are now written but
+unchecked. Native home lists still need this integration. Repository chrome's package count
+now uses the shared live-session check for foreign browsers; that runtime fix is unchecked.

@@ -125,6 +125,12 @@ async fn create(
             "invalid",
         ));
     }
+    if let Some(id) = input.user_id {
+        codeyard_identity::cells::resolve_user_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(|| Error::validation("OrganizationInvitation", "invitee_id", "invalid"))?;
+    }
     let invitation = outcome(
         codeyard_db_orgs::organizations::invitations::create_organization_invitation(
             &state.pool,

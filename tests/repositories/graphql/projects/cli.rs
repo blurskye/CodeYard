@@ -241,6 +241,31 @@ async fn cli_contract(pg: bool) {
     .unwrap()
     .id;
     assert_eq!(pid, node_id::scoped("PVT", alice, project_id).unwrap());
+    let computed = node_id::project_field(alice, project_id, "ASSIGNEES").unwrap();
+    for id in [
+        computed.clone(),
+        node_id::git("PVTBF", &format!("{project_id}/ASSIGNEES")),
+    ] {
+        let found = send(
+            &router,
+            token,
+            "query($id:ID!){node(id:$id){id ... on ProjectV2Field{name dataType project{id}}}}",
+            json!({"id":id}),
+        )
+        .await;
+        assert_eq!(found["node"]["id"], computed);
+        assert_eq!(found["node"]["dataType"], "ASSIGNEES");
+        assert_eq!(found["node"]["project"]["id"], pid);
+    }
+    let (_, rejected) = call(
+        &router,
+        Some(token),
+        "query($id:ID!){node(id:$id){id}}",
+        json!({"id":node_id::project_field(alice + 10000, project_id, "ASSIGNEES").unwrap()}),
+    )
+    .await;
+    assert!(rejected["data"]["node"].is_null(), "{rejected}");
+    assert_eq!(rejected["errors"][0]["type"], "NOT_FOUND", "{rejected}");
     let org_project = codeyard_db_repos::projects::create(
         f.pool(),
         alice,

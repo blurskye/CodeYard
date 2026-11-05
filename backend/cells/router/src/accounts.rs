@@ -28,6 +28,7 @@ pub const ALPN: &[u8] = b"codeyard/cells/1";
 enum Request {
     Authorize(Proof),
     User(String),
+    UserId(i64),
     Membership(codeyard_db_core::cells::memberships::Event),
 }
 #[derive(Serialize, Deserialize)]
@@ -69,6 +70,29 @@ impl Remote {
     }
 }
 impl Remote {
+    async fn metadata(
+        &self,
+        cell: &ReadyCell,
+        request: &Request,
+        id: i64,
+        name: Option<&str>,
+    ) -> Result<Option<User>> {
+        let Reply::User(user) = self.exchange(cell, request).await? else {
+            anyhow::bail!("Invalid home metadata answer");
+        };
+        let Some(user) = user else {
+            return Ok(None);
+        };
+        ensure!(
+            user.id == id
+                && name.is_none_or(|name| user.username == name)
+                && !user.is_stub
+                && user.home_cell == i32::from(cell.id.get()),
+            "Metadata answer has the wrong home"
+        );
+        codeyard_db_core::cells::authorization::validate_public_user(&user)?;
+        Ok(Some(*user))
+    }
     async fn exchange(&self, cell: &ReadyCell, request: &Request) -> Result<Reply> {
         ensure!(
             !cell.rpc_addresses.is_empty(),
@@ -99,6 +123,23 @@ impl Remote {
     }
 }
 impl Home for Remote {
+    fn user_id<'a>(&'a self, id: i64) -> BoxFuture<'a, Result<Option<User>>> {
+        Box::pin(async move {
+            codeyard_support::cells::Prefix::for_id(id)?;
+            let _slot = self.slots.clone().try_acquire_owned()?;
+            let Some(cell) = self
+                .routes
+                .by_object(Object {
+                    kind: ObjectKind::User,
+                    id,
+                })
+                .await?
+            else {
+                return Ok(None);
+            };
+            self.metadata(&cell, &Request::UserId(id), id, None).await
+        })
+    }
     fn membership_page<'a>(
         &'a self,
         cell: codeyard_support::cells::Prefix,
@@ -116,6 +157,7 @@ impl Home for Remote {
                 .ok_or_else(|| anyhow::anyhow!("The resource cell is unavailable"))?;
             let (path, kind) = match page.list {
                 List::Organizations => ("/api/v3/user/orgs", ObjectKind::Organization),
+                List::GraphqlOrganizations => ("/api/graphql", ObjectKind::Organization),
                 List::Repositories => ("/api/v3/user/repos", ObjectKind::Repository),
             };
             let request = {
@@ -128,14 +170,31 @@ impl Home for Remote {
                 query
                     .append_pair("page", &page.number.to_string())
                     .append_pair("per_page", &page.size.to_string());
+                let graphql = matches!(page.list, List::GraphqlOrganizations);
+                let offset = (i64::from(page.number) - 1)
+                    .checked_mul(i64::from(page.size))
+                    .ok_or_else(|| anyhow::anyhow!("Invalid membership page"))?;
+                let body = if graphql {
+                    axum::body::Body::from(serde_json::to_vec(&serde_json::json!({
+                        "query":"query($first:Int!,$after:String){viewer{organizations(first:$first,after:$after){nodes{__typename id databaseId login name url avatarUrl createdAt description viewerCanCreateProjects}}}}",
+                        "variables":{"first":page.size,"after":if offset==0 {None} else {Some(codeyard_model::graphql_cursor::encode(offset-1))}}
+                    }))?)
+                } else {
+                    axum::body::Body::empty()
+                };
                 axum::http::Request::builder()
-                    .method("GET")
-                    .uri(format!("{path}?{}", query.finish()))
+                    .method(if graphql { "POST" } else { "GET" })
+                    .uri(if graphql {
+                        path.to_owned()
+                    } else {
+                        format!("{path}?{}", query.finish())
+                    })
                     .header(
                         axum::http::header::AUTHORIZATION,
                         format!("Bearer {credential}"),
                     )
-                    .body(axum::body::Body::empty())?
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(body)?
             };
             ensure!(
                 crate::selection::Credential::from_headers(request.headers(), "session_id")?
@@ -148,16 +207,34 @@ impl Home for Remote {
                 "Remote membership read is unavailable"
             );
             let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024).await?;
-            let rows: Vec<serde_json::Value> = serde_json::from_slice(&bytes)?;
+            let document: serde_json::Value = serde_json::from_slice(&bytes)?;
+            let rows: Vec<serde_json::Value> = if matches!(page.list, List::GraphqlOrganizations) {
+                ensure!(
+                    document.get("errors").is_none(),
+                    "Remote membership read is unavailable"
+                );
+                serde_json::from_value(
+                    document["data"]["viewer"]["organizations"]["nodes"].clone(),
+                )?
+            } else {
+                serde_json::from_value(document)?
+            };
             ensure!(
                 rows.len() <= usize::from(page.size),
                 "Remote membership page exceeds its limit"
             );
             let mut seen = std::collections::HashSet::new();
             for row in &rows {
-                let id = row["id"]
-                    .as_i64()
-                    .ok_or_else(|| anyhow::anyhow!("Invalid membership document"))?;
+                let id = if matches!(page.list, List::GraphqlOrganizations) {
+                    row["id"]
+                        .as_str()
+                        .and_then(codeyard_model::node_id::decode)
+                        .filter(|(kind, _)| *kind == "O")
+                        .map(|(_, id)| id)
+                } else {
+                    row["id"].as_i64()
+                }
+                .ok_or_else(|| anyhow::anyhow!("Invalid membership document"))?;
                 ensure!(seen.insert(id), "Duplicate membership document");
                 let home = self.routes.by_object(Object { kind, id }).await?;
                 ensure!(
@@ -216,22 +293,13 @@ impl Home for Remote {
                 .cell(location.cell)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("The home cell is unavailable"))?;
-            let Reply::User(user) = self
-                .exchange(&cell, &Request::User(name.to_owned()))
-                .await?
-            else {
-                anyhow::bail!("Invalid home metadata answer");
-            };
-            let Some(user) = user else { return Ok(None) };
-            ensure!(
-                user.id == location.object.id
-                    && user.username == name
-                    && !user.is_stub
-                    && user.home_cell == i32::from(cell.id.get()),
-                "Metadata answer has the wrong home"
-            );
-            codeyard_db_core::cells::authorization::validate_public_user(&user)?;
-            Ok(Some(*user))
+            self.metadata(
+                &cell,
+                &Request::User(name.to_owned()),
+                location.object.id,
+                Some(name),
+            )
+            .await
         })
     }
     fn authorize<'a>(&'a self, proof: &'a Proof) -> BoxFuture<'a, Result<Option<Answer>>> {
@@ -364,6 +432,13 @@ impl rpc::Service for Accounts {
                     proof.validate()?;
                     match self.home.authorize(&proof).await {
                         Ok(answer) => Reply::Account(answer.map(Box::new)),
+                        Err(_) => Reply::Unavailable,
+                    }
+                }
+                Request::UserId(id) => {
+                    codeyard_support::cells::Prefix::for_id(id)?;
+                    match self.home.user_id(id).await {
+                        Ok(user) => Reply::User(user.map(Box::new)),
                         Err(_) => Reply::Unavailable,
                     }
                 }

@@ -112,6 +112,21 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
     )
     .await
     .unwrap();
+    // Repository chrome counts linked packages with the same foreign browser proof.
+    authorization::authorize(pool, &proof)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        codeyard_db_repos::packages::count_linked(
+            pool,
+            Some(codeyard_db_repos::packages::Credential::Session(&value)),
+            repo.id
+        )
+        .await
+        .unwrap(),
+        0
+    );
     let app = database.router(root.path()).await;
     let request = |method: &str, path: &str, supplied: &str| {
         Request::builder()
@@ -290,6 +305,14 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
     );
     provider.live.store(false, Ordering::SeqCst);
     expire(pool).await;
+    assert!(codeyard_db_repos::packages::count_linked(
+        pool,
+        Some(codeyard_db_repos::packages::Credential::Session(&value)),
+        repo.id
+    )
+    .await
+    .is_err());
+
     assert!(authorization::authorize(pool, &proof)
         .await
         .unwrap()

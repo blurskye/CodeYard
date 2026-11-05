@@ -31,17 +31,19 @@ impl Home for Local {
             let user =
                 codeyard_db_identity::users::accounts::get_user_by_username(&self.pool, name)
                     .await?;
-            Ok(user
-                .filter(|user| {
-                    !user.is_stub
-                        && !user.is_banned
-                        && !user.must_change_password
-                        && user.home_cell == i32::from(self.pool.cell_id().get())
-                })
-                .map(|mut user| {
-                    codeyard_db_core::cells::authorization::redact_user(&mut user);
-                    user
-                }))
+            Ok(self.public_user(user))
+        })
+    }
+    fn user_id<'a>(
+        &'a self,
+        id: i64,
+    ) -> Pin<Box<dyn Future<Output = Result<Option<codeyard_db_core::models::User>>> + Send + 'a>>
+    {
+        Box::pin(async move {
+            codeyard_support::cells::Prefix::for_id(id)?;
+            Ok(self.public_user(
+                codeyard_db_identity::users::accounts::get_user_by_id(&self.pool, id).await?,
+            ))
         })
     }
     fn authorize<'a>(
@@ -52,6 +54,21 @@ impl Home for Local {
     }
 }
 impl Local {
+    fn public_user(
+        &self,
+        user: Option<codeyard_db_core::models::User>,
+    ) -> Option<codeyard_db_core::models::User> {
+        user.filter(|user| {
+            !user.is_stub
+                && !user.is_banned
+                && !user.must_change_password
+                && user.home_cell == i32::from(self.pool.cell_id().get())
+        })
+        .map(|mut user| {
+            codeyard_db_core::cells::authorization::redact_user(&mut user);
+            user
+        })
+    }
     async fn answer(&self, proof: &Proof) -> Result<Option<Answer>> {
         proof.validate()?;
         let pool = &self.pool;
@@ -278,16 +295,50 @@ pub async fn resolve_user(
     else {
         return Ok(None);
     };
-    codeyard_db_core::cells::authorization::validate_public_user(&user)?;
     anyhow::ensure!(
         user.username == name && !user.is_stub,
         "Invalid foreign account metadata"
     );
+    Ok(retain_user(pool, user)
+        .await?
+        .filter(|stored| stored.username == name))
+}
+
+async fn retain_user(
+    pool: &DbPool,
+    user: codeyard_db_core::models::User,
+) -> Result<Option<codeyard_db_core::models::User>> {
+    codeyard_db_core::cells::authorization::validate_public_user(&user)?;
     let source = codeyard_support::cells::Prefix::try_from(i64::from(user.home_cell))?;
     codeyard_db_core::cells::stubs::user(pool, source, &user).await?;
     Ok(
-        codeyard_db_identity::users::accounts::get_user_by_username(pool, name)
+        codeyard_db_identity::users::accounts::get_user_by_id(pool, user.id)
             .await?
-            .filter(|stored| stored.id == user.id && stored.home_cell == user.home_cell),
+            .filter(|stored| stored.home_cell == user.home_cell),
     )
+}
+
+pub async fn resolve_user_id(
+    pool: &DbPool,
+    id: i64,
+) -> Result<Option<codeyard_db_core::models::User>> {
+    if codeyard_support::cells::Prefix::for_id(id).is_err() {
+        return Ok(None);
+    }
+    if let Some(user) = codeyard_db_identity::users::accounts::get_user_by_id(pool, id).await? {
+        return Ok(Some(user));
+    }
+    let Some(home) = pool.foreign_authorization() else {
+        return Ok(None);
+    };
+    let Some(user) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), home.user_id(id)).await??
+    else {
+        return Ok(None);
+    };
+    anyhow::ensure!(
+        user.id == id && !user.is_stub,
+        "Invalid foreign account metadata"
+    );
+    retain_user(pool, user).await
 }

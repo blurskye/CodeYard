@@ -56,7 +56,7 @@ pub(crate) fn node_owner_sql(kind: &str) -> Option<&'static str> {
         "LB" => "SELECT repo_id FROM issue_linked_branches WHERE id=$1",
         "IT" => "SELECT COALESCE(owner_user_id,owner_org_id) FROM issue_attributes WHERE id=$1 AND kind='type'",
         "RRS" => "SELECT COALESCE(owner_repo_id,owner_org_id) FROM repository_rulesets WHERE id=$1",
-        "PVT" => "SELECT owner_id FROM projects WHERE id=$1 AND deleted_at IS NULL",
+        "PVT" | "PVTBF" => "SELECT owner_id FROM projects WHERE id=$1 AND deleted_at IS NULL",
         "PVTF" | "PVTSSF" | "PVTIF" => "SELECT p.owner_id FROM project_fields f JOIN projects p ON p.id=f.project_id WHERE f.id=$1 AND p.deleted_at IS NULL",
         "PVTI" | "DI" => "SELECT p.owner_id FROM project_items i JOIN projects p ON p.id=i.project_id WHERE i.id=$1 AND p.deleted_at IS NULL",
         "PVTV" => "SELECT p.owner_id FROM project_views v JOIN projects p ON p.id=v.project_id WHERE v.id=$1 AND p.deleted_at IS NULL",

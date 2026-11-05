@@ -321,6 +321,53 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .any(|repo| repo["id"] == repository.id),
         "{listed}"
     );
+    let carol = codeyard_db_identity::users::accounts::create_user(&one.pool, "carol", None)
+        .await
+        .unwrap();
+    assert!(
+        codeyard_db_identity::users::accounts::get_user_by_id(&zero.pool, carol.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let response = client
+        .post(format!(
+            "{}/api/v3/orgs/pointer-org/invitations",
+            http.url()
+        ))
+        .bearer_auth(&alice_token)
+        .json(&serde_json::json!({"invitee_id":carol.id}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let invited: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, 201, "{invited}");
+    assert_eq!(invited["login"], "carol");
+    let retained = codeyard_db_identity::users::accounts::get_user_by_id(&zero.pool, carol.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(retained.is_stub && retained.password_hash.is_none() && retained.email.is_none());
+    let response = client
+        .post(format!(
+            "{}/api/v3/orgs/pointer-org/invitations",
+            http.url()
+        ))
+        .bearer_auth(&alice_token)
+        .json(&serde_json::json!({"invitee_id":-1}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 422);
+    for _ in 0..8 {
+        if !codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+            .await
+            .unwrap()
+        {
+            break;
+        }
+    }
     let response = client
         .put(format!(
             "{}/api/v3/orgs/pointer-org/memberships/bob",
@@ -366,6 +413,27 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .any(|org| org["id"] == organization.id),
         "{orgs}"
     );
+    let graphql_orgs = serde_json::json!({"query":"{viewer{organizations(first:100){totalCount nodes{id login viewerCanCreateProjects}}}}"});
+    let listed: serde_json::Value = client
+        .post(format!("{}/api/graphql", bob_http.url()))
+        .bearer_auth(&value)
+        .json(&graphql_orgs)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(listed.get("errors").is_none(), "{listed}");
+    assert_eq!(listed["data"]["viewer"]["organizations"]["totalCount"], 1);
+    assert_eq!(
+        listed["data"]["viewer"]["organizations"]["nodes"][0]["login"],
+        "pointer-org"
+    );
+    assert!(
+        listed["data"]["viewer"]["organizations"]["nodes"][0]["viewerCanCreateProjects"]
+            .is_boolean()
+    );
     let members: serde_json::Value = client
         .get(format!("{}/api/v3/orgs/pointer-org/members", http.url()))
         .bearer_auth(&alice_token)
@@ -406,6 +474,18 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .all(|org| org["id"] != organization.id),
         "{orgs}"
     );
+    let listed: serde_json::Value = client
+        .post(format!("{}/api/graphql", bob_http.url()))
+        .bearer_auth(&value)
+        .json(&graphql_orgs)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(listed.get("errors").is_none(), "{listed}");
+    assert_eq!(listed["data"]["viewer"]["organizations"]["totalCount"], 0);
     for (page, expected) in [(1, repository.id), (2, native_repository.id)] {
         let response = client
             .get(format!(

@@ -319,6 +319,9 @@ pub trait Home: Send + Sync {
         Box::pin(async { anyhow::bail!("Membership admission is unavailable") })
     }
     fn authorize<'a>(&'a self, proof: &'a Proof) -> BoxFuture<'a, Result<Option<Answer>>>;
+    fn user_id<'a>(&'a self, _id: i64) -> BoxFuture<'a, Result<Option<User>>> {
+        Box::pin(async { anyhow::bail!("Remote account metadata is unavailable") })
+    }
     fn user<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Option<User>>>;
 }
 pub type Provider = Arc<dyn Home>;

@@ -7,6 +7,7 @@ pub mod dependency_inventory;
 pub mod fine_grained;
 pub mod github_apps;
 pub mod github_error;
+pub mod graphql_cursor;
 pub mod graphql_error;
 pub mod http_config;
 pub mod identity;

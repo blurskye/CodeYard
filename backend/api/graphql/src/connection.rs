@@ -2,8 +2,6 @@
 use crate::arguments::Arguments;
 use crate::Result;
 use async_graphql::Error;
-use base64::engine::general_purpose::STANDARD;
-use base64::Engine;
 use serde_json::json;
 use serde_json::Value;
 
@@ -14,20 +12,9 @@ pub(super) struct Page {
     end: i64,
 }
 
-pub(super) fn cursor(offset: i64) -> String {
-    STANDARD.encode(format!("cursor:{offset}"))
-}
-
+pub(super) use codeyard_model::graphql_cursor::encode as cursor;
 fn decode(value: &str) -> Result<i64> {
-    let decoded = STANDARD
-        .decode(value)
-        .map_err(|_| Error::new("Invalid cursor"))?;
-    let decoded = std::str::from_utf8(&decoded).map_err(|_| Error::new("Invalid cursor"))?;
-    decoded
-        .strip_prefix("cursor:")
-        .and_then(|s| s.parse::<i64>().ok())
-        .filter(|n| *n >= 0 && *n < i64::MAX)
-        .ok_or_else(|| Error::new("Invalid cursor"))
+    codeyard_model::graphql_cursor::decode(value).ok_or_else(|| Error::new("Invalid cursor"))
 }
 
 pub(super) fn validate(ctx: &Arguments) -> Result<(Option<i64>, Option<i64>)> {

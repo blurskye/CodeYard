@@ -143,7 +143,7 @@ const BUILT_IN_FIELDS: [(codeyard_db_repos::projects::BuiltInField, &str, &str);
 ];
 fn built_in_field(project: &Value, name: &str, data_type: &str) -> Value {
     let id = project["_project"].as_i64().unwrap_or_default();
-    json!({"__typename":"ProjectV2Field","id":node_id::git("PVTBF",&format!("{id}/{data_type}")),"databaseId":null,"name":name,"dataType":data_type,"isIssueField":false,
+    json!({"__typename":"ProjectV2Field","id":node_id::project_field(project["_owner"].as_i64().unwrap_or_default(),id,data_type),"databaseId":null,"name":name,"dataType":data_type,"isIssueField":false,
         "createdAt":project["createdAt"],"updatedAt":project["updatedAt"],"_project":id})
 }
 fn order_fields(ctx: &Arguments, values: &mut [Value]) -> Result<()> {
@@ -339,6 +339,30 @@ fn authorize_account(request: &RequestContext) -> Result<()> {
         return Err(crate::token_denied());
     }
     request.require_oauth_scope("repo")
+}
+
+pub(super) async fn computed_field(id: &str, request: &RequestContext) -> Result<Value> {
+    authorize_account(request)?;
+    let (owner, project, field) = node_id::decode_project_field(id).ok_or_else(missing)?;
+    let project = codeyard_db_repos::projects::by_id(
+        &request.state.pool,
+        Some(request.auth.user.id),
+        project,
+    )
+    .await
+    .map_err(operation)?;
+    if owner.is_some_and(|owner| owner != project.owner_id) {
+        return Err(missing());
+    }
+    let (name, data_type, _) = BUILT_IN_FIELDS
+        .iter()
+        .find(|(_, data_type, _)| *data_type == field)
+        .ok_or_else(missing)?;
+    Ok(built_in_field(
+        &project_object(&project),
+        name.name(),
+        data_type,
+    ))
 }
 
 pub(super) async fn node(kind: &str, id: i64, request: &RequestContext) -> Result<Value> {
@@ -799,9 +823,41 @@ async fn resolve_at(
                         nodes.push(crate::user::organization_by_id(org.id, request).await?);
                         after = org.id;
                     }
+                    if nodes.len()
+                        > codeyard_db_core::cells::memberships::Config::default().maximum_scan
+                    {
+                        return Err(Error::new("Organization membership scan exceeds its limit"));
+                    }
                     if orgs.len() < 100 {
                         break;
                     }
+                }
+                let config = codeyard_db_core::cells::memberships::Config::default();
+                if let Some(remote) = codeyard_app::api_shared::github::memberships::remote(
+                    pool,
+                    &request.auth,
+                    &request.headers,
+                    codeyard_db_core::cells::memberships::List::GraphqlOrganizations,
+                    Vec::new(),
+                    config.maximum_scan,
+                )
+                .await
+                .map_err(unavailable)?
+                {
+                    for mut node in remote {
+                        let (_, id) = node["id"]
+                            .as_str()
+                            .and_then(node_id::decode)
+                            .ok_or_else(missing)?;
+                        node["databaseId"] = json!(id);
+                        node["_membership"] = json!(true);
+                        nodes.push(node);
+                    }
+                    if nodes.len() > config.maximum_scan {
+                        return Err(Error::new("Organization membership scan exceeds its limit"));
+                    }
+                    nodes.sort_by_key(|node| node["databaseId"].as_i64());
+                    nodes.dedup_by_key(|node| node["databaseId"].as_i64());
                 }
                 crate::connection::slice(ctx, nodes)
             }

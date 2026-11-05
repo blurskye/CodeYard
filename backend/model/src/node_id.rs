@@ -92,6 +92,43 @@ pub fn decode(value: &str) -> Option<(&str, i64)> {
     (id > 0).then_some((kind, id))
 }
 
+/// A computed project field has no row; its stable key includes its owning account.
+pub fn project_field(owner: i64, project: i64, field: &str) -> Option<String> {
+    codeyard_support::cells::Prefix::for_id(owner).ok()?;
+    codeyard_support::cells::Prefix::for_id(project).ok()?;
+    valid_project_field(field).then(|| git("PVTBF", &format!("{owner}/{project}/{field}")))
+}
+fn valid_project_field(field: &str) -> bool {
+    !field.is_empty()
+        && field.len() <= 32
+        && field
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte == b'_')
+}
+/// Former two-part keys remain readable; new keys always include the account root.
+pub fn decode_project_field(value: &str) -> Option<(Option<i64>, i64, String)> {
+    if value.len() > 128 {
+        return None;
+    }
+    let encoded = value.strip_prefix("PVTBF_")?;
+    let key = String::from_utf8(URL_SAFE_NO_PAD.decode(encoded).ok()?).ok()?;
+    let mut parts = key.split('/');
+    let first = parts.next()?.parse::<i64>().ok()?;
+    let second = parts.next()?;
+    let (owner, project, field) = match parts.next() {
+        Some(field) => (Some(first), second.parse::<i64>().ok()?, field),
+        None => (None, first, second),
+    };
+    if parts.next().is_some() || !valid_project_field(field) {
+        return None;
+    }
+    codeyard_support::cells::Prefix::for_id(project).ok()?;
+    if let Some(owner) = owner {
+        codeyard_support::cells::Prefix::for_id(owner).ok()?;
+    }
+    Some((owner, project, field.to_owned()))
+}
+
 /// Root-bearing IDs route through one account or repository after it moves.
 /// The simple root IDs and the former byte form still resolve as documented.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -154,6 +191,9 @@ fn decode_messagepack(bytes: &[u8]) -> Option<(i64, i64)> {
 /// The explicit ownership hint in a numeric MessagePack node ID, if present.
 /// Resource readers validate ownership or recorded redirects; the hint never grants access.
 pub fn scoped_root(value: &str) -> Option<i64> {
+    if value.starts_with("PVTBF_") {
+        return decode_project_field(value)?.0;
+    }
     decode(value)?;
     let (_, encoded) = value.split_once('_')?;
     let bytes = URL_SAFE_NO_PAD.decode(encoded).ok()?;
@@ -163,6 +203,14 @@ pub fn scoped_root(value: &str) -> Option<i64> {
 /// Decode before routing without querying an object's cell. The resource cell still
 /// checks that the ID belongs to this root; routing hints never grant access.
 pub fn routed(value: &str) -> Option<Routed<'_>> {
+    if value.starts_with("PVTBF_") {
+        let (owner, project, _) = decode_project_field(value)?;
+        return Some(Routed {
+            kind: "PVTBF",
+            root: owner.unwrap_or(project),
+            id: project,
+        });
+    }
     if value.len() > 2048 {
         return None;
     }
@@ -378,6 +426,34 @@ mod tests {
             root
         );
         assert!(super::routed(&super::reference(root, "refs/heads/bad\0")).is_none());
+    }
+
+    #[test]
+    fn computed_project_fields_retain_account_roots_and_bound_untrusted_keys() {
+        let owner = *codeyard_support::cells::Prefix::new(1).ids().start();
+        let project = *codeyard_support::cells::Prefix::new(2).ids().start();
+        let value = super::project_field(owner, project, "ASSIGNEES").unwrap();
+        assert_eq!(
+            super::decode_project_field(&value),
+            Some((Some(owner), project, "ASSIGNEES".into()))
+        );
+        assert_eq!(super::routed(&value).unwrap().root, owner);
+        assert_eq!(super::routed(&value).unwrap().id, project);
+        assert_eq!(super::scoped_root(&value), Some(owner));
+        assert_eq!(
+            super::scoped_root(&super::git("PVTBF", &format!("{project}/ASSIGNEES"))),
+            None
+        );
+        for key in [
+            "0/1/ASSIGNEES",
+            "1/0/ASSIGNEES",
+            "1/2/assignees",
+            "1/2/ASSIGNEES/3",
+            "1/2/ASSIGNEES\0",
+        ] {
+            assert!(super::decode_project_field(&super::git("PVTBF", key)).is_none());
+        }
+        assert!(super::project_field(owner, project, &"A".repeat(33)).is_none());
     }
 
     #[test]

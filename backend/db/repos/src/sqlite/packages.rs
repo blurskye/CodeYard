@@ -41,15 +41,23 @@ async fn actor<'a>(
     let token = match token {
         Credential::Token(id) => id,
         Credential::Session(session) => {
-            let id: Option<i64> = sqlx::query_scalar("SELECT u.id FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.id=$1 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password")
-                .bind(session).fetch_optional(&mut **tx).await?;
-            return Ok(Actor {
-                id: Some(id.ok_or(Refusal::Unauthorized)?),
-                repo: None,
-                owner: None,
-                selected: None,
-                classic: false,
-            });
+            let accounts: Vec<i64> = sqlx::query_scalar(&crate::packages::session_account_query(
+                "strftime('%Y-%m-%dT%H:%M:%f000Z','now')",
+            ))
+            .bind(session)
+            .bind(codeyard_support::token_hash::token_hash(session))
+            .fetch_all(&mut **tx)
+            .await?;
+            ensure!(accounts.len() == 1, Refusal::Unauthorized);
+            let account = accounts[0];
+            ensure!(
+                codeyard_db_core::queries::sqlite::users::transitions::live_session(
+                    tx, account, session
+                )
+                .await?,
+                Refusal::Unauthorized
+            );
+            return Ok(Actor::session(account));
         }
     };
     let row: Option<(i64, String, String)> = sqlx::query_as("SELECT u.id,u.username,t.scope FROM users u JOIN personal_access_tokens t ON t.user_id=u.id WHERE t.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))")

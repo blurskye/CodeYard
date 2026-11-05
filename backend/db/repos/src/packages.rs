@@ -43,6 +43,16 @@ impl Actor {
         classic: false,
     };
 
+    pub fn session(id: i64) -> Self {
+        Self {
+            id: Some(id),
+            repo: None,
+            owner: None,
+            selected: None,
+            classic: false,
+        }
+    }
+
     pub fn for_owner(self, kind: &str, id: Option<i64>) -> Self {
         match self.owner {
             Some((owner_kind, owner)) if owner_kind != kind || Some(owner) != id => Self::ANONYMOUS,
@@ -60,6 +70,12 @@ impl Actor {
         };
         format!("({selection} AND {policy})")
     }
+}
+
+// Resolve identity without retaining a credential before its account lock. The caller
+// then uses the shared live-session check in the same package transaction.
+pub(crate) fn session_account_query(now: &str) -> String {
+    format!("SELECT u.id FROM users u WHERE NOT u.is_banned AND NOT u.must_change_password AND ((NOT u.is_stub AND EXISTS(SELECT 1 FROM sessions s WHERE s.user_id=u.id AND s.id=$1)) OR (u.is_stub AND EXISTS(SELECT 1 FROM foreign_credentials f WHERE f.user_id=u.id AND f.kind='session' AND f.credential_hash=$2 AND f.expires_at>{now}))) LIMIT 2")
 }
 
 pub(crate) fn read_condition(actor: &Actor, repository_access: &str) -> String {

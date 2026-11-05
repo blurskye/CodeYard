@@ -441,6 +441,9 @@ impl Object {
             request.authorize(repo, "checks", false).await?;
         }
         if ty == "Organization"
+            && !(field == "viewerCanCreateProjects"
+                && self.0["_membership"] == true
+                && self.0[field].is_boolean())
             && matches!(
                 field,
                 "team"

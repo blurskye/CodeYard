@@ -149,6 +149,7 @@ pub async fn apply(pool: &crate::DbPool, event: &Event, admission: &dyn Admissio
 #[serde(rename_all = "snake_case")]
 pub enum List {
     Organizations,
+    GraphqlOrganizations,
     Repositories,
 }
 #[derive(Clone, Serialize, Deserialize)]

@@ -59,6 +59,7 @@ mod user;
 type Result<T> = async_graphql::Result<T>;
 
 struct RequestContext {
+    headers: HeaderMap,
     state: Arc<AppState>,
     auth: codeyard_identity::github_auth::Authentication,
     actor: codeyard_db_core::queries::credentials::Actor,
@@ -383,6 +384,9 @@ async fn validate_node_root(id: &str, request: &RequestContext) -> Result<()> {
 
 async fn node(id: &str, request: &RequestContext) -> Result<Value> {
     validate_node_root(id, request).await?;
+    if id.starts_with("PVTBF_") {
+        return crate::projects::computed_field(id, request).await;
+    }
     if id.starts_with("D_") || id.starts_with("DIC_") || id.starts_with("DC_") {
         return crate::discussions::node(id, request).await;
     }
@@ -628,6 +632,7 @@ async fn execute(
     let routing_state = state.clone();
     let query_timeout = state.graphql_query_timeout;
     let request = body.data(RequestContext {
+        headers: headers.clone(),
         state,
         auth: authentication,
         actor,

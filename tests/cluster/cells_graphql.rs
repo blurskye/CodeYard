@@ -228,6 +228,11 @@ async fn two_cells_split_queries_keep_node_positions_and_validate_before_ordered
         Default::default(),
     )
     .unwrap();
+    let computed = node_id::project_field(*Prefix::new(1).ids().start(), 17, "ASSIGNEES").unwrap();
+    assert_eq!(
+        routes.by_node(&computed).await.unwrap().unwrap().id,
+        Prefix::new(1)
+    );
     // Directory ownership can differ from a row's allocation prefix after a move.
     // No move protocol is exercised here: these are authoritative route fixtures.
     sqlx::query("INSERT INTO directory_objects(kind,id,home_cell,active,nonce_hash) VALUES('repository',99,1,true,$1),('organization',$2,0,true,$1)")

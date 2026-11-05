@@ -166,17 +166,23 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Runtime eb1c71056db64586b3b41c713e7bf631 covers those fixes, native publication,
     cleanup/restart, capacity and the new public two-cell gh/Git round. All 334 selected
     library tests pass without skips, including real foreign SSH push/clone and revocation;
-    all 234 cluster tests also pass without skips; database tests are running.
+    cluster 234, Git 42 and identity 166 also pass without skips. Database passes 179 and
+    fails two foreign browser-page checks because package counts assume local session rows;
+    the shared live-session fix is written. Repository contracts and e2e are still running.
     Numeric child IDs and remote membership delivery/REST discovery pass workspace
     95564883b4604fb5bbd2968e4c6c5188, Clippy dc45e3525fc74aaabc0f286151667188 and WASM
     ba06675531a94ac0a434f8822c9a23ca. Both baselines retain stable review-request row IDs
     and protection-rule App owners. Old output assertions now expect rooted IDs; former input
     IDs remain accepted as the architecture requires. HTTP/TLS tests cover forged roots,
     pointer rollback/replay, grant revocation and gh pagination; runtime is pending.
-    The next unchecked follow-up projects 64-bit IDs through GraphQL's nullable databaseId
-    and fullDatabaseId fields and prevents membership reads from calling their own home cell.
-    Native/GraphQL home listing integration and synthetic node families remain open.
-    No stage 2 completion is claimed.
+    GraphQL's 64-bit ID output and membership self-call guard pass workspace
+    5dee459c4fb74e9dbc34ff6b93fb6b3e, Clippy 3a43d960fc5f4dc19e871ba01ed782c1 and WASM
+    54abdb51b250438586b711004cd4536a. The next unchecked batch roots computed project fields,
+    discovers remote orgs through bounded GraphQL pages with the original token, and resolves
+    numeric foreign invitation targets through the existing home RPC. It shares package
+    session checks with the native/foreign credential owner; HTTP, hostile-root, invitation,
+    revocation and cursor tests are written. Native home lists and runtime acceptance remain
+    open. No stage 2 completion is claimed.
     Stages 3 to 6 are not built. Automatic user moves and org regional presence remain
     documented owner decisions.
     Owner follow-ups: foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded
