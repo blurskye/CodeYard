@@ -781,4 +781,5 @@ and hostile-limit tests await runtime. The two-cell client round also checks nat
 Git storage through HTTP and SSH pushes/clones and explicit scoped-ID bounds.
 The browser package-session retries pass on both engines. GraphQL discovery now uses
 the actual organization-list resolver, and every mutation family shares rooted-ID
-preflight; workspace, Clippy and WASM pass, while their runtime retry is next.
+preflight; workspace, Clippy and WASM pass. Their runtime retry includes native lists,
+both database engines, cluster and the public two-cell gh/Git round.
