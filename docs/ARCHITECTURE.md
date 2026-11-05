@@ -755,8 +755,9 @@ object-store log chunks, current-copy clone distribution and issue/PR read routi
 written and pass workspace, Clippy and WASM checks. Initial CI, database, cluster,
 PgBouncer and quorum acceptance passes; replica startup and a CI-engine lock failure need
 reruns. The capacity-lock, copy-seed and CLI changes pass source checks; acceptance is running.
-Stage 2 has unchecked source for ID initialization and credential framing. Its directory,
-router, foreign authorization and stubs are not built; stages 3 to 6 are not built.
+Stage 2 has unchecked source for ID initialization, credential framing and directory
+queries. Directory transport, the router, foreign authorization and stubs are not built;
+stages 3 to 6 are not built.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
 numbers remain assumptions until stage 1 measures a real cell.
 

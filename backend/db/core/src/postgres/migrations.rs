@@ -14,6 +14,15 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[(
 static MIGRATION_TURNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 pub async fn run_migrations(pool: &PgPool) -> Result<()> {
+    apply(pool, MIGRATIONS).await
+}
+
+/// Independent stores use the same transactional baseline and history checks.
+pub async fn run_baseline(pool: &PgPool, name: &'static str, sql: &'static str) -> Result<()> {
+    apply(pool, &[(1, name, sql)]).await
+}
+
+async fn apply(pool: &PgPool, migrations: &[(i64, &str, &str)]) -> Result<()> {
     info!("Running database migrations...");
 
     // Runs in this process take turns. Otherwise a queue of them, such as many test
@@ -39,8 +48,8 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
         sqlx::query_as("SELECT version, sha256 FROM _gitserv_migrations ORDER BY version")
             .fetch_all(&mut *tx)
             .await?;
-    validate_history(&applied)?;
-    for &(version, name, sql) in &MIGRATIONS[applied.len()..] {
+    validate_history_for(&applied, migrations)?;
+    for &(version, name, sql) in &migrations[applied.len()..] {
         sqlx::Executor::execute(&mut *tx, sqlx::raw_sql(sql))
             .await
             .with_context(|| format!("apply database migration {version} ({name})"))?;
@@ -58,8 +67,12 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
 }
 
 pub fn validate_history(applied: &[(i64, String)]) -> Result<()> {
+    validate_history_for(applied, MIGRATIONS)
+}
+
+fn validate_history_for(applied: &[(i64, String)], migrations: &[(i64, &str, &str)]) -> Result<()> {
     for (index, (version, checksum)) in applied.iter().enumerate() {
-        let Some((expected_version, _, sql)) = MIGRATIONS.get(index) else {
+        let Some((expected_version, _, sql)) = migrations.get(index) else {
             bail!("database has migrations newer than this application; downgrade refused");
         };
         if version != expected_version

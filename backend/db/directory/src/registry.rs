@@ -1,0 +1,124 @@
+use super::{Directory, Refusal};
+use anyhow::{ensure, Result};
+use codeyard_model::cells::{Cell, State};
+use codeyard_support::cells::Prefix;
+
+const COLUMNS: &str = "c.id,c.name,c.region,c.state,c.web_urls::text,c.ssh_addresses::text,c.database_bytes,c.write_rate,c.maximum_database_bytes,c.maximum_write_rate,(SELECT COALESCE(json_agg(public_key)::text,'[]') FROM (SELECT public_key FROM directory_node_keys WHERE cell_id=c.id ORDER BY public_key LIMIT 1001) keys) AS node_keys";
+
+#[derive(sqlx::FromRow)]
+struct Row {
+    id: i32,
+    name: String,
+    region: String,
+    state: String,
+    web_urls: String,
+    ssh_addresses: String,
+    database_bytes: i64,
+    write_rate: i64,
+    maximum_database_bytes: i64,
+    maximum_write_rate: i64,
+    node_keys: String,
+}
+impl Row {
+    fn cell(self) -> Result<Cell> {
+        Cell {
+            id: Prefix::try_from(i64::from(self.id))?,
+            name: self.name,
+            region: self.region,
+            state: State::parse(&self.state).ok_or(Refusal::Unavailable)?,
+            web_urls: serde_json::from_str(&self.web_urls)?,
+            ssh_addresses: serde_json::from_str(&self.ssh_addresses)?,
+            node_keys: serde_json::from_str(&self.node_keys)?,
+            database_bytes: self.database_bytes,
+            write_rate: self.write_rate,
+            maximum_database_bytes: self.maximum_database_bytes,
+            maximum_write_rate: self.maximum_write_rate,
+        }
+        .prepare()
+    }
+}
+
+impl Directory {
+    /// Local operator only; this method is never exposed as a cell-authenticated mutation.
+    pub async fn register_cell(&self, cell: Cell) -> Result<()> {
+        self.run(async {
+            let cell = cell.prepare().map_err(|_| Refusal::Invalid)?;
+            let id = i32::from(cell.id.get());
+            let mut tx = self.begin().await?;
+            sqlx::query("INSERT INTO directory_cells(id,name,region,state,web_urls,ssh_addresses,database_bytes,write_rate,maximum_database_bytes,maximum_write_rate) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET name=excluded.name,region=excluded.region,state=excluded.state,web_urls=excluded.web_urls,ssh_addresses=excluded.ssh_addresses,database_bytes=excluded.database_bytes,write_rate=excluded.write_rate,maximum_database_bytes=excluded.maximum_database_bytes,maximum_write_rate=excluded.maximum_write_rate,observed_at=clock_timestamp()")
+                .bind(id).bind(&cell.name).bind(&cell.region).bind(cell.state.as_str()).bind(serde_json::to_value(&cell.web_urls)?).bind(serde_json::to_value(&cell.ssh_addresses)?).bind(cell.database_bytes).bind(cell.write_rate).bind(cell.maximum_database_bytes).bind(cell.maximum_write_rate).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO directory_cell_prefixes(prefix,cell_id) VALUES($1,$1) ON CONFLICT DO NOTHING")
+                .bind(id).execute(&mut *tx).await?;
+            let assigned: i32 = sqlx::query_scalar("SELECT cell_id FROM directory_cell_prefixes WHERE prefix=$1 FOR UPDATE")
+                .bind(id).fetch_one(&mut *tx).await?;
+            ensure!(assigned == id, Refusal::Conflict);
+            sqlx::query("DELETE FROM directory_node_keys WHERE cell_id=$1 AND NOT(public_key=ANY($2))")
+                .bind(id).bind(&cell.node_keys).execute(&mut *tx).await?;
+            for key in &cell.node_keys {
+                sqlx::query("INSERT INTO directory_node_keys(public_key,cell_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
+                    .bind(key).bind(id).execute(&mut *tx).await?;
+            }
+            let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM directory_node_keys WHERE cell_id=$1 AND public_key=ANY($2)")
+                .bind(id).bind(&cell.node_keys).fetch_one(&mut *tx).await?;
+            ensure!(count as usize == cell.node_keys.len(), Refusal::Conflict);
+            tx.commit().await?;
+            Ok(())
+        }).await
+    }
+
+    pub async fn cell(&self, prefix: Prefix) -> Result<Option<Cell>> {
+        self.run(async {
+            let mut tx = self.begin().await?;
+            let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLUMNS} FROM directory_cells c JOIN directory_cell_prefixes p ON p.cell_id=c.id WHERE p.prefix=$1"))
+                .bind(i32::from(prefix.get())).fetch_optional(&mut *tx).await?;
+            let cell = row.map(Row::cell).transpose()?;
+            tx.commit().await?;
+            Ok(cell)
+        }).await
+    }
+
+    pub async fn cells(&self, after: Option<Prefix>, limit: i64) -> Result<Vec<Cell>> {
+        self.run(async {
+            ensure!((1..=100).contains(&limit), Refusal::Invalid);
+            let mut tx = self.begin().await?;
+            let rows: Vec<Row> = sqlx::query_as(&format!(
+                "SELECT {COLUMNS} FROM directory_cells c WHERE c.id>$1 ORDER BY c.id LIMIT $2"
+            ))
+            .bind(after.map_or(-1, |prefix| i32::from(prefix.get())))
+            .bind(limit)
+            .fetch_all(&mut *tx)
+            .await?;
+            let cells = rows
+                .into_iter()
+                .map(Row::cell)
+                .collect::<Result<Vec<_>>>()?;
+            tx.commit().await?;
+            Ok(cells)
+        })
+        .await
+    }
+
+    pub async fn choose_cell(&self, region: &str) -> Result<Option<Cell>> {
+        self.run(async {
+            codeyard_model::cells::validate_region(region).map_err(|_| Refusal::Invalid)?;
+            let mut tx = self.begin().await?;
+            let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLUMNS} FROM directory_cells c WHERE region=$1 AND state='open' AND database_bytes::numeric<maximum_database_bytes::numeric/2 AND write_rate::numeric<maximum_write_rate::numeric/2 AND observed_at>clock_timestamp()-$2::bigint*INTERVAL '1 second' ORDER BY database_bytes::numeric/maximum_database_bytes,id LIMIT 1"))
+                .bind(region).bind(self.config.stale_seconds).fetch_optional(&mut *tx).await?;
+            let cell = row.map(Row::cell).transpose()?;
+            tx.commit().await?;
+            Ok(cell)
+        }).await
+    }
+
+    pub async fn report_load(&self, peer: &str, bytes: i64, write_rate: i64) -> Result<()> {
+        self.run(async {
+            ensure!(bytes >= 0 && write_rate >= 0, Refusal::Invalid);
+            let mut tx = self.begin().await?;
+            let cell = super::owner(&mut tx, peer, true).await?;
+            sqlx::query("UPDATE directory_cells SET database_bytes=$2,write_rate=$3,observed_at=clock_timestamp() WHERE id=$1")
+                .bind(i32::from(cell.get())).bind(bytes).bind(write_rate).execute(&mut *tx).await?;
+            tx.commit().await?;
+            Ok(())
+        }).await
+    }
+}

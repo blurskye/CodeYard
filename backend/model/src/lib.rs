@@ -30,3 +30,5 @@ pub mod webhook_events;
 pub mod webhook_ids;
 pub mod workflow_glob;
 pub mod workflow_yaml;
+
+pub mod cells;

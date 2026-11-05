@@ -156,13 +156,15 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     configurable pools. Object-store log chunks, current-copy clone distribution and
     issue/PR replica reads and scoped namespace/email/attestation locks pass workspace,
     Clippy and WASM checks. Initial CI, database, cluster, PgBouncer and quorum acceptance
-    passes; one CI-engine library lock test failed, and the replica fixture failed startup.
+    passes. The CI-engine library lock rerun passes; durable log delivery exceeded an old
+    SQL-only test deadline, and the replica client check still fails after startup was fixed.
     The fixture fix, scoped object reservations, cache-policy row locks and removal of the
     experimental gate pass source checks; the combined acceptance rerun is running. Stage 1 finished-CI and load
     measurements are runtime pending, need a writable delegated cgroup. Other content read
     families remain on the primary; bulk retention remains open.
-    Stage 2 ID initialization and credential framing are written but unchecked; directory,
-    router, foreign authorization and stubs are not built. Stages 3 to 6 are not built.
+    Stage 2 ID initialization, credential framing and directory data queries are written
+    but unchecked. The directory transport, router, foreign authorization and stubs are
+    not built. Stages 3 to 6 are not built.
     Individual users may move automatically to
     their working region in stage 6. Organizations retain one write home and gain read
     presence across regions in stages 5 and 6; see the architecture acceptance lists.

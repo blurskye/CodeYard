@@ -5384,7 +5384,9 @@ async fn successful_core_is_tried_first_for_subsequent_log_batches() {
         .unwrap();
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
     tokio::time::timeout(
-        Duration::from_secs(1),
+        // The attempt counter below proves peer preference. Durable chunk I/O uses
+        // the configured log deadline rather than the old SQL-only one-second budget.
+        codeyard_db_core::ci_logs::io_timeout().unwrap(),
         queue.logs("slot", run.id, 0, &[line("after failover")]),
     )
     .await

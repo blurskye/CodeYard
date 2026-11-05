@@ -20,6 +20,7 @@ backend/
   db/
     core/                      DbPool, connection, migrations, models, native_operation!
     identity/ orgs/ repos/ actions/ security/ cluster/     queries by domain
+    directory/                 global PostgreSQL directory, independent of a cell
   repos-core/                  repository store, Git sessions and workflow readers
   repos-rpc/                   repository RPC handlers
   ci-engine/                   CI admission, queue, workers and pull-request refresh

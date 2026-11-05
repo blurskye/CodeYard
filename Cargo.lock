@@ -9824,6 +9824,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "codeyard-db-directory"
+version = "0.1.5"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "codeyard-db-core",
+ "codeyard-model",
+ "codeyard-support",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "codeyard-db-identity"
 version = "0.1.5"
 dependencies = [
