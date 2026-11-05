@@ -40,8 +40,8 @@ pub async fn team_locator(pool: &SqlitePool, id: i64) -> Result<Option<(i64, Str
         .fetch_optional(pool)
         .await?)
 }
-pub async fn node_repository(pool: &SqlitePool, kind: &str, id: i64) -> Result<Option<i64>> {
-    let Some(sql) = crate::graphql::node_repository_sql(kind) else {
+pub async fn node_owner(pool: &SqlitePool, kind: &str, id: i64) -> Result<Option<i64>> {
+    let Some(sql) = crate::graphql::node_owner_sql(kind) else {
         return Ok(None);
     };
     let mut query = sqlx::query_scalar(sql).bind(id);

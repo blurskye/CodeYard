@@ -176,10 +176,13 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     guards and native list filters, with SQLite/PostgreSQL HTTP and storage tests. Exact
     lookups retain stubs for references. Workspace a01f0a8780954bbbba9f9d985affa50e,
     Clippy 49b15ab6972445e1bcf022d3c31cb9f3 and WASM a192af85af5945458deaa483d93431f4
-    pass. The following unchecked batch adds native rooted-ID decoding,
+    pass. The next batch also passes source checks for native rooted-ID decoding,
     owner verification for reads and mutation inputs, common repository/team ID issuance in
     REST/webhooks/GraphQL, and forged-root HTTP tests. Object and job-token assertions
-    that pinned prefix-only output now assert rooted output.
+    that pinned prefix-only output now assert rooted output. Workspace
+    9b48ed0ede81492a983d778bf7f0685f, Clippy e7e52deddcfb4410ab8cdd9a026b3491
+    and WASM db4415d3a44047e9b8efe007bc3521d7 pass. Metadata-only owner validation
+    and separate hostile-device-code fixtures are the next unchecked source.
     The public proxy role, foreign authorization and stages 3 to 6 remain unimplemented.
     Automatic individual moves and org regional presence are documented owner decisions.
 
@@ -200,8 +203,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
   message.
 - **SQLite in a cluster?** Not supported. One machine on SQLite is one cell; it joins a
   multi-cell deployment through `codeyard db copy` to PostgreSQL.
-- **Is "ready" claimed early?** No. The hiding switch comes off only when part A passes,
-  items 1 to 6 are done, and A16 has numbers.
+- **Is "ready" claimed early?** No. The owner removed the hiding switch when authorizing
+  cells. Outstanding acceptance and unmeasured capacity stay listed above.
 
 ## Stop rules
 

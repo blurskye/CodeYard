@@ -14,7 +14,7 @@ pub struct RateLimit {
 
 /// Resolve only the owning repository; the API then applies live access and the family's scope
 /// before calling the same record readers as REST. Prefixes never supply SQL identifiers.
-pub(crate) fn node_repository_sql(kind: &str) -> Option<&'static str> {
+pub(crate) fn repository_owner_sql(kind: &str) -> Option<&'static str> {
     Some(match kind {
         "I" => "SELECT repo_id FROM issues WHERE id=$1",
         "PR" => "SELECT repo_id FROM pull_requests WHERE id=$1",
@@ -35,9 +35,35 @@ pub(crate) fn node_repository_sql(kind: &str) -> Option<&'static str> {
     })
 }
 
-native_operation!(crate::postgres::graphql::node_repository,
-    crate::sqlite::graphql::node_repository,
-    fn node_repository(pool: &DbPool, kind: &str, id: i64) -> Result<Option<i64>>);
+/// Only ownership is resolved here; the operation applies its live resource policy.
+/// Type names select fixed SQL, never an identifier supplied by a client.
+pub(crate) fn node_owner_sql(kind: &str) -> Option<&'static str> {
+    if let Some(sql) = repository_owner_sql(kind) {
+        return Some(sql);
+    }
+    Some(match kind {
+        "R" => "SELECT id FROM repositories WHERE id=$1",
+        "U" => "SELECT id FROM users WHERE id=$1",
+        "O" => "SELECT id FROM organizations WHERE id=$1",
+        "T" => "SELECT org_id FROM teams WHERE id=$1",
+        "IC" => "SELECT i.repo_id FROM issue_comments c JOIN issues i ON i.id=c.issue_id WHERE c.id=$1",
+        "PC" => "SELECT p.repo_id FROM pr_comments c JOIN pull_requests p ON p.id=c.pull_request_id WHERE c.id=$1",
+        "L" => "SELECT repo_id FROM labels WHERE id=$1",
+        "D" => "SELECT repo_id FROM discussions WHERE id=$1",
+        "DIC" => "SELECT repo_id FROM discussion_categories WHERE id=$1",
+        "LB" => "SELECT repo_id FROM issue_linked_branches WHERE id=$1",
+        "IT" => "SELECT COALESCE(owner_user_id,owner_org_id) FROM issue_attributes WHERE id=$1 AND kind='type'",
+        "RRS" => "SELECT COALESCE(owner_repo_id,owner_org_id) FROM repository_rulesets WHERE id=$1",
+        "PVT" => "SELECT owner_id FROM projects WHERE id=$1 AND deleted_at IS NULL",
+        "PVTF" | "PVTSSF" | "PVTIF" => "SELECT p.owner_id FROM project_fields f JOIN projects p ON p.id=f.project_id WHERE f.id=$1 AND p.deleted_at IS NULL",
+        "PVTI" | "DI" => "SELECT p.owner_id FROM project_items i JOIN projects p ON p.id=i.project_id WHERE i.id=$1 AND p.deleted_at IS NULL",
+        _ => return None,
+    })
+}
+
+native_operation!(crate::postgres::graphql::node_owner,
+    crate::sqlite::graphql::node_owner,
+    fn node_owner(pool: &DbPool, kind: &str, id: i64) -> Result<Option<i64>>);
 native_operation!(crate::postgres::graphql::linked_branch, crate::sqlite::graphql::linked_branch,
     fn linked_branch(pool: &DbPool, id: i64) -> Result<Option<crate::issues::management::LinkedBranch>>);
 native_operation!(crate::postgres::graphql::ruleset_owner, crate::sqlite::graphql::ruleset_owner,

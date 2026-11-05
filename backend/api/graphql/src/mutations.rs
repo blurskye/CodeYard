@@ -132,7 +132,7 @@ async fn validate_input_roots(args: &Arguments, request: &RequestContext) -> Res
                 if roots > 1000 {
                     return Err(Error::new("Mutation input exceeds the request limit"));
                 }
-                boxed(|| crate::node(id, request)).await?;
+                crate::validate_node_root(id, request).await?;
             }
             _ => {}
         }

@@ -599,7 +599,7 @@ async fn hovercard_subject(
                 "pull-requests"
             };
             let code = if kind == "issue" { "I" } else { "PR" };
-            let repo = codeyard_db_repos::graphql::node_repository(pool, code, id)
+            let repo = codeyard_db_repos::graphql::node_owner(pool, code, id)
                 .await
                 .map_err(Error::unavailable)?
                 .ok_or_else(Error::missing)?;

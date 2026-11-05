@@ -120,15 +120,6 @@ async fn contract(pg: bool) {
         entry.text().contains("maxlength=\"15\""),
         "native device form must accept every cell prefix"
     );
-    for code in ["1-ABCD-EFGH", "65536-ABCD-EFGH", "../ABCD-EFGH"] {
-        let invalid = user
-            .form_reply("/login/device", &[("user_code", code)])
-            .await;
-        assert_eq!(invalid.status, StatusCode::OK);
-        assert!(invalid
-            .text()
-            .contains("This code is invalid, expired or already used."));
-    }
     let code = device(&router, "repo read:org gist").await;
     assert_eq!(code["interval"], 5);
     assert_eq!(code["expires_in"], 900);
@@ -855,4 +846,33 @@ async fn sqlite_oauth_apps_contract() {
 #[tokio::test]
 async fn postgres_oauth_apps_contract() {
     contract(true).await;
+}
+
+// Invalid cell codes have their own request budget; the long OAuth contract also
+// exercises repeated successful approvals and must retain the production limiter.
+async fn invalid_cell_codes(pg: bool) {
+    let fixture = Database::new(pg).await;
+    fixture.complete_setup().await;
+    let actor = fixture.actor("device-alice").await;
+    let root = tempfile::tempdir().unwrap();
+    let router = fixture.router(root.path()).await;
+    let user = Client::login(&router, fixture.pool(), actor).await;
+    for code in ["1-ABCD-EFGH", "65536-ABCD-EFGH", "../ABCD-EFGH"] {
+        let invalid = user
+            .form_reply("/login/device", &[("user_code", code)])
+            .await;
+        assert_eq!(invalid.status, StatusCode::OK);
+        assert!(invalid
+            .text()
+            .contains("This code is invalid, expired or already used."));
+    }
+}
+
+#[tokio::test]
+async fn sqlite_device_codes_reject_foreign_and_malformed_cells() {
+    invalid_cell_codes(false).await;
+}
+#[tokio::test]
+async fn postgres_device_codes_reject_foreign_and_malformed_cells() {
+    invalid_cell_codes(true).await;
 }

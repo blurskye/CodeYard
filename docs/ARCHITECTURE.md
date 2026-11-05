@@ -756,7 +756,8 @@ transport are built and source-checked. Route metadata, shared GraphQL preflight
 session storage, catalogue selection and bounded HTTP/GraphQL forwarding pass workspace,
 Clippy and WASM. Their runtime tests are pending; upload cleanup and Git/ref routing also pass source checks. The public router
 role and foreign authorization are not built. Stub schema, metadata upserts and local
-credential/storage/listing guards are written but unchecked; stages 3 to 6 are not built.
+credential/storage/listing guards pass source checks, as do common rooted node IDs.
+Metadata-only root validation is the next unchecked batch; stages 3 to 6 are not built.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.
 

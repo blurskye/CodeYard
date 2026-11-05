@@ -150,7 +150,7 @@ pub(super) async fn contexts(
 
 pub(super) async fn node(kind: &str, id: i64, request: &RequestContext) -> Result<Value> {
     let pool = &request.state.pool;
-    let repo = codeyard_db_repos::graphql::node_repository(pool, kind, id)
+    let repo = codeyard_db_repos::graphql::node_owner(pool, kind, id)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;

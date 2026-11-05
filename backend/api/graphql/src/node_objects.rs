@@ -119,7 +119,7 @@ pub(super) async fn asset(
 
 pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> Result<Value> {
     let pool = &request.state.pool;
-    let repo_id = codeyard_db_repos::graphql::node_repository(pool, kind, id)
+    let repo_id = codeyard_db_repos::graphql::node_owner(pool, kind, id)
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
