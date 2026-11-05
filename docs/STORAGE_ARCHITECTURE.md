@@ -126,12 +126,24 @@ pack indexes, one pack with its commit graph, and each default branch's language
 Deleted repositories move to `REPOS_PATH/deleted/<time>-<directory>` and deleted uploads
 stay queued; both are removed after 7 days, so a backup up to a week old still finds them.
 
-A cluster is not covered by `codeyard backup` yet. Stop every node and back up the
-database, `REPOS_PATH` on every storage node, the bucket, each node's key (`NODE_KEY`,
-`NODE_KEY_FILE` or `node.key`) with its peer settings (`CLUSTER_NODES`,
-`CLUSTER_NODES_FILE`, `CLUSTER_PEERS`, `<state_dir>/cluster-peer.json`), and
-`SECRETS_MASTER_KEY`. Never copy only a live SQLite file: committed writes may still be in
-its WAL.
+Cluster backup fetches repositories and the storage-node object inventory from a stopped,
+enrolled coordinator while other cores serve. Restore installs each storage identity and
+keeps startup fenced until verification and the required copies finish. Follow
+[Cluster backup and restore](CLUSTER.md#backup-and-restore); keep node private keys,
+peer settings and `SECRETS_MASTER_KEY` in a separate secret backup. Never copy only a
+live SQLite file: committed writes may still be in its WAL.
+
+### Crash durability check
+
+Use a disposable single-node VM with a persistent virtual disk and no unrelated data.
+Push a new commit from outside the VM and record its object id there. Immediately after
+the push returns successfully, hard-reset the guest through its console with
+`echo b > /proc/sysrq-trigger`, without a preceding `sync` or orderly shutdown.
+After boot, clone the repository from outside the VM, check that the recorded commit is
+present, and run `git fsck --full` on the clone and the server's bare repository. Repeat
+with SQLite and PostgreSQL on the guest. Record the filesystem, virtual disk cache mode,
+database engine and commit id with the result. A process kill does not satisfy this
+check; it leaves the guest's disk cache intact.
 
 ## Moving data
 
