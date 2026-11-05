@@ -875,9 +875,13 @@ async fn new_repositories_use_all_voters(pool: &DbPool) {
             );
             assert_eq!(store.head_target().await.unwrap().as_deref(), Some(MAIN));
             if source.is_some() {
-                codeyard_cluster::replicas::promote::catch_up_voter(context, repo.id)
-                    .await
-                    .unwrap();
+                codeyard_cluster::replicas::promote::catch_up_voter(
+                    context,
+                    repo.id,
+                    &tokio_util::sync::CancellationToken::new(),
+                )
+                .await
+                .unwrap();
                 assert_eq!(store.refs().await.unwrap().get(MAIN), Some(&stores.old));
             } else {
                 assert!(store.refs().await.unwrap().is_empty());
@@ -1100,9 +1104,14 @@ async fn three_voters_keep_a_majority_and_recover_a_missed_write(pool: &DbPool) 
 
     // The missed voter fetches acknowledged objects from a current copy. Its own
     // outbound connection works while its inbound listener is stopped.
-    codeyard_cluster::replicas::promote::catch_up_voter(&stores.contexts[2], stores.fixture.repo)
-        .await
-        .unwrap();
+    codeyard_cluster::replicas::pass(
+        &stores.contexts[2],
+        &mut codeyard_cluster::replicas::Retry::default(),
+        &mut codeyard_cluster::replicas::promote::Silent::default(),
+        &mut codeyard_cluster::replicas::Copying::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(stores.refs().await[2][MAIN], stores.new);
     let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, stores.fixture.repo)
         .await
@@ -1180,9 +1189,13 @@ async fn three_voter_recovery_refills_a_stale_survivor_while_public_reads_stay_f
             .is_err(),
         "fenced terms must refuse client reads"
     );
-    codeyard_cluster::replicas::promote::catch_up_voter(&stores.contexts[2], repo)
-        .await
-        .unwrap();
+    codeyard_cluster::replicas::promote::catch_up_voter(
+        &stores.contexts[2],
+        repo,
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     assert!(codeyard_cluster::replicas::promote::recover_family(
         pool,
         repo,

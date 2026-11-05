@@ -44,7 +44,15 @@ pub async fn snapshot(
     mirror: &Path,
     want: &[String],
 ) -> Result<()> {
-    transfer::snapshot(context, primary, repository, mirror, want).await
+    transfer::snapshot(
+        context,
+        primary,
+        repository,
+        mirror,
+        want,
+        &CancellationToken::new(),
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -384,6 +392,19 @@ async fn place_and_start(
     let node = context.node_id;
     let mut held =
         codeyard_db_cluster::cluster::list_held_replicas(context.database()?, node).await?;
+    let voters = if codeyard_db_cluster::cluster::writes::write_settings(context.database()?)
+        .await?
+        .write_quorum
+        .is_some()
+    {
+        codeyard_db_cluster::cluster::writes::held_voters(context.database()?, node).await?
+    } else {
+        Vec::new()
+    };
+    copying.voting = voters.iter().map(|row| row.repository_id).collect();
+    held.retain(|row| !copying.voting.contains(&row.repository_id));
+    held.extend(voters);
+    held.sort_by_key(|row| row.repository_id);
     copying.cancel_obsolete(&held);
     let live: HashSet<_> = held.iter().map(|row| row.repository_id).collect();
     retry
@@ -559,7 +580,9 @@ pub struct Copying {
     /// The directory each running copy writes, which nothing else may move or remove.
     directories: HashMap<tokio::task::Id, Uuid>,
     /// Source identity and cancellation stay owned until the task is joined.
-    transfers: HashMap<tokio::task::Id, (i64, Option<i64>, CancellationToken)>,
+    transfers: HashMap<tokio::task::Id, (i64, Option<i64>, bool, CancellationToken)>,
+    /// Voting copies share the same two transfer slots and shutdown owner.
+    voting: HashSet<i64>,
     /// The repository whose copy was started last. The next scan starts after it, so a
     /// repository that is behind at every pass cannot take both slots every time. Kept in
     /// memory only.
@@ -570,16 +593,17 @@ pub struct Copying {
 
 impl Copying {
     fn cancel_all(&self) {
-        for (_, _, stop) in self.transfers.values() {
+        for (_, _, _, stop) in self.transfers.values() {
             stop.cancel();
         }
     }
 
     fn cancel_obsolete(&self, held: &[HeldReplica]) {
-        for (repository, primary, stop) in self.transfers.values() {
-            if !held
-                .iter()
-                .any(|row| row.repository_id == *repository && row.primary_node_id == *primary)
+        for (repository, primary, voting, stop) in self.transfers.values() {
+            if self.voting.contains(repository) != *voting
+                || !held
+                    .iter()
+                    .any(|row| row.repository_id == *repository && row.primary_node_id == *primary)
             {
                 stop.cancel();
             }
@@ -616,7 +640,7 @@ impl Copying {
                 let cancelled = self
                     .transfers
                     .remove(&id)
-                    .is_some_and(|(_, _, stop)| stop.is_cancelled());
+                    .is_some_and(|(_, _, _, stop)| stop.is_cancelled());
                 self.directories.remove(&id);
                 if cancelled {
                     retry.succeeded(repository_id);
@@ -656,7 +680,8 @@ impl Copying {
             .iter()
             .chain(&held[..split])
             .filter(|row| {
-                row.primary_node_id.is_some_and(|primary| primary != node)
+                (self.voting.contains(&row.repository_id)
+                    || row.primary_node_id.is_some_and(|primary| primary != node))
                     && row.applied_version < row.write_version
                     && codeyard_repos_core::wire::repository_uuid(&row.disk_path)
                         .is_ok_and(|uuid| !self.is_running(uuid))
@@ -686,12 +711,16 @@ impl Copying {
             let task_stop = stop.clone();
             let repository = row.repository_id;
             let primary = row.primary_node_id;
+            let voting = self.voting.contains(&repository);
             let handle = self.running.spawn(async move {
-                (repository, copy_one(&context, &row, uuid, &task_stop).await)
+                (
+                    repository,
+                    copy_one(&context, &row, uuid, &task_stop, voting).await,
+                )
             });
             self.directories.insert(handle.id(), uuid);
             self.transfers
-                .insert(handle.id(), (repository, primary, stop));
+                .insert(handle.id(), (repository, primary, voting, stop));
         }
     }
 }
@@ -710,8 +739,31 @@ async fn copy_one(
     row: &HeldReplica,
     uuid: Uuid,
     stop: &CancellationToken,
+    voting: bool,
 ) -> Result<()> {
     let pool = context.database()?;
+    if voting {
+        if stop.is_cancelled() {
+            return Ok(());
+        }
+        let view =
+            codeyard_db_cluster::cluster::writes::recovery_view(pool, row.repository_id).await?;
+        if !view.serving {
+            // Reconstruction may outlast a heartbeat. Try retained local objects in
+            // this owned slot before a network refill.
+            let _ = codeyard_repos_core::repositories::store::RepoStore::recover_term(
+                pool,
+                row.repository_id,
+                context.node_id,
+                &context.repos_path,
+            )
+            .await;
+        }
+        if stop.is_cancelled() {
+            return Ok(());
+        }
+        return promote::catch_up_voter(context, row.repository_id, stop).await;
+    }
     let primary = row
         .primary_node_id
         .context("the repository has no primary")?;

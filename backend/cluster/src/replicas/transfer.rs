@@ -527,15 +527,14 @@ pub(super) async fn snapshot(
     repository: Uuid,
     mirror: &Path,
     want: &[String],
+    stop: &CancellationToken,
 ) -> Result<()> {
-    let stop = CancellationToken::new();
     let have = if mirror.join("HEAD").is_file() {
         tips(context, repository, mirror).await?
     } else {
         Vec::new()
     };
-    let (pack, listing) =
-        download(context, primary, repository, mirror, &have, want, &stop).await?;
+    let (pack, listing) = download(context, primary, repository, mirror, &have, want, stop).await?;
     let store = RepoStore::from_disk_path(mirror.to_str().context("backup path is not text")?);
     if !mirror.join("HEAD").is_file() {
         store.initialize(None, "main").await?;

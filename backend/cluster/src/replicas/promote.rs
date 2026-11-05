@@ -320,6 +320,7 @@ pub async fn promote_to_voters(
 pub async fn catch_up_voter(
     context: &codeyard_repos_core::context::NodeContext,
     repository: i64,
+    stop: &tokio_util::sync::CancellationToken,
 ) -> Result<()> {
     use codeyard_db_cluster::cluster::writes as journal;
     use codeyard_repos_core::repositories::store::RepoStore;
@@ -379,7 +380,8 @@ pub async fn catch_up_voter(
                     && voter.applied_version == view.committed_version
                     && is_reporting_storage(&nodes, voter.node_id)
             }) {
-                if super::transfer::snapshot(context, source.node_id, uuid, &path, &[])
+                ensure!(!stop.is_cancelled(), "voter copy cancelled");
+                if super::transfer::snapshot(context, source.node_id, uuid, &path, &[], stop)
                     .await
                     .is_err()
                 {

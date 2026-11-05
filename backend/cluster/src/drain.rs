@@ -36,9 +36,6 @@ pub async fn step(context: &NodeContext) -> Result<()> {
         {
             tracing::debug!(repository, %error, "canonical recovery is pending");
         }
-        if let Err(error) = crate::replicas::promote::catch_up_voter(context, repository).await {
-            tracing::debug!(repository, %error, "voter catch-up is pending");
-        }
     }
     let node = codeyard_db_cluster::cluster::get_node_by_id(pool, context.node_id)
         .await?
