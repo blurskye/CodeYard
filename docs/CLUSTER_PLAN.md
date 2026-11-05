@@ -34,7 +34,7 @@ upgrades and measured load limits.
 Current acceptance status:
 
 - 1: hiding-switch CLI refusal checks pass.
-- 2: storage-node copies, capacity, loss, retry, drain and private access pass HTTP checks on both engines; native startup without S3 passes. A single-node runner-transport backend correction passes source checks; HTTP rerun pending.
+- 2: storage-node copies, capacity, loss, retry, drain and private access pass HTTP checks on both engines; native startup without S3 passes. Single-node uploads remain readable after runner transport starts and after restore.
 - 3: quorum initialization, copy, default selection, voter replacement, primary loss and full-disk retry pass.
 - 4: drain REST, authority, promotion and native/hydrated browser checks pass. Finished-CI drain acceptance needs a delegated cgroup.
 - 5: quorum, drain, bounded scraping and acquisition waiter metrics pass HTTP acceptance.
