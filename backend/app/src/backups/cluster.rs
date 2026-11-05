@@ -312,7 +312,10 @@ pub async fn restore_node(pool: &DbPool, places: &Places<'_>, dir: &Path) -> Res
                 RepoStore::recover_term(pool, repository.id, node.id, places.repos_path).await?;
             }
         }
-        installed.push((repository.id, primary, repository.write_version));
+        let version = codeyard_db_cluster::cluster::get_write_version(pool, repository.id)
+            .await?
+            .context("restored repository disappeared")?;
+        installed.push((repository.id, primary, version));
     }
     let objects = codeyard_db_cluster::backups::node_objects(pool, node.id).await?;
     let local =

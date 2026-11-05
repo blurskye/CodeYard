@@ -141,7 +141,7 @@ async fn sqlite_backup_and_restore_cli_keep_repository_and_account_data() {
             .await
             .unwrap()
             .unwrap();
-    assert_eq!(row.owner_id, user);
+    assert_eq!(row.owner_id(), user);
     assert_eq!(
         git2::Repository::open_bare(row.disk_path)
             .unwrap()
