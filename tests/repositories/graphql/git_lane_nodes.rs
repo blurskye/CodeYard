@@ -152,7 +152,10 @@ pub(super) async fn exercise(
     .await;
     assert_eq!(status, StatusCode::OK, "{teams}");
     let id = teams[0]["node_id"].clone();
-    assert_eq!(id, codeyard_model::node_id::encode("T", team.id));
+    assert_eq!(
+        id,
+        codeyard_model::node_id::scoped("T", org, team.id).unwrap()
+    );
     let view=query(router,alice,"query($id:ID!){node(id:$id){id __typename ...on Team{name slug privacy organization{login}}} organization(login:\"graphql-org\"){team(slug:\"graphql-team\"){id}}}",json!({"id":id})).await;
     assert_eq!(view["node"]["__typename"], "Team");
     assert_eq!(view["node"]["slug"], "graphql-team");
