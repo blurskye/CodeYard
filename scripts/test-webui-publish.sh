@@ -3,7 +3,16 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 fixture=$(mktemp -d)
-trap 'rm -rf -- "$fixture"' EXIT
+cleanup() {
+    local status=$?
+    trap - EXIT
+    if ((status != 0)) && [[ -f $fixture/build.log ]]; then
+        tail -80 "$fixture/build.log" >&2
+    fi
+    rm -rf -- "$fixture"
+    exit "$status"
+}
+trap cleanup EXIT
 mkdir -p "$fixture/scripts" "$fixture/tools" "$fixture/webui/src/assets"
 cp "$ROOT/scripts/build-webui.sh" "$ROOT/scripts/check-web-dependencies.py" "$fixture/scripts/"
 printf 'fixture css\n' >"$fixture/webui/src/assets/tailwind.css"
