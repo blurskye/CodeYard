@@ -127,6 +127,8 @@ async fn web(
     configuration: &str,
     key: Option<&codeyard_support::node_identity::NodeKey>,
 ) -> (Server, String) {
+    crate::support::fake_webui_bundle::install();
+    let bundle = std::env::var_os("WEBUI_DIST").expect("owned test bundle");
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(3))
         .build()
@@ -143,6 +145,7 @@ async fn web(
                 .env_clear()
                 .env("PATH", std::env::var_os("PATH").unwrap())
                 .env("DATABASE_URL", &url)
+                .env("WEBUI_DIST", &bundle)
                 .env("GITSERV_STATE_DIR", root.join(format!("{name}-state")))
                 .env("REPOS_PATH", root.join(format!("{name}-repos")))
                 .env("HTTP_ADDR", addresses[0].to_string())

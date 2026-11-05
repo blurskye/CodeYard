@@ -10,9 +10,10 @@ Items 1–9 have source implementations and acceptance tests. The earlier source
 backup/restore and organization OIDC pass workspace, Clippy and WASM checks. Acquisition
 waiter tracking passes source checks and awaits runtime acceptance. Majority defaults
 and the final primary-loss e2e step pass source checks. Private organization OIDC
-enrollment through the operator CLI is written and awaits checks. One runtime job passed 1,013 library
-tests and Helm render checks; its single CI fixture failure is corrected. The cluster,
-storage, identity, backup/restore and end-to-end runs are in progress. Rolling upgrades
+enrollment through the operator CLI passes source checks. One runtime job passed 1,013 library
+tests and Helm render checks; its single CI fixture failure is corrected. The next runtime job found a quorum-copy lock deadlock and was cancelled. Its fix
+and fixture corrections await checks; cluster, storage, identity, backup/restore and
+end-to-end acceptance remain pending. Rolling upgrades
 and measured load limits are not complete.
 Cluster mode stays hidden behind
 `CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.
@@ -45,7 +46,7 @@ Current acceptance status (runtime checks are still pending):
 - 9: pool configuration source checks and Helm render checks pass; PostgreSQL failover, PgBouncer and load runs pending.
 - 10: previous-release target needs confirmation before compatibility work.
 - 11: primary snapshots, object copies, fenced import and per-node restore pass source checks; runtime pending.
-- 12: cross-node REST account/IP and audit acceptance written; organization OIDC login and commit-time membership checks pass source checks; private enrollment CLI awaits checks, runtime pending.
+- 12: cross-node REST account/IP and audit acceptance written; organization OIDC login and commit-time membership checks pass source checks; private enrollment CLI passes source checks, runtime pending.
 
 ## A. Checks on what exists
 

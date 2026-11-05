@@ -422,6 +422,7 @@ impl LocalStore {
         source: &LocalStore,
         staged: &LocalStore,
         refs: &std::collections::HashMap<String, String>,
+        publication: &git::locks::PublicationGuard,
     ) -> Result<(), RepoError> {
         use tokio::io::AsyncWriteExt;
         // Only objects move before authorization. No copied reference is visible yet.
@@ -462,9 +463,6 @@ impl LocalStore {
             .iter()
             .map(|(name, target)| oid_change(name, None, Some(target)))
             .collect();
-        let publication = git::locks::publication(self.path())
-            .await
-            .map_err(RepoError::from)?;
         publication
             .scope(self.publish_quorum_refs(pool, repository, &changes, async {
                 super::live_read(

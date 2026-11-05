@@ -247,6 +247,14 @@ async fn cluster_backup_cli_restores_into_an_empty_cluster_and_resumes_an_interr
         ci_replicas: Default::default(),
     };
     for node in &stores.contexts {
+        let codeyard_db_core::DbPool::Postgres(raw) = &source else {
+            unreachable!()
+        };
+        sqlx::query("UPDATE nodes SET disk_free=900000 WHERE id=$1")
+            .bind(node.node_id)
+            .execute(raw)
+            .await
+            .unwrap();
         codeyard_db_cluster::drain::record_capacity(&source, &node.key.public_hex(), 1_000_000)
             .await
             .unwrap();

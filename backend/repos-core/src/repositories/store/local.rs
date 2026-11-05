@@ -1375,7 +1375,23 @@ impl LocalStore {
                 "Source is not a template",
             ));
         }
-        let _publication = git::locks::lock(self.path()).await;
+        // Quorum publication owns its process mutex and interprocess lease together.
+        // Retaining the legacy mutex while acquiring that lease would deadlock copying.
+        let quorum = self.quorum_context(pool, repo_id).await?.is_some();
+        let publication = if quorum {
+            Some(
+                git::locks::publication(self.path())
+                    .await
+                    .map_err(RepoError::from)?,
+            )
+        } else {
+            None
+        };
+        let _legacy_publication = if quorum {
+            None
+        } else {
+            Some(git::locks::lock(self.path()).await)
+        };
         // A pending gist has no ready gist row yet; its explicit owner is its only writer.
         // Ordinary copies recheck destination authority after potentially slow copying.
         let destination = codeyard_identity::repository_access::current_repository(pool, repo_id)
@@ -1455,7 +1471,7 @@ impl LocalStore {
         codeyard_identity::repository_access::credential_user(pool, &authority, true)
             .await
             .map_err(RepoError::from)?;
-        if self.quorum_context(pool, repo_id).await?.is_some() {
+        if let Some(publication) = publication {
             let staged = Self::new(
                 temporary
                     .path()
@@ -1471,6 +1487,7 @@ impl LocalStore {
                 source,
                 &staged,
                 &copied,
+                &publication,
             )
             .await?;
             return Ok(());

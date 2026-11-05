@@ -825,16 +825,20 @@ async fn new_repositories_use_both_voters(pool: &DbPool) {
         .unwrap()
         .unwrap();
     for (name, source) in [("new-empty", None), ("new-copy", Some(&source))] {
-        let repo = lifecycle::provision(
-            (pool, Some(&stores.contexts[0])),
-            &stores.contexts[0].repos_path,
-            RepositoryCreationOwner::personal(f.owner),
-            name,
-            None,
-            false,
-            source,
+        let repo = timeout(
+            WAIT,
+            lifecycle::provision(
+                (pool, Some(&stores.contexts[0])),
+                &stores.contexts[0].repos_path,
+                RepositoryCreationOwner::personal(f.owner),
+                name,
+                None,
+                false,
+                source,
+            ),
         )
         .await
+        .expect("repository creation deadline")
         .unwrap();
         let view = codeyard_db_cluster::cluster::writes::recovery_view(pool, repo.id)
             .await
@@ -886,16 +890,20 @@ async fn new_repositories_use_both_voters(pool: &DbPool) {
     }
     stores.listeners[1].stop().await;
     for (name, source) in [("failed-empty", None), ("failed-copy", Some(&source))] {
-        assert!(lifecycle::provision(
-            (pool, Some(&stores.contexts[0])),
-            &stores.contexts[0].repos_path,
-            RepositoryCreationOwner::personal(f.owner),
-            name,
-            None,
-            false,
-            source,
+        assert!(timeout(
+            WAIT,
+            lifecycle::provision(
+                (pool, Some(&stores.contexts[0])),
+                &stores.contexts[0].repos_path,
+                RepositoryCreationOwner::personal(f.owner),
+                name,
+                None,
+                false,
+                source,
+            )
         )
         .await
+        .expect("unavailable voter creation deadline")
         .is_err());
         assert!(codeyard_db_repos::repositories::records::get_repository(
             pool,
