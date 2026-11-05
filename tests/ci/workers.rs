@@ -4536,6 +4536,243 @@ async fn ci_fixture() -> CiFixture {
 }
 
 #[tokio::test]
+async fn a_hostile_runner_cannot_select_another_runs_credentials_repository_or_logs() {
+    let fixture = ci_fixture().await;
+    let remote = fixture.remote();
+    let queued = fixture.queue_run().await;
+    let claimed = remote
+        .claim(
+            "victim",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(claimed.run.id, queued.id);
+    assert!(!claimed.runtime.token.is_empty());
+    assert!(!claimed.github_tokens.act.is_empty());
+    remote
+        .logs("victim", queued.id, 0, &[line("private victim log")])
+        .await
+        .unwrap();
+
+    let key = codeyard_support::node_identity::NodeKey::generate();
+    codeyard_db_cluster::cluster::upsert_declared_nodes(
+        fixture.pool(),
+        &[codeyard_db_cluster::cluster::DeclaredMember {
+            public_key: key.public_hex(),
+            name: "hostile-runner".into(),
+            roles: vec!["runner".into()],
+        }],
+    )
+    .await
+    .unwrap();
+    let attacker = client(&key).await;
+    let foreign = RunQueue::Remote {
+        preferred: Default::default(),
+        context: attacker.clone(),
+        peers: vec![fixture.peer.clone()],
+    };
+    let connection = attacker
+        .iroh
+        .endpoint()
+        .await
+        .unwrap()
+        .connect(
+            fixture.peer.endpoint_addr().unwrap(),
+            codeyard_cluster_core::transport::ALPN_EVENTS,
+        )
+        .await
+        .unwrap();
+    // A caller cannot choose a run when claiming work, or request its credentials or logs.
+    // Unknown operations are refused by the real frame parser, before any queue effect.
+    for operation in [
+        json!({"Token": {"id": queued.id}}),
+        json!({"GetLogs": {"id": queued.id}}),
+        json!({"Storage": {"run_id": queued.run_id}}),
+    ] {
+        let reply = stream_request(
+            &connection,
+            json!({"worker":"attacker", "operation":operation}),
+        )
+        .await;
+        assert!(reply["result"].get("Err").is_some(), "{reply}");
+        let encoded = reply.to_string();
+        assert!(!encoded.contains(&claimed.runtime.token));
+        assert!(!encoded.contains(&claimed.github_tokens.act));
+        assert!(!encoded.contains("private victim log"));
+    }
+    let reply = stream_request(
+        &connection,
+        json!({"worker":"attacker", "operation":{"Claim": {
+            "mode":"local", "platforms":CiConfig::default().platform_labels(),
+            "id":queued.id, "run_id":queued.run_id,
+        }}}),
+    )
+    .await;
+    assert_eq!(
+        reply["result"],
+        json!({"Ok": null}),
+        "a run owned by another node is not claimable: {reply}"
+    );
+    assert!(foreign
+        .logs("attacker", queued.id, 1, &[line("forged")])
+        .await
+        .is_err());
+    assert_eq!(
+        foreign.heartbeat("attacker", queued.id).await.unwrap(),
+        None
+    );
+    assert!(!foreign
+        .finish("attacker", queued.id, "success", None)
+        .await
+        .unwrap());
+
+    let rpc = attacker
+        .iroh
+        .endpoint()
+        .await
+        .unwrap()
+        .connect(
+            fixture.peer.endpoint_addr().unwrap(),
+            codeyard_cluster_core::transport::ALPN_RPC,
+        )
+        .await
+        .unwrap();
+    repository_refused_with_claim(
+        &rpc,
+        claimed.repository,
+        codeyard_repos_core::wire::Operation::BlobById {
+            id: fixture.blob.clone(),
+        },
+        Some(codeyard_repos_core::wire::CiRunAccess {
+            id: queued.id,
+            worker: claimed.run.worker.clone().unwrap(),
+        }),
+        "running CI claim",
+    )
+    .await;
+    assert_eq!(
+        foreign
+            .store(&claimed)
+            .unwrap()
+            .blob_by_id(&fixture.blob)
+            .await
+            .unwrap_err()
+            .kind,
+        ErrorKind::Invalid
+    );
+
+    // The attacker's legitimate claim works, without reviving access to the victim's run.
+    let other_uuid = Uuid::new_v4();
+    let other_path = fixture.root.path().join(format!("{other_uuid}.git"));
+    let original = RepoStore::from_disk_path(
+        fixture
+            .root
+            .path()
+            .join(format!("{}.git", claimed.repository))
+            .to_str()
+            .unwrap(),
+    );
+    RepoStore::from_disk_path(other_path.to_str().unwrap())
+        .initialize(Some(&original), "main")
+        .await
+        .unwrap();
+    let other_repo = codeyard_db_repos::repositories::records::create_repository(
+        fixture.pool(),
+        fixture.owner,
+        "other-project",
+        None,
+        true,
+        other_path.to_str().unwrap(),
+    )
+    .await
+    .unwrap();
+    let own = enqueue(
+        fixture.pool(),
+        other_repo.id,
+        fixture.owner,
+        &fixture.sha,
+        &fixture.blob,
+    )
+    .await;
+    let own_claim = foreign
+        .claim(
+            "attacker",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(own_claim.run.id, own.id);
+    assert_eq!(own_claim.repository, other_uuid);
+    assert_ne!(own_claim.runtime.token, claimed.runtime.token);
+    assert_ne!(own_claim.github_tokens.act, claimed.github_tokens.act);
+    assert!(!foreign
+        .store(&own_claim)
+        .unwrap()
+        .blob_by_id(&fixture.blob)
+        .await
+        .unwrap()
+        .is_empty());
+    assert_eq!(
+        foreign
+            .store(&claimed)
+            .unwrap()
+            .blob_by_id(&fixture.blob)
+            .await
+            .unwrap_err()
+            .kind,
+        ErrorKind::Invalid
+    );
+    let victim = codeyard_db_actions::ci::get_ci_run_by_run_id(fixture.pool(), queued.run_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(victim.status, "running");
+    assert_eq!(victim.worker, claimed.run.worker);
+    let logs = codeyard_db_actions::ci::list_ci_logs(fixture.pool(), queued.id, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        logs.iter()
+            .map(|line| line.line.as_str())
+            .collect::<Vec<_>>(),
+        ["private victim log"]
+    );
+
+    codeyard_cluster_core::pairing::revoke(
+        fixture.pool(),
+        codeyard_db_cluster::cluster::Authority::Operator,
+        "hostile-runner",
+    )
+    .await
+    .unwrap();
+    let reply = stream_request(
+        &connection,
+        json!({"worker":"attacker", "operation":{"Heartbeat":{"id":own.id}}}),
+    )
+    .await;
+    assert!(
+        reply["result"].get("Err").is_some(),
+        "revoked runner on a reused connection: {reply}"
+    );
+    assert!(!remote
+        .store(&claimed)
+        .unwrap()
+        .blob_by_id(&fixture.blob)
+        .await
+        .unwrap()
+        .is_empty());
+    connection.close(0u32.into(), b"test complete");
+    rpc.close(0u32.into(), b"test complete");
+    attacker.iroh.close().await;
+    fixture.close().await;
+}
+
+#[tokio::test]
 async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
     let mut fixture = ci_fixture().await;
     let pool = fixture.pool().clone();
