@@ -2820,6 +2820,10 @@ t_cluster_drain_worker() {
     assert_ci_worker "$id"
 }
 
+t_cluster_browser() {
+    "$GITHUB_PYTHON" -I "$ROOT/scripts/test-cluster-browser.py" "$BASE" "$RUN/jar-alice.json" ci1
+}
+
 t_cluster_shutdown() { # inline: attempt every stop even when one fails
     local node failed=0
     for node in ci1 store1 store2 web1; do
@@ -3043,6 +3047,7 @@ run_cluster_round() {
     step -f 'revocation: live ci1 cannot claim two new runs; both stay queued' t_cluster_revoke_worker
     step 'revocation: approving ci1 runs the queued work' t_cluster_approve_worker
     step 'drain: a drained runner takes no new jobs and cancel resumes claims' t_cluster_drain_worker
+    step 'cluster pages: drain and scaling save with and without hydration' t_cluster_browser
     step -f -i 'quorum: HTTP and SSH acknowledgements survive immediate primary SIGKILL' t_cluster_quorum_primary_loss
     # Shutdown is still checked after a required step fails.
     ROUND_BLOCKED=0

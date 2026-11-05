@@ -38,7 +38,7 @@ Current acceptance status (runtime checks are still pending):
 - 1: hiding switch built; source checks pass.
 - 2: two-copy storage-node backend, shared drain reservations and HTTP acceptance written; source checks pass, runtime pending.
 - 3: quorum initialization, copy and voter replacement pass source checks; majority defaults and explicit legacy selection pass source checks.
-- 4: drain source checks pass; runtime acceptance pending.
+- 4: drain source checks pass; native and hydrated browser acceptance written, runtime pending.
 - 5: quorum, drain and acquisition waiter metrics pass source checks; runtime acceptance pending.
 - 6: bounded invitations and environment-only provisioning source checks pass; runtime pending.
 - 7: lease leader, policy settings, pause and dry run source checks pass; runtime pending.
