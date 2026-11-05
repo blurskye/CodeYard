@@ -1525,6 +1525,33 @@ pub fn list_mirror_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
     )
 }
 
+/// Literal names for replacing refs, including dangling symbolic refs.
+pub fn list_mirror_ref_names(repo_path: &Path) -> Result<Vec<String>> {
+    let repo = Repository::open_bare(repo_path)?;
+    let mut names = Vec::new();
+    let mut bytes = 0usize;
+    for reference in repo.references()? {
+        let reference = reference?;
+        let name = reference.name().context("invalid reference name")?;
+        if !name.starts_with("refs/") {
+            continue;
+        }
+        ensure!(
+            git2::Reference::is_valid_name(name),
+            "invalid reference name"
+        );
+        if names.len() >= MAX_MIRROR_REFS || name.len() > MAX_REF_NAME_BYTES {
+            return Err(ObjectTooLarge.into());
+        }
+        bytes = bytes
+            .checked_add(ref_listing_bytes(name))
+            .filter(|bytes| *bytes <= MAX_MIRROR_REF_BYTES)
+            .ok_or(ObjectTooLarge)?;
+        names.push(name.to_owned());
+    }
+    Ok(names)
+}
+
 fn collect_refs(
     repo_path: &Path,
     wanted: impl Fn(&str) -> bool,

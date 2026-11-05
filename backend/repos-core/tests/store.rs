@@ -3581,3 +3581,36 @@ async fn a_repository_past_the_ref_limit_stays_readable_and_repairable() {
         .unwrap();
     assert_eq!(f.store.refs().await.unwrap().len(), total - 1);
 }
+
+#[tokio::test]
+async fn replacing_refs_removes_dangling_symbolic_aliases_without_following_them() {
+    for canonical in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let repo = git2::Repository::init_bare(root.path()).unwrap();
+        repo.reference_symbolic(
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+            true,
+            "clone alias",
+        )
+        .unwrap();
+        let store = RepoStore::from_disk_path(root.path().to_str().unwrap());
+        if canonical {
+            store
+                .restore_refs(&[codeyard_db_core::models::RefValue {
+                    name: "HEAD".into(),
+                    kind: "symbolic".into(),
+                    target: "refs/heads/main".into(),
+                }])
+                .await
+                .unwrap();
+        } else {
+            store
+                .set_refs(&std::collections::HashMap::new())
+                .await
+                .unwrap();
+        }
+        assert!(repo.find_reference("refs/remotes/origin/HEAD").is_err());
+        assert!(git::mirror::check(root.path()).await.unwrap().is_none());
+    }
+}

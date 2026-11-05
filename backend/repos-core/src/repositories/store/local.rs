@@ -768,9 +768,9 @@ impl LocalStore {
         refs: &[codeyard_db_core::models::RefValue],
     ) -> anyhow::Result<()> {
         codeyard_db_cluster::cluster::writes::validate_values(refs)?;
-        let current = self.mirror_refs().await?;
+        let current = self.blocking(git::list_mirror_ref_names).await?;
         let mut remove = String::from("start\n");
-        for name in current.keys() {
+        for name in current {
             remove.push_str(&format!("delete {name}\n"));
         }
         remove.push_str("prepare\ncommit\n");
@@ -4104,6 +4104,16 @@ impl LocalStore {
     /// The objects they name must already be stored.
     pub(super) async fn set_refs(&self, refs: &HashMap<String, String>) -> Result<(), RepoError> {
         let mut current = self.mirror_refs().await?;
+        // Symbolic aliases are not object-id listings. Remove them literally so an
+        // obsolete alias cannot dangle, or delete its target through update-ref.
+        for name in self.blocking(git::list_mirror_ref_names).await? {
+            if !current.contains_key(&name) {
+                let (status, _) = self.git(&["update-ref", "--no-deref", "-d", &name]).await?;
+                if !status.success() {
+                    return Err(unavailable("Git could not remove a symbolic replica ref"));
+                }
+            }
+        }
         let names: std::collections::BTreeSet<&str> = refs.keys().map(String::as_str).collect();
         let blockers: Vec<String> = current
             .keys()
