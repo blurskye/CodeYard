@@ -24,16 +24,37 @@ pub async fn copies(pool: &PgPool, key: &str) -> Result<Vec<(i64, i32)>> {
 
 pub async fn reserve(pool: &PgPool, id: i64, key: &str, object: &Object) -> Result<Vec<i64>> {
     let mut tx = pool.begin().await?;
-    sqlx::query("SELECT pg_advisory_xact_lock(37004)")
-        .execute(&mut *tx)
-        .await?;
-    owner(&mut tx, id, key).await?;
+    // Pick candidates without a cell-wide lock, then reserve only their disks. Git
+    // placement and drain retain the same node rows when reserving capacity.
     let nodes: Vec<ClusterNode> = sqlx::query_as(
-        "SELECT *,clock_timestamp() AS observed_at FROM nodes ORDER BY id LIMIT 1001 FOR UPDATE",
+        "SELECT *,clock_timestamp() AS observed_at FROM nodes ORDER BY id LIMIT 1001",
     )
     .fetch_all(&mut *tx)
     .await?;
     ensure!(nodes.len() <= 1000, "object node limit exceeded");
+    let copies: Vec<(i64,i32)> = sqlx::query_as("SELECT node_id,ready FROM storage_object_copies WHERE object_key=$1 ORDER BY node_id LIMIT 1001")
+        .bind(&object.object_key).fetch_all(&mut *tx).await?;
+    ensure!(copies.len() <= 1000, "object copy limit exceeded");
+    let pending = pending(&mut tx).await?;
+    let candidates = crate::objects::targets(&nodes, &copies, &pending, object.bytes)?;
+    // Include the caller before retaining its authority, preserving sorted row order
+    // even when a node serves both web and storage roles.
+    let mut retained = candidates.clone();
+    retained.push(id);
+    retained.sort_unstable();
+    retained.dedup();
+    for node in retained {
+        let lock = if candidates.contains(&node) {
+            "FOR UPDATE"
+        } else {
+            "FOR SHARE"
+        };
+        sqlx::query(&format!("SELECT id FROM nodes WHERE id=$1 {lock}"))
+            .bind(node)
+            .fetch_one(&mut *tx)
+            .await?;
+    }
+    owner(&mut tx, id, key).await?;
     sqlx::query("INSERT INTO storage_objects(object_key,digest,bytes,content_type) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING")
         .bind(&object.object_key).bind(&object.digest).bind(object.bytes).bind(&object.content_type).execute(&mut *tx).await?;
     let stored: Object = sqlx::query_as("SELECT object_key,digest,bytes,content_type,confirmed FROM storage_objects WHERE object_key=$1 FOR UPDATE")
@@ -48,6 +69,17 @@ pub async fn reserve(pool: &PgPool, id: i64, key: &str, object: &Object) -> Resu
     let copies: Vec<(i64,i32)> = sqlx::query_as("SELECT node_id,ready FROM storage_object_copies WHERE object_key=$1 ORDER BY node_id LIMIT 1001")
         .bind(&object.object_key).fetch_all(&mut *tx).await?;
     ensure!(copies.len() <= 1000, "object copy limit exceeded");
+    // Re-read after both disk and object locks. Existing assignments need no new
+    // reservation; every new assignment must use one of the retained candidate disks.
+    let mut nodes: Vec<ClusterNode> = sqlx::query_as(
+        "SELECT *,clock_timestamp() AS observed_at FROM nodes ORDER BY id LIMIT 1001",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    ensure!(nodes.len() <= 1000, "object node limit exceeded");
+    nodes.retain(|node| {
+        candidates.contains(&node.id) || copies.iter().any(|copy| copy.0 == node.id)
+    });
     let pending = pending(&mut tx).await?;
     let targets = crate::objects::targets(&nodes, &copies, &pending, object.bytes)?;
     for node in &targets {

@@ -343,14 +343,23 @@ start_read_replica() {
     [[ -n ${GITSERV_TEST_POSTGRES_DATA:-} && -f ${GITSERV_TEST_POSTGRES_DATA%/data}/.codeyard-owned-postgres ]] || {
         echo 'Read replica acceptance needs the owned PostgreSQL from builder-test.sh' >&2; return 1;
     }
-    local backup ctl port
+    local backup ctl port psql settings connections locks
     backup=$(pg_tool pg_basebackup) || return 1
     ctl=$(pg_tool pg_ctl) || return 1
     port=$(free_ports 1) || return 1
     READ_REPLICA_DATA=$RUN/read-replica
+    psql=$(pg_tool psql) || return 1
+    # builder-test.sh sets these on the primary command line, so basebackup's
+    # copied configuration alone is insufficient for hot standby to start.
+    settings=$(pg_command "$GITSERV_TEST_DATABASE_URL" "$psql" --dbname -X -At -v ON_ERROR_STOP=1 \
+        -c "SELECT current_setting('max_connections') || ' ' || current_setting('max_locks_per_transaction')") || return 1
+    read -r connections locks <<<"$settings"
+    [[ $connections =~ ^[1-9][0-9]{0,5}$ && $locks =~ ^[1-9][0-9]{0,5}$ ]] || return 1
     pg_command "$GITSERV_TEST_DATABASE_URL" "$backup" --dbname -D "$READ_REPLICA_DATA" -R -X stream --checkpoint=fast || return 1
     "$ctl" -D "$READ_REPLICA_DATA" -l "$RUN/read-replica.log" -w \
-        -o "-h 127.0.0.1 -p $port -k $RUN -c hot_standby=on -c log_statement=all" start || return 1
+        -o "-h 127.0.0.1 -p $port -k $RUN -c hot_standby=on -c max_connections=$connections -c max_locks_per_transaction=$locks -c log_statement=all" start || {
+            tail -n 80 "$RUN/read-replica.log"; return 1;
+        }
     DATABASE_READ_URL=$(E2E_REPLICA_PORT=$port E2E_PRIMARY_URL=$DATABASE_URL "$PYTHON" -I -c 'import os, urllib.parse as u
 p=u.urlsplit(os.environ["E2E_PRIMARY_URL"])
 host=p.netloc.rsplit(":",1)[0]
@@ -481,7 +490,7 @@ configure_node() {
         "PATH=${PG_BIN:+$PG_BIN:}$PATH" "HOME=$NODE_DIR/home" "LANG=C.UTF-8" "NO_COLOR=1" "RUST_LOG=warn,codeyard=info"
         "GITSERV_STATE_DIR=$NODE_DIR/state" "REPOS_PATH=$NODE_DIR/repos" "HOST_KEY_PATH=$NODE_DIR/host_key"
         "HTTP_ADDR=127.0.0.1:${HTTP_PORTS[$node]:-0}" "SSH_ADDR=127.0.0.1:${SSH_PORTS[$node]:-0}" "SSH_MODE=builtin"
-        "GITSERV_NODE_ROLES=$roles" "CODEYARD_EXPERIMENTAL_CLUSTER=1"
+        "GITSERV_NODE_ROLES=$roles"
         "PUBLIC_URL=${ACTION_OBJECTS_ORIGIN:-$BASE}" "PUBLIC_HTTP_CLONE_BASE=$BASE" "PUBLIC_SSH_CLONE_BASE=$SSH_URL" "COOKIE_SECURE=false"
         "WEBUI_DIST=$WEBUI_DIST"
         "CI_EXECUTION_MODE=local" "CI_ACT_BINARY=$ACT" "CI_ACTIONS_BINARY=$ACTIONS_BIN"

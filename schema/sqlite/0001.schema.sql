@@ -1439,6 +1439,7 @@ CREATE TABLE actions_settings (
     act_enabled INTEGER NOT NULL DEFAULT 1 CHECK (act_enabled IN (0,1)),
     default_engine TEXT NOT NULL DEFAULT 'codeyard-actions' CHECK ((default_engine='codeyard-actions' AND codeyard_actions_enabled) OR (default_engine='act' AND act_enabled))
 );
+INSERT INTO actions_settings(id) VALUES(1);
 
 CREATE TABLE repo_actions_settings (
     repo_id INTEGER PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE CHECK (repo_id IS NULL OR typeof(repo_id)='integer'),

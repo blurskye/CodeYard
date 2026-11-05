@@ -19,8 +19,8 @@ SIGKILL; majority loss refuses a push. VM hard-reset acceptance needs a disposab
 Browser bundle publication, delivery, native and hydrated cluster forms, and live
 cross-node issue updates pass. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
-Cluster mode stays hidden behind
-`CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.
+Cluster mode requires PostgreSQL; the owner removed the experimental environment gate
+when authorizing cells. Outstanding acceptance above remains open.
 
 ## Where we are
 
@@ -86,10 +86,9 @@ is written as manual steps beside the operations guide.
 
 Every item has one answer. Numbers are defaults that an admin can change in settings.
 
-1. **Hide the cluster until it is ready.** `codeyard cluster enable` and `serve --cluster`
-   print "cluster mode is not ready yet" unless `CODEYARD_EXPERIMENTAL_CLUSTER=1` is set;
-   `scripts/e2e.sh` sets it. The docs say single node is the supported setup. The switch is
-   removed when items 1 to 6 are done and part A passes.
+1. **Cluster availability.** The owner removed the experimental environment gate when
+   authorizing cells on 2026-11-05. `codeyard cluster enable` and `serve --cluster` retain
+   their PostgreSQL and enrollment checks. Single-node SQLite remains supported.
 2. **Files survive a web node.** Packages, CI artifacts, caches and LFS stay in the object
    store, which gets a third backend: storage nodes. An object is content-addressed
    (sha256, already declared at upload), written to two storage nodes before the upload is
@@ -155,11 +154,13 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     acceptance list. The owner lifted the A16 gate on 2026-11-05. Stage 0 automated
     durability checks pass; its VM hard-reset check remains open. Stage 1 reuses scoped authority and package locks, notification polling,
     configurable pools. Object-store log chunks, current-copy clone distribution and
-    issue/PR replica reads pass workspace, Clippy and WASM checks. Focused library,
-    CI/database/cluster and PgBouncer/replica/quorum acceptance is running.
-    Namespace, email and attestation locks are now scoped in source; their runtime
-    acceptance and the updated source check round are pending. Remaining read families,
-    bulk retention and valid load measurements are open.
+    issue/PR replica reads and scoped namespace/email/attestation locks pass workspace,
+    Clippy and WASM checks. Initial CI, database, cluster, PgBouncer and quorum acceptance
+    passes; one CI-engine library lock test failed, and the replica fixture failed startup.
+    The fixture fix, scoped object reservations, cache-policy row locks and removal of the
+    experimental gate await checks and runtime acceptance. Stage 1 finished-CI and load
+    measurements are runtime pending, need a writable delegated cgroup. Other content read
+    families and bulk retention remain on the primary and bounded cleanup paths.
     Stages 2 to 6 are not built. Individual users may move automatically to
     their working region in stage 6. Organizations retain one write home and gain read
     presence across regions in stages 5 and 6; see the architecture acceptance lists.

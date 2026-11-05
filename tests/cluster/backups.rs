@@ -23,7 +23,6 @@ pub(super) fn command(
         .env("REPOS_PATH", repos)
         .env("NODE_NAME", name)
         .env("CLUSTER_TCP_BIND", "127.0.0.1:0")
-        .env("CODEYARD_EXPERIMENTAL_CLUSTER", "1")
         .env("GITSERV_NODE_ROLES", "web")
         .env("SECRETS_MASTER_KEY", "01".repeat(32))
         .stdin(std::process::Stdio::piped())

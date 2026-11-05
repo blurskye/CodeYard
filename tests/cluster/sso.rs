@@ -180,7 +180,6 @@ async fn web(
                     .arg("--cluster")
                     .env("NODE_KEY", key.secret_hex())
                     .env("NODE_NAME", name)
-                    .env("CODEYARD_EXPERIMENTAL_CLUSTER", "1")
                     .env("IROH_BIND", "127.0.0.1:0")
                     .env("CLUSTER_TCP_BIND", "127.0.0.1:0");
             }

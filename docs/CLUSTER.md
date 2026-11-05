@@ -6,9 +6,9 @@ Actions jobs ([CI local runner](CI_LOCAL_RUNNER.md)). Use cluster mode when you 
 and SSH servers separate from the machines that hold the repositories, or several
 repository disks. [Architecture](ARCHITECTURE.md) section 2 explains how it works.
 
-Single node is the supported setup. Cluster mode is experimental: `cluster enable` and
-`serve --cluster` refuse with "cluster mode is not ready yet" unless
-`CODEYARD_EXPERIMENTAL_CLUSTER=1` is set in the environment.
+`cluster enable` and `serve --cluster` require PostgreSQL. A single-node installation
+keeps SQLite support. The [readiness plan](CLUSTER_PLAN.md) records outstanding runtime
+acceptance and measured limits.
 
 ## Turn on cluster mode
 
@@ -703,7 +703,8 @@ unrelated accounts never wait on each other. Names reserve only their case-folde
 and organization namespace key; email ownership reserves only the affected addresses,
 in sorted order. The setup exclusion is used only before setup completes. Attestation
 and artifact metadata changes serialize within their owner, and bundle collection locks
-only its bounded candidate rows. These lock changes await runtime acceptance.
+only its bounded candidate rows. Cache policy uses its settings row, and object uploads
+retain only their selected capacity rows. These lock changes await runtime acceptance.
 
 A CI claim returns at most 128 compatible runs (1 to 1024 in the configuration), but the
 database may still examine a very large queued backlog to find them, and a claim restarts

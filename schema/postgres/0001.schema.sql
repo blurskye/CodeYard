@@ -1538,6 +1538,7 @@ CREATE TABLE IF NOT EXISTS actions_settings (
     act_enabled BOOLEAN NOT NULL DEFAULT TRUE,
     default_engine TEXT NOT NULL DEFAULT 'codeyard-actions' CHECK ((default_engine='codeyard-actions' AND codeyard_actions_enabled) OR (default_engine='act' AND act_enabled))
 );
+INSERT INTO actions_settings(id) VALUES(1);
 
 CREATE TABLE IF NOT EXISTS repo_actions_settings (
     repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,

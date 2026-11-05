@@ -11,7 +11,6 @@ fn run(directory: &Path, arguments: &[&str], environment: &[(&str, &str)]) -> Ou
     Command::new(env!("CARGO_BIN_EXE_codeyard"))
         .args(arguments)
         .env_clear()
-        .env("CODEYARD_EXPERIMENTAL_CLUSTER", "1")
         .envs(environment.iter().copied())
         .current_dir(directory)
         .output()
@@ -23,28 +22,21 @@ fn text(bytes: &[u8]) -> String {
 }
 
 #[test]
-fn cluster_mode_requires_an_explicit_experimental_opt_in() {
+fn cluster_commands_require_postgres_without_an_environment_gate() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join(".env"), "").unwrap();
+    let url = format!(
+        "sqlite://{}?mode=rwc",
+        directory.path().join("cell.db").display()
+    );
     for arguments in [vec!["cluster", "enable"], vec!["serve", "--cluster"]] {
-        for value in ["", "0", "true", "01"] {
-            let output = run(
-                directory.path(),
-                &arguments,
-                &[("CODEYARD_EXPERIMENTAL_CLUSTER", value)],
-            );
-            assert!(!output.status.success());
-            assert!(text(&output.stderr).contains("cluster mode is not ready yet"));
-            assert!(!directory.path().join(".gitserv").exists());
-        }
-        let output = Command::new(env!("CARGO_BIN_EXE_codeyard"))
-            .args(&arguments)
-            .env_clear()
-            .current_dir(directory.path())
-            .output()
-            .unwrap();
+        let output = run(directory.path(), &arguments, &[("DATABASE_URL", &url)]);
         assert!(!output.status.success());
-        assert!(text(&output.stderr).contains("cluster mode is not ready yet"));
+        assert!(
+            text(&output.stderr).contains("PostgreSQL"),
+            "{}",
+            text(&output.stderr)
+        );
     }
 }
 

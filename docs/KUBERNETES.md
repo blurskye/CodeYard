@@ -1,9 +1,9 @@
 # Codeyard on Kubernetes
 
 The chart at `deploy/helm/codeyard` runs web pods and a storage StatefulSet, with optional
-SSH and trusted-workflow runner Deployments. Cluster mode is **experimental**, not a
-production-HA guarantee; see [cluster limits](CLUSTER.md#limits). The chart opts in with
-`CODEYARD_EXPERIMENTAL_CLUSTER=1`. It bundles neither PostgreSQL nor an object store.
+SSH and trusted-workflow runner Deployments. See [cluster limits](CLUSTER.md#limits)
+and the [readiness plan](CLUSTER_PLAN.md) for pending acceptance. The chart bundles
+neither PostgreSQL nor an object store.
 
 ## Install
 

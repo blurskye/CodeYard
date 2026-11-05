@@ -13,7 +13,6 @@ data:
   SESSION_DURATION_DAYS: {{ .Values.config.sessionDurationDays | quote }}
   HTTP_TRUSTED_PROXY_IPS: {{ .Values.config.httpTrustedProxyIps | quote }}
   CORS_ORIGINS: {{ .Values.config.corsOrigins | quote }}
-  CODEYARD_EXPERIMENTAL_CLUSTER: {{ ternary "1" "0" .Values.config.experimentalCluster | quote }}
   DATABASE_POOL_SIZE: {{ .Values.config.databasePoolSize | quote }}
   STORAGE_MIN_FREE_BYTES: {{ .Values.config.storageMinFreeBytes | quote }}
   S3_ENDPOINT: {{ .Values.config.s3.endpoint | quote }}

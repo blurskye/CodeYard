@@ -752,7 +752,9 @@ the round rather than skipping it.
 Stage 0 reuses the durability work from cluster plan items 3 and 11. Stage 1 already
 has account and package lock scoping, cursor polling and configurable pools. Its new
 object-store log chunks, current-copy clone distribution and issue/PR read routing are
-written and pass workspace, Clippy and WASM checks; runtime acceptance is running.
+written and pass workspace, Clippy and WASM checks. Initial CI, database, cluster,
+PgBouncer and quorum acceptance passes; replica startup and a CI-engine lock failure need
+reruns. The latest capacity-lock and CLI changes still need checks.
 Stages 2 to 6 are not built. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
 numbers remain assumptions until stage 1 measures a real cell.
 

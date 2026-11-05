@@ -52,8 +52,6 @@ config:
   httpTrustedProxyIps: ""
   # Explicit allowed CORS origins, normally empty.
   corsOrigins: ""
-  # Opt in to the currently experimental cluster implementation.
-  experimentalCluster: true
   # Storage readiness reserve in bytes (1 GiB).
   storageMinFreeBytes: "1073741824"
   # PostgreSQL connections per core process (1–1000).

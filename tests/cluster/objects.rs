@@ -219,6 +219,30 @@ async fn uploaded_files_survive_web_and_storage_loss_and_drain_without_s3_on_bot
             2
         );
         assert_eq!(download(&reader, &upload).await, bytes);
+        if pg {
+            // Reserving A and B must not wait for unrelated storage node C's row.
+            db.execute(
+                "UPDATE nodes SET disk_free=8500 WHERE id=$1",
+                &[nodes[4].context.node_id],
+            )
+            .await;
+            let mut blocker = db.pg().begin().await.unwrap();
+            sqlx::query("SELECT id FROM nodes WHERE id=$1 FOR UPDATE")
+                .bind(nodes[4].context.node_id)
+                .fetch_one(&mut *blocker)
+                .await
+                .unwrap();
+            let independent = reserve(&reader, b"unrelated disk lock").await;
+            let status = tokio::time::timeout(
+                std::time::Duration::from_secs(3),
+                put(&reader, &independent, b"unrelated disk lock"),
+            )
+            .await
+            .expect("object placement must retain only its selected disks");
+            assert_eq!(status, StatusCode::NO_CONTENT);
+            confirm(&reader, &independent).await;
+            blocker.commit().await.unwrap();
+        }
         let repo = codeyard_db_repos::repositories::records::create_repository(
             db.pool(),
             user,

@@ -161,16 +161,32 @@ async fn contract(pg: bool) {
         403,
     )
     .await;
-    let (_, first) = call(
-        &router,
-        create,
-        "POST",
-        public,
-        Some(&writer),
-        input.clone(),
-        201,
+    let unrelated = if pg {
+        let mut tx = f.pg().begin().await.unwrap();
+        codeyard_db_core::queries::postgres::attestations::lock(&mut tx, "org", other_org)
+            .await
+            .unwrap();
+        Some(tx)
+    } else {
+        None
+    };
+    let (_, first) = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        call(
+            &router,
+            create,
+            "POST",
+            public,
+            Some(&writer),
+            input.clone(),
+            201,
+        ),
     )
-    .await;
+    .await
+    .expect("an attestation in one org must not wait on another org's lock");
+    if let Some(tx) = unrelated {
+        tx.commit().await.unwrap();
+    }
     let (_, repeat) = call(
         &router,
         create,
@@ -430,4 +446,35 @@ async fn sqlite_attestation_contract() {
 #[tokio::test]
 async fn postgres_attestation_contract() {
     contract(true).await;
+}
+
+#[tokio::test]
+async fn postgres_bundle_collection_skips_an_admitted_publisher() {
+    let mut f = Database::new(true).await;
+    f.execute(
+        "INSERT INTO attestation_bundles(hash,bundle) VALUES('reserved-publisher','{}')",
+        &[],
+    )
+    .await;
+    let mut publisher = f.pg().begin().await.unwrap();
+    sqlx::query("SELECT hash FROM attestation_bundles WHERE hash='reserved-publisher' FOR UPDATE")
+        .fetch_one(&mut *publisher)
+        .await
+        .unwrap();
+    let removed = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        codeyard_db_security::attestations::collect(f.pool()),
+    )
+    .await
+    .expect("collection must skip busy bundles")
+    .unwrap();
+    assert_eq!(removed, 0);
+    publisher.commit().await.unwrap();
+    assert_eq!(
+        codeyard_db_security::attestations::collect(f.pool())
+            .await
+            .unwrap(),
+        1
+    );
+    f.finish().await;
 }

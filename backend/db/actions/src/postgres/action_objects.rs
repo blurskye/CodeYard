@@ -33,12 +33,13 @@ pub(crate) async fn lock_site_cache_policy(
     connection: &mut sqlx::PgConnection,
     exclusive: bool,
 ) -> Result<()> {
-    sqlx::query(if exclusive {
-        "SELECT pg_advisory_xact_lock(723947125)"
-    } else {
-        "SELECT pg_advisory_xact_lock_shared(723947125)"
-    })
-    .execute(connection)
+    // The baseline always owns this singleton. Cache operations share it; site edits
+    // retain it exclusively before touching repository rows, so no advisory lock is needed.
+    let lock = if exclusive { "FOR UPDATE" } else { "FOR SHARE" };
+    sqlx::query(&format!(
+        "SELECT id FROM actions_settings WHERE id=1 {lock}"
+    ))
+    .fetch_one(connection)
     .await?;
     Ok(())
 }
