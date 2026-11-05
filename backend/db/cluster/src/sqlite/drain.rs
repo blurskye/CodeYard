@@ -67,11 +67,10 @@ pub async fn change(
         );
         let objects = crate::sqlite::objects::prepare_drain(&mut tx, node.id, &nodes).await?;
         let pending = crate::sqlite::objects::pending(&mut tx).await?;
-        let quorum: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM node_configuration WHERE write_quorum IS NOT NULL)",
-        )
-        .fetch_one(&mut *tx)
-        .await?;
+        let quorum = crate::sqlite::cluster::writes::effective_settings(&mut tx)
+            .await?
+            .write_quorum
+            .is_some();
         let targets = crate::drain::plan(
             node.id,
             &nodes,

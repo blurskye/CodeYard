@@ -72,7 +72,7 @@ async fn refused_receive(
 async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     bundle::install();
     let database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)

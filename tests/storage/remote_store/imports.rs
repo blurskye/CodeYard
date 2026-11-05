@@ -8,7 +8,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     let _session_cap = lock_git_session_cap().await;
     bundle::install();
     let database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)

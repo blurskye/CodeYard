@@ -465,6 +465,13 @@ async fn pool_waiter_scrapes_show_pending_acquisition_and_clear_after_completion
         tokio::time::timeout(std::time::Duration::from_secs(5), started.notified())
             .await
             .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while observed.waiters() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
         assert_eq!(observed.waiters(), 1);
         let (status, _, body) = get(&router, "/metrics", Some("Bearer waiter-scrape")).await;
         assert_eq!(status, StatusCode::OK, "{body}");

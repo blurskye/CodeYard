@@ -6,7 +6,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
     let _session_cap = lock_git_session_cap().await;
     bundle::install();
     let database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)

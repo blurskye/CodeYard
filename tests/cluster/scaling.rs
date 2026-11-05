@@ -21,7 +21,7 @@ async fn site_policy_forms_leader_pause_dry_run_and_storage_rules_agree_on_both_
     for pg in [false, true] {
         let mut db = Database::new(pg).await;
         db.complete_setup().await;
-        codeyard_db_cluster::cluster::enable_cluster(db.pool())
+        crate::support::native_database::enable_cluster(db.pool())
             .await
             .unwrap();
         let root = tempfile::tempdir().unwrap();

@@ -2716,6 +2716,52 @@ t_cluster_approve_worker() {
     done
 }
 
+# Run last: existing legacy repositories keep their fixtures; these new repositories
+# exercise the two-voter path with real pushes and process death immediately after ack.
+t_cluster_quorum_primary_loss() {
+    local transport name source primary pid expected destination deadline
+    pg_query "UPDATE node_configuration SET write_quorum='majority',replicas='2' WHERE id=1" >/dev/null
+    for transport in http ssh; do
+        name=quorum-survival-$transport
+        as alice req POST /api/repos --accept json --status 201 --json "{\"name\":\"$name\",\"is_private\":true}"
+        source=$RUN/work/$name
+        mkdir -p "$source"
+        git_as alice -C "$source" init -q -b main
+        printf 'acknowledged over %s\n' "$transport" >"$source/README.md"
+        git_as alice -C "$source" add README.md
+        git_as alice -C "$source" commit -qm 'A quorum holds this commit'
+        expected=$(git_as alice -C "$source" rev-parse HEAD)
+        primary=$(repo_node alice "$name")
+        [[ $primary == store1 || $primary == store2 ]]
+        pid=${SERVER_PIDS[$primary]}
+        if [[ $transport == http ]]; then
+            git_with_token write -C "$source" push -q "$BASE/alice/$name.git" main || return 1
+            kill -KILL "$pid" || return 1
+        else
+            git_as alice -C "$source" push -q "$SSH_URL/alice/$name.git" main || return 1
+            kill -KILL "$pid" || return 1
+        fi
+        wait "$pid" 2>/dev/null || true
+        unset "SERVER_PIDS[$primary]"
+        destination=$RUN/clone-$name
+        deadline=$((SECONDS + 120))
+        until git_with_token read clone -q "$BASE/alice/$name.git" "$destination"; do
+            ((SECONDS < deadline)) || { echo 'An acknowledged commit was not cloneable within two minutes' >&2; return 1; }
+            [[ ! -e $destination ]] || rm -rf -- "$destination"
+            sleep 1
+        done
+        [[ $(git_as alice -C "$destination" rev-parse HEAD) == "$expected" ]]
+        git_as alice clone -q "$SSH_URL/alice/$name.git" "$destination-ssh"
+        [[ $(git_as alice -C "$destination-ssh" rev-parse HEAD) == "$expected" ]]
+        start_server "$primary"
+        deadline=$((SECONDS + 60))
+        until [[ $(pg_query "SELECT last_seen>clock_timestamp()-INTERVAL '30 seconds' FROM nodes WHERE name='$primary'") == t ]]; do
+            ((SECONDS < deadline)) || { echo 'Storage did not report after restart' >&2; return 1; }
+            sleep 1
+        done
+    done
+}
+
 t_cluster_drain_worker() {
     local sha id deadline=$((SECONDS + 45))
     cluster_cli web1 drain ci1
@@ -2913,7 +2959,7 @@ run_cluster_round() {
 
     step -f -i 'database is ready' prepare_database
     step -f -i 'cluster: isolated ports and declared store2 key' prepare_cluster
-    step -f 'cluster: `codeyard cluster enable` turns on cluster mode' cluster_cli web1 enable
+    step -f 'cluster: explicit legacy mode preserves the asynchronous-replica checks' cluster_cli web1 enable --write-quorum 1
     step -f -i 'cluster: web1 starts first (web,ssh)' start_server web1
     step -f 'cluster: store1 pairs with an invite and cluster join' t_cluster_join_store
     step -f -i 'cluster: store1 starts (storage only)' start_server store1
@@ -2958,6 +3004,7 @@ run_cluster_round() {
     step -f 'revocation: live ci1 cannot claim two new runs; both stay queued' t_cluster_revoke_worker
     step 'revocation: approving ci1 runs the queued work' t_cluster_approve_worker
     step 'drain: a drained runner takes no new jobs and cancel resumes claims' t_cluster_drain_worker
+    step -f -i 'quorum: HTTP and SSH acknowledgements survive immediate primary SIGKILL' t_cluster_quorum_primary_loss
     # Shutdown is still checked after a required step fails.
     ROUND_BLOCKED=0
     step -i 'shutdown: every node exits with status 0 and no log has a panic' t_cluster_shutdown

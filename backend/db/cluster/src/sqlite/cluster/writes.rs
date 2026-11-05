@@ -46,8 +46,15 @@ async fn settings(conn: &mut SqliteConnection) -> Result<WriteSettings> {
     .unwrap_or_default())
 }
 
+pub(crate) async fn effective_settings(connection: &mut SqliteConnection) -> Result<WriteSettings> {
+    Ok(sqlx::query_as(crate::cluster::writes::EFFECTIVE_SETTINGS)
+        .fetch_optional(connection)
+        .await?
+        .unwrap_or_default())
+}
+
 pub async fn write_settings(pool: &SqlitePool) -> Result<WriteSettings> {
-    settings(&mut *pool.acquire().await?).await
+    effective_settings(&mut *pool.acquire().await?).await
 }
 
 async fn quorum(conn: &mut SqliteConnection, repo: i64, term: i64) -> Result<i64> {

@@ -49,7 +49,11 @@ and the rest) open the node connection in either mode; they do not change the mo
 
 ## Quorum push preparation
 
-The opt-in two-voter push path requires both fixed storage voters. Preparation uses the
+New clusters default to `majority`, requiring both fixed storage voters. Choose
+`codeyard cluster enable --write-quorum 1` for the legacy asynchronous policy. Enabling
+a new cluster mode requires every core to be stopped; existing repositories without
+quorum preparation require that explicit legacy choice. The choice is kept on repeated
+enable commands. Start two storage nodes before creating repositories in majority mode. Preparation uses the
 stored `write_timeout_seconds` deadline (default 10 seconds). On each storage node,
 `WRITE_QUORUM_MAX_PACK_BYTES` limits a prepared pack (default 128 MiB, maximum 1 GiB).
 Keep `codeyard-writes/` inside each repository with its objects: it retains undecided
@@ -114,7 +118,10 @@ cluster first.
 
 ## Start the first node
 
-On the machine that already runs Codeyard, or a new one, with PostgreSQL:
+With PostgreSQL, stop the current server before enabling the cluster. A new installation
+uses majority; an existing installation with repositories first runs
+`codeyard cluster enable --write-quorum 1` to retain their legacy write path. Then start
+the first node:
 
 ```bash
 DATABASE_URL=postgres://... NODE_NAME=core IROH_BIND=0.0.0.0:7444 \

@@ -248,3 +248,9 @@ impl Drop for PostgresDatabase {
 pub fn token() -> String {
     format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
 }
+
+/// The preexisting replica fixtures exercise the legacy asynchronous policy explicitly.
+/// Quorum fixtures already supply their own setting and keep it through this transition.
+pub async fn enable_cluster(pool: &codeyard_db_core::DbPool) -> anyhow::Result<bool> {
+    codeyard_db_cluster::cluster::enable_cluster_with_quorum(pool, "1").await
+}

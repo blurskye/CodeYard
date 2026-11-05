@@ -76,7 +76,7 @@ impl Stores {
             },
         ];
         let fixture = setup_with_refs(pool, 2, "2", &refs).await;
-        assert!(codeyard_db_cluster::cluster::enable_cluster(pool)
+        assert!(crate::support::native_database::enable_cluster(pool)
             .await
             .unwrap());
         let repository =

@@ -8,7 +8,8 @@ keeps the longer plan for cells; this file comes first and does not repeat it.
 
 Items 1–9 have source implementations and acceptance tests. The earlier source batch,
 backup/restore and organization OIDC pass workspace, Clippy and WASM checks. Acquisition
-waiter tracking is now written and awaits checks. One runtime job passed 1,013 library
+waiter tracking passes source checks and awaits runtime acceptance. Majority defaults
+and the final primary-loss e2e step are written and await checks. One runtime job passed 1,013 library
 tests and Helm render checks; its single CI fixture failure is corrected. The cluster,
 storage, identity, backup/restore and end-to-end runs are in progress. Rolling upgrades
 and measured load limits are not complete.
@@ -34,9 +35,9 @@ Current acceptance status (runtime checks are still pending):
 
 - 1: hiding switch built; source checks pass.
 - 2: two-copy storage-node backend, shared drain reservations and HTTP acceptance written; source checks pass, runtime pending.
-- 3: quorum initialization and copy source checks pass; voter replacement source checks pass; runtime pending.
+- 3: quorum initialization, copy and voter replacement pass source checks; majority defaults and explicit legacy selection are written, awaiting checks.
 - 4: drain source checks pass; runtime acceptance pending.
-- 5: quorum and drain metrics source checks pass; acquisition waiter tracking is written and awaits checks.
+- 5: quorum, drain and acquisition waiter metrics pass source checks; runtime acceptance pending.
 - 6: bounded invitations and environment-only provisioning source checks pass; runtime pending.
 - 7: lease leader, policy settings, pause and dry run source checks pass; runtime pending.
 - 8: mover and bandwidth limit source checks pass; runtime pending.
@@ -54,7 +55,7 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 | # | Check | Pass when | Current check |
 |---|---|---|---|
 | A1 | `scripts/e2e.sh` cluster round | green | pending builder acceptance |
-| A2 | Push over HTTP and SSH, `kill -9` the storage primary the moment the push returns | within 2 minutes `git clone` has the commit, no `--force` | quorum regression written; runtime pending |
+| A2 | Push over HTTP and SSH, `kill -9` the storage primary the moment the push returns | within 2 minutes `git clone` has the commit, no `--force` | final cluster e2e step written; runtime pending |
 | A3 | Upload a package or CI artifact through web node 1, download it through web node 2 | same bytes | cross-node HTTP regression written; runtime pending |
 | A4 | Stop one web node while clients run `gh` and `git` | other nodes keep serving, sessions survive, no half-written state | pending builder acceptance |
 | A5 | Kill a storage node during a clone and a push | clear error to the client, no changed refs, clone retries from a copy | pending builder acceptance |

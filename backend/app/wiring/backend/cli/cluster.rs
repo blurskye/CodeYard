@@ -59,7 +59,11 @@ pub enum Command {
     /// Print a new secret key and its public key
     Keygen,
     /// Turn on cluster mode, which allows the web, storage and ssh roles on separate machines
-    Enable,
+    Enable {
+        /// majority requires two durable voters; 1 keeps the legacy asynchronous path
+        #[arg(long, default_value = "majority")]
+        write_quorum: String,
+    },
     /// Print a ticket that lets another machine join: a runner, or in cluster mode any role
     Invite {
         /// Roles the new machine may run: runner, or in cluster mode also web, storage and ssh
@@ -220,8 +224,8 @@ pub async fn run(
     }
     require_postgres(pool)?;
     match command {
-        Command::Enable => {
-            if codeyard_db_cluster::cluster::enable_cluster(pool).await? {
+        Command::Enable { write_quorum } => {
+            if codeyard_db_cluster::cluster::enable_cluster_with_quorum(pool, write_quorum).await? {
                 println!("Cluster mode is on: machines can now join with the web, storage and ssh roles (see docs/CLUSTER.md).");
             } else {
                 println!("Cluster mode was already on.");

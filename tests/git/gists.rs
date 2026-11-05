@@ -138,7 +138,7 @@ async fn current_copies(database: &native::PostgresDatabase, repositories: &[i64
 async fn gists_http_ssh_remote_and_promotion() {
     bundle::install();
     let mut database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)

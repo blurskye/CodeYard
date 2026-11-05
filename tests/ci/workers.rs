@@ -43,7 +43,7 @@ use uuid::Uuid;
 #[tokio::test]
 async fn core_sigterm_during_container_recovery_withdraws_its_heartbeat() {
     let database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -117,7 +117,7 @@ async fn core_sigterm_during_container_recovery_withdraws_its_heartbeat() {
 #[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn cluster_startup_can_execute_preexisting_runs_for_unplaced_repositories() {
     let database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -444,7 +444,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     let pool = &database.pool;
     // The core here is a web and storage node, which only cluster mode has. Claims need the web
     // role, since preparing one reads the run's workflow from any node.
-    codeyard_db_cluster::cluster::enable_cluster(pool)
+    crate::support::native_database::enable_cluster(pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -3428,7 +3428,7 @@ async fn ownership_record_failure_does_not_permanently_remove_worker_capacity() 
 async fn discovery_allows_stalled_tcp_to_fall_back_to_iroh() {
     let fixture = ci_fixture().await;
     // Discovery runs on a web node, not a runner-only one, and web nodes need cluster mode.
-    codeyard_db_cluster::cluster::enable_cluster(fixture.pool())
+    crate::support::native_database::enable_cluster(fixture.pool())
         .await
         .unwrap();
     codeyard_db_cluster::cluster::upsert_declared_nodes(

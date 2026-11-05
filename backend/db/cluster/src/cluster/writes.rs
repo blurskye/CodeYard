@@ -12,6 +12,10 @@ use sha2::Sha256;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
+// Explicit legacy mode is effective only before any repository has a quorum term.
+// An inconsistent downgrade remains fenced instead of opening old, unjournalled paths.
+pub(crate) const EFFECTIVE_SETTINGS: &str = "SELECT CASE WHEN write_quorum='1' AND NOT EXISTS(SELECT 1 FROM repository_write_control) THEN NULL ELSE write_quorum END AS write_quorum,write_timeout_seconds FROM node_configuration WHERE id=1";
+
 pub(crate) const MAX_VOTERS: usize = 999;
 pub(crate) const MAX_FAMILY: usize = 10_000;
 pub(crate) const MAX_REFS: usize = codeyard_git::repository::MAX_MIRROR_REFS;

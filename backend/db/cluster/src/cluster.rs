@@ -294,10 +294,36 @@ native_operation!(crate::postgres::cluster::cluster_enabled,
     /// default, allows only the server and runners.
     fn cluster_enabled(pool: &DbPool) -> Result<bool>);
 
-native_operation!(crate::postgres::cluster::enable_cluster,
-    crate::sqlite::cluster::enable_cluster,
-    /// Turns on cluster mode. Returns false when it was already on.
-    fn enable_cluster(pool: &DbPool) -> Result<bool>);
+/// New clusters use majority; existing explicit settings are preserved.
+pub async fn enable_cluster(pool: &DbPool) -> Result<bool> {
+    enable_cluster_with_quorum(pool, "majority").await
+}
+
+/// This is an offline installation transition, shared by `cluster enable` and `serve --cluster`.
+pub async fn enable_cluster_with_quorum(pool: &DbPool, value: &str) -> Result<bool> {
+    let majority = match value {
+        "majority" => true,
+        "1" => false,
+        _ => anyhow::bail!("write quorum must be majority or 1"),
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        if cluster_enabled(pool).await? {
+            return Ok(false);
+        }
+        let maintenance = maintenance_lock(pool).await?;
+        let changed = match pool {
+            DbPool::Postgres(native) => {
+                crate::postgres::cluster::enable_cluster(native, majority).await
+            }
+            DbPool::Sqlite(native) => {
+                crate::sqlite::cluster::enable_cluster(native, majority).await
+            }
+        };
+        maintenance.release().await;
+        changed
+    })
+    .await?
+}
 
 native_operation!(crate::postgres::cluster::is_admitted_node,
     crate::sqlite::cluster::is_admitted_node,

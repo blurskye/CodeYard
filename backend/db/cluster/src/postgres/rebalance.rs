@@ -51,11 +51,10 @@ pub async fn plan(pool: &PgPool, node: i64) -> Result<Option<Move>> {
     if setting == "all" {
         return Ok(None);
     }
-    let quorum: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM node_configuration WHERE write_quorum IS NOT NULL)",
-    )
-    .fetch_one(&mut *tx)
-    .await?;
+    let quorum = crate::postgres::cluster::writes::effective_settings(&mut tx)
+        .await?
+        .write_quorum
+        .is_some();
     let wanted = if quorum { 2 } else { setting.parse::<usize>()? };
     let candidates: Vec<i64> = sqlx::query_scalar("SELECT r.id FROM repositories r WHERE r.storage_node_id=$1 AND NOT EXISTS(SELECT 1 FROM node_drain_repositories d WHERE d.repository_id=r.id) ORDER BY r.size_bytes,COALESCE((SELECT MAX(created_at) FROM repository_pushes WHERE repo_id=r.id),r.created_at),r.id LIMIT 128")
         .bind(node).fetch_all(&mut *tx).await?;

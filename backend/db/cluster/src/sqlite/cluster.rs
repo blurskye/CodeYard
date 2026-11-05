@@ -9,6 +9,7 @@ use crate::cluster::PrimaryReplicaRow;
 use crate::cluster::PromoteOutcome;
 use anyhow::anyhow;
 use anyhow::bail;
+use anyhow::ensure;
 use anyhow::Result;
 use codeyard_db_core::models::ClusterNode;
 use codeyard_db_core::models::HeldReplica;
@@ -518,16 +519,34 @@ pub async fn cluster_enabled(pool: &SqlitePool) -> Result<bool> {
     )
 }
 
-pub async fn enable_cluster(pool: &SqlitePool) -> Result<bool> {
-    Ok(sqlx::query(&format!(
-        "INSERT INTO node_configuration (id, cluster_enabled) VALUES (1, 1)
-         ON CONFLICT (id) DO UPDATE SET cluster_enabled = 1, updated_at = {NOW}
-         WHERE NOT node_configuration.cluster_enabled"
-    ))
-    .execute(pool)
-    .await?
-    .rows_affected()
-        == 1)
+pub async fn enable_cluster(pool: &SqlitePool, majority: bool) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let old: Option<(bool, Option<String>)> =
+        sqlx::query_as("SELECT cluster_enabled,write_quorum FROM node_configuration WHERE id=1")
+            .fetch_optional(&mut *tx)
+            .await?;
+    if old.as_ref().is_some_and(|(enabled, _)| *enabled) {
+        return Ok(false);
+    }
+    let selected = old.and_then(|(_, setting)| setting).unwrap_or_else(|| {
+        if majority {
+            "majority".into()
+        } else {
+            "1".into()
+        }
+    });
+    if selected != "1" {
+        let legacy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE NOT EXISTS(SELECT 1 FROM repository_write_control c WHERE c.repository_id=r.id))")
+            .fetch_one(&mut *tx).await?;
+        ensure!(
+            !legacy,
+            "existing repositories require explicit legacy mode: cluster enable --write-quorum 1"
+        );
+    }
+    let changed = sqlx::query("INSERT INTO node_configuration(id,cluster_enabled,write_quorum) VALUES(1,1,$1) ON CONFLICT(id) DO UPDATE SET cluster_enabled=1,write_quorum=excluded.write_quorum,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE NOT node_configuration.cluster_enabled")
+        .bind(selected).execute(&mut *tx).await?.rows_affected()==1;
+    tx.commit().await?;
+    Ok(changed)
 }
 
 pub async fn is_admitted_node(pool: &SqlitePool, public_key: &str) -> Result<bool> {

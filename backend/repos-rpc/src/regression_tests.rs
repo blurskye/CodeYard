@@ -30,7 +30,7 @@ async fn context(path: &Path) -> NodeContext {
         .unwrap();
     codeyard_db_core::run_migrations(&pool).await.unwrap();
     // A web and storage node only exists in cluster mode.
-    codeyard_db_cluster::cluster::enable_cluster(&pool)
+    codeyard_db_cluster::cluster::enable_cluster_with_quorum(&pool, "1")
         .await
         .unwrap();
     let key = NodeKey::generate();

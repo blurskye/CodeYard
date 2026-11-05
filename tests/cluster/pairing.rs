@@ -185,7 +185,7 @@ async fn token_uses(pool: &DbPool, ticket: &JoinTicket) -> i32 {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_one_time_invite_adds_one_active_node() {
     let db = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -260,10 +260,10 @@ async fn single_node_mode_admits_only_runners_until_cluster_mode_is_enabled() {
     assert_eq!(try_echo(&runner, &core.address).await.unwrap(), b"hello");
     assert_refused(try_echo(&storage, &core.address).await);
 
-    assert!(codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    assert!(crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap());
-    assert!(!codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    assert!(!crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap());
     assert!(codeyard_db_cluster::cluster::cluster_enabled(&db.pool)
@@ -277,7 +277,7 @@ async fn single_node_mode_admits_only_runners_until_cluster_mode_is_enabled() {
 #[tokio::test]
 async fn adopting_takes_only_the_repositories_whose_directories_are_here() {
     let db = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap();
     let node = codeyard_db_cluster::cluster::register_own_node(
@@ -340,7 +340,7 @@ async fn adopting_takes_only_the_repositories_whose_directories_are_here() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn open_invites_are_listed_and_a_cancelled_one_admits_nobody() {
     let db = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -397,7 +397,7 @@ async fn open_invites_are_listed_and_a_cancelled_one_admits_nobody() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_reusable_invite_admits_many_nodes_within_its_roles() {
     let db = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -456,7 +456,7 @@ async fn a_reusable_invite_admits_many_nodes_within_its_roles() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_node_that_needs_approval_waits_as_pending_until_approved() {
     let db = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -492,7 +492,7 @@ async fn a_node_that_needs_approval_waits_as_pending_until_approved() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn revoking_a_node_refuses_its_next_connection() {
     let db = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -536,7 +536,7 @@ async fn revoking_a_node_refuses_its_next_connection() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unknown_keys_are_refused_everywhere_but_can_only_pair() {
     let db = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -588,7 +588,7 @@ async fn unknown_keys_are_refused_everywhere_but_can_only_pair() {
 #[tokio::test]
 async fn idle_pairing_peers_hold_their_slots_and_free_them_when_they_drop() {
     let db = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -687,7 +687,7 @@ async fn raw_pairing(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn declared_nodes_are_members_without_a_join_step() {
     let db = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap();
     let core = Core::start(&db.pool).await;
@@ -804,7 +804,7 @@ fn settings(name: &str, ticket: Option<JoinTicket>) -> Settings {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn serving_nodes_register_report_their_address_and_pair_with_a_token() {
     let db = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap();
     let state_a = tempfile::tempdir().unwrap();
@@ -1047,7 +1047,9 @@ async fn sqlite_installations_refuse_every_cluster_action() {
     refused(codeyard_cluster_core::settings::require_postgres(&sqlite.pool).unwrap_err());
     let commands = [
         Command::List,
-        Command::Enable,
+        Command::Enable {
+            write_quorum: "majority".into(),
+        },
         Command::Approve { name: "x".into() },
         Command::Revoke { name: "x".into() },
         Command::Invite {
@@ -1553,7 +1555,7 @@ async fn membership_queries_agree_on_sqlite_and_postgresql() {
     membership_contract(&sqlite.pool).await;
     sqlite.close().await;
     let postgres = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&postgres.pool)
+    crate::support::native_database::enable_cluster(&postgres.pool)
         .await
         .unwrap();
     membership_contract(&postgres.pool).await;
@@ -1562,7 +1564,7 @@ async fn membership_queries_agree_on_sqlite_and_postgresql() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn withdrawing_gives_up_when_the_node_row_is_locked() {
     let db = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&db.pool)
+    crate::support::native_database::enable_cluster(&db.pool)
         .await
         .unwrap();
     let state = tempfile::tempdir().unwrap();

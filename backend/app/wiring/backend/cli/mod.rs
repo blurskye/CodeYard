@@ -207,7 +207,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         cli.command,
         Commands::Serve { cluster: true, .. }
             | Commands::Cluster {
-                action: crate::backend::cli::cluster::Command::Enable,
+                action: crate::backend::cli::cluster::Command::Enable { .. },
             }
     ) {
         anyhow::ensure!(

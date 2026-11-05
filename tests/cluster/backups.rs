@@ -2,7 +2,7 @@
 use codeyard_support::node_identity::NodeKey;
 use std::path::Path;
 
-async fn cli(
+pub(super) async fn cli(
     root: &Path,
     url: &str,
     key: Option<&NodeKey>,

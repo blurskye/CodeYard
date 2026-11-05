@@ -154,7 +154,7 @@ async fn multiplexed_slot_wait_keeps_the_active_channel_readable(
 async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     bundle::install();
     let database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)

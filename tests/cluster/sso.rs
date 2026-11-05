@@ -273,7 +273,7 @@ async fn organization_oidc_crosses_web_nodes_and_rechecks_membership_and_audit_f
         ));
         let mut node_keys = Vec::new();
         if pg {
-            codeyard_db_cluster::cluster::enable_cluster(db.pool())
+            crate::support::native_database::enable_cluster(db.pool())
                 .await
                 .unwrap();
             for name in ["first", "second"] {
@@ -290,8 +290,9 @@ async fn organization_oidc_crosses_web_nodes_and_rechecks_membership_and_audit_f
                 node_keys.push(key);
             }
         }
-        let (first_server, first) =
+        let (first_server, mut first) =
             web(&db, root.path(), "first", None, &config, node_keys.first()).await;
+        let mut first_server = Some(first_server);
         let (second_server, second) = if pg {
             let (server, base) = web(
                 &db,
@@ -324,6 +325,24 @@ async fn organization_oidc_crosses_web_nodes_and_rechecks_membership_and_audit_f
             .send()
             .await
             .unwrap();
+        let authenticated =
+            codeyard_db_identity::users::sessions::list_user_sessions(db.pool(), member.id)
+                .await
+                .unwrap();
+        assert_eq!(authenticated.len(), 1);
+        let signed_cookie = response
+            .headers()
+            .get_all("set-cookie")
+            .iter()
+            .filter_map(|value| value.to_str().ok())
+            .map(|value| value.split(';').next().unwrap())
+            .find(|value| {
+                value
+                    .split_once('=')
+                    .is_some_and(|(_, value)| value == authenticated[0].id)
+            })
+            .expect("SSO callback sets its admitted session cookie")
+            .to_owned();
         assert_eq!(
             response.status(),
             StatusCode::FOUND,
@@ -359,6 +378,20 @@ async fn organization_oidc_crosses_web_nodes_and_rechecks_membership_and_audit_f
             .unwrap()
             .status()
             .is_redirection());
+        if pg {
+            // The first web process dies after the acknowledged session transaction.
+            drop(first_server.take());
+            let page = client
+                .get(format!("{second}/settings?tab=profile"))
+                .header("cookie", signed_cookie)
+                .header("accept", "application/vnd.codeyard.page+json")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(page.status(), StatusCode::OK);
+            assert!(page.text().await.unwrap().contains("oidc-member"));
+            first = second.clone();
+        }
         let (callback, cookie) = flow(&client, &first, Some("wrong-nonce")).await;
         assert_eq!(
             client

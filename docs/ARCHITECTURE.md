@@ -290,7 +290,10 @@ Node membership (`pending`, `active`, `revoked`) is separate from allocation sta
 The panel, REST and CLI use `cluster::drain::change`. Initialization and drain source checks pass; runtime acceptance is pending.
 Application database queries share `db::pool` acquisition tracking; metrics count yielded
 acquisitions until they complete, time out or are cancelled. Streaming keeps one queued
-row and releases the query and connection together when cancelled. This batch awaits checks.
+row and releases the query and connection together when cancelled. Its source checks pass;
+runtime acceptance is pending. New clusters choose majority by default; existing asynchronous
+installations explicitly choose `cluster enable --write-quorum 1`. That transition is offline
+and preserves existing repositories. The default-policy batch awaits checks.
 Provisioning, lease-led scaling, rebalancing and pool configuration pass source checks;
 their runtime acceptance is pending. [Cluster readiness](CLUSTER_PLAN.md) tracks acceptance.
 

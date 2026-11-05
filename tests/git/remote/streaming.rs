@@ -38,7 +38,7 @@ fn peak_memory(server: &Server) -> u64 {
 pub async fn exercise(remote: bool) {
     bundle::install();
     let database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)

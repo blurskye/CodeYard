@@ -40,7 +40,7 @@ async fn start_node(
 #[tokio::test]
 async fn code_search_reads_a_repository_stored_on_another_node() {
     let database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
@@ -101,7 +101,7 @@ async fn remote_file_lists_and_commit_walks_keep_size_limits_and_deadlines() {
     use codeyard_git::CommitFilter;
     use codeyard_repos_core::repositories::store::RepoStore;
     let database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     let root = tempfile::tempdir().unwrap();
@@ -196,7 +196,7 @@ async fn remote_file_lists_and_commit_walks_keep_size_limits_and_deadlines() {
 #[tokio::test]
 async fn code_search_on_an_unreachable_storage_node_is_an_error_not_an_empty_repository() {
     let database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
@@ -261,7 +261,7 @@ async fn content_search_allows_transport_fallback_and_keeps_completed_repositori
     use std::{sync::Arc, time::Duration};
     fake_webui_bundle::install();
     let database = native::PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)

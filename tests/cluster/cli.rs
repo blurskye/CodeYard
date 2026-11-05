@@ -90,7 +90,7 @@ async fn repository_cli_requires_web_or_ssh_identity_before_inserting() {
     use crate::support::native_database::PostgresDatabase;
 
     let database = PostgresDatabase::new().await;
-    codeyard_db_cluster::cluster::enable_cluster(&database.pool)
+    crate::support::native_database::enable_cluster(&database.pool)
         .await
         .unwrap();
     let user = codeyard_db_identity::users::accounts::create_user(&database.pool, "owner", None)
