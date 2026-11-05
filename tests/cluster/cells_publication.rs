@@ -56,8 +56,11 @@ async fn signup(
     let cookie = codeyard_api_http::session::build_session_cookie(&session, 1).unwrap();
     let mut form = url::form_urlencoded::Serializer::new(String::new());
     form.extend_pairs([
-        ("username", name), ("email", email), ("password", "a-long-test-password"),
-        ("confirm_password", "a-long-test-password"), ("csrf_token", csrf.as_str()),
+        ("username", name),
+        ("email", email),
+        ("password", "a-long-test-password"),
+        ("confirm_password", "a-long-test-password"),
+        ("csrf_token", csrf.as_str()),
     ]);
     client
         .post(format!("{}/register", server.url()))
