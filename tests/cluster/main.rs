@@ -20,3 +20,5 @@ mod tcp;
 mod sso;
 
 mod quorum_default;
+
+mod quorum_disk;

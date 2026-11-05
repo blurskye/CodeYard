@@ -61,7 +61,7 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 | A3 | Upload a package or CI artifact through web node 1, download it through web node 2 | same bytes | cross-node HTTP regression written; runtime pending |
 | A4 | Stop one web node while clients run `gh` and `git` | other nodes keep serving, sessions survive, no half-written state | gh/Git process-loss step and browser-session regression written; runtime pending |
 | A5 | Kill a storage node during a clone and a push | clear error to the client, no changed refs, clone retries from a copy | pending builder acceptance |
-| A6 | Fill a storage node's disk | placement skips it, writes fail cleanly, no corrupt repository | pending builder acceptance |
+| A6 | Fill a storage node's disk | placement skips it, writes fail cleanly, no corrupt repository | bounded tmpfs Git failure/retry and HTTP placement acceptance written; checks pending |
 | A7 | Restart PostgreSQL under load | `/ready` goes 503 then 200, nodes reconnect without restart, no lost acknowledged write | owned-database crash step written; runtime pending |
 | A8 | Revoke a node key | the node is refused on its next call, within 60 seconds | pending builder acceptance |
 | A9 | Send an oversized, truncated, replayed and unauthorised frame to the node port | refused, bounded memory, logged without secrets | pending builder acceptance |

@@ -174,6 +174,10 @@ impl Stores {
         &self,
         pool: &DbPool,
     ) -> (anyhow::Result<std::process::ExitStatus>, Vec<u8>, Vec<u8>) {
+        self.push_with_input(pool, self.push_input().await).await
+    }
+
+    pub(super) async fn push_input(&self) -> Vec<u8> {
         let primary = RepoStore::from_disk_path(self.paths[0].to_str().unwrap());
         let mut pack = Vec::new();
         let status = primary
@@ -192,6 +196,14 @@ impl Stores {
         let command = format!("{} {} {MAIN}\0report-status atomic\n", self.old, self.new);
         let mut input = format!("{:04x}{command}0000", command.len() + 4).into_bytes();
         input.extend_from_slice(&pack);
+        input
+    }
+
+    pub(super) async fn push_with_input(
+        &self,
+        pool: &DbPool,
+        input: Vec<u8>,
+    ) -> (anyhow::Result<std::process::ExitStatus>, Vec<u8>, Vec<u8>) {
         let mut session = GitSession::new(GitService::ReceivePack, true);
         session.credential = Some(self.credential);
         session.owner = "quorum-owner".into();
@@ -227,7 +239,7 @@ impl Stores {
         (status, output, errors)
     }
 
-    async fn refs(&self) -> Vec<std::collections::HashMap<String, String>> {
+    pub(super) async fn refs(&self) -> Vec<std::collections::HashMap<String, String>> {
         let mut refs = Vec::new();
         for path in &self.paths {
             refs.push(

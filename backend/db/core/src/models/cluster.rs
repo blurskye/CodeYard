@@ -46,7 +46,13 @@ impl ClusterNode {
     pub fn ranked_storage(nodes: &[Self]) -> Vec<&Self> {
         let mut nodes: Vec<_> = nodes
             .iter()
-            .filter(|node| node.state == "active" && node.is_serving_storage())
+            .filter(|node| {
+                node.state == "active"
+                    && node.is_serving_storage()
+                    && node
+                        .available_storage_bytes()
+                        .is_some_and(|bytes| bytes > 0)
+            })
             .collect();
         nodes.sort_by_key(|node| {
             (
@@ -55,6 +61,18 @@ impl ClusterNode {
             )
         });
         nodes
+    }
+
+    /// Reported free bytes beyond the same 15% reserve used by drain admission.
+    /// Legacy reports without a total still exclude full disks from allocation.
+    pub fn available_storage_bytes(&self) -> Option<i64> {
+        let free = self.disk_free?;
+        let reserve = match self.disk_total {
+            Some(total) if total <= 0 || free > total => return Some(0),
+            Some(total) => total / 100 * 15 + (total % 100 * 15 + 99) / 100,
+            None => 0,
+        };
+        Some(free.saturating_sub(reserve).max(0))
     }
 
     /// Online, reporting its free space and holding the `storage` role, which a repository

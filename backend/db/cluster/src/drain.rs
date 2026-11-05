@@ -77,16 +77,12 @@ pub(crate) fn plan(
         .iter()
         .filter(|node| node.id != source && node.state == "active" && node.is_serving_storage())
     {
-        if let (Some(free), Some(total)) = (node.disk_free, node.disk_total) {
-            let reserve = total / 100 * 15 + (total % 100 * 15 + 99) / 100;
+        if let (Some(free), Some(_)) = (node.available_storage_bytes(), node.disk_total) {
             let reserved = pending
                 .iter()
                 .find(|row| row.0 == node.id)
                 .map_or(0, |row| row.1);
-            space.insert(
-                node.id,
-                free.saturating_sub(reserve).saturating_sub(reserved).max(0),
-            );
+            space.insert(node.id, free.saturating_sub(reserved).max(0));
         }
     }
     let mut links = BTreeMap::<i64, Vec<i64>>::new();
