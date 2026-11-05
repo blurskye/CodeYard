@@ -426,6 +426,12 @@ pub async fn set_node_status(
 pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::PgConnection> {
     let mut connection = pool.acquire().await?;
     connection.close_on_drop();
+    let allowed: bool = sqlx::query_scalar(
+        "SELECT pg_try_advisory_lock_shared(723947122,hashtext(COALESCE(current_schema(),'')))",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    ensure!(allowed, "cluster restore or offline repair is in progress");
     // Advisory locks are per database, and the installation's tables live in its schema, so
     // two installations in different schemas of one database do not exclude each other.
     let locked: bool = sqlx::query_scalar(
@@ -1082,4 +1088,20 @@ async fn move_primary(
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+/// Excludes every serving core in this installation during restore and offline repair.
+pub async fn maintenance_lock(pool: &PgPool) -> Result<PgConnection> {
+    let mut connection = pool.acquire().await?;
+    connection.close_on_drop();
+    let allowed: bool = sqlx::query_scalar(
+        "SELECT pg_try_advisory_lock(723947122,hashtext(COALESCE(current_schema(),'')))",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
+    ensure!(
+        allowed,
+        "stop every core node before cluster restore or offline repair"
+    );
+    Ok(connection.detach())
 }

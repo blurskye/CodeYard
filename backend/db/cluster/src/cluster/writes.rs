@@ -154,7 +154,7 @@ fn validate_ref(name: &str, kind: &str, target: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-pub(crate) fn validate_values(refs: &[RefValue]) -> Result<()> {
+pub fn validate_values(refs: &[RefValue]) -> Result<()> {
     ensure!(refs.len() <= MAX_REFS, "too many references");
     let mut names = BTreeSet::new();
     let mut bytes = 0;

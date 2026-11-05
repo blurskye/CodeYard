@@ -1,3 +1,4 @@
+mod backups;
 mod cli;
 mod drain;
 mod fixes;

@@ -203,6 +203,7 @@ pub async fn start(
     settings: Settings,
 ) -> Result<Cluster> {
     require_postgres(pool)?;
+    ensure!(!codeyard_db_cluster::backups::restore_pending(pool).await?,"cluster restore is pending; install every storage node with restore --node and finish repo verify --repair before starting cores");
     let key = load_or_create(state_dir)?;
     let identity_lock = codeyard_db_cluster::cluster::serving_lock(pool, &key.public_hex()).await?;
     if !settings.declared.is_empty() {

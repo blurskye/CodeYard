@@ -278,6 +278,9 @@ The experimental write quorum uses two storage voters and PostgreSQL decisions, 
 canonical refs and fenced term directories. Empty initialization and repository copies
 use that coordinator too. Read distribution and geo-routing remain future work.
 Cluster files use two checksum-checked storage-node copies, or shared S3 when configured.
+Cluster backup reuses replica snapshots and object placement. Restore imports a fenced
+database, installs each original storage identity, and completes through offline verification;
+`restore_pending` blocks core startup until the required copies are installed.
 The new backend awaits builder verification. Single node remains supported.
 
 Node membership (`pending`, `active`, `revoked`) is separate from allocation state

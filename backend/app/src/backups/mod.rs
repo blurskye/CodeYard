@@ -21,7 +21,9 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::Path;
 use std::path::PathBuf;
+mod cluster;
 pub mod repair;
+pub use cluster::restore_node;
 
 const SQLITE_FILE: &str = "database.sqlite";
 const POSTGRES_FILE: &str = "database.pgdump";
@@ -111,6 +113,9 @@ async fn mirror_all(repositories: &[(String, PathBuf)], copy: &Path) -> Result<V
     reject_symlink(copy)?;
     for (name, path) in repositories {
         reject_symlink(&copy.join(name))?;
+        if path == &copy.join(name) {
+            continue;
+        }
         mirror::mirror(path, &copy.join(name))
             .await
             .with_context(|| format!("copy repository {name}"))?;
@@ -369,9 +374,19 @@ async fn postgres_tool(program: &str, database_url: &str, arguments: &[&str]) ->
     if let Some(password) = password {
         command.env("PGPASSWORD", password);
     }
-    let output = command.output().await.with_context(|| {
-        format!("could not start {program}; install the PostgreSQL client tools")
-    })?;
+    command
+        .process_group(0)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let output = codeyard_git::repository::process::run(
+        command,
+        &[],
+        64 * 1024,
+        cluster::command_timeout()?,
+    )
+    .await
+    .with_context(|| format!("could not run {program}; install the PostgreSQL client tools"))?;
     ensure!(
         output.status.success(),
         "{program} failed: {}",
@@ -413,19 +428,30 @@ pub async fn backup(
     places: &Places<'_>,
     dir: &Path,
 ) -> Result<()> {
+    backup_with_context(pool, places, dir, None).await
+}
+
+/// An operator on an enrolled, stopped web/SSH node can copy the other live primaries.
+pub async fn backup_with_context(
+    pool: &codeyard_db_core::DbPool,
+    places: &Places<'_>,
+    dir: &Path,
+    context: Option<&codeyard_repos_core::context::NodeContext>,
+) -> Result<()> {
+    let clustered = codeyard_db_cluster::cluster::cluster_enabled(pool).await?;
     ensure!(
-        !codeyard_db_cluster::cluster::cluster_enabled(pool).await?,
-        "codeyard backup covers a single-node installation; this one is in cluster mode"
+        !clustered || context.is_some(),
+        "cluster backup needs an enrolled web or ssh node context"
     );
     let s3 = codeyard_storage::s3::S3Config::optional_from_env()?.is_some();
     let started = std::time::Instant::now();
     let before = codeyard_db_cluster::backups::list_repositories(pool).await?;
     ensure!(
-        before.iter().all(|repo| repo.storage_node_id.is_none()),
+        clustered || before.iter().all(|repo| repo.storage_node_id.is_none()),
         "single-node backup cannot include repositories assigned to storage nodes"
     );
     check_destination(dir, places)?;
-    for repo in &before {
+    for repo in before.iter().filter(|repo| repo.storage_node_id.is_none()) {
         let source = resolved(Path::new(&repo.disk_path))?;
         let root = resolved(dir)?;
         for name in [REPOSITORIES_DIR, mirror::DELETED_DIR, UPLOADS_DIR] {
@@ -438,7 +464,9 @@ pub async fn backup(
         }
     }
     private_dir(dir)?;
-    let _lock = lock_destination(dir)?;
+    let lock = std::sync::Arc::new(lock_destination(dir)?);
+    let _lock = lock.clone();
+    let mut object_inventory = Vec::new();
     let file = match pool {
         codeyard_db_core::DbPool::Sqlite(_) => SQLITE_FILE,
         codeyard_db_core::DbPool::Postgres(_) => POSTGRES_FILE,
@@ -456,9 +484,11 @@ pub async fn backup(
             codeyard_db_cluster::backups::sqlite_snapshot_repositories(&partial).await?
         }
         codeyard_db_core::DbPool::Postgres(_) => {
-            let (snapshot_tx, snapshot, repositories) =
+            let (snapshot_tx, snapshot, repositories, objects) =
                 codeyard_db_cluster::backups::postgres_snapshot(pool).await?;
             let snapshot = format!("--snapshot={snapshot}");
+            let schema = codeyard_db_cluster::backups::schema_name(pool).await?;
+            let schema = format!("--schema=\"{}\"", schema.replace('"', "\"\""));
             let target = format!("--file={}", partial.display());
             postgres_tool(
                 "pg_dump",
@@ -468,12 +498,14 @@ pub async fn backup(
                     "--no-owner",
                     "--no-privileges",
                     "--lock-wait-timeout=30s",
+                    &schema,
                     &snapshot,
                     &target,
                 ],
             )
             .await?;
             snapshot_tx.commit().await?;
+            object_inventory = objects;
             repositories
         }
     };
@@ -483,10 +515,10 @@ pub async fn backup(
     // The exact snapshot inventory is authoritative, including rows created and removed while
     // the snapshot ran. Missing required storage refuses publication rather than losing it.
     ensure!(
-        after.iter().all(|repo| repo.storage_node_id.is_none()),
+        clustered || after.iter().all(|repo| repo.storage_node_id.is_none()),
         "snapshot contains placed repositories; single-node backup refused"
     );
-    for repository in &after {
+    for repository in after.iter().filter(|repo| repo.storage_node_id.is_none()) {
         let source = resolved(Path::new(&repository.disk_path))?;
         for name in [REPOSITORIES_DIR, mirror::DELETED_DIR, UPLOADS_DIR] {
             let target = resolved(&dir.join(name))?;
@@ -509,6 +541,23 @@ pub async fn backup(
     let mut repositories = Vec::new();
     let mut deleted = std::collections::HashMap::new();
     for repository in &after {
+        if repository.storage_node_id.is_some() {
+            let context = context.context("cluster backup context unavailable")?;
+            let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path)?;
+            let name = format!("{uuid}.git");
+            let path = dir.join(REPOSITORIES_DIR).join(&name);
+            reject_symlink(&path)?;
+            let current =
+                codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository.id)
+                    .await?
+                    .context("snapshot repository was removed before its mirror was copied")?;
+            let primary = current
+                .storage_node_id
+                .context("snapshot repository placement disappeared")?;
+            codeyard_cluster::replicas::snapshot(context, primary, uuid, &path).await?;
+            repositories.push((name, path));
+            continue;
+        }
         let mut path = PathBuf::from(&repository.disk_path);
         let name = directory_name(&path)?;
         if !path.is_dir() {
@@ -541,6 +590,14 @@ pub async fn backup(
 
     if s3 {
         println!("Uploads are in S3 and are not copied; back up the bucket with its own tools.");
+    } else if clustered {
+        cluster::save_objects(
+            context.context("cluster backup context unavailable")?,
+            object_inventory,
+            &dir.join(UPLOADS_DIR),
+            lock.clone(),
+        )
+        .await?;
     } else {
         let (source, copy) = (places.state_dir.join(UPLOADS_DIR), dir.join(UPLOADS_DIR));
         reject_symlink(&source)?;
@@ -698,24 +755,19 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
                 codeyard_db_cluster::backups::is_empty(&pool).await?,
                 "restore needs an empty PostgreSQL database; this one has tables"
             );
-            let source = source.to_str().context("backup path is not UTF-8")?;
-            postgres_tool(
-                "pg_restore",
-                places.database_url,
-                &[
-                    "--exit-on-error",
-                    "--single-transaction",
-                    "--no-owner",
-                    "--no-privileges",
-                    source,
-                ],
-            )
-            .await?;
+            let schema = codeyard_db_cluster::backups::schema_name(&pool).await?;
+            cluster::restore_postgres(places.database_url, &source, &schema).await?;
             pool
         }
     };
     codeyard_db_core::run_migrations(&pool).await?;
     println!("Database restored.");
+    let clustered = codeyard_db_cluster::cluster::cluster_enabled(&pool).await?;
+    let maintenance = if clustered {
+        Some(codeyard_db_cluster::cluster::maintenance_lock(&pool).await?)
+    } else {
+        None
+    };
 
     let root = std::path::absolute(places.repos_path)?;
     private_dir(&root)?;
@@ -745,7 +797,7 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
     println!("Repositories restored.");
 
     let copy = dir.join(UPLOADS_DIR);
-    if !s3 && copy.is_dir() {
+    if !s3 && !clustered && copy.is_dir() {
         let copied =
             tokio::task::spawn_blocking(move || copy_tree(&copy, &uploads, &mut Vec::new()))
                 .await??;
@@ -762,10 +814,40 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<codeyard_db_core
         copy_synced(&dir.join("release.key"), &signer)?;
         private_file(&signer)?;
     }
-    let problems = verify(&pool, true).await?;
-    rebuild(&pool).await?;
+    let problems = if clustered {
+        repair::verify_offline(&pool, true, Some(&root)).await?
+    } else {
+        verify(&pool, true).await?
+    };
+    if clustered {
+        repair::rebuild_offline(&pool, Some(&root)).await?;
+        cluster::restore_refs(&pool, &root, true).await?;
+        if let Some(key) = codeyard_support::node_identity::load_existing(places.state_dir)? {
+            if let Some(node) =
+                codeyard_db_cluster::cluster::get_node_by_public_key(&pool, &key.public_hex())
+                    .await?
+            {
+                if !node.roles.iter().any(|role| role == "storage") {
+                    codeyard_db_cluster::backups::restore_node_ready(
+                        &pool,
+                        node.id,
+                        &key.public_hex(),
+                    )
+                    .await?;
+                }
+            }
+        }
+    } else {
+        rebuild(&pool).await?;
+    }
+    if let Some(maintenance) = maintenance {
+        maintenance.release().await;
+    }
     if problems > 0 {
         bail!("restore finished with {problems} problems left; see the list above");
+    }
+    if clustered {
+        println!("Database and coordinator mirrors restored. Install each storage node with `restore --node` before starting any core, then run `repo verify --repair` from this coordinator.");
     }
     println!("Restore complete.");
     Ok(pool)

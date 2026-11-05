@@ -266,7 +266,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         }
     };
     // A restore fills an empty database itself, before anything migrates it.
-    if let Commands::Restore { dir } = &cli.command {
+    if let Commands::Restore { dir, node: false } = &cli.command {
         let places = codeyard_app::backups::Places {
             database_url: &database_url,
             state_dir: &cli.state_dir,
@@ -296,8 +296,14 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                 unreachable!("database copy runs before the application database opens")
             }
 
-            Commands::Restore { .. } => {
-                unreachable!("restore runs before the application database opens")
+            Commands::Restore { dir, node } => {
+                anyhow::ensure!(node, "database restore runs before migrations");
+                let places = codeyard_app::backups::Places {
+                    database_url: &database_url,
+                    state_dir: &cli.state_dir,
+                    repos_path: &cli.repos_path,
+                };
+                codeyard_app::backups::restore_node(&pool, &places, &dir).await?;
             }
 
             Commands::Backup { dir } => {
@@ -306,7 +312,22 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     state_dir: &cli.state_dir,
                     repos_path: &cli.repos_path,
                 };
-                codeyard_app::backups::backup(&pool, &places, &dir).await?;
+                let context = if codeyard_db_cluster::cluster::cluster_enabled(&pool).await? {
+                    codeyard_cluster::client_context(&pool, &cli.state_dir, &cli.repos_path).await?
+                } else {
+                    None
+                };
+                let result = codeyard_app::backups::backup_with_context(
+                    &pool,
+                    &places,
+                    &dir,
+                    context.as_ref(),
+                )
+                .await;
+                if let Some(context) = context {
+                    context.iroh.close().await;
+                }
+                result?;
             }
 
             Commands::Serve {
@@ -432,7 +453,16 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                     .await?;
                 }
                 RepoAction::Verify { repair } => {
-                    let problems = codeyard_app::backups::repair::verify(&pool, repair).await?;
+                    let problems = if codeyard_db_cluster::cluster::cluster_enabled(&pool).await? {
+                        codeyard_app::backups::repair::verify_cluster(
+                            &pool,
+                            &cli.repos_path,
+                            repair,
+                        )
+                        .await?
+                    } else {
+                        codeyard_app::backups::repair::verify(&pool, repair).await?
+                    };
                     if problems > 0 {
                         bail!("{problems} problems found");
                     }

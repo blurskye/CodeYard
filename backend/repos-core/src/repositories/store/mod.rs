@@ -2686,6 +2686,19 @@ impl RepoStore {
     }
 
     /// Makes this copy's refs exactly `refs`.
+    /// Offline restore installs the database's canonical refs on an unbound local mirror.
+    pub async fn restore_refs(
+        &self,
+        refs: &[codeyard_db_core::models::RefValue],
+    ) -> Result<(), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.restore_refs(refs).await,
+            Backend::Remote(_) => Err(crate::wire::invalid(
+                "restore requires an offline local mirror",
+            )),
+        }
+    }
+
     pub async fn set_refs(&self, refs: &HashMap<String, String>) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.set_refs(refs).await,

@@ -43,19 +43,19 @@ fn commit(repo: &git2::Repository, message: &str, parent: Option<git2::Oid>) -> 
         .to_string()
 }
 
-struct Stores {
-    fixture: Fixture,
-    contexts: Vec<NodeContext>,
+pub(super) struct Stores {
+    pub(super) fixture: Fixture,
+    pub(super) contexts: Vec<NodeContext>,
     listeners: Vec<codeyard_cluster::tcp::Listener>,
     paths: Vec<PathBuf>,
     _roots: Vec<tempfile::TempDir>,
-    old: String,
+    pub(super) old: String,
     new: String,
     credential: ReceiveCredential,
 }
 
 impl Stores {
-    async fn new(pool: &DbPool) -> Self {
+    pub(super) async fn new(pool: &DbPool) -> Self {
         let seed = tempfile::tempdir().unwrap();
         let seed_repo = git2::Repository::init_bare(seed.path()).unwrap();
         let old = commit(&seed_repo, "initial", None);
@@ -170,7 +170,7 @@ impl Stores {
         }
     }
 
-    async fn push(
+    pub(super) async fn push(
         &self,
         pool: &DbPool,
     ) -> (anyhow::Result<std::process::ExitStatus>, Vec<u8>, Vec<u8>) {
@@ -306,7 +306,7 @@ impl Stores {
             .collect()
     }
 
-    async fn stop(&self) {
+    pub(super) async fn stop(&self) {
         for listener in &self.listeners {
             listener.stop().await;
         }

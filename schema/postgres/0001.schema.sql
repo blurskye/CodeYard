@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS node_configuration (
     -- Single-node mode allows only the server and runners; `codeyard cluster enable` turns on
     -- cluster mode.
     cluster_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    restore_pending BOOLEAN NOT NULL DEFAULT FALSE,
     CONSTRAINT node_configuration_singleton CHECK (id = 1),
     CONSTRAINT node_configuration_mode_check CHECK (node_mode IN ('public', 'private'))
 );

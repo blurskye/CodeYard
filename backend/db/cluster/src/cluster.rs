@@ -381,3 +381,14 @@ native_operation!(crate::postgres::cluster::promote_fork_family,
     /// `to` is active and reporting in and holds a current copy of each, and `from` is still
     /// active but offline.
     fn promote_fork_family(pool: &DbPool, repo_id: i64, from: i64, to: i64) -> Result<FamilyOutcome>);
+
+/// An offline maintenance lock shares the same lifetime owner as node serving leases.
+pub async fn maintenance_lock(pool: &DbPool) -> Result<ServingLock> {
+    match pool {
+        DbPool::Postgres(pool) => Ok(ServingLock {
+            postgres: Some(crate::postgres::cluster::maintenance_lock(pool).await?),
+            _file: None,
+        }),
+        DbPool::Sqlite(_) => serving_lock(pool, "restore").await,
+    }
+}

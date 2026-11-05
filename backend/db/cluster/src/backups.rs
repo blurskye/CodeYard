@@ -44,7 +44,12 @@ native_operation!(crate::postgres::backups::is_empty,
     fn is_empty(pool: &DbPool) -> Result<bool>);
 
 pub async fn sqlite_snapshot_repositories(path: &std::path::Path) -> Result<Vec<Repository>> {
-    crate::sqlite::backups::snapshot_repositories(path).await
+    let rows = crate::sqlite::backups::snapshot_repositories(path).await?;
+    anyhow::ensure!(
+        rows.len() as i64 <= entry_limit()?,
+        "backup repository limit exceeded"
+    );
+    Ok(rows)
 }
 
 /// Keep the exporting transaction alive until pg_dump has imported and read its snapshot.
@@ -54,6 +59,7 @@ pub async fn postgres_snapshot(
     sqlx::Transaction<'static, sqlx::Postgres>,
     String,
     Vec<Repository>,
+    Vec<crate::objects::Object>,
 )> {
     match pool {
         DbPool::Postgres(pool) => crate::postgres::backups::export_snapshot(pool).await,
@@ -70,3 +76,33 @@ pub async fn copy_sqlite(pool: &DbPool, path: &str) -> Result<()> {
         }
     }
 }
+
+/// A bounded snapshot catalogue; it can be raised for a larger installation.
+pub fn entry_limit() -> Result<i64> {
+    let count = match std::env::var("BACKUP_MAX_ENTRIES") {
+        Ok(raw) => raw.parse::<i64>()?,
+        Err(std::env::VarError::NotPresent) => 10_000,
+        Err(error) => return Err(error.into()),
+    };
+    anyhow::ensure!(
+        (1..=1_000_000).contains(&count),
+        "invalid backup entry limit"
+    );
+    Ok(count)
+}
+native_operation!(crate::postgres::backups::restore_refs,crate::sqlite::backups::restore_refs,
+    /// Operator-only, while the installation is locked offline; keeps every voter fenced.
+    fn restore_refs(pool:&DbPool,repository:i64,refs:&[codeyard_db_core::models::RefValue],force:bool)->Result<()>);
+native_operation!(crate::postgres::backups::restore_node_ready,crate::sqlite::backups::restore_node_ready,
+    fn restore_node_ready(pool:&DbPool,node:i64,key:&str)->Result<()>);
+
+native_operation!(crate::postgres::backups::node_objects,crate::sqlite::backups::node_objects,
+    fn node_objects(pool:&DbPool,node:i64)->Result<Vec<crate::objects::Object>>);
+
+native_operation!(crate::postgres::backups::restore_pending,crate::sqlite::backups::restore_pending,
+    fn restore_pending(pool:&DbPool)->Result<bool>);
+native_operation!(crate::postgres::backups::finish_restore,crate::sqlite::backups::finish_restore,
+    fn finish_restore(pool:&DbPool)->Result<()>);
+
+native_operation!(crate::postgres::backups::schema_name,crate::sqlite::backups::schema_name,
+    fn schema_name(pool:&DbPool)->Result<String>);

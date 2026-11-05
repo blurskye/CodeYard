@@ -5,6 +5,7 @@ edition.workspace = true
 license = "LGPL-3.0-or-later"
 
 [dependencies]
+codeyard-cluster.workspace = true
 codeyard-ci-engine.workspace = true
 codeyard-repos-pulls.workspace = true
 codeyard-repos-core.workspace = true

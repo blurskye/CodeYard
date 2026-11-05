@@ -43,15 +43,24 @@ async fn retain_matching_head(
     pool: &codeyard_db_core::DbPool,
     pull: &codeyard_db_cluster::backups::PullRequestHead,
     candidate: &str,
+    root: Option<&Path>,
 ) -> Result<Option<Arc<git::locks::PublicationGuard>>> {
     let Some(head_id) = pull.head_repo_id else {
         return Ok(None);
     };
-    let Some(head) =
+    let Some(mut head) =
         codeyard_db_repos::repositories::records::get_repository_by_id(pool, head_id).await?
     else {
         return Ok(None);
     };
+    if let Some(root) = root.filter(|_| head.storage_node_id.is_some()) {
+        let uuid = codeyard_repos_core::wire::repository_uuid(&head.disk_path)?;
+        head.disk_path = root
+            .join(format!("{uuid}.git"))
+            .to_string_lossy()
+            .into_owned();
+        head.storage_node_id = None;
+    }
     if head.storage_node_id.is_some() || head.is_gist {
         return Ok(None);
     }
@@ -73,13 +82,50 @@ async fn retain_matching_head(
 /// Checks every repository this node stores and returns how many problems remain.
 pub async fn verify(pool: &codeyard_db_core::DbPool, repair: bool) -> Result<usize> {
     refuse_cluster(pool, "verify").await?;
+    verify_offline(pool, repair, None).await
+}
+
+/// Cluster verification runs against the coordinator's complete restore catalogue while offline.
+pub async fn verify_cluster(
+    pool: &codeyard_db_core::DbPool,
+    root: &Path,
+    repair: bool,
+) -> Result<usize> {
+    let maintenance = codeyard_db_cluster::cluster::maintenance_lock(pool).await?;
+    ensure!(
+        codeyard_db_cluster::backups::restore_pending(pool).await?,
+        "offline cluster verification requires a pending restore catalogue"
+    );
+    let problems = verify_offline(pool, repair, Some(root)).await?;
+    if repair && problems == 0 {
+        rebuild_offline(pool, Some(root)).await?;
+        super::cluster::restore_refs(pool, root, false).await?;
+        codeyard_db_cluster::backups::finish_restore(pool).await?;
+    }
+    maintenance.release().await;
+    Ok(problems)
+}
+
+pub(super) async fn verify_offline(
+    pool: &codeyard_db_core::DbPool,
+    repair: bool,
+    root: Option<&Path>,
+) -> Result<usize> {
     let mut problems = 0;
     let mut report = |line: String| {
         println!("{line}");
         problems += 1;
     };
     let mut deleted = HashMap::new();
-    for repository in codeyard_db_cluster::backups::list_repositories(pool).await? {
+    for mut repository in codeyard_db_cluster::backups::list_repositories(pool).await? {
+        if let Some(root) = root.filter(|_| repository.storage_node_id.is_some()) {
+            let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path)?;
+            repository.disk_path = root
+                .join(format!("{uuid}.git"))
+                .to_string_lossy()
+                .into_owned();
+            repository.storage_node_id = None;
+        }
         if repository.storage_node_id.is_some() {
             continue;
         }
@@ -172,7 +218,7 @@ pub async fn verify(pool: &codeyard_db_core::DbPool, repair: bool) -> Result<usi
                 Some(sha) if *sha == pull.head_sha => {}
                 // Git may be newer, but the retained ref alone does not identify its source.
                 Some(sha) if pull.state == "open" && present.contains(sha) => {
-                    if let Some(_head) = retain_matching_head(pool, &pull, sha).await? {
+                    if let Some(_head) = retain_matching_head(pool, &pull, sha, root).await? {
                         if !repair {
                             report(format!(
                                 "{label}: pull request #{number} records {}, its live head branch has {sha}",
@@ -309,8 +355,23 @@ pub async fn verify(pool: &codeyard_db_core::DbPool, repair: bool) -> Result<usi
 /// graph, then each default branch's language statistics.
 pub async fn rebuild(pool: &codeyard_db_core::DbPool) -> Result<()> {
     refuse_cluster(pool, "rebuild").await?;
+    rebuild_offline(pool, None).await
+}
+
+pub(super) async fn rebuild_offline(
+    pool: &codeyard_db_core::DbPool,
+    root: Option<&Path>,
+) -> Result<()> {
     let mut rebuilt = 0;
-    for repository in codeyard_db_cluster::backups::list_repositories(pool).await? {
+    for mut repository in codeyard_db_cluster::backups::list_repositories(pool).await? {
+        if let Some(root) = root.filter(|_| repository.storage_node_id.is_some()) {
+            let uuid = codeyard_repos_core::wire::repository_uuid(&repository.disk_path)?;
+            repository.disk_path = root
+                .join(format!("{uuid}.git"))
+                .to_string_lossy()
+                .into_owned();
+            repository.storage_node_id = None;
+        }
         if repository.storage_node_id.is_some() {
             continue;
         }

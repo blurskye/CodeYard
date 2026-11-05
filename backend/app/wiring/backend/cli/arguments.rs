@@ -105,7 +105,7 @@ pub(super) enum Commands {
 
     /// Copy the database, then every repository, then local uploads into a directory.
     /// Runs while the server serves; a second run into the same directory copies only
-    /// what changed. Single-node installations only.
+    /// what changed. Cluster backup runs from a stopped, enrolled web/SSH node.
     Backup {
         /// Backup directory, created if missing
         dir: PathBuf,
@@ -116,6 +116,9 @@ pub(super) enum Commands {
     Restore {
         /// Backup directory written by `codeyard backup`
         dir: PathBuf,
+        /// Install this original storage identity's assigned files into the restored cluster
+        #[arg(long)]
+        node: bool,
     },
 }
 

@@ -9552,6 +9552,7 @@ dependencies = [
  "codeyard-api-rest",
  "codeyard-ci",
  "codeyard-ci-engine",
+ "codeyard-cluster",
  "codeyard-cluster-core",
  "codeyard-db-actions",
  "codeyard-db-cluster",

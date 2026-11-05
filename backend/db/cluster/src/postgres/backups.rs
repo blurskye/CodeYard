@@ -9,6 +9,7 @@ pub async fn export_snapshot(
     sqlx::Transaction<'static, sqlx::Postgres>,
     String,
     Vec<Repository>,
+    Vec<crate::objects::Object>,
 )> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
@@ -17,16 +18,36 @@ pub async fn export_snapshot(
     let snapshot = sqlx::query_scalar("SELECT pg_export_snapshot()")
         .fetch_one(&mut *tx)
         .await?;
-    let repositories = sqlx::query_as("SELECT * FROM repositories ORDER BY id")
-        .fetch_all(&mut *tx)
-        .await?;
-    Ok((tx, snapshot, repositories))
+    let limit = crate::backups::entry_limit()?;
+    let repositories: Vec<Repository> =
+        sqlx::query_as("SELECT * FROM repositories ORDER BY id LIMIT $1")
+            .bind(limit + 1)
+            .fetch_all(&mut *tx)
+            .await?;
+    anyhow::ensure!(
+        repositories.len() as i64 <= limit,
+        "backup repository limit exceeded"
+    );
+    let objects:Vec<crate::objects::Object>=sqlx::query_as("SELECT object_key,digest,bytes,content_type,confirmed FROM storage_objects WHERE confirmed=1 ORDER BY object_key LIMIT $1")
+        .bind(limit+1).fetch_all(&mut *tx).await?;
+    anyhow::ensure!(
+        objects.len() as i64 <= limit,
+        "backup object limit exceeded"
+    );
+    Ok((tx, snapshot, repositories, objects))
 }
 
 pub async fn list_repositories(pool: &PgPool) -> Result<Vec<Repository>> {
-    Ok(sqlx::query_as("SELECT * FROM repositories ORDER BY id")
+    let limit = crate::backups::entry_limit()?;
+    let rows: Vec<Repository> = sqlx::query_as("SELECT * FROM repositories ORDER BY id LIMIT $1")
+        .bind(limit + 1)
         .fetch_all(pool)
-        .await?)
+        .await?;
+    anyhow::ensure!(
+        rows.len() as i64 <= limit,
+        "backup repository limit exceeded"
+    );
+    Ok(rows)
 }
 
 pub async fn set_disk_path(pool: &PgPool, repo_id: i64, disk_path: &str) -> Result<()> {
@@ -62,4 +83,127 @@ pub async fn is_empty(pool: &PgPool) -> Result<bool> {
     )
     .fetch_one(pool)
     .await?)
+}
+
+pub async fn restore_refs(
+    pool: &PgPool,
+    repository: i64,
+    refs: &[codeyard_db_core::models::RefValue],
+    force: bool,
+) -> Result<()> {
+    crate::cluster::writes::validate_values(refs)?;
+    let mut tx = pool.begin().await?;
+    let pending: bool =
+        sqlx::query_scalar("SELECT restore_pending FROM node_configuration WHERE id=1")
+            .fetch_one(&mut *tx)
+            .await?;
+    anyhow::ensure!(pending, "cluster restore is not pending");
+    let control:Option<(i64,i64,i32)>=sqlx::query_as("SELECT term,committed_version,serving FROM repository_write_control WHERE repository_id=$1 FOR UPDATE")
+        .bind(repository).fetch_optional(&mut *tx).await?;
+    let Some((term, version, serving)) = control else {
+        return Ok(());
+    };
+    anyhow::ensure!(serving == 0, "restore repository is already serving");
+    if !force {
+        let current:Vec<codeyard_db_core::models::RefValue>=sqlx::query_as("SELECT name,kind,target FROM repository_committed_refs WHERE repository_id=$1 ORDER BY name LIMIT $2")
+            .bind(repository).bind((crate::cluster::writes::MAX_REFS+1) as i64).fetch_all(&mut *tx).await?;
+        let normalized = |values: &[codeyard_db_core::models::RefValue]| {
+            values
+                .iter()
+                .map(|value| (value.name.clone(), value.kind.clone(), value.target.clone()))
+                .collect::<std::collections::BTreeSet<_>>()
+        };
+        if normalized(&current) == normalized(refs) {
+            return Ok(());
+        }
+    }
+    let term = term
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("restore term overflow"))?;
+    let version = version
+        .checked_add(1)
+        .ok_or_else(|| anyhow::anyhow!("restore version overflow"))?;
+    sqlx::query("UPDATE repository_writes SET decision=CASE WHEN decision='pending' THEN 'abort' ELSE decision END,finished=1 WHERE repository_id=$1 AND finished=0").bind(repository).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM repository_committed_refs WHERE repository_id=$1")
+        .bind(repository)
+        .execute(&mut *tx)
+        .await?;
+    for value in refs {
+        sqlx::query("INSERT INTO repository_committed_refs(repository_id,name,kind,target) VALUES($1,$2,$3,$4)")
+            .bind(repository).bind(&value.name).bind(&value.kind).bind(&value.target).execute(&mut *tx).await?;
+    }
+    sqlx::query("UPDATE repository_write_control SET term=$2,committed_version=$3 WHERE repository_id=$1 AND serving=0").bind(repository).bind(term).bind(version).execute(&mut *tx).await?;
+    sqlx::query("UPDATE repository_voters SET term=$2,applied_version=-1 WHERE repository_id=$1")
+        .bind(repository)
+        .bind(term)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "UPDATE repository_replicas SET applied_version=-1,synced_at=NULL WHERE repository_id=$1",
+    )
+    .bind(repository)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("UPDATE repositories SET write_version=write_version+1 WHERE id=$1")
+        .bind(repository)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn restore_node_ready(pool: &PgPool, node: i64, key: &str) -> Result<()> {
+    let changed=sqlx::query("UPDATE nodes SET state='active',drain_error=NULL WHERE id=$1 AND public_key=$2 AND status='active' AND last_seen IS NULL")
+        .bind(node).bind(key).execute(pool).await?;
+    anyhow::ensure!(
+        changed.rows_affected() == 1,
+        "restored node identity changed or is already serving"
+    );
+    Ok(())
+}
+
+pub async fn node_objects(pool: &PgPool, node: i64) -> Result<Vec<crate::objects::Object>> {
+    let limit = crate::backups::entry_limit()?;
+    let objects:Vec<crate::objects::Object>=sqlx::query_as("SELECT o.object_key,o.digest,o.bytes,o.content_type,o.confirmed FROM storage_objects o JOIN storage_object_copies c ON c.object_key=o.object_key WHERE c.node_id=$1 AND o.confirmed=1 ORDER BY o.object_key LIMIT $2")
+        .bind(node).bind(limit+1).fetch_all(pool).await?;
+    anyhow::ensure!(
+        objects.len() as i64 <= limit,
+        "restore object limit exceeded"
+    );
+    Ok(objects)
+}
+
+pub async fn restore_pending(pool: &PgPool) -> Result<bool> {
+    Ok(
+        sqlx::query_scalar("SELECT restore_pending FROM node_configuration WHERE id=1")
+            .fetch_optional(pool)
+            .await?
+            .unwrap_or(false),
+    )
+}
+pub async fn finish_restore(pool: &PgPool) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    let pending: bool =
+        sqlx::query_scalar("SELECT restore_pending FROM node_configuration WHERE id=1 FOR UPDATE")
+            .fetch_one(&mut *tx)
+            .await?;
+    anyhow::ensure!(pending, "cluster restore is not pending");
+    let incomplete:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN nodes n ON n.id=r.storage_node_id WHERE n.status<>'active' OR n.state<>'active') OR EXISTS(SELECT 1 FROM repository_write_control c WHERE NOT EXISTS(SELECT 1 FROM repository_voters v WHERE v.repository_id=c.repository_id AND v.term=c.term) OR EXISTS(SELECT 1 FROM repository_voters v JOIN nodes n ON n.id=v.node_id WHERE v.repository_id=c.repository_id AND (v.term<>c.term OR v.applied_version<>c.committed_version OR n.status<>'active' OR n.state<>'active'))) OR EXISTS(SELECT 1 FROM storage_objects o WHERE o.confirmed=1 AND (SELECT COUNT(*) FROM storage_object_copies c JOIN nodes n ON n.id=c.node_id WHERE c.object_key=o.object_key AND c.ready=1 AND n.status='active' AND n.state='active')<2)").fetch_one(&mut *tx).await?;
+    anyhow::ensure!(
+        !incomplete,
+        "restore every assigned storage node before completing verification"
+    );
+    sqlx::query("UPDATE node_configuration SET restore_pending=FALSE WHERE id=1")
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+pub async fn schema_name(pool: &PgPool) -> Result<String> {
+    Ok(
+        sqlx::query_scalar("SELECT COALESCE(current_schema(),'public')")
+            .fetch_one(pool)
+            .await?,
+    )
 }

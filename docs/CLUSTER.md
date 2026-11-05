@@ -486,6 +486,40 @@ iroh. A transfer in flight is different. TCP keeps retransmitting unacknowledged
 until the kernel's retransmission limit, which can take many minutes, so a clone or push
 that was streaming to a dead storage node can hang that long over TCP.
 
+## Backup and restore
+
+Cluster backup runs from a stopped, enrolled web or SSH node, with its usual cluster
+settings and key. Other cores keep serving. `codeyard backup DIR` uses `pg_dump` with a
+shared snapshot, fetches each placed repository from its primary through the replica
+transport, and copies the storage-node object inventory. S3 buckets still use the
+operator's versioned bucket backup tools. Keep node private keys and `SECRETS_MASTER_KEY`
+in the operator's separate secret backup; the archive contains only its coordinator key.
+
+Restore into a new PostgreSQL database using the same schema name and empty data paths:
+
+1. Keep every new core stopped. Run `codeyard restore DIR` on the coordinator.
+2. Give each storage machine its original enrolled `NODE_KEY` or `NODE_KEY_FILE`, the
+   restored database URL and an empty `REPOS_PATH`. Run `codeyard restore DIR --node`.
+   A failed installation can be repeated against the same owned paths.
+3. Run `codeyard repo verify --repair` from the coordinator with its restored repository
+   catalogue. It refuses completion until every required voter and two copies of every
+   stored object have been installed. Cores refuse startup while restore is pending.
+4. Start the storage nodes and then web/SSH nodes. Existing term recovery verifies Git
+   before enabling writes. Other web nodes and runners remain drained until the operator
+   cancels their drain. Scaling policies remain paused and in dry run after restore.
+
+Import and initial fencing share one PostgreSQL transaction. Live addresses, join tickets
+and running CI claims are cleared; old job tokens cannot write into the restored cluster.
+The installation's serving leases exclude offline restore and verification. Offline
+cluster verification uses this restore catalogue, and is refused after the cluster leaves
+restore mode. It does not inspect a running cluster through a stale archive.
+
+`BACKUP_MAX_ENTRIES` bounds repositories and stored objects (default 10,000, max 1,000,000).
+`BACKUP_COMMAND_TIMEOUT_SECONDS` bounds each database tool (default 3,600, max 86,400).
+`BACKUP_MAX_DATABASE_BYTES` bounds restore SQL on disk (default 10 GiB, max 10 TiB).
+`REPLICA_MAX_PACK_BYTES` bounds each repository transfer (default 4 GiB, max 1 TiB).
+The new cluster backup and CLI restore acceptance tests await builder verification.
+
 ## Watching it
 
 - `GET /health` answers while the process is up; `GET /ready` answers 503 while the node

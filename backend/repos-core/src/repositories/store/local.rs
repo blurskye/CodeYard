@@ -710,30 +710,7 @@ pub(super) async fn recover_term(
             status.success(),
             "retained objects are unavailable; repository remains fenced"
         );
-        let current = staged.mirror_refs().await?;
-        let mut remove = String::from("start\n");
-        for name in current.keys() {
-            remove.push_str(&format!("delete {name}\n"));
-        }
-        remove.push_str("prepare\ncommit\n");
-        staged.recovery_refs(&remove).await?;
-        let mut install = String::from("start\n");
-        for value in &view.refs {
-            if value.kind == "oid" {
-                install.push_str(&format!("update {} {}\n", value.name, value.target));
-            }
-        }
-        install.push_str("prepare\ncommit\n");
-        staged.recovery_refs(&install).await?;
-        for value in &view.refs {
-            if value.kind == "symbolic" {
-                let (status, _) = staged
-                    .git(&["symbolic-ref", &value.name, &value.target])
-                    .await?;
-                ensure!(status.success(), "could not restore canonical symbolic ref");
-            }
-        }
-        staged.verify_canonical(&view.refs).await?;
+        staged.install_canonical(&view.refs).await?;
         let current = codeyard_db_cluster::cluster::writes::recovery_view(pool, repository).await?;
         ensure!(
             !current.serving
@@ -776,6 +753,48 @@ pub(super) async fn recover_term(
 }
 
 impl LocalStore {
+    pub(super) async fn restore_refs(
+        &self,
+        refs: &[codeyard_db_core::models::RefValue],
+    ) -> Result<(), RepoError> {
+        if self.context.is_some() {
+            return Err(RepoError::write_denied());
+        }
+        self.install_canonical(refs).await.map_err(RepoError::from)
+    }
+
+    async fn install_canonical(
+        &self,
+        refs: &[codeyard_db_core::models::RefValue],
+    ) -> anyhow::Result<()> {
+        codeyard_db_cluster::cluster::writes::validate_values(refs)?;
+        let current = self.mirror_refs().await?;
+        let mut remove = String::from("start\n");
+        for name in current.keys() {
+            remove.push_str(&format!("delete {name}\n"));
+        }
+        remove.push_str("prepare\ncommit\n");
+        self.recovery_refs(&remove).await?;
+        let mut install = String::from("start\n");
+        for value in refs {
+            if value.kind == "oid" {
+                install.push_str(&format!("update {} {}\n", value.name, value.target));
+            }
+        }
+        install.push_str("prepare\ncommit\n");
+        self.recovery_refs(&install).await?;
+        for value in refs {
+            if value.kind == "symbolic" {
+                let (status, _) = self
+                    .git(&["symbolic-ref", &value.name, &value.target])
+                    .await?;
+                anyhow::ensure!(status.success(), "could not restore canonical symbolic ref");
+            }
+        }
+        self.verify_canonical(refs).await?;
+        Ok(())
+    }
+
     async fn recovery_refs(&self, script: &str) -> anyhow::Result<()> {
         let mut command = process::git_command()?;
         command

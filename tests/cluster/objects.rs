@@ -21,7 +21,7 @@ struct Node {
     context: NodeContext,
     listener: Option<codeyard_cluster::tcp::Listener>,
 }
-async fn listen(context: &NodeContext) -> codeyard_cluster::tcp::Listener {
+pub(super) async fn listen(context: &NodeContext) -> codeyard_cluster::tcp::Listener {
     let pool = context.database().unwrap();
     let queue = RunQueue::Database {
         pool: pool.clone(),
