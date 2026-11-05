@@ -162,13 +162,15 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     WASM 92880ee5cb534d41b01aa5b26782d841. Browser sessions, home CSRF, transaction-time
     expiry and native two-cell GraphQL have Clippy 51989f211504408ab7128222b8cb3b1b and
     WASM fe919429f2ab4bfabdfdf341bdb3d336 passes; workspace
-    0c9835e8d1d94b96b879c25e875e3069 is running. Cold collaborator metadata lookup and
-    retained invitation credentials are written with both-engine and real HTTP tests;
-    this next batch is unchecked. Runtime job 375fa054f4204225b5c57bb2b02cd059 runs the
+    0c9835e8d1d94b96b879c25e875e3069 also passes. Cold collaborator metadata lookup and
+    retained invitation credentials have both-engine and real HTTP tests; their first check
+    round is workspace b518ddaa51694fb6925a9d3d408cb19a, Clippy
+    161ffaa2e0e6470480f700dc80aa81d5 and WASM aa012bf0486f481db20c53d7dde25835 (running). Runtime job 375fa054f4204225b5c57bb2b02cd059 runs the
     earlier snapshot, including the cluster/Git/OAuth fixture fixes from failed job 049.
     Native signup/key claim publication, remote membership pointers, remaining node families
     and the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
     Automatic user moves and org regional presence remain documented owner decisions.
+    Owner follow-up: check foreign-cache expiry after PostgreSQL row-lock waits.
 
 ## Decisions that settle the open questions
 

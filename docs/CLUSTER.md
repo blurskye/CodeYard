@@ -734,7 +734,7 @@ may request home answers. Set `HTTP_TRUSTED_PROXY_IPS` on cell web nodes to the 
 routers' addresses so client rate limits retain the original address. Foreign token/SSH
 admission, exact Git proofs and resource scope checks pass source checks. Browser-session
 pages/forms reuse home CSRF and cached identity without local credentials; their source
-check round is running. Cold collaborator targets have directory-verified home metadata
+checks pass. Cold collaborator targets have directory-verified home metadata
 lookup before the invitation transaction; this follow-up is unchecked.
 
 Rooted node readers and common repository/team projections pass source checks; remaining
