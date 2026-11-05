@@ -165,8 +165,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     and WASM after removing the HTTP extraction's unused import.
     Generated GraphQL remains unchanged. Catalogue selection and bounded GraphQL dispatch,
     including mixed-cell nodes and ordered mutations, pass all three checks. Git/ref/composite
-    routing hints and upload cleanup are the next unchecked batch. Two real
-    HTTP cells and TLS-directory tests cover the dispatch source; these tests have not run.
+    routing hints and upload cleanup pass workspace 53188113fc0f4d4aa1a760d067f3d97a,
+    Clippy e9247e79663843cbb6fe5cee24024561 and WASM a65f391359894621b5b10e48a84d1c9a.
+    Two real HTTP cells and TLS-directory tests cover the dispatch source; these tests have not run.
     Token tests that pinned the former unprefixed length now assert the scoped format; the
     directory CLI fixture now supplies the capacity it asserts. Runtime rechecks are pending.
     The public proxy role, foreign authorization, stubs and stages 3 to 6 remain unimplemented.
