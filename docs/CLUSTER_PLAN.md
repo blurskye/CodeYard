@@ -14,7 +14,8 @@ Storage checks pass (99 passed, 3 ignored). Before cell work, all 221 cluster in
 checks passed, including full-disk failure/retry and interrupted cluster backup/restore.
 The first stage 0 extension ran 225: 223 passed and two missed-voter checks exposed
 dangling symbolic aliases. The alias fix passes workspace, Clippy and WASM checks; its
-runtime retest is running. Browser bundle publication, delivery, native and hydrated cluster forms, and live
+runtime retest has passed 307 focused library and repository-store checks; cluster and
+client checks are still running. Browser bundle publication, delivery, native and hydrated cluster forms, and live
 cross-node issue updates pass. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
 Cluster mode stays hidden behind

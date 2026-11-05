@@ -557,7 +557,7 @@ membership and offers approval and revocation; invites are made with the CLI.
 ### One repository interface: `RepoStore`
 
 Callers ask for `repo_store(&repo, node_context)`
-(`backend/app/src/repositories/store/`). Node context holds this node's endpoint,
+(`backend/repos-core/src/repositories/store/`). Node context holds this node's endpoint,
 identity, optional database pool, learned peer addresses and repository root;
 it is passed explicitly so several
 nodes can run in one process. Plain single-node callers pass None. Only
@@ -653,28 +653,27 @@ non-storage nodes leave it NULL.
 ### Code map additions
 
 ```
-backend/app/src/cluster/
-  mod.rs          startup: load identity, register/refresh membership, heartbeat
-  identity.rs     node keys: load, generate, keygen command
-  pairing.rs      invites, join tokens, declarative allowlist, approval, revoke
-  transport.rs    iroh endpoint, ALPN router, peer allowlist check, dial choice
-  tcp.rs          TCP listener and dialer: handshake limits, membership gate
-  tls.rs          TLS 1.3 settings and key checks for node connections over TCP
-  link.rs         one request stream, whichever transport carried it
-  context.rs      NodeContext: endpoints, membership/address reads, repository root
-  rpc/            wire.rs, client.rs, repository.rs and git_session.rs: common
-                  messages/framing, dialing, role/claim/placement policy and streams
-  ci.rs           CI queue RPC, worker role and run ownership checks
-  worker.rs       core addresses and database-free worker context
-  placement.rs    choosing the storage node for a new repository
-  replicas/       the sync loop (mod.rs), the copy plan (plan.rs), one copy's
-                  transfer (transfer.rs), promotion and take-over (promote.rs)
-backend/app/src/repositories/store/
-  mod.rs          RepoStore and repo_store(&repo, context)
-  local.rs        current git code behind the interface, including the copy's
-                  pack, index and ref operations
-  remote.rs       RPC client implementation
-backend/db/core/src/queries/cluster.rs (+ postgres/, sqlite/)  queries for the node tables
+backend/app/wiring/backend/node/  binary startup and runtime ownership
+backend/support/src/node_identity.rs  node key loading and generation
+backend/cluster/core/src/
+  pairing.rs      invitations, enrollment and revocation
+  transport.rs    iroh dialer, addresses and membership checks
+  tcp.rs, tls.rs, link.rs  authenticated TCP dialing and shared request links
+  settings.rs     node configuration and startup limits
+  writes.rs       quorum preparation, votes and publication decisions
+backend/cluster/src/
+  lib.rs          listener startup, node registration and heartbeat
+  tcp.rs          authenticated TCP listener
+  ci.rs, worker.rs  core CI requests and database-free workers
+  drain.rs, provision.rs, scaling.rs  node lifecycle and scaling policy
+  replicas/       owned copy queue, snapshots, promotion, catch-up and rebalancing
+backend/repos-core/src/
+  context.rs      node identity, repository roots, term fencing and addresses
+  wire.rs, rpc_client.rs, git_transport.rs  repository messages and Git transport
+  cluster/        placement and shared replica policy
+  repositories/store/  RepoStore and local Git publications
+backend/repos-rpc/src/  repository handlers, Git streams and local RPC dispatch
+backend/db/cluster/src/  cluster queries, with postgres/ and sqlite/ implementations
 ```
 
 ### Tests
