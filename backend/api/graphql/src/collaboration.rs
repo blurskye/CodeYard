@@ -17,7 +17,7 @@ pub(super) async fn milestone(
     let row = summary.milestone;
     let repo = crate::repository::by_id(row.repo_id, request).await?;
     Ok(
-        json!({"__typename":"Milestone","_repo":row.repo_id,"id":node_id::encode("M",row.id),"databaseId":row.id,
+        json!({"__typename":"Milestone","_repo":row.repo_id,"id":node_id::scoped("M",row.repo_id,row.id),"databaseId":row.id,
         "closed":row.state=="closed","progressPercentage":if summary.open_items+summary.closed_items==0 {0.0} else {100.0*summary.closed_items as f64/(summary.open_items+summary.closed_items) as f64},
         "creator":match row.creator_id {Some(id)=>crate::user::actor_by_id(id,request).await?,None=>Value::Null},
         "number":row.number,"title":row.title,"description":row.description,"state":row.state.to_uppercase(),

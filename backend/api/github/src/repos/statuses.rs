@@ -54,7 +54,7 @@ async fn documents(
             let creator = status.creator_id.and_then(|id| users.get(&id));
             json!({
             "id": status.id,
-            "node_id": codeyard_model::node_id::encode("CS", status.id),
+            "node_id": codeyard_model::node_id::scoped("CS",status.repo_id,status.id),
             "avatar_url": creator.as_ref().map(|value| &value["avatar_url"]),
             "url": format!("{}/statuses/{}", repo_url(owner, name), status.sha),
             "state": status.state, "context": status.context, "description": status.description,

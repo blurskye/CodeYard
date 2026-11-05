@@ -176,7 +176,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     lookups retain stubs for references. Workspace a01f0a8780954bbbba9f9d985affa50e,
     Clippy 49b15ab6972445e1bcf022d3c31cb9f3 and WASM a192af85af5945458deaa483d93431f4
     are running or queued. The following unchecked batch adds native rooted-ID decoding,
-    owner verification for reads and mutation inputs, and forged-root HTTP tests.
+    owner verification for reads and mutation inputs, common repository/team ID issuance in
+    REST/webhooks/GraphQL, and forged-root HTTP tests. Object and job-token assertions
+    that pinned prefix-only output now assert rooted output.
     The public proxy role, foreign authorization and stages 3 to 6 remain unimplemented.
     Automatic individual moves and org regional presence are documented owner decisions.
 

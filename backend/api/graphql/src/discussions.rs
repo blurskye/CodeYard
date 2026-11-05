@@ -33,12 +33,12 @@ fn id(value: &str, kind: &str) -> Result<i64> {
         .ok_or_else(missing)
 }
 pub(super) fn object(d: &store::Discussion) -> Value {
-    json!({"__typename":"Discussion","id":node_id::encode("D",d.id),"databaseId":d.id,"_repo":d.repo_id,"_author":d.author_id,"_category":d.category_id,"_answer":d.answer_id,"_answerBy":d.answer_chosen_by,
+    json!({"__typename":"Discussion","id":node_id::scoped("D",d.repo_id,d.id),"databaseId":d.id,"_repo":d.repo_id,"_author":d.author_id,"_category":d.category_id,"_answer":d.answer_id,"_answerBy":d.answer_chosen_by,
         "number":d.number,"title":d.title,"body":d.body,"locked":d.locked,"closed":false,"closedAt":null,"stateReason":null,
         "isAnswered":d.answer_id.is_some(),"answerChosenAt":d.answer_chosen_at,"createdAt":d.created_at,"updatedAt":d.updated_at,"reactionGroups":[]})
 }
 fn category(c: &store::Category) -> Value {
-    json!({"__typename":"DiscussionCategory","id":node_id::encode("DIC",c.id),"_repo":c.repo_id,"name":c.name,"slug":c.slug,"emoji":c.emoji,"description":c.description,"isAnswerable":c.answerable,"createdAt":c.created_at})
+    json!({"__typename":"DiscussionCategory","id":node_id::scoped("DIC",c.repo_id,c.id),"_repo":c.repo_id,"name":c.name,"slug":c.slug,"emoji":c.emoji,"description":c.description,"isAnswerable":c.answerable,"createdAt":c.created_at})
 }
 fn comment(c: &store::Comment, d: &store::Discussion) -> Value {
     json!({"__typename":"DiscussionComment","id":node_id::discussion_comment(d.repo_id,c.id),"databaseId":c.id,"_repo":d.repo_id,"_discussion":d.id,"_number":d.number,"_author":c.author_id,"_reply":c.reply_to_id,

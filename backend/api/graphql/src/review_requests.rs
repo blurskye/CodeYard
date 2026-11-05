@@ -21,7 +21,7 @@ pub(super) async fn team_object(
         .ok_or_else(missing)?
         .to_owned();
     Ok(
-        json!({"__typename":"Team","id":node_id::encode("T",team.id),"databaseId":team.id,
+        json!({"__typename":"Team","id":node_id::scoped("T",team.org_id,team.id),"databaseId":team.id,
         "name":team.name,"slug":team.slug,"description":team.description,"createdAt":team.created_at,
         "updatedAt":team.updated_at,"privacy":if team.privacy=="secret" {"SECRET"} else {"VISIBLE"},
         "combinedSlug":format!("{org}/{}",team.slug),"organization":organization,

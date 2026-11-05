@@ -86,7 +86,7 @@ async fn linked_at(
     )
     .await?;
     Ok(Some(
-        json!({"__typename":"LinkedBranch","_repo":repo.id,"_scope":"contents","id":node_id::encode("LB",branch.id),"ref":reference}),
+        json!({"__typename":"LinkedBranch","_repo":repo.id,"_scope":"contents","id":node_id::scoped("LB",repo.id,branch.id),"ref":reference}),
     ))
 }
 

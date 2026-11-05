@@ -86,7 +86,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap();
-        let id = node_id::encode("CC", row.id);
+        let id = node_id::scoped("CC", repo.id, row.id).unwrap();
         let (_, result) = call(
             &router,
             Some(&tokens["contents"]),

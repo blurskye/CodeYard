@@ -76,7 +76,7 @@ pub fn team_document(team: &codeyard_db_core::models::Team, org: &str, permissio
         5 => "admin",
         _ => "none",
     };
-    json!({"id": team.id, "node_id": codeyard_model::node_id::encode("T", team.id), "name": team.name,
+    json!({"id": team.id, "node_id": node_id::scoped("T",team.org_id,team.id), "name": team.name,
         "slug": team.slug, "description": team.description, "privacy": if team.privacy == "secret" { "secret" } else { "closed" },
         "permission": permission, "type": "organization", "organization_id": team.org_id, "url": url,
         "notification_setting": if team.notifications_enabled { "notifications_enabled" } else { "notifications_disabled" },
@@ -879,7 +879,7 @@ pub fn commit_comment(
 ) -> Value {
     let url = repo_url(owner, &repo.name);
     json!({
-        "id": comment.id, "node_id": codeyard_model::node_id::encode("CC", comment.id), "body": comment.body,
+        "id": comment.id, "node_id": node_id::scoped("CC",repo.id,comment.id), "body": comment.body,
         "user": author.map(person), "author_association": association,
         "url": format!("{url}/comments/{}", comment.id),
         "html_url": format!("{}{}", link_origin(), codeyard_repos::commit_comments::comment_link(owner, &repo.name, comment)),
@@ -1042,7 +1042,7 @@ pub fn reaction_rollup(url: &str, counts: &[codeyard_db_repos::reactions::Reacti
 pub fn reaction(reaction: &codeyard_db_repos::reactions::Reaction, author: Option<&User>) -> Value {
     json!({
         "id": reaction.id,
-        "node_id": codeyard_model::node_id::encode("REA", reaction.id),
+        "node_id": node_id::scoped("REA",reaction.repo_id,reaction.id),
         "user": author.map(user),
         "content": reaction.content,
         "created_at": time(reaction.created_at),
@@ -1065,7 +1065,7 @@ pub fn milestone(
     );
     json!({
         "id": milestone.id,
-        "node_id": codeyard_model::node_id::encode("M", milestone.id),
+        "node_id": node_id::scoped("M",milestone.repo_id,milestone.id),
         "number": milestone.number,
         "url": url,
         "html_url": format!("{}/{}/{}/milestones/{}", link_origin(), codeyard_webui::encode_component(owner), codeyard_webui::encode_component(repo), milestone.number),
@@ -1087,7 +1087,7 @@ pub fn milestone(
 pub fn label(label: &codeyard_db_core::models::Label, owner: &str, repo: &str) -> Value {
     json!({
         "id": label.id,
-        "node_id": codeyard_model::node_id::encode("L", label.id),
+        "node_id": node_id::scoped("L",label.repo_id,label.id),
         "url": format!("{}/api/v3/repos/{}/{}/labels/{}", link_origin(), codeyard_webui::encode_component(owner), codeyard_webui::encode_component(repo), codeyard_webui::encode_component(&label.name)),
         "name": label.name,
         "color": label.color.trim_start_matches('#'),
@@ -1172,7 +1172,7 @@ pub fn issue_event(
     owner: &str,
 ) -> Value {
     let mut value = json!({
-        "id": event.id, "node_id": codeyard_model::node_id::encode("IE", event.id),
+        "id": event.id, "node_id": node_id::scoped("IE",repo.id,event.id),
         "url": format!("{}/issues/events/{}", codeyard_model::urls::repo_url(owner, &repo.name), event.id),
         "actor": actor.map(user), "event": event.kind,
         "commit_id": null, "commit_url": null, "created_at": time(event.created_at),
@@ -1212,7 +1212,7 @@ pub fn conversation_comment(
     let comment_id = conversation_comment_id(id, pull_request);
     json!({
         "id": comment_id,
-        "node_id": codeyard_model::node_id::encode("IC", comment_id),
+        "node_id": node_id::scoped(if pull_request {"PC"} else {"IC"},scope.repo.id,id),
         "url": format!("{base}/issues/comments/{comment_id}"),
         "issue_url": format!("{base}/issues/{number}"),
         "html_url": format!("{}/{}/{}?comment={id}#comment-{id}", repository_url(scope.owner, &scope.repo.name), if pull_request { "pull" } else { "issues" }, number),
@@ -1285,7 +1285,7 @@ pub fn issue_json(issue: &Issue, author: &Person, repo: &Repository, owner: &str
     let url = format!("{base}/issues/{}", issue.number);
     json!({
         "url": url,
-        "node_id": codeyard_model::node_id::encode("I", issue.id),
+        "node_id": node_id::scoped("I",repo.id,issue.id),
         "repository_url": base,
         "labels_url": format!("{url}/labels{{/name}}"),
         "comments_url": format!("{url}/comments"),
@@ -1363,7 +1363,7 @@ pub fn pull_request_json(
     let url = format!("{repo_url}/pulls/{}", pull.number);
     let html_url = format!("{}/pull/{}", repository_url(owner, &repo.name), pull.number);
     let mut value = json!({
-        "url": url, "node_id": codeyard_model::node_id::encode("PR", pull.id),"maintainer_can_modify":pull.maintainer_can_modify,
+        "url": url, "node_id": node_id::scoped("PR",repo.id,pull.id),"maintainer_can_modify":pull.maintainer_can_modify,
         "locked": pull.locked, "active_lock_reason": pull.lock_reason, "assignee": null, "assignees": [], "labels": [], "milestone": null,
         "requested_reviewers": [], "requested_teams": [], "auto_merge": null, "maintainer_can_modify": false,
         "author_association": if repo.personal_owner_id() == Some(author.id) { "OWNER" } else { "NONE" },
@@ -1441,7 +1441,7 @@ pub fn pull_request_review_json(
         id = review.id
     );
     let mut value = json!({
-        "id": review.id, "node_id": codeyard_model::node_id::encode("PRR", review.id), "user": person(reviewer),
+        "id": review.id, "node_id": node_id::scoped("PRR",repo.id,review.id), "user": person(reviewer),
         "body": review.body.as_deref().unwrap_or(""), "state": review.state.to_ascii_uppercase(),
         "commit_id": review.commit_sha, "html_url": html_url, "pull_request_url": url,
         "author_association": if repo.is_personal_owner(reviewer.id) { "OWNER" } else { "NONE" },
@@ -1502,7 +1502,7 @@ pub fn pull_request_review_comment_json(
     let current = review_comment_is_current(comment, pull);
     // GitHub sends the range and position fields as null rather than leaving them out;
     // `review_comment_diff` fills the positions from the diff.
-    let mut value = json!({"id":comment.id,"node_id":node_id::encode("PRRC",comment.id),"url":url,"html_url":html,"pull_request_url":pull_url,
+    let mut value = json!({"id":comment.id,"node_id":node_id::scoped("PRRC",repo.id,comment.id),"url":url,"html_url":html,"pull_request_url":pull_url,
         "pull_request_review_id":comment.review_id,"body":comment.body,"path":comment.path,"diff_hunk":"",
         "commit_id":comment.commit_sha.as_deref().unwrap_or(&pull.head_sha),"original_commit_id":comment.commit_sha.as_deref().unwrap_or(&pull.head_sha),
         "user":person(author),"created_at":time(comment.created_at),"updated_at":time(comment.updated_at),"author_association":if repo.is_personal_owner(author.id){"OWNER"}else{"NONE"},
@@ -1689,7 +1689,7 @@ pub fn release_asset(
 ) -> Value {
     let base = codeyard_model::urls::repo_url(owner, name);
     json!({
-        "id": asset.id, "node_id": codeyard_model::node_id::encode("RA", asset.id),
+        "id": asset.id, "node_id": node_id::scoped("RA",release.repo_id,asset.id),
         "url": format!("{base}/releases/assets/{}", asset.id),
         "browser_download_url": format!("{}/{}/{}/releases/download/{}/{}", link_origin(),
             codeyard_webui::encode_component(owner), codeyard_webui::encode_component(name),
@@ -1711,7 +1711,7 @@ pub fn release_json(
     let base = codeyard_model::urls::repo_url(owner, name);
     let id = release.id;
     let mut value = json!({
-        "id": id, "node_id": codeyard_model::node_id::encode("RE", id),
+        "id": id, "node_id": node_id::scoped("RE",release.repo_id,id),
         "url": format!("{base}/releases/{id}"), "assets_url": format!("{base}/releases/{id}/assets"),
         "upload_url": format!("{base}/releases/{id}/assets{{?name,label}}"),
         "html_url": format!("{}/{}/{}/releases/tag/{}", link_origin(), codeyard_webui::encode_component(owner),

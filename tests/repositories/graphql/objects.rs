@@ -73,9 +73,9 @@ pub(super) async fn exercise(
     .await
     .unwrap();
     let ids = [
-        codeyard_model::node_id::encode("M", milestone.id),
-        codeyard_model::node_id::encode("RE", release.id),
-        codeyard_model::node_id::encode("RA", asset.id),
+        super::node_id::scoped("M", repo, milestone.id),
+        super::node_id::scoped("RE", repo, release.id),
+        super::node_id::scoped("RA", repo, asset.id),
     ];
     for (id, path) in [
         (

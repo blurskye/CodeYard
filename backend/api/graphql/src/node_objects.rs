@@ -29,7 +29,7 @@ pub(super) async fn review(
     }
     Ok(
         json!({"__typename":"PullRequestReview","_repo":repo.id,"_scope":"pull-requests","_review":row.id,
-        "id":node_id::encode("PRR",row.id),"databaseId":row.id,"body":row.body.as_deref().unwrap_or(""),"state":row.state.to_uppercase(),
+        "id":node_id::scoped("PRR",repo.id,row.id),"databaseId":row.id,"body":row.body.as_deref().unwrap_or(""),"state":row.state.to_uppercase(),
         "createdAt":row.created_at,"submittedAt":if row.state=="pending" {None} else {Some(row.created_at)},
         "author":crate::user::retained_author(row.author_id,request).await?,"authorAssociation":access::author_association(&request.state.pool,&repo,row.author_id).await.map_err(unavailable)?,
         "commit":row.commit_sha.as_ref().map(|oid|json!({"__typename":"Commit","oid":oid,"_repo":repo.id,"_scope":"pull-requests"})),
@@ -66,7 +66,7 @@ pub(super) async fn review_comment(
     }
     Ok(
         json!({"__typename":"PullRequestReviewComment","_repo":repo.id,"_scope":"pull-requests",
-        "id":node_id::encode("PRRC",row.id),"databaseId":row.id,"body":row.body,"path":row.path,"line":row.line,
+        "id":node_id::scoped("PRRC",repo.id,row.id),"databaseId":row.id,"body":row.body,"path":row.path,"line":row.line,
         "createdAt":row.created_at,"updatedAt":row.updated_at,"author":crate::user::retained_author(row.author_id,request).await?,
         "pullRequest":crate::issue::pull_object(&pull),"outdated":row.commit_sha.as_ref().is_some_and(|s|s!=&pull.head_sha),
         "isMinimized":false,"minimizedReason":null,"viewerDidAuthor":row.author_id==request.auth.user.id,
@@ -84,7 +84,7 @@ pub(super) async fn release(
         return Err(missing());
     }
     Ok(
-        json!({"__typename":"Release","_repo":repo.id,"_release":row.id,"id":node_id::encode("RE",row.id),"databaseId":row.id,
+        json!({"__typename":"Release","_repo":repo.id,"_release":row.id,"id":node_id::scoped("RE",repo.id,row.id),"databaseId":row.id,
         "name":row.name,"tagName":row.tag_name,"description":row.body,"immutable":row.is_immutable,"isDraft":row.is_draft,"isPrerelease":row.is_prerelease,"isLatest":row.is_latest,
         "createdAt":row.created_at,"publishedAt":row.published_at,"author":crate::user::retained_author(row.author_id,request).await?,
         "url":url(&format!("/{}/{}/releases/tag/{}",crate::repository::owner(&repo,request).await?,repo.name,codeyard_webui::encode_component(&row.tag_name)))}),
@@ -112,7 +112,7 @@ pub(super) async fn asset(
         "",
     );
     Ok(
-        json!({"__typename":"ReleaseAsset","_repo":repo.id,"id":node_id::encode("RA",row.id),"name":row.name,"contentType":row.content_type,
+        json!({"__typename":"ReleaseAsset","_repo":repo.id,"id":node_id::scoped("RA",repo.id,row.id),"name":row.name,"contentType":row.content_type,
         "size":row.size,"downloadCount":row.download_count,"createdAt":row.created_at,"updatedAt":row.updated_at,"downloadUrl":doc["browser_download_url"]}),
     )
 }
@@ -263,7 +263,7 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
             let subject =
                 Box::pin(crate::node(&node_id::encode(kind, subject_id), request)).await?;
             Ok(
-                json!({"__typename":"Reaction","_repo":repo.id,"_scope":if matches!(kind,"PR"|"PRR"|"PRRC") || subject["_pull"] == true {"pull-requests"} else if matches!(kind,"RE"|"CC") {"contents"} else {"issues"},"id":node_id::encode("REA",row.id),"databaseId":row.id,
+                json!({"__typename":"Reaction","_repo":repo.id,"_scope":if matches!(kind,"PR"|"PRR"|"PRRC") || subject["_pull"] == true {"pull-requests"} else if matches!(kind,"RE"|"CC") {"contents"} else {"issues"},"id":node_id::scoped("REA",repo.id,row.id),"databaseId":row.id,
                 "content":match row.content.as_str(){"+1"=>"THUMBS_UP","-1"=>"THUMBS_DOWN","laugh"=>"LAUGH","hooray"=>"HOORAY","confused"=>"CONFUSED","heart"=>"HEART","rocket"=>"ROCKET","eyes"=>"EYES",_=>return Err(unavailable(()))},"createdAt":row.created_at,"user":crate::user::by_id(row.user_id,request).await?,"reactable":subject}),
             )
         }
@@ -316,7 +316,7 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
                 }
             };
             Ok(
-                json!({"__typename":ty,"_repo":repo.id,"_scope":if row.subject_kind=="pull_request" {"pull-requests"} else {"issues"},"id":node_id::encode("IE",row.id),"createdAt":row.created_at,
+                json!({"__typename":ty,"_repo":repo.id,"_scope":if row.subject_kind=="pull_request" {"pull-requests"} else {"issues"},"id":node_id::scoped("IE",repo.id,row.id),"createdAt":row.created_at,
                 "actor":match row.actor_id {Some(id)=>crate::user::actor_by_id(id,request).await?,None=>Value::Null},"previousTitle":row.previous,"currentTitle":row.detail}),
             )
         }

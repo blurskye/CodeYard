@@ -724,3 +724,7 @@ Router source now includes bounded HTTP streaming and GraphQL field dispatch usi
 application route catalogue. These paths are not exposed by a public router role yet;
 foreign credentials and stub transport remain unfinished. Stub storage and local access/listing
 guards are written but unchecked. The generated schema crate is unchanged.
+
+Native rooted-ID readers and common repository/team projections are written but unchecked.
+The router uses those repository/org roots for directory lookups; full node-family issuance,
+foreign authorization and the public HTTP/SSH role remain open.

@@ -116,7 +116,7 @@ pub(super) async fn query(ctx: &Arguments, request: &RequestContext) -> Result<V
 }
 
 pub(super) fn label(label: &codeyard_db_core::models::Label) -> Value {
-    json!({"__typename":"Label","_repo":label.repo_id,"id":node_id::encode("L",label.id),"name":label.name,"color":label.color.trim_start_matches('#'),"description":label.description,"createdAt":label.created_at,"updatedAt":label.updated_at.unwrap_or(label.created_at),"isDefault":false})
+    json!({"__typename":"Label","_repo":label.repo_id,"id":node_id::scoped("L",label.repo_id,label.id),"name":label.name,"color":label.color.trim_start_matches('#'),"description":label.description,"createdAt":label.created_at,"updatedAt":label.updated_at.unwrap_or(label.created_at),"isDefault":false})
 }
 
 pub(super) fn label_connection(

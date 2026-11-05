@@ -22,7 +22,7 @@ pub(super) async fn object(
         && !request.auth.user.must_change_password;
     let owner = crate::repository::owner(&repo, request).await?;
     Ok(
-        json!({"__typename":"CommitComment","_repo":repo.id,"id":node_id::encode("CC",row.id),"databaseId":row.id,"body":row.body,"path":row.path,"position":row.position,
+        json!({"__typename":"CommitComment","_repo":repo.id,"id":node_id::scoped("CC",repo.id,row.id),"databaseId":row.id,"body":row.body,"path":row.path,"position":row.position,
         "author":match row.author_id {Some(id)=>crate::user::retained_author(id,request).await?,None=>Value::Null},"createdAt":row.created_at,"updatedAt":row.updated_at,
         "includesCreatedEdit":row.updated_at>row.created_at,"lastEditedAt":if row.updated_at>row.created_at {Some(row.updated_at)} else {None},"isMinimized":false,"minimizedReason":null,
         "viewerDidAuthor":authored,"viewerCanUpdate":writable&&authored,"viewerCanDelete":writable&&(authored || codeyard_identity::repository_access::can_maintain(&request.state.pool,&request.auth.user,&repo).await.map_err(unavailable)?),

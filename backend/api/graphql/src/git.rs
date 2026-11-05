@@ -290,5 +290,5 @@ pub(super) async fn resolve(
 
 pub(super) fn status(repo: i64, row: &codeyard_db_core::models::CommitStatus) -> Value {
     json!({"__typename":"StatusContext","_repo":repo,"_scope":"statuses","_oid":row.sha,"_creator":row.creator_id,
-        "id":node_id::encode("CS",row.id),"context":row.context,"state":row.state.to_uppercase(),"description":row.description,"targetUrl":row.target_url,"createdAt":row.created_at})
+        "id":node_id::scoped("CS",repo,row.id),"context":row.context,"state":row.state.to_uppercase(),"description":row.description,"targetUrl":row.target_url,"createdAt":row.created_at})
 }
