@@ -301,7 +301,7 @@ pub trait Home: Send + Sync {
         _cell: Prefix,
         _page: &'a super::memberships::Page,
         _credential: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<Value>>> {
+    ) -> BoxFuture<'a, Result<super::memberships::PageResult>> {
         Box::pin(async { anyhow::bail!("Remote membership reads are unavailable") })
     }
 

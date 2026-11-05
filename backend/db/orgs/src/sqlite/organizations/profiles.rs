@@ -216,7 +216,7 @@ pub async fn list_actor_organizations(
     if !active(&mut tx, actor).await? {
         return Ok(Denied);
     }
-    let rows = sqlx::query_as("SELECT o.id,o.name,o.display_name,o.description,o.is_verified,NOT EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AS governance_suspended,o.avatar_file_id FROM organizations o JOIN org_memberships m ON m.org_id=o.id WHERE m.user_id=?1 AND m.role IN ('owner','admin','member') AND o.id>?2 ORDER BY o.id LIMIT ?3")
+    let rows = sqlx::query_as("SELECT o.id,o.name,o.display_name,o.description,o.is_verified,NOT EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AS governance_suspended,o.avatar_file_id FROM organizations o JOIN org_memberships m ON m.org_id=o.id WHERE NOT o.is_stub AND m.user_id=?1 AND m.role IN ('owner','admin','member') AND o.id>?2 ORDER BY o.id LIMIT ?3")
         .bind(actor).bind(page.after).bind(page.limit).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(rows))
@@ -233,7 +233,7 @@ pub async fn list_repository_creation_organizations(
     }
     // Role and usable governance filter BEFORE LIMIT in the same read snapshot.
     // Never enumerate memberships or apply a site-administrator exception.
-    let rows = sqlx::query_as("SELECT o.id,o.name,o.display_name,o.description,o.is_verified,FALSE AS governance_suspended,o.avatar_file_id FROM organizations o JOIN org_memberships m ON m.org_id=o.id WHERE m.user_id=?1 AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM organization_settings s WHERE s.org_id=o.id AND (s.members_can_create_public_repositories OR s.members_can_create_private_repositories)))) AND o.id>?2 AND EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) ORDER BY o.id LIMIT ?3")
+    let rows = sqlx::query_as("SELECT o.id,o.name,o.display_name,o.description,o.is_verified,FALSE AS governance_suspended,o.avatar_file_id FROM organizations o JOIN org_memberships m ON m.org_id=o.id WHERE NOT o.is_stub AND m.user_id=?1 AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM organization_settings s WHERE s.org_id=o.id AND (s.members_can_create_public_repositories OR s.members_can_create_private_repositories)))) AND o.id>?2 AND EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) ORDER BY o.id LIMIT ?3")
         .bind(actor).bind(page.after).bind(page.limit).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(rows))

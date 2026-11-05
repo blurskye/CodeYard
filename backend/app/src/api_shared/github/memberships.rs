@@ -1,7 +1,7 @@
 //! Home pointers select resource cells; their existing HTTP handlers own list authorization.
 use axum::http::HeaderMap;
 use codeyard_db_core::{
-    cells::memberships::{self, Config, List, Page},
+    cells::memberships::{self, Budget, Config, List, Page, PageResult},
     DbPool,
 };
 use codeyard_identity::github_auth::{self, Authentication};
@@ -26,12 +26,56 @@ pub async fn remote(
     query: Vec<(String, String)>,
     wanted: usize,
 ) -> Result<Option<Vec<Value>>> {
-    if auth.user.is_stub || pool.foreign_authorization().is_none() {
+    let credential = github_auth::credential(headers).ok_or_else(github_auth::required)?;
+    if codeyard_support::token_hash::token_hash(credential) != auth.token.token_hash {
+        return Err(github_auth::required());
+    }
+    Ok(read(
+        pool,
+        &auth.database_actor(),
+        auth.user.is_stub,
+        credential,
+        list,
+        query,
+        wanted,
+    )
+    .await?
+    .map(|page| page.rows))
+}
+
+pub async fn browser(
+    pool: &DbPool,
+    actor: &codeyard_db_core::queries::credentials::Actor,
+    stub: bool,
+    session: &str,
+    list: List,
+    query: Vec<(String, String)>,
+    wanted: usize,
+) -> Result<Option<PageResult>> {
+    if !list.browser()
+        || !matches!(actor.credential(), Some(codeyard_db_core::queries::users::accounts::AccountCredential::Session(value)) if value == session)
+    {
+        return Err(github_auth::required());
+    }
+    codeyard_support::cells::Secret::cookie(session).map_err(|_| github_auth::required())?;
+    read(pool, actor, stub, session, list, query, wanted).await
+}
+
+async fn read(
+    pool: &DbPool,
+    actor: &codeyard_db_core::queries::credentials::Actor,
+    stub: bool,
+    credential: &str,
+    list: List,
+    query: Vec<(String, String)>,
+    wanted: usize,
+) -> Result<Option<PageResult>> {
+    if stub || pool.foreign_authorization().is_none() {
         return Ok(None);
     }
     let config = Config::default();
     config.validate().map_err(failure)?;
-    let homes = memberships::homes(pool, &auth.database_actor(), config)
+    let homes = memberships::homes(pool, actor, config)
         .await
         .map_err(failure)?;
     if homes.is_empty() {
@@ -43,41 +87,50 @@ pub async fn remote(
     let provider = pool
         .foreign_authorization()
         .ok_or_else(|| Error::unavailable(anyhow::anyhow!("Resource cells are unavailable")))?;
-    let credential = github_auth::credential(headers).ok_or_else(github_auth::required)?;
-    if codeyard_support::token_hash::token_hash(credential) != auth.token.token_hash {
-        return Err(github_auth::required());
-    }
+    let page_size = list.page_size(config);
     let result = tokio::time::timeout(Duration::from_secs(config.request_seconds), async {
         let mut pending = stream::iter(homes)
             .map(|home| {
                 let provider = provider.clone();
-                let query = query.clone();
+                let mut query = query.clone();
                 async move {
                     let mut values = Vec::new();
-                    let mut bytes = 0usize;
-                    for number in 1..=(config.maximum_scan / config.page_size + 1) {
+                    let mut budget = Budget::new(config)?;
+                    let mut total = None;
+                    for number in 1..=(config.maximum_scan / page_size + 1) {
                         let page = Page {
                             list,
                             query: query.clone(),
                             number: number as u32,
-                            size: config.page_size as u16,
+                            size: page_size as u16,
                         };
-                        let rows = provider.membership_page(home, &page, credential).await?;
-                        let done = rows.len() < config.page_size;
-                        for row in rows.into_iter().take(wanted - values.len()) {
-                            bytes = bytes
-                                .checked_add(serde_json::to_vec(&row)?.len())
-                                .ok_or_else(|| {
-                                    anyhow::anyhow!("Membership response exceeds its limit")
-                                })?;
-                            anyhow::ensure!(
-                                bytes <= config.maximum_bytes,
-                                "Membership response exceeds its limit"
-                            );
+                        let result = provider.membership_page(home, &page, credential).await?;
+                        anyhow::ensure!(
+                            result.rows.len() <= page_size
+                                && result
+                                    .total
+                                    .is_none_or(|total| total >= result.rows.len() as i64),
+                            "Invalid membership page"
+                        );
+                        if number == 1 {
+                            total = result.total;
+                        }
+                        let done = result.rows.len() < page_size;
+                        if matches!(list, List::BrowserOrganizations) && !done {
+                            let after = result
+                                .rows
+                                .last()
+                                .and_then(|row| row["id"].as_i64())
+                                .ok_or_else(|| anyhow::anyhow!("Invalid organization page"))?;
+                            query.retain(|(key, _)| key != "after");
+                            query.push(("after".into(), after.to_string()));
+                        }
+                        for row in result.rows.into_iter().take(wanted - values.len()) {
+                            budget.add(&row)?;
                             values.push(row);
                         }
                         if done || values.len() == wanted {
-                            return Ok::<_, anyhow::Error>((values, bytes));
+                            return Ok::<_, anyhow::Error>((values, budget, total));
                         }
                     }
                     anyhow::bail!("Membership scan exceeds its limit")
@@ -85,23 +138,28 @@ pub async fn remote(
             })
             .buffer_unordered(4);
         let mut values = Vec::new();
-        let mut bytes = 0usize;
+        let mut budget = Budget::new(config)?;
+        let mut total = Some(0_i64);
         while let Some(result) = pending.next().await {
-            let (rows, size) = result?;
-            bytes = bytes
-                .checked_add(size)
-                .ok_or_else(|| anyhow::anyhow!("Membership response exceeds its limit"))?;
-            anyhow::ensure!(
-                bytes <= config.maximum_bytes && values.len() + rows.len() <= config.maximum_scan,
-                "Membership response exceeds its limit"
-            );
+            let (rows, used, count) = result?;
+            total = match (total, count) {
+                (Some(a), Some(b)) => Some(
+                    a.checked_add(b)
+                        .ok_or_else(|| anyhow::anyhow!("Membership count exceeds its limit"))?,
+                ),
+                _ => None,
+            };
+            budget.merge(&used)?;
             values.extend(rows);
         }
-        Ok::<_, anyhow::Error>(values)
+        Ok::<_, anyhow::Error>(PageResult {
+            rows: values,
+            total,
+        })
     })
     .await;
     // The original home credential is read again after every remote wait, even on failure.
-    memberships::homes(pool, &auth.database_actor(), config)
+    memberships::homes(pool, actor, config)
         .await
         .map_err(failure)?;
     let rows = result
@@ -118,16 +176,9 @@ pub fn page(
     limit: usize,
 ) -> Result<(Vec<Value>, bool)> {
     let config = Config::default();
-    let mut bytes = 0usize;
+    let mut budget = Budget::new(config).map_err(Error::unavailable)?;
     for value in &values {
-        bytes = bytes
-            .checked_add(serde_json::to_vec(value).map_err(Error::unavailable)?.len())
-            .ok_or_else(|| Error::invalid("Membership response exceeds its limit"))?;
-    }
-    if values.len() > config.maximum_scan || bytes > config.maximum_bytes {
-        return Err(Error::unavailable(anyhow::anyhow!(
-            "Membership response exceeds its limit"
-        )));
+        budget.add(value).map_err(Error::unavailable)?;
     }
     let mut seen = std::collections::HashSet::new();
     values.retain(|row| row["id"].as_i64().is_some_and(|id| seen.insert(id)));

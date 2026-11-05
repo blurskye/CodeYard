@@ -771,6 +771,9 @@ cell key and both directory homes at commit; duplicate and older deliveries are 
 Home REST repository/org listings fetch bounded pages through the resource cell's existing
 HTTP handlers with the original token, then recheck that token before answering. This batch
 passes source checks; its HTTP/TLS, rollback, replay and gh pagination tests await runtime.
-GraphQL organization discovery and cold numeric invitation targets are now written but
-unchecked. Native home lists still need this integration. Repository chrome's package count
-now uses the shared live-session check for foreign browsers; that runtime fix is unchecked.
+GraphQL organization discovery, cold numeric invitation targets and repository chrome's
+shared package-session check pass source checks; runtime is pending. Native home repository
+and org lists now read the resource cells' existing authorized page models with the original
+cookie. They share the bounded collector and row/byte budget, then recheck the home session.
+Both engines exclude stub organizations from private indexes and creation choices. This
+follow-up and its HTML, page-model, revocation-during-read and hostile-limit tests are unchecked.

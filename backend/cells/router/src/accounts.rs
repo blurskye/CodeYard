@@ -145,7 +145,7 @@ impl Home for Remote {
         cell: codeyard_support::cells::Prefix,
         page: &'a codeyard_db_core::cells::memberships::Page,
         credential: &'a str,
-    ) -> BoxFuture<'a, Result<Vec<serde_json::Value>>> {
+    ) -> BoxFuture<'a, Result<codeyard_db_core::cells::memberships::PageResult>> {
         Box::pin(async move {
             use codeyard_db_core::cells::memberships::List;
             page.validate()?;
@@ -159,6 +159,8 @@ impl Home for Remote {
                 List::Organizations => ("/api/v3/user/orgs", ObjectKind::Organization),
                 List::GraphqlOrganizations => ("/api/graphql", ObjectKind::Organization),
                 List::Repositories => ("/api/v3/user/repos", ObjectKind::Repository),
+                List::BrowserRepositories => ("/", ObjectKind::Repository),
+                List::BrowserOrganizations => ("/settings/organizations", ObjectKind::Organization),
             };
             let request = {
                 let mut query = url::form_urlencoded::Serializer::new(String::new());
@@ -182,19 +184,35 @@ impl Home for Remote {
                 } else {
                     axum::body::Body::empty()
                 };
-                axum::http::Request::builder()
+                let browser = page.list.browser();
+                let request = axum::http::Request::builder()
                     .method(if graphql { "POST" } else { "GET" })
                     .uri(if graphql {
                         path.to_owned()
                     } else {
                         format!("{path}?{}", query.finish())
                     })
-                    .header(
-                        axum::http::header::AUTHORIZATION,
-                        format!("Bearer {credential}"),
-                    )
-                    .header(axum::http::header::CONTENT_TYPE, "application/json")
-                    .body(body)?
+                    .header(axum::http::header::CONTENT_TYPE, "application/json");
+                if browser {
+                    codeyard_support::cells::Secret::cookie(credential)?;
+                    request
+                        .header(
+                            axum::http::header::COOKIE,
+                            format!("session_id={credential}"),
+                        )
+                        .header(
+                            axum::http::header::ACCEPT,
+                            "application/vnd.codeyard.page+json",
+                        )
+                        .body(body)?
+                } else {
+                    request
+                        .header(
+                            axum::http::header::AUTHORIZATION,
+                            format!("Bearer {credential}"),
+                        )
+                        .body(body)?
+                }
             };
             ensure!(
                 crate::selection::Credential::from_headers(request.headers(), "session_id")?
@@ -208,7 +226,29 @@ impl Home for Remote {
             );
             let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024).await?;
             let document: serde_json::Value = serde_json::from_slice(&bytes)?;
-            let rows: Vec<serde_json::Value> = if matches!(page.list, List::GraphqlOrganizations) {
+            let total = if matches!(page.list, List::BrowserRepositories) {
+                ensure!(
+                    document["page"]["lane"] == "Discovery",
+                    "Invalid browser repository page"
+                );
+                Some(
+                    document["page"]["model"]["Home"]["shared_count"]
+                        .as_i64()
+                        .filter(|count| *count >= 0)
+                        .ok_or_else(|| anyhow::anyhow!("Invalid membership count"))?,
+                )
+            } else {
+                None
+            };
+            let rows: Vec<serde_json::Value> = if matches!(page.list, List::BrowserRepositories) {
+                serde_json::from_value(document["page"]["model"]["Home"]["shared"].clone())?
+            } else if matches!(page.list, List::BrowserOrganizations) {
+                ensure!(
+                    document["page"]["lane"] == "Organizations",
+                    "Invalid browser organization page"
+                );
+                serde_json::from_value(document["page"]["model"]["organizations"].clone())?
+            } else if matches!(page.list, List::GraphqlOrganizations) {
                 ensure!(
                     document.get("errors").is_none(),
                     "Remote membership read is unavailable"
@@ -231,6 +271,8 @@ impl Home for Remote {
                         .and_then(codeyard_model::node_id::decode)
                         .filter(|(kind, _)| *kind == "O")
                         .map(|(_, id)| id)
+                } else if matches!(page.list, List::BrowserRepositories) {
+                    row["repository"]["id"].as_i64()
                 } else {
                     row["id"].as_i64()
                 }
@@ -242,7 +284,7 @@ impl Home for Remote {
                     "Membership document has another home"
                 );
             }
-            Ok(rows)
+            Ok(codeyard_db_core::cells::memberships::PageResult { rows, total })
         })
     }
     fn send_membership<'a>(

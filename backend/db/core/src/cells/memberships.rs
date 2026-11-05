@@ -45,12 +45,15 @@ pub trait Admission: Send + Sync {
     fn check<'a>(&'a self, event: &'a Event) -> BoxFuture<'a, Result<Prefix>>;
 }
 
+pub const DEFAULT_PAGE_SIZE: usize = 100;
+
 #[derive(Clone, Copy)]
 pub struct Config {
     pub maximum_cells: usize,
     pub maximum_scan: usize,
     pub maximum_bytes: usize,
     pub page_size: usize,
+    pub browser_repository_page_size: usize,
     pub request_seconds: u64,
 }
 impl Default for Config {
@@ -59,7 +62,8 @@ impl Default for Config {
             maximum_cells: 64,
             maximum_scan: 10000,
             maximum_bytes: 32 * 1024 * 1024,
-            page_size: 100,
+            page_size: DEFAULT_PAGE_SIZE,
+            browser_repository_page_size: 30,
             request_seconds: 10,
         }
     }
@@ -71,9 +75,50 @@ impl Config {
                 && (1..=100000).contains(&self.maximum_scan)
                 && (65536..=256 * 1024 * 1024).contains(&self.maximum_bytes)
                 && (1..=100).contains(&self.page_size)
+                && (1..=100).contains(&self.browser_repository_page_size)
                 && (1..=60).contains(&self.request_seconds),
             "Invalid remote membership limits"
         );
+        Ok(())
+    }
+}
+
+/// One row/byte budget is shared by cell reads and their merged presentation.
+pub struct Budget {
+    config: Config,
+    count: usize,
+    bytes: usize,
+}
+impl Budget {
+    pub fn new(config: Config) -> Result<Self> {
+        config.validate()?;
+        Ok(Self {
+            config,
+            count: 0,
+            bytes: 0,
+        })
+    }
+    pub fn add<T: Serialize>(&mut self, value: &T) -> Result<()> {
+        self.extend(1, serde_json::to_vec(value)?.len())
+    }
+    pub fn merge(&mut self, other: &Self) -> Result<()> {
+        self.extend(other.count, other.bytes)
+    }
+    fn extend(&mut self, count: usize, bytes: usize) -> Result<()> {
+        let count = self
+            .count
+            .checked_add(count)
+            .ok_or_else(|| anyhow::anyhow!("Membership response exceeds its limit"))?;
+        let bytes = self
+            .bytes
+            .checked_add(bytes)
+            .ok_or_else(|| anyhow::anyhow!("Membership response exceeds its limit"))?;
+        ensure!(
+            count <= self.config.maximum_scan && bytes <= self.config.maximum_bytes,
+            "Membership response exceeds its limit"
+        );
+        self.count = count;
+        self.bytes = bytes;
         Ok(())
     }
 }
@@ -151,7 +196,27 @@ pub enum List {
     Organizations,
     GraphqlOrganizations,
     Repositories,
+    BrowserRepositories,
+    BrowserOrganizations,
 }
+impl List {
+    pub fn browser(self) -> bool {
+        matches!(self, Self::BrowserRepositories | Self::BrowserOrganizations)
+    }
+    pub fn page_size(self, config: Config) -> usize {
+        if matches!(self, Self::BrowserRepositories) {
+            config.browser_repository_page_size
+        } else {
+            config.page_size
+        }
+    }
+}
+
+pub struct PageResult {
+    pub rows: Vec<serde_json::Value>,
+    pub total: Option<i64>,
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Page {
@@ -170,11 +235,19 @@ impl Page {
             ensure!(
                 value.len() <= 4096
                     && !value.chars().any(char::is_control)
-                    && matches!(self.list, List::Repositories)
-                    && matches!(
-                        key.as_str(),
-                        "type" | "visibility" | "affiliation" | "sort" | "direction" | "since"
-                    ),
+                    && match self.list {
+                        List::Repositories => matches!(
+                            key.as_str(),
+                            "type" | "visibility" | "affiliation" | "sort" | "direction" | "since"
+                        ),
+                        List::BrowserRepositories => key == "q" && value.chars().count() <= 100,
+                        List::BrowserOrganizations =>
+                            key == "after"
+                                && value.parse::<i64>().ok().is_some_and(
+                                    |id| id >= 0 && id <= codeyard_support::cells::MAX_ID
+                                ),
+                        _ => false,
+                    },
                 "Invalid membership query"
             );
         }
@@ -239,4 +312,46 @@ pub async fn homes(
         },
     )
     .await?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn membership_budget_rejects_large_rows_counts_and_merges_without_advancing() {
+        let config = Config {
+            maximum_scan: 2,
+            maximum_bytes: 65536,
+            ..Default::default()
+        };
+        let mut budget = Budget::new(config).unwrap();
+        budget.add(&"first").unwrap();
+        assert!(budget.add(&"x".repeat(65536)).is_err());
+        budget.add(&true).unwrap();
+        assert!(budget.add(&false).is_err());
+        let mut other = Budget::new(config).unwrap();
+        other.add(&true).unwrap();
+        assert!(budget.merge(&other).is_err());
+        assert_eq!(budget.count, 2);
+    }
+    #[test]
+    fn browser_membership_pages_reject_hostile_and_unrelated_queries() {
+        for (list, key, value) in [
+            (List::BrowserRepositories, "q", "x".repeat(101)),
+            (List::BrowserRepositories, "q", "a\rb".into()),
+            (List::BrowserRepositories, "type", "all".into()),
+            (List::BrowserOrganizations, "after", "-1".into()),
+            (List::BrowserOrganizations, "after", i64::MAX.to_string()),
+            (List::BrowserOrganizations, "q", "secret".into()),
+        ] {
+            assert!(Page {
+                list,
+                number: 1,
+                size: 30,
+                query: vec![(key.into(), value)]
+            }
+            .validate()
+            .is_err());
+        }
+    }
 }

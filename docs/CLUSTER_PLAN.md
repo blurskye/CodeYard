@@ -185,9 +185,13 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     numeric foreign invitation targets through the existing home RPC. It shares package
     session checks with the native/foreign credential owner; HTTP, hostile-root, invitation,
     revocation and cursor tests are written. Workspace ccd54b9276ec4460b20047f8794f4f6a and
-    WASM 11432ad448f9400eb75e00f2eee16e80 pass; Clippy 0634de72aa504774b5ddde46187bace7
-    is running. Native home lists and runtime acceptance remain open. No stage 2 completion
-    is claimed.
+    Clippy 0634de72aa504774b5ddde46187bace7 and WASM 11432ad448f9400eb75e00f2eee16e80
+    pass. Runtime 3c645a8bdabd457ba45e70efff05b20b covers every changed library/integration
+    target and the failed cells round, with cell startup diagnostics enabled. The next
+    unchecked batch reads remote native dashboard/org lists through authorized page models
+    with the original cookie, shares all row/byte budgets, and filters private stub orgs on
+    both engines. Tests cover HTML/model output and session revocation during a remote wait.
+    Runtime acceptance remains open. No stage 2 completion is claimed.
     Stages 3 to 6 are not built. Automatic user moves and org regional presence remain
     documented owner decisions.
     Owner follow-ups: foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded

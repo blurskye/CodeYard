@@ -19,6 +19,46 @@ impl Admission for Gate {
         })
     }
 }
+struct PendingPage {
+    session: String,
+    started: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+impl codeyard_db_core::cells::authorization::Home for PendingPage {
+    fn user<'a>(
+        &'a self,
+        _name: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::models::User>>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn authorize<'a>(
+        &'a self,
+        _proof: &'a codeyard_db_core::cells::authorization::Proof,
+    ) -> BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::cells::authorization::Answer>>> {
+        Box::pin(async { Ok(None) })
+    }
+    fn membership_page<'a>(
+        &'a self,
+        _cell: Prefix,
+        _page: &'a memberships::Page,
+        credential: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<memberships::PageResult>> {
+        Box::pin(async move {
+            assert_eq!(credential, self.session);
+            self.started.notify_one();
+            self.release.notified().await;
+            Ok(memberships::PageResult {
+                rows: vec![
+                    serde_json::json!({"repository":{"id":*Prefix::new(1).ids().start(),
+                    "owner":"remote","name":"never-disclose","description":null,"is_private":true,
+                    "stars":0,"forks":0,"default_branch":"main","updated_at":"2026-11-01"},"role":"Write"}),
+                ],
+                total: Some(1),
+            })
+        })
+    }
+}
+
 async fn contract(pg: bool) {
     let mut f = Database::empty(pg).await;
     f.complete_setup().await;
@@ -95,6 +135,46 @@ async fn contract(pg: bool) {
         &[user],
     )
     .await;
+    // Revoke the original browser session while its remote list is in flight.
+    let request_limit =
+        std::time::Duration::from_secs(memberships::Config::default().request_seconds * 2);
+    let provider = std::sync::Arc::new(PendingPage {
+        session: session.clone(),
+        started: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    });
+    f.pool().set_foreign_authorization(provider.clone());
+    let root = tempfile::tempdir().unwrap();
+    let app = f.router(root.path()).await;
+    let request = axum::http::Request::builder()
+        .uri("/")
+        .header("cookie", format!("session_id={session}"))
+        .header("accept", "application/vnd.codeyard.page+json")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let mut pending = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+        use tower::ServiceExt;
+        app.oneshot(request).await.unwrap()
+    }));
+    tokio::time::timeout(request_limit, provider.started.notified())
+        .await
+        .unwrap();
+    codeyard_db_identity::users::sessions::delete_session(f.pool(), &session)
+        .await
+        .unwrap();
+    provider.release.notify_one();
+    let response = tokio::time::timeout(request_limit, &mut pending)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    );
+    let body = axum::body::to_bytes(response.into_body(), 2 * 1024 * 1024)
+        .await
+        .unwrap();
+    assert!(!String::from_utf8_lossy(&body).contains("never-disclose"));
     let mut removal = event.clone();
     removal.id += 1;
     removal.change.active = false;

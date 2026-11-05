@@ -202,6 +202,25 @@ async fn contract(pg: bool) {
     // References to remote members remain intact, but account listings and their counts agree.
     use crate::support::organizations::applied;
     use codeyard_db_orgs::organizations::{membership, profiles, teams, OrganizationPage};
+    let listed = applied(
+        profiles::list_actor_organizations(pool, native.id, OrganizationPage::new(0, 100).unwrap())
+            .await
+            .unwrap(),
+    );
+    assert!(
+        listed.iter().all(|org| org.id != organization.id),
+        "Private native indexes exclude foreign organization stubs"
+    );
+    let choices = applied(
+        profiles::list_repository_creation_organizations(
+            pool,
+            native.id,
+            OrganizationPage::new(0, 100).unwrap(),
+        )
+        .await
+        .unwrap(),
+    );
+    assert!(choices.iter().all(|org| org.id != organization.id));
     let org = applied(
         profiles::create_organization(
             pool,

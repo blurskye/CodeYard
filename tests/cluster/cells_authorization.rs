@@ -321,6 +321,42 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .any(|repo| repo["id"] == repository.id),
         "{listed}"
     );
+    let browser: serde_json::Value = client
+        .get(format!("{}/", bob_http.url()))
+        .header("cookie", format!("session_id={session}"))
+        .header("accept", "application/vnd.codeyard.page+json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(browser["page"]["lane"], "Discovery", "{browser}");
+    assert_eq!(
+        browser["page"]["model"]["Home"]["shared_count"], 1,
+        "{browser}"
+    );
+    assert_eq!(
+        browser["page"]["model"]["Home"]["shared"][0]["repository"]["id"],
+        repository.id
+    );
+    assert_eq!(
+        browser["page"]["model"]["Home"]["shared"][0]["repository"]["owner"],
+        "alice"
+    );
+    let html = client
+        .get(format!("{}/", bob_http.url()))
+        .header("cookie", format!("session_id={session}"))
+        .send()
+        .await
+        .unwrap();
+    let status = html.status();
+    let html = html.text().await.unwrap();
+    assert_eq!(status, 200, "{html}");
+    assert!(
+        html.contains("/alice/private"),
+        "The server-rendered dashboard includes the remote repository"
+    );
     let carol = codeyard_db_identity::users::accounts::create_user(&one.pool, "carol", None)
         .await
         .unwrap();
@@ -434,6 +470,21 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         listed["data"]["viewer"]["organizations"]["nodes"][0]["viewerCanCreateProjects"]
             .is_boolean()
     );
+    let browser: serde_json::Value = client
+        .get(format!("{}/settings/organizations", bob_http.url()))
+        .header("cookie", format!("session_id={session}"))
+        .header("accept", "application/vnd.codeyard.page+json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(browser["page"]["lane"], "Organizations", "{browser}");
+    assert_eq!(
+        browser["page"]["model"]["organizations"][0]["id"], organization.id,
+        "{browser}"
+    );
     let members: serde_json::Value = client
         .get(format!("{}/api/v3/orgs/pointer-org/members", http.url()))
         .bearer_auth(&alice_token)
@@ -486,6 +537,23 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .unwrap();
     assert!(listed.get("errors").is_none(), "{listed}");
     assert_eq!(listed["data"]["viewer"]["organizations"]["totalCount"], 0);
+    let browser: serde_json::Value = client
+        .get(format!("{}/settings/organizations", bob_http.url()))
+        .header("cookie", format!("session_id={session}"))
+        .header("accept", "application/vnd.codeyard.page+json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        browser["page"]["model"]["organizations"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "{browser}"
+    );
     for (page, expected) in [(1, repository.id), (2, native_repository.id)] {
         let response = client
             .get(format!(
@@ -630,6 +698,23 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap();
     assert!(matches!(response.status().as_u16(), 401 | 403));
+    let browser: serde_json::Value = client
+        .get(format!("{}/", bob_http.url()))
+        .header("cookie", format!("session_id={session}"))
+        .header("accept", "application/vnd.codeyard.page+json")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        browser["page"]["model"]["Home"]["shared"]
+            .as_array()
+            .unwrap()
+            .is_empty(),
+        "{browser}"
+    );
     // Resource-cell revocation is immediate, independent of a warm home answer.
     sqlx::query("DELETE FROM repo_access WHERE repo_id=$1 AND user_id=$2")
         .bind(repository.id)

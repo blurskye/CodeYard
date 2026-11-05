@@ -292,7 +292,7 @@ pub(super) async fn selected(
 }
 
 /// Rows per list page. A full page may have rows after it, so its next link is shown.
-pub(super) const PAGE_LIMIT: i64 = 100;
+pub(super) const PAGE_LIMIT: i64 = codeyard_db_core::cells::memberships::DEFAULT_PAGE_SIZE as i64;
 
 pub(super) fn cursor(ctx: &PageContext, name: &str) -> Option<(i64, OrganizationPage)> {
     cursor_with_limit(ctx, name, PAGE_LIMIT)
@@ -967,6 +967,63 @@ pub(super) async fn respond_with_hook_draft(
                 }
                 Err(_) => return unavailable(ctx),
             };
+        if let Some(session) = ctx.session_id.as_deref() {
+            let stub = ctx.user.as_ref().is_none_or(|user| user.is_stub);
+            let remote = codeyard_app::api_shared::github::memberships::browser(
+                &ctx.state.pool,
+                &ctx.database_actor(actor),
+                stub,
+                session,
+                codeyard_db_core::cells::memberships::List::BrowserOrganizations,
+                vec![("after".into(), after.to_string())],
+                PAGE_LIMIT as usize + 1,
+            )
+            .await;
+            match remote {
+                Ok(Some(remote)) => {
+                    let Ok(mut budget) =
+                        codeyard_db_core::cells::memberships::Budget::new(Default::default())
+                    else {
+                        return unavailable(ctx);
+                    };
+                    for org in &model.organizations {
+                        if budget.add(org).is_err() {
+                            return unavailable(ctx);
+                        }
+                    }
+                    for row in remote.rows {
+                        if budget.add(&row).is_err() {
+                            return unavailable(ctx);
+                        }
+                        match serde_json::from_value(row) {
+                            Ok(row) => model.organizations.push(row),
+                            Err(_) => return unavailable(ctx),
+                        }
+                    }
+                    model.organizations.retain(|org| org.id > after);
+                    model.organizations.sort_by_key(|org| org.id);
+                    model.organizations.dedup_by_key(|org| org.id);
+                    model.more_organizations |= model.organizations.len() > PAGE_LIMIT as usize;
+                    model.organizations.truncate(PAGE_LIMIT as usize);
+                    model.after = model.organizations.last().map_or(after, |org| org.id);
+                    if codeyard_identity::repository_access::credential_user(
+                        &ctx.state.pool,
+                        &ctx.database_actor(actor),
+                        false,
+                    )
+                    .await
+                    .is_err()
+                    {
+                        return ctx.error(
+                            StatusCode::UNAUTHORIZED,
+                            "Session expired; reload the page.",
+                        );
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => return unavailable(ctx),
+            }
+        }
     }
     // An organization's settings are titled for the organization, not the personal account.
     let title = match &model.selected {
