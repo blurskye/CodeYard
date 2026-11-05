@@ -754,7 +754,7 @@ has account and package lock scoping, cursor polling and configurable pools. Its
 object-store log chunks, current-copy clone distribution and issue/PR read routing are
 written and pass workspace, Clippy and WASM checks. Initial CI, database, cluster,
 PgBouncer and quorum acceptance passes; replica startup and a CI-engine lock failure need
-reruns. The latest capacity-lock and CLI changes still need checks.
+reruns. The capacity-lock, copy-seed and CLI changes pass source checks; acceptance is running.
 Stages 2 to 6 are not built. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
 numbers remain assumptions until stage 1 measures a real cell.
 

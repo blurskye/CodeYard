@@ -158,7 +158,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Clippy and WASM checks. Initial CI, database, cluster, PgBouncer and quorum acceptance
     passes; one CI-engine library lock test failed, and the replica fixture failed startup.
     The fixture fix, scoped object reservations, cache-policy row locks and removal of the
-    experimental gate await checks and runtime acceptance. Stage 1 finished-CI and load
+    experimental gate pass source checks; the combined acceptance rerun is running. Stage 1 finished-CI and load
     measurements are runtime pending, need a writable delegated cgroup. Other content read
     families remain on the primary; bulk retention remains open.
     Stages 2 to 6 are not built. Individual users may move automatically to
