@@ -754,30 +754,18 @@ the round rather than skipping it.
 Stage 0 reuses cluster plan items 3 and 11; automated durability acceptance passes,
 while hard-reset acceptance needs a disposable VM. Stage 1's 51 PgBouncer/replica/quorum
 checks pass; finished-CI shutdown and measured capacity need a delegated cgroup.
-Stage 2 ranges, credentials, directory transport/cache, public HTTP/SSH routing, stubs,
-common rooted IDs and foreign token/SSH admission pass source checks. The browser-session,
-home-CSRF and native two-cell GraphQL follow-up passes workspace, Clippy and WASM.
-Cold collaborator metadata lookup and retained invitation credentials also pass source
-checks. Runtime acceptance on an earlier snapshot passes Git, identity and all 51 targeted
-e2e checks. Collected query, routing, fixture and rooted-ID fixes pass source checks and
-await their runtime retry. Native signup/key claim publication, durable claim cleanup,
-capacity reporting, foreign GraphQL quotas and remote membership pointers pass source checks.
-The earlier runtime passes 334 selected library, 234 cluster, 42 Git and 166 identity
-checks. Both browser-page database retries now pass on SQLite and PostgreSQL.
-Computed project-field IDs, GraphQL home organization discovery and numeric foreign invitation
-targets pass source checks. Native home lists now share bounded reads of existing authorized
-page models with original browser sessions; workspace, Clippy and WASM pass, while runtime
-is pending. Public two-cell gh/Git acceptance remains open; stages 3 to 6 are not built.
-Range renewal is a deferred owner follow-up.
-Runtime 3c645 passes 300 selected library tests and the selected membership, browser,
-gist, reviewer and CI contracts. Cluster passes 233 with one GraphQL discovery failure;
-project tests expose a mutation preflight bypass on both engines. Their collected fix
-moves discovery into its actual list owner and runs root validation before every mutation
-family; workspace, Clippy and WASM pass. The cells fixture now isolates
-its UDP listeners.
-[Cluster readiness](CLUSTER_PLAN.md) records current check jobs and runtime gaps.
-The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
-assumptions until stage 1 measures a real cell.
+Stage 2 source covers directory transport/claims/cache, public HTTP/SSH routing, scoped
+credentials and rooted IDs, stable homes, stubs, home authorization, native publication
+and cleanup, capacity reporting and bounded home membership lists. Workspace, Clippy and
+WASM pass; generated GraphQL is unchanged. Earlier runtime passes Git, identity and both
+exhaustive GraphQL contracts. The latest completed retry passes 300 selected library tests
+and the selected both-engine membership, browser, gist, reviewer and CI contracts. It
+exposes GraphQL discovery and mutation-root failures; their collected fixes pass source
+checks and join native home lists and the isolated cells fixture in runtime 9a78fe9.
+Public two-cell gh/Git acceptance remains open. Stages 3 to 6 are not built; range renewal
+is a deferred owner follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and
+runtime gaps. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
+numbers remain assumptions until stage 1 measures a real cell.
 
 Two findings set the order of work:
 

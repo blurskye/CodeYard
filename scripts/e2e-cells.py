@@ -313,9 +313,13 @@ def acceptance(deployment):
         answer = client.api("graphql", "--method", "POST", "--input", "-", input=json.dumps({"query": query}))
         assert not answer.get("errors"), answer
         assert answer["data"]["zero"]["name"] == "shared" and answer["data"]["one"]["name"] == "other", answer
-        identity = answer["data"]["one"]["id"]
-        node = client.api("graphql", "--method", "POST", "--input", "-", input=json.dumps({"query": 'query($id:ID!){node(id:$id){id ... on Repository{name}}}', "variables": {"id": identity}}))
-        assert node["data"]["node"] == {"id": identity, "name": "other"}, node
+        identities = {name: repository["id"] for name, repository in answer["data"].items()}
+        nodes = client.api("graphql", "--method", "POST", "--input", "-", input=json.dumps({
+            "query": 'query($zero:ID!,$one:ID!){zero:node(id:$zero){id ... on Repository{name}} one:node(id:$one){id ... on Repository{name}}}',
+            "variables": identities}))
+        assert not nodes.get("errors"), nodes
+        assert nodes["data"]["zero"] == {"id": identities["zero"], "name": "shared"}, nodes
+        assert nodes["data"]["one"] == {"id": identities["one"], "name": "other"}, nodes
         people = client.api("search/users?q=bob")
         assert all(item["id"] != bob["id"] for item in people["items"]), "a local search must not expose metadata stubs"
         client.checked("node lookup and one native GraphQL query span both cells; stubs stay out of account search")

@@ -154,66 +154,33 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     automated durability acceptance passes. Hard reset is runtime pending, needs a disposable
     VM. Stage 1's 51 PgBouncer/replica/quorum e2e checks pass without skips; finished-CI
     shutdown and capacity measurements need a writable delegated cgroup.
-    Stage 2 directory claims/TLS/cache, routing, scoped credentials, stable homes, stubs,
-    common rooted IDs, native claim publication, transactional claim cleanup, bounded capacity
-    reports and foreign GraphQL quota ownership pass workspace bb56c210807b48338ec9987c8b7472c8,
-    Clippy 769b632f8bba481485b42948058bb200 and WASM 1c95951358e9455fb98c704e454e1bef.
-    Generated GraphQL is unchanged. Range renewal is a committed, deferred owner follow-up.
-    Earlier runtime 616868dc57e7437c85afe790dcf2161a passes 400 changed-library tests,
-    CI 220 with 19 existing cgroup-dependent ignores, pull requests 324 with two existing
-    cgroup-dependent ignores, and all nine selected repository contracts. Cluster is 230/one
-    and database 179/two; their quota and browser-fixture fixes pass source checks.
-    Runtime eb1c71056db64586b3b41c713e7bf631 covers those fixes, native publication,
-    cleanup/restart, capacity and the new public two-cell gh/Git round. All 334 selected
-    library tests pass without skips, including real foreign SSH push/clone and revocation;
-    cluster 234, Git 42 and identity 166 also pass without skips. Database passes 179 and
-    fails two foreign browser-page checks because package counts assume local session rows;
-    the shared live-session fix is written. Both exhaustive GraphQL contracts pass. PgBouncer,
-    replica and quorum e2e pass; the new cells round fails at native cell-1 startup, before
-    client acceptance, and its cleanup step is skipped. The fixture now prints a bounded
-    child-log tail on startup failure. Runtime 3c645a8bdabd457ba45e70efff05b20b exposes a
-    fixture collision on the default UDP port 7444; each native process now gets an ephemeral
-    loopback listener and drops inherited transport settings. All 300 selected library tests
-    pass without skips. Cluster passes 233 with one GraphQL organization discovery failure;
-    both membership, foreign browser, gist and team-reviewer contracts pass on both engines,
-    as do both selected CI contracts. Project tests pass four and fail two forged-root
-    mutation checks. The collected source fix moves discovery into the existing list
-    resolver, removes the unreachable project duplicate and runs shared root preflight
-    before every mutation family. HTTP regressions also cover zero-sized/sorted foreign
-    organization pages and forged roots in both review-request mutations. Clippy
-    bd60df12a16c434ea93a6834f0e5574c and WASM 311c4e58da1a4071ac22761eb50e9148 pass;
-    workspace 8a63bf5aaff6498a89cf1f6eaa8f7599 passes. Runtime
-    9a78fe99403a4962b155fdec3a848af1 covers native lists, the collected GraphQL fixes,
-    cluster, both database engines and the public two-cell gh/Git round.
-    Numeric child IDs and remote membership delivery/REST discovery pass workspace
-    95564883b4604fb5bbd2968e4c6c5188, Clippy dc45e3525fc74aaabc0f286151667188 and WASM
-    ba06675531a94ac0a434f8822c9a23ca. Both baselines retain stable review-request row IDs
-    and protection-rule App owners. Old output assertions now expect rooted IDs; former input
-    IDs remain accepted as the architecture requires. HTTP/TLS tests cover forged roots,
-    pointer rollback/replay, grant revocation and gh pagination; runtime is pending.
-    GraphQL's 64-bit ID output and membership self-call guard pass workspace
-    5dee459c4fb74e9dbc34ff6b93fb6b3e, Clippy 3a43d960fc5f4dc19e871ba01ed782c1 and WASM
-    54abdb51b250438586b711004cd4536a. The next unchecked batch roots computed project fields,
-    discovers remote orgs through bounded GraphQL pages with the original token, and resolves
-    numeric foreign invitation targets through the existing home RPC. It shares package
-    session checks with the native/foreign credential owner; HTTP, hostile-root, invitation,
-    revocation and cursor tests are written. Workspace ccd54b9276ec4460b20047f8794f4f6a and
-    Clippy 0634de72aa504774b5ddde46187bace7 and WASM 11432ad448f9400eb75e00f2eee16e80
-    pass. Runtime 3c645a8bdabd457ba45e70efff05b20b covers every changed library/integration
-    target and the failed cells round, with cell startup diagnostics enabled. The next
-    unchecked batch reads remote native dashboard/org lists through authorized page models
-    with the original cookie, shares all row/byte budgets, and filters private stub orgs on
-    both engines. Tests cover HTML/model output and session revocation during a remote wait.
-    Native home lists and their shared budgets pass workspace 7b8a449676274b2284d8c67447439d70,
-    Clippy 95d21a9f9bb94eb9aa6ff3a8b6a9ae82 and WASM 05c22273aa1e4ad2a864829dcfb7c222.
-    Runtime acceptance remains open. The next cells round explicitly pushes/clones the
-    cell-1 native repository over HTTP and SSH, checks account/repository ID bounds and
-    checks the home dashboard's foreign private repository in HTML and hydration data.
-    No stage 2 completion is claimed.
-    Stages 3 to 6 are not built. Automatic user moves and org regional presence remain
-    documented owner decisions.
-    Owner follow-ups: foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded
-    expired directory-claim collection.
+    Stage 2 source covers directory claims/TLS/cache, public HTTP/SSH routing, scoped
+    credentials and IDs, stable homes, stubs, home authorization, native publication,
+    durable cleanup, capacity reporting and bounded home membership discovery.
+    Workspace 8a63bf5aaff6498a89cf1f6eaa8f7599, Clippy bd60df12a16c434ea93a6834f0e5574c
+    and WASM 311c4e58da1a4071ac22761eb50e9148 pass. Generated GraphQL is unchanged.
+    New output assertions use rooted IDs; former input IDs remain accepted as required.
+    Earlier runtime eb1c71056db64586b3b41c713e7bf631 passes 334 selected library, 234 cluster,
+    42 Git and 166 identity tests and both exhaustive GraphQL contracts. Before that, CI
+    passes 220 with 19 existing cgroup-dependent ignores and pull requests pass 324 with
+    two existing cgroup-dependent ignores. All 51 targeted stage 1 e2e checks pass.
+    Runtime 3c645a8bdabd457ba45e70efff05b20b passes 300 selected library tests and both-engine
+    membership, foreign browser, gist, reviewer and selected CI contracts without skips.
+    Cluster passes 233 and fails one GraphQL organization discovery check; project tests
+    pass four and fail two forged-root mutations. Their checked fix moves discovery into
+    its actual list resolver and root preflight before every mutation family, removing
+    the unreachable duplicate. New HTTP checks cover sorted/zero-sized org pages and
+    forged roots in both review-request mutations.
+    Runtime 9a78fe99403a4962b155fdec3a848af1 covers these fixes, native dashboard/org lists,
+    cluster, both database engines and the public two-cell gh/Git round. The cells fixture
+    now isolates UDP listeners after the earlier startup collision; it checks native cell-1
+    Git pushes/clones, scoped IDs, private dashboard output and stopped-cell page errors.
+    The strengthened both-cell node query awaits a later cells round.
+    No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
+    and org regional presence remain documented owner decisions.
+    Committed range renewal is a deferred owner follow-up. Other owner follow-ups:
+    foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded expired
+    directory-claim collection.
 
 ## Decisions that settle the open questions
 
