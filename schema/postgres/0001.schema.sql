@@ -44,6 +44,8 @@ CREATE INDEX IF NOT EXISTS idx_pending_object_deletions_due
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS users (
     id BIGSERIAL PRIMARY KEY,
+    home_cell INTEGER NOT NULL DEFAULT 0 CHECK (home_cell BETWEEN 0 AND 65535),
+    is_stub BOOLEAN NOT NULL DEFAULT FALSE,
     username VARCHAR(255) NOT NULL UNIQUE,
     email VARCHAR(255) UNIQUE,
     password_hash VARCHAR(255),
@@ -59,7 +61,8 @@ CREATE TABLE IF NOT EXISTS users (
     two_factor_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    email_notifications BOOLEAN NOT NULL DEFAULT TRUE
+    email_notifications BOOLEAN NOT NULL DEFAULT TRUE,
+    CONSTRAINT users_stub_data CHECK (NOT is_stub OR (password_hash IS NULL AND email IS NULL AND avatar_file_id IS NULL AND NOT is_admin AND NOT must_change_password AND NOT two_factor_enabled))
 );
 
 -- files is created before users, so its user foreign key is added here.
@@ -73,6 +76,7 @@ CREATE UNIQUE INDEX users_username_folded ON users(lower(username COLLATE "C"));
 
 CREATE TABLE IF NOT EXISTS node_configuration (
     id SMALLINT PRIMARY KEY,
+    cell_id INTEGER NOT NULL DEFAULT 0 CHECK (cell_id BETWEEN 0 AND 65535),
     cell_prefix INTEGER NOT NULL DEFAULT 0 CHECK (cell_prefix BETWEEN 0 AND 65535),
     database_id TEXT NOT NULL UNIQUE DEFAULT (replace(gen_random_uuid()::text,'-','')),
     node_mode VARCHAR(20) NOT NULL DEFAULT 'public', -- public | private
@@ -239,6 +243,8 @@ CREATE TABLE two_factor_recovery_codes (
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS organizations (
     id BIGSERIAL PRIMARY KEY,
+    home_cell INTEGER NOT NULL DEFAULT 0 CHECK (home_cell BETWEEN 0 AND 65535),
+    is_stub BOOLEAN NOT NULL DEFAULT FALSE,
     name VARCHAR(255) NOT NULL UNIQUE,
     display_name VARCHAR(255),
     description TEXT,
@@ -246,7 +252,8 @@ CREATE TABLE IF NOT EXISTS organizations (
     billing_email VARCHAR(255),
     is_verified BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT organizations_stub_data CHECK (NOT is_stub OR (billing_email IS NULL AND avatar_file_id IS NULL))
 );
 
 CREATE TABLE IF NOT EXISTS org_memberships (
@@ -312,6 +319,8 @@ CREATE INDEX IF NOT EXISTS idx_team_memberships_user_id ON team_memberships(user
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS repositories (
     id BIGSERIAL PRIMARY KEY,
+    home_cell INTEGER NOT NULL DEFAULT 0 CHECK (home_cell BETWEEN 0 AND 65535),
+    is_stub BOOLEAN NOT NULL DEFAULT FALSE,
     owner_kind VARCHAR(10) NOT NULL DEFAULT 'user', -- user, org
     owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
     owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
@@ -357,7 +366,8 @@ CREATE TABLE IF NOT EXISTS repositories (
         (owner_kind = 'org' AND owner_org_id IS NOT NULL AND owner_user_id IS NULL)
     ),
     CONSTRAINT repo_unique_user UNIQUE (owner_user_id, name),
-    CONSTRAINT repo_unique_org UNIQUE (owner_org_id, name)
+    CONSTRAINT repo_unique_org UNIQUE (owner_org_id, name),
+    CONSTRAINT repositories_stub_data CHECK (NOT is_stub OR (disk_path='' AND storage_node_id IS NULL AND size_bytes=0))
 );
 CREATE UNIQUE INDEX organizations_name_folded ON organizations(lower(name COLLATE "C"));
 CREATE UNIQUE INDEX repo_unique_user_folded ON repositories(owner_user_id,lower(name COLLATE "C"));
@@ -4227,3 +4237,18 @@ CREATE CONSTRAINT TRIGGER merge_policy_statuses AFTER INSERT OR UPDATE OR DELETE
 CREATE CONSTRAINT TRIGGER merge_policy_checks AFTER INSERT OR UPDATE OR DELETE ON check_runs DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
 CREATE CONSTRAINT TRIGGER merge_policy_suites AFTER INSERT OR UPDATE OR DELETE ON check_suites DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
 CREATE CONSTRAINT TRIGGER merge_policy_ci AFTER INSERT OR UPDATE OR DELETE ON ci_runs DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION advance_merge_policy_epoch();
+
+-- Personal credentials belong only to their account's write home.
+CREATE FUNCTION cell_credential_home() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    PERFORM id FROM users WHERE id=NEW.user_id AND NOT is_stub FOR SHARE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'Credential owner is not local'; END IF;
+    RETURN NEW;
+END;
+$$;
+CREATE TRIGGER sessions_cell_home BEFORE INSERT OR UPDATE OF user_id ON sessions FOR EACH ROW EXECUTE FUNCTION cell_credential_home();
+CREATE TRIGGER personal_access_tokens_cell_home BEFORE INSERT OR UPDATE OF user_id ON personal_access_tokens FOR EACH ROW EXECUTE FUNCTION cell_credential_home();
+CREATE TRIGGER ssh_keys_cell_home BEFORE INSERT OR UPDATE OF user_id ON ssh_keys FOR EACH ROW EXECUTE FUNCTION cell_credential_home();
+CREATE TRIGGER oauth_accounts_cell_home BEFORE INSERT OR UPDATE OF user_id ON oauth_accounts FOR EACH ROW EXECUTE FUNCTION cell_credential_home();
+CREATE TRIGGER two_factor_auth_cell_home BEFORE INSERT OR UPDATE OF user_id ON two_factor_auth FOR EACH ROW EXECUTE FUNCTION cell_credential_home();
+CREATE TRIGGER two_factor_recovery_codes_cell_home BEFORE INSERT OR UPDATE OF user_id ON two_factor_recovery_codes FOR EACH ROW EXECUTE FUNCTION cell_credential_home();

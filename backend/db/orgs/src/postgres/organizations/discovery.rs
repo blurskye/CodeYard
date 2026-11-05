@@ -20,12 +20,12 @@ pub async fn list_organizations(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Organization>> {
-    Ok(sqlx::query_as("SELECT o.* FROM organizations o WHERE o.id>$1 AND EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AND ($2::bigint IS NULL OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=o.id AND m.user_id=$2 AND m.role IN ('owner','admin','member') AND ($3 OR m.is_public))) ORDER BY o.id LIMIT $4 OFFSET $5")
+    Ok(sqlx::query_as("SELECT o.* FROM organizations o WHERE NOT o.is_stub AND o.id>$1 AND EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AND ($2::bigint IS NULL OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=o.id AND m.user_id=$2 AND m.role IN ('owner','admin','member') AND ($3 OR m.is_public))) ORDER BY o.id LIMIT $4 OFFSET $5")
         .bind(since).bind(user).bind(private).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
 pub async fn organization_public_repositories(pool: &PgPool, org: i64) -> Result<i64> {
-    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND NOT is_private")
+    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM repositories WHERE NOT is_stub AND owner_kind='org' AND owner_org_id=$1 AND NOT is_private")
         .bind(org).fetch_one(pool).await?)
 }
 

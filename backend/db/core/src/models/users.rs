@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct User {
+    pub home_cell: i32,
+    pub is_stub: bool,
     pub id: i64,
     pub username: String,
     pub email: Option<String>,

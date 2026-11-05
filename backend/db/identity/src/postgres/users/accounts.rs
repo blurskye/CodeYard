@@ -10,13 +10,14 @@ pub async fn create_user(pool: &PgPool, username: &str, email: Option<&str>) -> 
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::lock_namespace(&mut tx, username).await?;
     crate::postgres::users::transitions::require_user_namespace(&mut tx, username).await?;
-    let result = sqlx::query_as::<_, User>(
+    let result = sqlx::query_as::<_, User>(&format!(
         r#"
-        INSERT INTO users (username, email)
-        VALUES ($1, $2)
+        INSERT INTO users (home_cell,username, email)
+        VALUES ({cell_home},$1, $2)
         RETURNING *
         "#,
-    )
+        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+    ))
     .bind(username)
     .bind(email)
     .fetch_one(&mut *tx)
@@ -45,13 +46,14 @@ pub async fn create_user_with_password_and_flags(
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::lock_namespace(&mut tx, username).await?;
     crate::postgres::users::transitions::require_user_namespace(&mut tx, username).await?;
-    let result = sqlx::query_as::<_, User>(
+    let result = sqlx::query_as::<_, User>(&format!(
         r#"
-        INSERT INTO users (username, email, password_hash, is_admin, must_change_password)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO users (home_cell,username, email, password_hash, is_admin, must_change_password)
+        VALUES ({cell_home},$1, $2, $3, $4, $5)
         RETURNING *
         "#,
-    )
+        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+    ))
     .bind(username)
     .bind(email)
     .bind(password_hash)
@@ -64,7 +66,7 @@ pub async fn create_user_with_password_and_flags(
 }
 
 pub async fn count_users(pool: &PgPool) -> Result<i64> {
-    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users")
+    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM users WHERE NOT is_stub")
         .fetch_one(pool)
         .await?;
 
@@ -214,7 +216,7 @@ pub async fn get_users_by_ids(pool: &PgPool, ids: &[i64]) -> Result<Vec<User>> {
 
 pub async fn list_users_since(pool: &PgPool, since: i64, limit: i64) -> Result<Vec<User>> {
     Ok(
-        sqlx::query_as("SELECT * FROM users WHERE id>$1 ORDER BY id LIMIT $2")
+        sqlx::query_as("SELECT * FROM users WHERE NOT is_stub AND id>$1 ORDER BY id LIMIT $2")
             .bind(since)
             .bind(limit)
             .fetch_all(pool)
@@ -223,9 +225,10 @@ pub async fn list_users_since(pool: &PgPool, since: i64, limit: i64) -> Result<V
 }
 
 pub async fn list_users(pool: &PgPool) -> Result<Vec<User>> {
-    let users = sqlx::query_as::<_, User>("SELECT * FROM users ORDER BY username")
-        .fetch_all(pool)
-        .await?;
+    let users =
+        sqlx::query_as::<_, User>("SELECT * FROM users WHERE NOT is_stub ORDER BY username")
+            .fetch_all(pool)
+            .await?;
 
     Ok(users)
 }
@@ -239,13 +242,14 @@ pub async fn create_user_from_oauth(
     let mut tx = pool.begin().await?;
     crate::postgres::users::transitions::lock_namespace(&mut tx, username).await?;
     crate::postgres::users::transitions::require_user_namespace(&mut tx, username).await?;
-    let result = sqlx::query_as::<_, User>(
+    let result = sqlx::query_as::<_, User>(&format!(
         r#"
-        INSERT INTO users (username, email, display_name, email_verified)
-        VALUES ($1, $2, $3, $4)
+        INSERT INTO users (home_cell,username, email, display_name, email_verified)
+        VALUES ({cell_home},$1, $2, $3, $4)
         RETURNING *
         "#,
-    )
+        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+    ))
     .bind(username)
     .bind(email)
     .bind(display_name)
@@ -340,7 +344,7 @@ pub async fn count_matching_users<'a>(
     pool: impl sqlx::Executor<'a, Database = sqlx::Postgres>,
     text: &str,
 ) -> Result<(i64, i64, i64)> {
-    Ok(sqlx::query_as("SELECT COUNT(*), COUNT(*) FILTER (WHERE is_admin), COUNT(*) FILTER (WHERE is_banned) FROM users WHERE strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0")
+    Ok(sqlx::query_as("SELECT COUNT(*), COUNT(*) FILTER (WHERE is_admin), COUNT(*) FILTER (WHERE is_banned) FROM users WHERE NOT is_stub AND (strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0)")
         .bind(text.trim().to_lowercase()).fetch_one(pool).await?)
 }
 
@@ -351,7 +355,7 @@ pub async fn list_admin_users<'a>(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<AdminUser>> {
-    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE (strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0) AND CASE $4 WHEN 'admins' THEN is_admin WHEN 'banned' THEN is_banned ELSE TRUE END ORDER BY username,id LIMIT $2 OFFSET $3")
+    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE NOT is_stub AND (strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0) AND CASE $4 WHEN 'admins' THEN is_admin WHEN 'banned' THEN is_banned ELSE TRUE END ORDER BY username,id LIMIT $2 OFFSET $3")
         .bind(text.trim().to_lowercase()).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
 }
 

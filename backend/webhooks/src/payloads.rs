@@ -2445,6 +2445,8 @@ mod tests {
             return;
         }
         let repo = Repository {
+            home_cell: 0,
+            is_stub: false,
             actions_engine: None,
             id: 1,
             owner_kind: "user".into(),

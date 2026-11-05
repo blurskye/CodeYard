@@ -57,12 +57,14 @@ pub(super) async fn register_in_connection(
         return Ok(None);
     }
     sqlx::query("INSERT INTO oauth_applications(owner_id,client_id,secret_hash,name,homepage,redirect_uri,is_github_app) VALUES($1,$2,$3,$4,$5,$5,TRUE)").bind(actor).bind(&app.client_id).bind(secret_hash).bind(&app.name).bind(&app.homepage).execute(&mut *tx).await?;
-    let bot: i64 =
-        sqlx::query_scalar("INSERT INTO users(username,display_name) VALUES($1,$2) RETURNING id")
-            .bind(format!("{}[bot]", app.slug))
-            .bind(&app.name)
-            .fetch_one(&mut *tx)
-            .await?;
+    let bot: i64 = sqlx::query_scalar(&format!(
+        "INSERT INTO users(home_cell,username,display_name) VALUES({cell_home},$1,$2) RETURNING id",
+        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+    ))
+    .bind(format!("{}[bot]", app.slug))
+    .bind(&app.name)
+    .fetch_one(&mut *tx)
+    .await?;
     let app=sqlx::query_as("INSERT INTO github_apps(owner_id,bot_id,client_id,slug,name,description,homepage,public_key,permissions,events,access_level,is_public) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *")
         .bind(actor).bind(bot).bind(&app.client_id).bind(&app.slug).bind(&app.name).bind(&app.description).bind(&app.homepage).bind(&app.public_key).bind(&app.permissions).bind(&app.events).bind(app.access_level).bind(app.is_public).fetch_one(&mut *tx).await?;
     Ok(Some(app))

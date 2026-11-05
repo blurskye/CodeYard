@@ -17,12 +17,12 @@ pub async fn create_forked_repository(
     input: NewForkedRepository<'_>,
 ) -> Result<Repository> {
     let result = sqlx::query_as::<_, Repository>(
-        r#"
-        INSERT INTO repositories (owner_kind, owner_user_id, name, description, is_private, disk_path, is_fork, forked_from_id, default_branch, created_by_id)
-        SELECT 'user', $1, $2, $3, ($4 OR source.is_private OR source.visibility_locked), $5, true, $6, $7, $1
+        &format!(r#"
+        INSERT INTO repositories (home_cell,owner_kind, owner_user_id, name, description, is_private, disk_path, is_fork, forked_from_id, default_branch, created_by_id)
+        SELECT {cell_home},'user', $1, $2, $3, ($4 OR source.is_private OR source.visibility_locked), $5, true, $6, $7, $1
         FROM repositories source WHERE source.id=$6 AND NOT source.is_gist
         RETURNING *
-        "#,
+        "#, cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL),
     )
     .bind(input.owner_id)
     .bind(input.name)
@@ -362,7 +362,7 @@ pub async fn search_users(
     let mut connection = search_connection(pool).await?;
     let pool = &mut *connection;
     Ok(sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE username ILIKE $1 OR display_name ILIKE $1 \
+        "SELECT * FROM users WHERE NOT is_stub AND (username ILIKE $1 OR display_name ILIKE $1) \
          ORDER BY username, id LIMIT $2 OFFSET $3",
     )
     .bind(contains_pattern(query))
@@ -376,7 +376,7 @@ pub async fn count_users(pool: &PgPool, query: &str, cap: i64) -> Result<i64> {
     let mut connection = search_connection(pool).await?;
     let pool = &mut *connection;
     Ok(sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM (SELECT 1 FROM users WHERE username ILIKE $1 OR display_name ILIKE $1 LIMIT $2) AS matches",
+        "SELECT COUNT(*) FROM (SELECT 1 FROM users WHERE NOT is_stub AND (username ILIKE $1 OR display_name ILIKE $1) LIMIT $2) AS matches",
     )
     .bind(contains_pattern(query))
     .bind(cap)

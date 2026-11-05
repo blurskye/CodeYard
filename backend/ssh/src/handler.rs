@@ -740,7 +740,7 @@ mod tests {
 
     fn user() -> User {
         serde_json::from_value(serde_json::json!({
-            "id": 1, "username": "fixture",
+            "id": 1, "username": "fixture", "home_cell": 0, "is_stub": false,
             "is_admin": false, "is_banned": false,
             "must_change_password": false, "email_verified": false,
             "two_factor_enabled": false,

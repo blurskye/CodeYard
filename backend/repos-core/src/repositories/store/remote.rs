@@ -42,6 +42,10 @@ pub(super) struct RemoteStore {
 }
 
 impl RemoteStore {
+    pub(super) fn unavailable() -> Self {
+        Self::new("", 0, None)
+    }
+
     pub(super) fn new(disk_path: &str, node_id: i64, context: Option<&NodeContext>) -> Self {
         Self {
             disk_path: disk_path.to_owned(),

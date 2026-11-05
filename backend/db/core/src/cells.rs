@@ -3,44 +3,56 @@ use crate::{pool::PgPool, DbPool};
 use anyhow::{ensure, Context, Result};
 use codeyard_support::cells::Prefix;
 use sqlx::PgConnection;
+pub mod stubs;
+
+/// Used by every native account/repository INSERT, including a cell with a later issuer range.
+pub const LOCAL_HOME_SQL: &str = "COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0)";
 
 pub async fn load(pool: &DbPool) -> Result<()> {
-    let value: Option<i32> = match pool {
+    let value: Option<(i32, i32)> = match pool {
         DbPool::Postgres(pool) => {
-            sqlx::query_scalar("SELECT cell_prefix FROM node_configuration WHERE id=1")
+            sqlx::query_as("SELECT cell_id,cell_prefix FROM node_configuration WHERE id=1")
                 .fetch_optional(pool)
                 .await?
         }
         DbPool::Sqlite(pool) => {
-            sqlx::query_scalar("SELECT cell_prefix FROM node_configuration WHERE id=1")
+            sqlx::query_as("SELECT cell_id,cell_prefix FROM node_configuration WHERE id=1")
                 .fetch_optional(pool)
                 .await?
         }
     };
-    pool.set_cell_prefix(Prefix::try_from(i64::from(value.unwrap_or(0)))?);
+    let (cell, prefix) = value.unwrap_or((0, 0));
+    pool.set_cell_identity(
+        Prefix::try_from(i64::from(cell))?,
+        Prefix::try_from(i64::from(prefix))?,
+    );
     Ok(())
 }
 
 /// The caller excludes serving processes with the existing maintenance and state locks.
 /// Cell zero retains every ID and sequence position; a nonzero prefix needs an empty cell.
 pub async fn initialize(pool: &DbPool, prefix: Prefix) -> Result<()> {
-    match pool {
+    let cell = match pool {
         DbPool::Postgres(pool) => initialize_postgres(pool, prefix).await?,
-        DbPool::Sqlite(_) => ensure!(prefix == Prefix::ZERO, "multiple cells require PostgreSQL"),
-    }
-    pool.set_cell_prefix(prefix);
+        DbPool::Sqlite(_) => {
+            ensure!(prefix == Prefix::ZERO, "multiple cells require PostgreSQL");
+            Prefix::ZERO
+        }
+    };
+    pool.set_cell_identity(cell, prefix);
     Ok(())
 }
 
-async fn initialize_postgres(pool: &PgPool, prefix: Prefix) -> Result<()> {
+async fn initialize_postgres(pool: &PgPool, prefix: Prefix) -> Result<Prefix> {
     let mut tx = pool.begin().await?;
     sqlx::query("INSERT INTO node_configuration(id) VALUES(1) ON CONFLICT(id) DO NOTHING")
         .execute(&mut *tx)
         .await?;
-    let previous: i32 =
-        sqlx::query_scalar("SELECT cell_prefix FROM node_configuration WHERE id=1 FOR UPDATE")
+    let (cell, previous): (i32, i32) =
+        sqlx::query_as("SELECT cell_id,cell_prefix FROM node_configuration WHERE id=1 FOR UPDATE")
             .fetch_one(&mut *tx)
             .await?;
+    let cell = Prefix::try_from(i64::from(cell))?;
     let previous = Prefix::try_from(i64::from(previous))?;
     ensure!(
         previous == Prefix::ZERO || previous == prefix,
@@ -96,12 +108,16 @@ async fn initialize_postgres(pool: &PgPool, prefix: Prefix) -> Result<()> {
             bounds.start(), bounds.end(), bounds.start()))
             .execute(&mut *tx).await?;
     }
-    sqlx::query("UPDATE node_configuration SET cell_prefix=$1,setup_completed=CASE WHEN $1<>0 THEN true ELSE setup_completed END WHERE id=1")
+    sqlx::query("UPDATE node_configuration SET cell_id=CASE WHEN cell_prefix=0 THEN $1 ELSE cell_id END,cell_prefix=$1,setup_completed=CASE WHEN $1<>0 THEN true ELSE setup_completed END WHERE id=1")
         .bind(i32::from(prefix.get()))
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(())
+    Ok(if previous == Prefix::ZERO {
+        prefix
+    } else {
+        cell
+    })
 }
 
 /// The same bounded catalog drives range allocation and whole-database copy.

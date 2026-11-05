@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Organization {
+    pub home_cell: i32,
+    pub is_stub: bool,
     pub id: i64,
     pub name: String,
     pub display_name: Option<String>,

@@ -35,6 +35,8 @@ CREATE INDEX idx_pending_object_deletions_due
 
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
+    home_cell INTEGER NOT NULL DEFAULT 0 CHECK (home_cell BETWEEN 0 AND 65535),
+    is_stub INTEGER NOT NULL DEFAULT 0 CHECK (is_stub IN (0,1)),
     username TEXT NOT NULL UNIQUE CHECK (length(username)<=255),
     email TEXT UNIQUE CHECK (length(email)<=255),
     password_hash TEXT CHECK (length(password_hash)<=255),
@@ -51,13 +53,15 @@ CREATE TABLE users (
     -- Whether notifications are also sent by email, when the site has a mail server.
     email_notifications INTEGER NOT NULL DEFAULT 1 CHECK (email_notifications IN (0,1)),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    CONSTRAINT users_stub_data CHECK (NOT is_stub OR (password_hash IS NULL AND email IS NULL AND avatar_file_id IS NULL AND NOT is_admin AND NOT must_change_password AND NOT two_factor_enabled))
 );
 
 CREATE UNIQUE INDEX users_username_folded ON users(lower(username));
 
 CREATE TABLE node_configuration (
     id INTEGER PRIMARY KEY CHECK (id IS NULL OR typeof(id)='integer') CHECK (id BETWEEN -32768 AND 32767),
+    cell_id INTEGER NOT NULL DEFAULT 0 CHECK (cell_id=0),
     cell_prefix INTEGER NOT NULL DEFAULT 0 CHECK (cell_prefix=0),
     database_id TEXT NOT NULL UNIQUE DEFAULT (lower(hex(randomblob(16)))),
     node_mode TEXT NOT NULL DEFAULT 'public' CHECK (length(node_mode)<=20),
@@ -215,6 +219,8 @@ CREATE TABLE two_factor_recovery_codes (
 
 CREATE TABLE organizations (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
+    home_cell INTEGER NOT NULL DEFAULT 0 CHECK (home_cell BETWEEN 0 AND 65535),
+    is_stub INTEGER NOT NULL DEFAULT 0 CHECK (is_stub IN (0,1)),
     name TEXT NOT NULL UNIQUE CHECK (length(name)<=255),
     display_name TEXT CHECK (length(display_name)<=255),
     description TEXT,
@@ -222,7 +228,8 @@ CREATE TABLE organizations (
     billing_email TEXT CHECK (length(billing_email)<=255),
     is_verified INTEGER NOT NULL DEFAULT 0 CHECK (is_verified IN (0,1)),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
-    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    CONSTRAINT organizations_stub_data CHECK (NOT is_stub OR (billing_email IS NULL AND avatar_file_id IS NULL))
 );
 
 CREATE TABLE org_memberships (
@@ -280,6 +287,8 @@ CREATE TABLE team_memberships (
 
 CREATE TABLE repositories (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
+    home_cell INTEGER NOT NULL DEFAULT 0 CHECK (home_cell BETWEEN 0 AND 65535),
+    is_stub INTEGER NOT NULL DEFAULT 0 CHECK (is_stub IN (0,1)),
     owner_kind TEXT NOT NULL DEFAULT 'user' CHECK (length(owner_kind)<=10), 
     owner_user_id INTEGER REFERENCES users(id) ON DELETE CASCADE CHECK (owner_user_id IS NULL OR typeof(owner_user_id)='integer'),
     owner_org_id INTEGER REFERENCES organizations(id) ON DELETE CASCADE CHECK (owner_org_id IS NULL OR typeof(owner_org_id)='integer'),
@@ -325,7 +334,8 @@ CREATE TABLE repositories (
         (owner_kind = 'org' AND owner_org_id IS NOT NULL AND owner_user_id IS NULL)
     ),
     CONSTRAINT repo_unique_user UNIQUE (owner_user_id, name),
-    CONSTRAINT repo_unique_org UNIQUE (owner_org_id, name)
+    CONSTRAINT repo_unique_org UNIQUE (owner_org_id, name),
+    CONSTRAINT repositories_stub_data CHECK (NOT is_stub OR (disk_path='' AND storage_node_id IS NULL AND size_bytes=0))
 );
 
 CREATE TABLE repo_access (
@@ -4086,3 +4096,41 @@ END;
 CREATE TRIGGER merge_policy_ci_delete AFTER DELETE ON ci_runs BEGIN
     INSERT INTO repository_merge_epochs SELECT id,1 FROM repositories WHERE id=OLD.repo_id ON CONFLICT(repo_id) DO UPDATE SET version=version+1;
 END;
+
+-- Personal credentials belong only to their account's write home.
+CREATE TRIGGER sessions_cell_home_insert BEFORE INSERT ON sessions
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+CREATE TRIGGER sessions_cell_home_update BEFORE UPDATE OF user_id ON sessions
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+CREATE TRIGGER personal_access_tokens_cell_home_insert BEFORE INSERT ON personal_access_tokens
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+CREATE TRIGGER personal_access_tokens_cell_home_update BEFORE UPDATE OF user_id ON personal_access_tokens
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+CREATE TRIGGER ssh_keys_cell_home_insert BEFORE INSERT ON ssh_keys
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+CREATE TRIGGER ssh_keys_cell_home_update BEFORE UPDATE OF user_id ON ssh_keys
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+CREATE TRIGGER oauth_accounts_cell_home_insert BEFORE INSERT ON oauth_accounts
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+CREATE TRIGGER oauth_accounts_cell_home_update BEFORE UPDATE OF user_id ON oauth_accounts
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+CREATE TRIGGER two_factor_auth_cell_home_insert BEFORE INSERT ON two_factor_auth
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+CREATE TRIGGER two_factor_auth_cell_home_update BEFORE UPDATE OF user_id ON two_factor_auth
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+CREATE TRIGGER two_factor_recovery_codes_cell_home_insert BEFORE INSERT ON two_factor_recovery_codes
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;
+CREATE TRIGGER two_factor_recovery_codes_cell_home_update BEFORE UPDATE OF user_id ON two_factor_recovery_codes
+WHEN NOT EXISTS(SELECT 1 FROM users WHERE id=NEW.user_id AND NOT is_stub)
+BEGIN SELECT RAISE(ABORT,'Credential owner is not local'); END;

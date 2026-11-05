@@ -24,7 +24,7 @@ pub async fn user_repo_access_in_transaction(
 // The actor's access level on repository `r`, 0 when none. A plain scalar over the
 // outer `r` and `u` rows, so the run list can evaluate it once per repository.
 pub const USER_REPO_ACCESS_SQL: &str = r#"
-    (CASE WHEN NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password
+    (CASE WHEN NOT r.is_stub AND NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password
         AND ((r.owner_kind = 'user' AND r.owner_user_id IS NOT NULL AND r.owner_org_id IS NULL)
             OR (r.owner_kind = 'org' AND r.owner_user_id IS NULL AND r.owner_org_id IS NOT NULL
                 AND EXISTS (SELECT 1 FROM organizations o WHERE o.id = r.owner_org_id)))
@@ -88,7 +88,7 @@ pub const USER_REPO_ACCESS_SQL: &str = r#"
 /// personal repositories of a site admin, and the access projection for everything else.
 pub fn readable_condition() -> String {
     format!(
-        "(NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin AND NOT u.is_banned AND NOT u.must_change_password) OR ({USER_REPO_ACCESS_SQL}) >= 1))"
+        "(NOT r.is_stub AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin AND NOT u.is_banned AND NOT u.must_change_password) OR ({USER_REPO_ACCESS_SQL}) >= 1))"
     )
 }
 

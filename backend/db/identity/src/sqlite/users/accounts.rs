@@ -9,11 +9,14 @@ use codeyard_db_core::pool::SqlitePool;
 pub async fn create_user(pool: &SqlitePool, username: &str, email: Option<&str>) -> Result<User> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     crate::sqlite::users::transitions::require_user_namespace(&mut tx, username).await?;
-    let user = sqlx::query_as("INSERT INTO users(username,email) VALUES (?1,?2) RETURNING *")
-        .bind(username)
-        .bind(email)
-        .fetch_one(&mut *tx)
-        .await?;
+    let user = sqlx::query_as(&format!(
+        "INSERT INTO users(home_cell,username,email) VALUES ({cell_home},?1,?2) RETURNING *",
+        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+    ))
+    .bind(username)
+    .bind(email)
+    .fetch_one(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(user)
 }
@@ -37,7 +40,7 @@ pub async fn create_user_with_password_and_flags(
 ) -> Result<User> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     crate::sqlite::users::transitions::require_user_namespace(&mut tx, username).await?;
-    let user = sqlx::query_as("INSERT INTO users(username,email,password_hash,is_admin,must_change_password) VALUES (?1,?2,?3,?4,?5) RETURNING *")
+    let user = sqlx::query_as(&format!("INSERT INTO users(home_cell,username,email,password_hash,is_admin,must_change_password) VALUES ({cell_home},?1,?2,?3,?4,?5) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
         .bind(username).bind(email).bind(password_hash).bind(is_admin).bind(must_change_password)
         .fetch_one(&mut *tx).await?;
     tx.commit().await?;
@@ -45,9 +48,11 @@ pub async fn create_user_with_password_and_flags(
 }
 
 pub async fn count_users(pool: &SqlitePool) -> Result<i64> {
-    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM users")
-        .fetch_one(pool)
-        .await?)
+    Ok(
+        sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE NOT is_stub")
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 pub async fn replace_password_hash(
@@ -176,7 +181,7 @@ pub async fn get_users_by_ids(pool: &SqlitePool, ids: &[i64]) -> Result<Vec<User
 
 pub async fn list_users_since(pool: &SqlitePool, since: i64, limit: i64) -> Result<Vec<User>> {
     Ok(
-        sqlx::query_as("SELECT * FROM users WHERE id>?1 ORDER BY id LIMIT ?2")
+        sqlx::query_as("SELECT * FROM users WHERE NOT is_stub AND id>?1 ORDER BY id LIMIT ?2")
             .bind(since)
             .bind(limit)
             .fetch_all(pool)
@@ -185,9 +190,11 @@ pub async fn list_users_since(pool: &SqlitePool, since: i64, limit: i64) -> Resu
 }
 
 pub async fn list_users(pool: &SqlitePool) -> Result<Vec<User>> {
-    Ok(sqlx::query_as("SELECT * FROM users ORDER BY username")
-        .fetch_all(pool)
-        .await?)
+    Ok(
+        sqlx::query_as("SELECT * FROM users WHERE NOT is_stub ORDER BY username")
+            .fetch_all(pool)
+            .await?,
+    )
 }
 
 pub async fn create_user_from_oauth(
@@ -198,7 +205,7 @@ pub async fn create_user_from_oauth(
 ) -> Result<User> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     crate::sqlite::users::transitions::require_user_namespace(&mut tx, username).await?;
-    let user = sqlx::query_as("INSERT INTO users(username,email,display_name,email_verified) VALUES (?1,?2,?3,?4) RETURNING *")
+    let user = sqlx::query_as(&format!("INSERT INTO users(home_cell,username,email,display_name,email_verified) VALUES ({cell_home},?1,?2,?3,?4) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
         .bind(username).bind(email).bind(display_name).bind(email.is_some()).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(user)
@@ -287,7 +294,7 @@ pub async fn count_matching_users<'a>(
     text: &str,
 ) -> Result<(i64, i64, i64)> {
     Ok(sqlx::query_as(
-        "SELECT COUNT(*), COALESCE(SUM(is_admin),0), COALESCE(SUM(is_banned),0) FROM users WHERE username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1",
+        "SELECT COUNT(*), COALESCE(SUM(is_admin),0), COALESCE(SUM(is_banned),0) FROM users WHERE NOT is_stub AND (username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1)",
     )
     .bind(codeyard_db_core::queries::sqlite::search::contains(text.trim()))
     .fetch_one(pool)
@@ -301,7 +308,7 @@ pub async fn list_admin_users<'a>(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<AdminUser>> {
-    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE (username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1) AND CASE ?4 WHEN 'admins' THEN is_admin WHEN 'banned' THEN is_banned ELSE 1 END ORDER BY username,id LIMIT ?2 OFFSET ?3")
+    Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE NOT is_stub AND (username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1) AND CASE ?4 WHEN 'admins' THEN is_admin WHEN 'banned' THEN is_banned ELSE 1 END ORDER BY username,id LIMIT ?2 OFFSET ?3")
         .bind(codeyard_db_core::queries::sqlite::search::contains(text.trim())).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
 }
 

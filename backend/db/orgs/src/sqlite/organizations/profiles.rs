@@ -30,7 +30,7 @@ pub async fn create_organization(
     if occupied {
         return Ok(Conflict);
     }
-    let id: Option<i64> = sqlx::query_scalar("INSERT INTO organizations(name,display_name,description) VALUES(?1,?2,?3) ON CONFLICT DO NOTHING RETURNING id")
+    let id: Option<i64> = sqlx::query_scalar(&format!("INSERT INTO organizations(home_cell,name,display_name,description) VALUES({cell_home},?1,?2,?3) ON CONFLICT DO NOTHING RETURNING id", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
         .bind(&input.slug).bind(input.profile.display_name.clone().flatten()).bind(input.profile.description.clone().flatten()).fetch_optional(&mut *tx).await?;
     let Some(id) = id else {
         return Ok(Conflict);

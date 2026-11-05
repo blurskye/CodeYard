@@ -202,6 +202,8 @@ mod tests {
     ) -> codeyard_db_core::models::Repository {
         let now = chrono::Utc::now();
         codeyard_db_core::models::Repository {
+            home_cell: 0,
+            is_stub: false,
             actions_engine: None,
             id,
             owner_kind: kind.into(),

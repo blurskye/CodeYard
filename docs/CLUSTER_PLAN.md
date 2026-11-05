@@ -170,7 +170,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Two real HTTP cells and TLS-directory tests cover the dispatch source; these tests have not run.
     Token tests that pinned the former unprefixed length now assert the scoped format; the
     directory CLI fixture now supplies the capacity it asserts. Runtime rechecks are pending.
-    The public proxy role, foreign authorization, stubs and stages 3 to 6 remain unimplemented.
+    Acceptance rerun 049f16eeb8324596b898b230885a66d3 runs the compiled snapshot. A new
+    unchecked batch adds stable cell identity, stub storage/metadata, credential/storage
+    guards and initial list filters; remaining guards, filters and tests are in progress.
+    The public proxy role, foreign authorization and stages 3 to 6 remain unimplemented.
     Automatic individual moves and org regional presence are documented owner decisions.
 
 ## Decisions that settle the open questions

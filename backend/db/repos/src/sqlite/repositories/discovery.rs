@@ -19,9 +19,9 @@ pub async fn create_forked_repository(
 ) -> Result<Repository> {
     // Read source policy and insert in one statement. Visibility-floor triggers
     // preserve/narrow descendants after source changes; no HTTP backend branch.
-    Ok(sqlx::query_as(r#"INSERT INTO repositories(owner_kind,owner_user_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,created_by_id)
-        SELECT 'user',?1,?2,?3,(?4 OR source.is_private OR source.visibility_locked),?5,1,?6,?7,?1
-        FROM repositories source WHERE source.id=?6 AND NOT source.is_gist RETURNING *"#)
+    Ok(sqlx::query_as(&format!(r#"INSERT INTO repositories(home_cell,owner_kind,owner_user_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,created_by_id)
+        SELECT {cell_home},'user',?1,?2,?3,(?4 OR source.is_private OR source.visibility_locked),?5,1,?6,?7,?1
+        FROM repositories source WHERE source.id=?6 AND NOT source.is_gist RETURNING *"#, cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
         .bind(input.owner_id).bind(input.name).bind(input.description).bind(input.is_private)
         .bind(input.disk_path).bind(input.forked_from).bind(input.default_branch).fetch_one(pool).await?)
 }
@@ -382,7 +382,7 @@ pub async fn search_users(
     ensure!(limit >= 0, "Result limit must be nonnegative");
     let mut connection = search_connection(pool).await?;
     let result = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE username REGEXP ?1 OR display_name REGEXP ?1 \
+        "SELECT * FROM users WHERE NOT is_stub AND (username REGEXP ?1 OR display_name REGEXP ?1) \
          ORDER BY username, id LIMIT ?2 OFFSET ?3",
     )
     .bind(contains(query))
@@ -397,7 +397,7 @@ pub async fn search_users(
 pub async fn count_users(pool: &SqlitePool, query: &str, cap: i64) -> Result<i64> {
     let mut connection = search_connection(pool).await?;
     let result = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM (SELECT 1 FROM users WHERE username REGEXP ?1 OR display_name REGEXP ?1 LIMIT ?2) AS matches",
+        "SELECT COUNT(*) FROM (SELECT 1 FROM users WHERE NOT is_stub AND (username REGEXP ?1 OR display_name REGEXP ?1) LIMIT ?2) AS matches",
     )
     .bind(contains(query)).bind(cap).fetch_one(&mut *connection).await;
     connection.finish().await?;

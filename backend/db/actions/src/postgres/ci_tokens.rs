@@ -39,7 +39,7 @@ pub async fn issue(
         !fork || tokens.iter().all(|token| !token.write),
         "fork token is read-only"
     );
-    sqlx::query("INSERT INTO users(username,display_name,email_verified) VALUES ($1,'GitHub Actions',true) ON CONFLICT(username) DO NOTHING")
+    sqlx::query(&format!("INSERT INTO users(home_cell,username,display_name,email_verified) VALUES ({cell_home},$1,'GitHub Actions',true) ON CONFLICT(username) DO NOTHING", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
         .bind(BOT).execute(&mut *tx).await?;
     let bot: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username=$1 AND password_hash IS NULL AND email IS NULL AND NOT is_admin AND NOT is_banned FOR SHARE NOWAIT")
         .bind(BOT).fetch_one(&mut *tx).await?;

@@ -491,6 +491,8 @@ mod tests {
     async fn negotiated_page_models_are_authorized_presentation_not_private_user_rows() {
         let now = chrono::Utc::now();
         let user = User {
+            home_cell: 0,
+            is_stub: false,
             id: 10,
             username: "alice".into(),
             email: Some("private@example.test".into()),

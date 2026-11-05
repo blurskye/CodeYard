@@ -41,6 +41,7 @@ async fn cell_one_issues_exact_bounded_ids_and_initialization_never_rewinds_them
     );
     codeyard_db_core::cells::load(&database.pool).await.unwrap();
     assert_eq!(database.pool.cell_prefix(), Prefix::new(1));
+    assert_eq!(database.pool.cell_id(), Prefix::new(1));
     let initialized: bool =
         sqlx::query_scalar("SELECT setup_completed FROM node_configuration WHERE id=1")
             .fetch_one(&database.raw)
@@ -77,6 +78,24 @@ async fn cell_one_issues_exact_bounded_ids_and_initialization_never_rewinds_them
             .unwrap(),
         2
     );
+    database.finish().await;
+}
+
+#[tokio::test]
+async fn reinitializing_an_issuer_range_preserves_the_cells_stable_identity() {
+    let mut database = PostgresDatabase::new().await;
+    let root = root();
+    let url = database.connection_url();
+    assert!(initialize(root.path(), &url, "2").await.status.success());
+    // A cell can acquire another issuer prefix without changing who owns its rows.
+    sqlx::query("UPDATE node_configuration SET cell_id=1 WHERE id=1")
+        .execute(&database.raw)
+        .await
+        .unwrap();
+    assert!(initialize(root.path(), &url, "2").await.status.success());
+    codeyard_db_core::cells::load(&database.pool).await.unwrap();
+    assert_eq!(database.pool.cell_id(), Prefix::new(1));
+    assert_eq!(database.pool.cell_prefix(), Prefix::new(2));
     database.finish().await;
 }
 

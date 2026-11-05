@@ -70,6 +70,10 @@ pub fn primary_path(root: &Path, uuid: uuid::Uuid) -> std::path::PathBuf {
 
 /// The store for a repository row. Cheap to create and to clone.
 pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore {
+    // A stub is identity metadata and never names this cell's Git storage.
+    if repo.is_stub {
+        return RepoStore(Backend::Remote(remote::RemoteStore::unavailable()));
+    }
     match repo.storage_node_id {
         None => RepoStore(Backend::Local(
             crate::repositories::store::local::LocalStore::new(&repo.disk_path, Some(None)),
@@ -131,6 +135,9 @@ impl RepoStore {
         repository: &Repository,
         context: &NodeContext,
     ) -> Result<Self, RepoError> {
+        if repository.is_stub {
+            return Err(crate::wire::unavailable());
+        }
         let uuid = crate::wire::repository_uuid(&repository.disk_path)?;
         Ok(Self(Backend::Local(
             local::LocalStore::new(

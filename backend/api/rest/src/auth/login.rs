@@ -403,6 +403,8 @@ mod tests {
     fn public_profile_page_serializes_presentation_not_private_account_records() {
         let now = chrono::Utc::now();
         let user = codeyard_db_core::models::User {
+            home_cell: 0,
+            is_stub: false,
             id: 11,
             username: "alice".into(),
             email: Some("private-email-marker@example.test".into()),

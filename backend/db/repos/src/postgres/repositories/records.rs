@@ -27,11 +27,11 @@ pub async fn create_repository(
     disk_path: &str,
 ) -> Result<Repository> {
     let result = sqlx::query_as::<_, Repository>(
-        r#"
-        INSERT INTO repositories (owner_kind, owner_user_id, name, description, is_private, disk_path, created_by_id)
-        VALUES ('user', $1, $2, $3, $4, $5, $1)
+        &format!(r#"
+        INSERT INTO repositories (home_cell,owner_kind, owner_user_id, name, description, is_private, disk_path, created_by_id)
+        VALUES ({cell_home},'user', $1, $2, $3, $4, $5, $1)
         RETURNING *
-        "#,
+        "#, cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL),
     )
     .bind(owner_id)
     .bind(name)

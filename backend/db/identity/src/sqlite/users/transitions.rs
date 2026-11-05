@@ -213,7 +213,7 @@ pub async fn complete_setup(
         if organization_name_exists(&mut tx, username).await? {
             return Ok(SetupClaim::ExistingAccounts);
         }
-        sqlx::query_as::<_, User>("INSERT INTO users (username,email,password_hash,is_admin) VALUES (?1,?2,?3,TRUE) RETURNING *")
+        sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,email,password_hash,is_admin) VALUES ({cell_home},?1,?2,?3,TRUE) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
             .bind(username).bind(email).bind(hash).fetch_one(&mut *tx).await?
     } else if let Some((id, expected_hash)) = recovery.filter(|_| count == 1) {
         // Complete setup for a sole active admin that was provisioned separately: the
@@ -251,12 +251,14 @@ pub async fn create_cli_user(
     if email_owned(&mut tx, email, -1).await? {
         return Ok(AccountAdmission::Conflict);
     }
-    let user =
-        sqlx::query_as::<_, User>("INSERT INTO users (username,email) VALUES (?1,?2) RETURNING *")
-            .bind(username)
-            .bind(email)
-            .fetch_one(&mut *tx)
-            .await?;
+    let user = sqlx::query_as::<_, User>(&format!(
+        "INSERT INTO users (home_cell,username,email) VALUES ({cell_home},?1,?2) RETURNING *",
+        cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL
+    ))
+    .bind(username)
+    .bind(email)
+    .fetch_one(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(AccountAdmission::User(Box::new(user)))
 }
@@ -287,7 +289,7 @@ pub async fn bootstrap_admin(
         return Ok(SetupClaim::ExistingAccounts);
     }
     let user = sqlx::query_as::<_, User>(
-        "INSERT INTO users (username,password_hash,is_admin) VALUES (?1,?2,TRUE) RETURNING *",
+        &format!("INSERT INTO users (home_cell,username,password_hash,is_admin) VALUES ({cell_home},?1,?2,TRUE) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL),
     )
     .bind(username)
     .bind(hash)
@@ -494,7 +496,7 @@ pub async fn register_password(
         tx.commit().await?;
         return Ok(AccountAdmission::Requested);
     }
-    let user = sqlx::query_as::<_, User>("INSERT INTO users (username,email,password_hash,is_admin,must_change_password) VALUES (?1,?2,?3,?5,?4) RETURNING *")
+    let user = sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,email,password_hash,is_admin,must_change_password) VALUES ({cell_home},?1,?2,?3,?5,?4) RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
         .bind(username).bind(email).bind(hash).bind(administrator.is_some()).bind(administrator.is_some_and(|(_, _, admin)| admin)).fetch_one(&mut *tx).await?;
     if let Some((actor, _, _)) = administrator {
         sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'user.create','user',?2,?3)")
@@ -545,7 +547,7 @@ pub async fn admit_oauth_account(
         if organization_name_exists(&mut tx, &name).await? {
             continue;
         }
-        let user = sqlx::query_as::<_, User>("INSERT INTO users (username,display_name) VALUES (?1,?2) ON CONFLICT DO NOTHING RETURNING *")
+        let user = sqlx::query_as::<_, User>(&format!("INSERT INTO users (home_cell,username,display_name) VALUES ({cell_home},?1,?2) ON CONFLICT DO NOTHING RETURNING *", cell_home = codeyard_db_core::cells::LOCAL_HOME_SQL))
             .bind(&name).bind(display_name).fetch_optional(&mut *tx).await?;
         if let Some(user) = user {
             // Login requires neither offline access nor token persistence. Do not retain

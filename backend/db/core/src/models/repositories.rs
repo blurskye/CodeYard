@@ -36,6 +36,8 @@ pub struct SharedRepository {
 
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct Repository {
+    pub home_cell: i32,
+    pub is_stub: bool,
     #[serde(default)]
     #[sqlx(default)]
     pub actions_engine: Option<String>,
