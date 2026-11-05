@@ -14,6 +14,104 @@ async fn run(mut command: tokio::process::Command) -> std::process::Output {
         .unwrap()
 }
 
+async fn bind_readonly(source: &std::path::Path, target: &std::path::Path) {
+    if source.is_dir() {
+        std::fs::create_dir_all(target).unwrap();
+    } else {
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::File::create(target).unwrap();
+    }
+    let bind = if source.is_dir() { "--rbind" } else { "--bind" };
+    for arguments in [vec![bind], vec!["-o", "remount,bind,ro"]] {
+        let mut command = tokio::process::Command::new("mount");
+        command.arg("--no-mtab");
+        command.args(&arguments);
+        if arguments[0] == bind {
+            command.arg(source);
+        }
+        let output = run({
+            command.arg(target);
+            command
+        })
+        .await;
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// Host root-owned ancestors are unmapped in a rootless user namespace. Keep the
+/// normal private-path checks by giving this fixture its own mapped, owned root.
+async fn enter_private_root(root: &std::path::Path) {
+    use std::os::unix::process::CommandExt;
+    let sandbox = root.join("root");
+    std::fs::create_dir(&sandbox).unwrap();
+    for source in [
+        "/nix/store",
+        "/bin",
+        "/usr",
+        "/lib",
+        "/lib64",
+        "/dev",
+        "/proc",
+    ] {
+        let source = std::path::Path::new(source);
+        if source.exists() {
+            bind_readonly(source, &sandbox.join(source.strip_prefix("/").unwrap())).await;
+        }
+    }
+    let executable = std::env::current_exe().unwrap();
+    let mut binaries = std::collections::BTreeSet::from([
+        executable.clone(),
+        std::path::PathBuf::from(env!("CARGO_BIN_EXE_codeyard")),
+    ]);
+    for name in ["GITSERV_TEST_OPENSSH_HELPER", "CODEYARD_ACTIONS_BIN"] {
+        if let Some(binary) = std::env::var_os(name) {
+            binaries.insert(binary.into());
+        }
+    }
+    for source in binaries {
+        assert!(source.is_absolute() && source.is_file());
+        let target = sandbox.join(source.strip_prefix("/").unwrap());
+        if !target.is_file() {
+            bind_readonly(&source, &target).await;
+        }
+    }
+    for name in ["tmp", "full"] {
+        std::fs::create_dir(sandbox.join(name)).unwrap();
+    }
+    let mut command = tokio::process::Command::new("mount");
+    command.arg("--no-mtab");
+    let output = run({
+        command
+            .args(["-t", "tmpfs", "-o", "size=4m,nosuid,nodev", "tmpfs"])
+            .arg(sandbox.join("full"));
+        command
+    })
+    .await;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    // Exec keeps the original child PID and the parent's process-group deadline.
+    let error = std::process::Command::new("chroot")
+        .arg(&sandbox)
+        .arg(executable)
+        .args([
+            "--exact",
+            "quorum_disk::full_filesystem_refuses_a_push_and_recovers_after_freeing_space",
+            "--nocapture",
+        ])
+        .env("CODEYARD_OWNED_FULL_DISK", "/full")
+        .env("CODEYARD_FULL_DISK_PRIVATE_ROOT", "1")
+        .env("TMPDIR", "/tmp")
+        .exec();
+    panic!("enter owned full-disk fixture: {error}");
+}
+
 #[test]
 fn full_filesystem_refuses_a_push_and_recovers_after_freeing_space() {
     crate::support::large_stack::run(|| async {
@@ -28,7 +126,8 @@ fn full_filesystem_refuses_a_push_and_recovers_after_freeing_space() {
                     "quorum_disk::full_filesystem_refuses_a_push_and_recovers_after_freeing_space",
                     "--nocapture",
                 ])
-                .env("CODEYARD_OWNED_FULL_DISK", directory.path());
+                .env("CODEYARD_OWNED_FULL_DISK", directory.path())
+                .env_remove("CODEYARD_FULL_DISK_PRIVATE_ROOT");
             let output = run(command).await;
             assert!(
                 output.status.success(),
@@ -39,16 +138,10 @@ fn full_filesystem_refuses_a_push_and_recovers_after_freeing_space() {
             return;
         };
         let root = std::path::PathBuf::from(root);
-        let mut command = tokio::process::Command::new("mount");
-        command
-            .args(["-t", "tmpfs", "-o", "size=4m,nosuid,nodev", "tmpfs"])
-            .arg(&root);
-        let output = run(command).await;
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        if std::env::var_os("CODEYARD_FULL_DISK_PRIVATE_ROOT").is_none() {
+            enter_private_root(&root).await;
+            unreachable!("the private root replaces this process");
+        }
         // This test process owns the mount namespace. Exiting unmounts it even on panic;
         // the parent's TempDir then removes the empty mount point.
         let original = std::env::var_os("TMPDIR");
