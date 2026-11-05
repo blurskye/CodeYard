@@ -6,15 +6,11 @@ to check in the cluster code that exists, what is still missing, and the decisio
 every open question. [Architecture](ARCHITECTURE.md#3-scaling-out-cells-behind-a-router-plan-not-built)
 keeps the longer plan for cells; this file comes first and does not repeat it.
 
-Items 1–9 have source implementations and acceptance tests. The earlier source batch,
-backup/restore and organization OIDC pass workspace, Clippy and WASM checks. Acquisition
-waiter tracking passes source checks and awaits runtime acceptance. Majority defaults
-and the final primary-loss e2e step pass source checks. Private organization OIDC
-enrollment through the operator CLI passes source checks. One runtime job passed 1,013 library
-tests and Helm render checks; its single CI fixture failure is corrected. The next runtime job found a quorum-copy lock deadlock and was cancelled. Its fix
-and fixture corrections pass all three source checks; cluster, storage, identity, backup/restore and
-end-to-end acceptance remain pending. Rolling upgrades
-and measured load limits are not complete.
+Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspace,
+Clippy and WASM checks pass, including the fault tests and full-disk placement fix.
+Earlier library and Helm checks pass; current runtime, backup/restore and end-to-end
+acceptance remain pending. Rolling upgrades need a previous-release target, and A16
+has no measured limits yet.
 Cluster mode stays hidden behind
 `CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.
 
@@ -61,7 +57,7 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 | A3 | Upload a package or CI artifact through web node 1, download it through web node 2 | same bytes | cross-node HTTP regression written; runtime pending |
 | A4 | Stop one web node while clients run `gh` and `git` | other nodes keep serving, sessions survive, no half-written state | gh/Git process-loss step and browser-session regression written; runtime pending |
 | A5 | Kill a storage node during a clone and a push | clear error to the client, no changed refs, clone retries from a copy | e2e pauses real pack transfers for SIGKILL and verifies copy retries; runtime pending |
-| A6 | Fill a storage node's disk | placement skips it, writes fail cleanly, no corrupt repository | bounded tmpfs Git failure/retry and HTTP placement acceptance written; checks pending |
+| A6 | Fill a storage node's disk | placement skips it, writes fail cleanly, no corrupt repository | bounded tmpfs Git failure/retry and HTTP placement acceptance pass source checks; runtime pending |
 | A7 | Restart PostgreSQL under load | `/ready` goes 503 then 200, nodes reconnect without restart, no lost acknowledged write | owned-database crash step written; runtime pending |
 | A8 | Revoke a node key | the node is refused on its next call, within 60 seconds | pending builder acceptance |
 | A9 | Send an oversized, truncated, replayed and unauthorised frame to the node port | refused, bounded memory, logged without secrets | pending builder acceptance |
