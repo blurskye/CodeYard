@@ -169,10 +169,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     earlier snapshot, including the cluster/Git/OAuth fixture fixes from failed job 049.
     Native signup/key claim publication, remote membership pointers, remaining node families
     and the two-cell gh/Git deployment remain unfinished. Stages 3 to 6 are not built.
-    Check suites/runs, artifacts and pull-request stacks now issue rooted IDs in unchecked
-    source, with HTTP resolution/forged-root and projection assertions on both engines.
-    Their check round is workspace f78a4a1f7d344f04822977b0aa180990, Clippy
-    45eb885b846949d39b1a4973faa8e89e and WASM 761e04b62cdf4670a5e8b84135462d15 (pending).
+    Check suites/runs, artifacts and pull-request stacks now issue rooted IDs, with HTTP resolution/forged-root and projection assertions on both engines.
+    They pass workspace f78a4a1f7d344f04822977b0aa180990, Clippy
+    45eb885b846949d39b1a4973faa8e89e and WASM 761e04b62cdf4670a5e8b84135462d15.
     Automatic user moves and org regional presence remain documented owner decisions.
     Owner follow-up: check foreign-cache expiry after PostgreSQL row-lock waits.
 
