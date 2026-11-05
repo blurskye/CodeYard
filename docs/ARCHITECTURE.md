@@ -791,7 +791,8 @@ Stage 0 needs no cells or router. It closes every gap where acknowledged data ca
   [Storage architecture](STORAGE_ARCHITECTURE.md#backups).
 - **Cluster part:** fixed-voter ref quorum, PostgreSQL arbitration and
   ref journals, snapshot backups and fenced offline restore are implemented. Operators
-  provide PostgreSQL HA. Process-loss acceptance and measured limits remain pending;
+  provide PostgreSQL HA. Three-voter process-loss acceptance passes; VM hard-reset
+  acceptance and measured limits remain pending;
   [Cluster readiness](CLUSTER_PLAN.md) is the current acceptance list.
 
 | Store | Decision | RPO | RTO |
@@ -812,8 +813,10 @@ a primary dies; an uncertain outcome tells the client to fetch before retrying. 
 replicas remain asynchronous. `majority` is the new-cluster default; explicit `1` retains
 the legacy asynchronous path. Initialization, copy and promotion share this coordinator.
 See [Quorum push preparation](CLUSTER.md#quorum-push-preparation) for limits and recovery.
-Three-voter preparation, stale-voter recovery and publisher process-loss acceptance are
-being checked in stage 0.
+Three-voter preparation and stale-voter recovery pass on SQLite and PostgreSQL.
+The real-process quorum round passes HTTP/SSH pushes, editor saves, gh branch creation
+and merges after immediate primary loss, and majority-loss refusal. The VM hard-reset
+check remains open.
 
 **Backup and restore.** `codeyard backup <dir>` runs while the installation serves: the
 database first (`VACUUM INTO`, `pg_dump`, or only the restore time when pgBackRest or WAL-G

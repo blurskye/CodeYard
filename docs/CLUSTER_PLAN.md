@@ -13,10 +13,10 @@ Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed
 Storage checks pass (99 passed, 3 ignored). Before cell work, all 221 cluster integration
 checks passed, including full-disk failure/retry and interrupted cluster backup/restore.
 Stage 0's alias fix passes workspace, Clippy and WASM checks, 307 focused library/store
-tests and all 225 cluster tests. Its client round passed HTTP/SSH push and editor-save
-survival after primary SIGKILL. A branch write hit the failed-dial cache just after restart;
-the client fixture now waits for three current voters before the next fault and is being
-retested. Browser bundle publication, delivery, native and hydrated cluster forms, and live
+tests and all 225 cluster tests. The dedicated quorum client round passes all 20 checks
+without skips: HTTP/SSH push, editor save, gh branch creation and merge survive primary
+SIGKILL; majority loss refuses a push. VM hard-reset acceptance needs a disposable target.
+Browser bundle publication, delivery, native and hydrated cluster forms, and live
 cross-node issue updates pass. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
 Cluster mode stays hidden behind
@@ -152,8 +152,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     organizations, an audit log for organization and site actions, and the abuse controls
     in [ABUSE_PREVENTION.md](ABUSE_PREVENTION.md), all checked in the cluster round.
 13. **Cells.** Stages 0 to 6 of the architecture document, in order, each with its own
-    acceptance list. The owner lifted the A16 gate on 2026-11-05. Stage 0 review is in
-    progress. Stage 1 reuses scoped authority and package locks, notification polling,
+    acceptance list. The owner lifted the A16 gate on 2026-11-05. Stage 0 automated
+    durability checks pass; its VM hard-reset check remains open. Stage 1 reuses scoped authority and package locks, notification polling,
     configurable pools and compressed database log chunks; its acceptance is incomplete.
     Stages 2 to 6 are not built. Individual users may move automatically to
     their working region in stage 6. Organizations retain one write home and gain read

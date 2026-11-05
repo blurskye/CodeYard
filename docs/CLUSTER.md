@@ -447,10 +447,13 @@ journal the old and new refs, provenance and default HEAD together. Default-bran
 settings changes, automatic HEAD selection and imported HEAD changes are journaled.
 Empty repositories initialize canonical HEAD on the selected voters before serving.
 Fork and template objects are staged privately and publish refs through that same path.
-Stage 0 adds three-voter majority and publisher process-loss checks; their runtime results
-are pending. `E2E_DATABASES=quorum bash scripts/e2e.sh` selects those real-process
-checks without requiring a completed CI job. The single-node fsync, backup, restore, verify and rebuild work and cluster
-plan items 3 and 11 are reused.
+Stage 0 three-voter majority and fenced-recovery tests pass on both database engines.
+The real-process quorum round passes HTTP/SSH push, editor, branch and merge survival
+after immediate primary SIGKILL, plus majority-loss refusal and recovery.
+`E2E_DATABASES=quorum bash scripts/e2e.sh` selects these checks without requiring a
+completed CI job. Single-node fsync, backup, restore, verify and rebuild and cluster plan
+items 3 and 11 are reused. The [VM hard-reset check](STORAGE_ARCHITECTURE.md#crash-durability-check)
+still needs a disposable target.
 
 ## Runners
 
