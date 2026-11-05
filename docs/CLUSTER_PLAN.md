@@ -9,9 +9,8 @@ keeps the longer plan for cells; this file comes first and does not repeat it.
 Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspace,
 Clippy and WASM checks pass, including the fault-test source and full-disk placement fix.
 Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed, 19 ignored) and Helm rendering pass.
-Storage checks pass (99 passed, 3 ignored). The cluster run passes 220 checks with one full-disk fixture ownership failure;
-its executable ownership correction passes source checks and awaits rerun. Cluster backup
-and restore pass. The browser app builds; asset replacement and debug-symbol size
+Storage checks pass (99 passed, 3 ignored). The latest rerun passes the full-disk
+failure/retry and cluster backup/restore checks; the complete run is still in progress. The browser app builds; asset replacement and debug-symbol size
 corrections await runtime verification. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
 Cluster mode stays hidden behind
@@ -36,7 +35,7 @@ Current acceptance status:
 
 - 1: hiding-switch CLI refusal checks pass.
 - 2: storage-node copies, capacity, loss, retry, drain and private access pass HTTP checks on both engines; native startup without S3 passes.
-- 3: quorum initialization, copy, default selection, voter replacement and primary-loss checks pass; full-disk retry awaits rerun.
+- 3: quorum initialization, copy, default selection, voter replacement, primary loss and full-disk retry pass.
 - 4: drain REST, authority and promotion checks pass; native and hydrated browser checks await execution.
 - 5: quorum, drain, bounded scraping and acquisition waiter metrics pass HTTP acceptance.
 - 6: bounded invitations and environment-only provisioning pass library and REST checks.
@@ -60,7 +59,7 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 | A3 | Upload a package or CI artifact through web node 1, download it through web node 2 | same bytes | cross-node file and CI-artifact HTTP checks pass |
 | A4 | Stop one web node while clients run `gh` and `git` | other nodes keep serving, sessions survive, no half-written state | gh/Git process-loss step and browser-session regression written; runtime pending |
 | A5 | Kill a storage node during a clone and a push | clear error to the client, no changed refs, clone retries from a copy | e2e pauses real pack transfers for SIGKILL and verifies copy retries; runtime pending |
-| A6 | Fill a storage node's disk | placement skips it, writes fail cleanly, no corrupt repository | bounded tmpfs Git failure/retry and HTTP placement acceptance pass source checks; runtime pending |
+| A6 | Fill a storage node's disk | placement skips it, writes fail cleanly, no corrupt repository | owned tmpfs Git failure/retry and HTTP placement checks pass on both engines |
 | A7 | Restart PostgreSQL under load | `/ready` goes 503 then 200, nodes reconnect without restart, no lost acknowledged write | owned-database crash step written; runtime pending |
 | A8 | Revoke a node key | the node is refused on its next call, within 60 seconds | TCP/QUIC revocation checks pass |
 | A9 | Send an oversized, truncated, replayed and unauthorised frame to the node port | refused, bounded memory, logged without secrets | hostile transport and pairing checks pass |
