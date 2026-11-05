@@ -51,6 +51,9 @@ impl Server {
     }
 }
 async fn native(database: &PostgresDatabase, name: &str) -> (Server, i64) {
+    codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
+        .await
+        .unwrap();
     let user = codeyard_db_identity::users::accounts::create_user(&database.pool, name, None)
         .await
         .unwrap();

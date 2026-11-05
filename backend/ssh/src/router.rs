@@ -7,9 +7,9 @@ use crate::{
 use anyhow::{ensure, Context, Result};
 use bytes::Bytes;
 use russh::{
-    keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKey},
+    keys::{PrivateKey, PrivateKeyWithHashAlg, PublicKey, PublicKeyOrCertificate},
     server::{Auth, ChannelOpenHandle, Handle, Msg, Session},
-    Channel, ChannelId, ChannelMsg, PublicKeyOrCertificate,
+    Channel, ChannelId, ChannelMsg,
 };
 use std::{
     collections::HashMap,
@@ -134,17 +134,17 @@ impl Handler {
         state._relay = Some(AbortOnDropHandle::new(tokio::spawn(async move {
             let result = tokio::time::timeout(
                 Duration::from_secs(3600),
-                relay(
+                Relay {
                     address,
-                    target.pins,
+                    pins: target.pins,
                     identity,
                     key,
-                    input,
                     protocol,
                     command,
-                    handle.clone(),
-                    channel,
-                ),
+                    handle: handle.clone(),
+                    id: channel,
+                }
+                .run(input),
             )
             .await;
             if !matches!(result, Ok(Ok(()))) {
@@ -372,124 +372,137 @@ impl russh::client::Handler for Peer {
             .any(|pin| pin == &fingerprint || ed25519.as_ref() == Some(pin)))
     }
 }
-async fn relay(
+struct Relay {
     address: SocketAddr,
     pins: Vec<String>,
     identity: Arc<PrivateKey>,
     key: PublicKey,
-    mut input: DuplexStream,
     protocol: Option<String>,
     command: Option<String>,
     handle: Handle,
     id: ChannelId,
-) -> Result<()> {
-    let stream = tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio::net::TcpStream::connect(address),
-    )
-    .await??;
-    let (stream, control) = duplicate_socket(stream)?;
-    let _control = ShutdownOnDrop(control);
-    let config = russh::client::Config {
-        inactivity_timeout: Some(Duration::from_secs(30)),
-        ..Default::default()
-    };
-    let mut connection = tokio::time::timeout(
-        Duration::from_secs(10),
-        russh::client::connect_stream(Arc::new(config), stream, Peer(pins)),
-    )
-    .await??;
-    let operation = async {
-        ensure!(
-            connection
-                .authenticate_publickey(
-                    "codeyard-router",
-                    PrivateKeyWithHashAlg::new(identity, None)
-                )
-                .await?
-                .success(),
-            "Router authentication refused"
-        );
-        let mut channel = connection.channel_open_session().await?;
-        channel
-            .set_env(true, "CODEYARD_SSH_KEY", key.to_openssh()?)
-            .await?;
-        loop {
-            match tokio::time::timeout(Duration::from_secs(10), channel.wait()).await? {
-                Some(ChannelMsg::Success) => break,
-                Some(ChannelMsg::Failure) | None => anyhow::bail!("SSH identity refused"),
-                _ => {}
-            }
-        }
-        if let Some(protocol) = protocol {
-            channel.set_env(false, "GIT_PROTOCOL", protocol).await?;
-        }
-        match command {
-            Some(command) => channel.exec(true, command).await?,
-            None => channel.request_shell(true).await?,
-        }
-        let (mut reader, writer) = channel.split();
-        let send = async {
-            let mut total = 0u64;
-            let mut buffer = vec![0; 65536];
-            loop {
-                let read = tokio::time::timeout(Duration::from_secs(30), input.read(&mut buffer))
-                    .await??;
-                if read == 0 {
-                    writer.eof().await?;
-                    return anyhow::Ok(());
-                }
-                total = total
-                    .checked_add(read as u64)
-                    .context("SSH input too large")?;
-                ensure!(total <= 2 * 1024 * 1024 * 1024, "SSH input too large");
-                writer
-                    .data_bytes(Bytes::copy_from_slice(&buffer[..read]))
-                    .await?;
-            }
+}
+impl Relay {
+    async fn run(self, mut input: DuplexStream) -> Result<()> {
+        let Self {
+            address,
+            pins,
+            identity,
+            key,
+            protocol,
+            command,
+            handle,
+            id,
+        } = self;
+        let stream = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::net::TcpStream::connect(address),
+        )
+        .await??;
+        let (stream, control) = duplicate_socket(stream)?;
+        let _control = ShutdownOnDrop(control);
+        let config = russh::client::Config {
+            inactivity_timeout: Some(Duration::from_secs(30)),
+            ..Default::default()
         };
-        let receive = async {
-            let mut total = 0u64;
-            while let Some(message) =
-                tokio::time::timeout(Duration::from_secs(30), reader.wait()).await?
-            {
-                match message {
-                    ChannelMsg::Data { data } => {
-                        total += data.len() as u64;
-                        ensure!(total <= 64 * 1024 * 1024 * 1024, "SSH output too large");
-                        handle
-                            .data(id, data)
-                            .await
-                            .map_err(|_| anyhow::anyhow!("SSH client closed"))?;
-                    }
-                    ChannelMsg::ExtendedData { data, ext } => {
-                        total += data.len() as u64;
-                        ensure!(total <= 64 * 1024 * 1024 * 1024, "SSH output too large");
-                        handle
-                            .extended_data(id, ext, data)
-                            .await
-                            .map_err(|_| anyhow::anyhow!("SSH client closed"))?;
-                    }
-                    ChannelMsg::ExitStatus { exit_status } => {
-                        let _ = handle.exit_status_request(id, exit_status).await;
-                    }
-                    ChannelMsg::Eof => {
-                        let _ = handle.eof(id).await;
-                    }
-                    ChannelMsg::Close => break,
+        let mut connection = tokio::time::timeout(
+            Duration::from_secs(10),
+            russh::client::connect_stream(Arc::new(config), stream, Peer(pins)),
+        )
+        .await??;
+        let operation = async {
+            ensure!(
+                connection
+                    .authenticate_publickey(
+                        "codeyard-router",
+                        PrivateKeyWithHashAlg::new(identity, None)
+                    )
+                    .await?
+                    .success(),
+                "Router authentication refused"
+            );
+            let mut channel = connection.channel_open_session().await?;
+            channel
+                .set_env(true, "CODEYARD_SSH_KEY", key.to_openssh()?)
+                .await?;
+            loop {
+                match tokio::time::timeout(Duration::from_secs(10), channel.wait()).await? {
+                    Some(ChannelMsg::Success) => break,
+                    Some(ChannelMsg::Failure) | None => anyhow::bail!("SSH identity refused"),
                     _ => {}
                 }
             }
-            let _ = handle.close(id).await;
+            if let Some(protocol) = protocol {
+                channel.set_env(false, "GIT_PROTOCOL", protocol).await?;
+            }
+            match command {
+                Some(command) => channel.exec(true, command).await?,
+                None => channel.request_shell(true).await?,
+            }
+            let (mut reader, writer) = channel.split();
+            let send = async {
+                let mut total = 0u64;
+                let mut buffer = vec![0; 65536];
+                loop {
+                    let read =
+                        tokio::time::timeout(Duration::from_secs(30), input.read(&mut buffer))
+                            .await??;
+                    if read == 0 {
+                        writer.eof().await?;
+                        return anyhow::Ok(());
+                    }
+                    total = total
+                        .checked_add(read as u64)
+                        .context("SSH input too large")?;
+                    ensure!(total <= 2 * 1024 * 1024 * 1024, "SSH input too large");
+                    writer
+                        .data_bytes(Bytes::copy_from_slice(&buffer[..read]))
+                        .await?;
+                }
+            };
+            let receive = async {
+                let mut total = 0u64;
+                while let Some(message) =
+                    tokio::time::timeout(Duration::from_secs(30), reader.wait()).await?
+                {
+                    match message {
+                        ChannelMsg::Data { data } => {
+                            total += data.len() as u64;
+                            ensure!(total <= 64 * 1024 * 1024 * 1024, "SSH output too large");
+                            handle
+                                .data(id, data)
+                                .await
+                                .map_err(|_| anyhow::anyhow!("SSH client closed"))?;
+                        }
+                        ChannelMsg::ExtendedData { data, ext } => {
+                            total += data.len() as u64;
+                            ensure!(total <= 64 * 1024 * 1024 * 1024, "SSH output too large");
+                            handle
+                                .extended_data(id, ext, data)
+                                .await
+                                .map_err(|_| anyhow::anyhow!("SSH client closed"))?;
+                        }
+                        ChannelMsg::ExitStatus { exit_status } => {
+                            let _ = handle.exit_status_request(id, exit_status).await;
+                        }
+                        ChannelMsg::Eof => {
+                            let _ = handle.eof(id).await;
+                        }
+                        ChannelMsg::Close => break,
+                        _ => {}
+                    }
+                }
+                let _ = handle.close(id).await;
+                anyhow::Ok(())
+            };
+            tokio::try_join!(send, receive)?;
             anyhow::Ok(())
-        };
-        tokio::try_join!(send, receive)?;
-        anyhow::Ok(())
-    }
-    .await;
-    let _ = connection
-        .disconnect(russh::Disconnect::ByApplication, "", "")
+        }
         .await;
-    let _ = tokio::time::timeout(Duration::from_secs(5), connection).await;
-    operation
+        let _ = connection
+            .disconnect(russh::Disconnect::ByApplication, "", "")
+            .await;
+        let _ = tokio::time::timeout(Duration::from_secs(5), connection).await;
+        operation
+    }
 }

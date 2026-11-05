@@ -11,7 +11,6 @@ use rand::RngCore;
 use russh::keys::ssh_key::private::Ed25519Keypair;
 use russh::keys::PrivateKey;
 use russh::server::Config;
-use russh::server::Server as _;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::Write;
@@ -682,6 +681,7 @@ mod request_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use russh::server::Server as _;
     use tokio::io::AsyncWriteExt;
 
     async fn tcp_pair() -> (TcpStream, TcpStream, SocketAddr) {
