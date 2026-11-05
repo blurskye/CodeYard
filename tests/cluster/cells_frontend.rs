@@ -290,7 +290,7 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
     assert_eq!(response.status(), 401);
     let alice_node = codeyard_model::node_id::encode("U", alice_id);
     let bob_node = codeyard_model::node_id::encode("U", bob_id);
-    let query = json!({"query": r#"query($a:ID!,$b:ID!){left:repository(owner:"alice",name:"repo"){id name} right:repository(owner:"bob",name:"repo"){id name} a:node(id:$a){id ... on User{login}} b:node(id:$b){id ... on User{login}}}"#,
+    let query = json!({"query": r#"query($a:ID!,$b:ID!){left:repository(owner:"alice",name:"repo"){id name databaseId fullDatabaseId} right:repository(owner:"bob",name:"repo"){id name databaseId fullDatabaseId} a:node(id:$a){id ... on User{login databaseId}} b:node(id:$b){id ... on User{login databaseId}}}"#,
         "variables":{"a":alice_node,"b":bob_node}});
     let response = client
         .post(format!("{}/api/graphql", router.url()))
@@ -309,6 +309,20 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
     assert_ne!(body["data"]["left"]["id"], body["data"]["right"]["id"]);
     assert_eq!(body["data"]["a"]["login"], "alice");
     assert_eq!(body["data"]["b"]["login"], "bob");
+    assert_eq!(body["data"]["a"]["databaseId"], alice_id);
+    assert!(body["data"]["b"]["databaseId"].is_null());
+    assert!(body["data"]["right"]["databaseId"].is_null());
+    let full = body["data"]["right"]["fullDatabaseId"]
+        .as_str()
+        .unwrap()
+        .parse::<i64>()
+        .unwrap();
+    assert_eq!(Prefix::for_id(full).unwrap(), Prefix::new(1));
+    assert_eq!(
+        body["data"]["left"]["fullDatabaseId"],
+        body["data"]["left"]["databaseId"].to_string()
+    );
+
     // No idle connection can keep a stopped cell reachable.
     bob.stop().await;
     assert_eq!(

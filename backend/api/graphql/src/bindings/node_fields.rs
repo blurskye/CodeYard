@@ -100,10 +100,10 @@ impl gql::ReleaseAssetResolver for Object {
     fields!("ReleaseAsset";id()->ID;name()->String;content_type()->String;size()->i32;download_count()->i32;download_url()->gql::URI;created_at()->gql::DateTime;updated_at()->gql::DateTime;);
 }
 impl gql::PullRequestReviewResolver for Object {
-    fields!("PullRequestReview";id()->ID;database_id()->Option<i32>;body()->String;reaction_groups()->Option<Vec<gql::ReactionGroup>>;state()->gql::PullRequestReviewState;created_at()->gql::DateTime;submitted_at()->Option<gql::DateTime>;author()->Option<gql::Actor>;author_association()->gql::CommentAuthorAssociation;commit()->Option<gql::Commit>;pull_request()->gql::PullRequest;url()->gql::URI;);
+    fields!("PullRequestReview";id()->ID;database_id()->Option<i32>;full_database_id()->Option<gql::BigInt>;body()->String;reaction_groups()->Option<Vec<gql::ReactionGroup>>;state()->gql::PullRequestReviewState;created_at()->gql::DateTime;submitted_at()->Option<gql::DateTime>;author()->Option<gql::Actor>;author_association()->gql::CommentAuthorAssociation;commit()->Option<gql::Commit>;pull_request()->gql::PullRequest;url()->gql::URI;);
 }
 impl gql::PullRequestReviewCommentResolver for Object {
-    fields!("PullRequestReviewComment";id()->ID;database_id()->Option<i32>;body()->String;reaction_groups()->Option<Vec<gql::ReactionGroup>>;path()->String;line()->Option<i32>;created_at()->gql::DateTime;updated_at()->gql::DateTime;author()->Option<gql::Actor>;pull_request()->gql::PullRequest;outdated()->bool;is_minimized()->bool;minimized_reason()->Option<String>;viewer_did_author()->bool;url()->gql::URI;);
+    fields!("PullRequestReviewComment";id()->ID;database_id()->Option<i32>;full_database_id()->Option<gql::BigInt>;body()->String;reaction_groups()->Option<Vec<gql::ReactionGroup>>;path()->String;line()->Option<i32>;created_at()->gql::DateTime;updated_at()->gql::DateTime;author()->Option<gql::Actor>;pull_request()->gql::PullRequest;outdated()->bool;is_minimized()->bool;minimized_reason()->Option<String>;viewer_did_author()->bool;url()->gql::URI;);
 }
 macro_rules! event {($resolver:ident,$ty:literal)=>{impl gql::$resolver for Object {fields!($ty;id()->ID;created_at()->gql::DateTime;actor()->Option<gql::Actor>;);}};}
 event!(MergedEventResolver, "MergedEvent");

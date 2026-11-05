@@ -973,6 +973,8 @@ a moved repository needs one forwarding entry, not one per comment. The
 Project fields, items and drafts use the project account's root, including items linked
 from another owner's repository. Issue type and field definitions use their account root;
 field values, workflows, environments, gists and review requests use their repository root.
+GraphQL `databaseId` is null when a scoped ID exceeds its 32-bit field; schema-supported
+`fullDatabaseId` fields return the complete decimal ID. Internal lookups keep the full ID.
 Review requests have stable row identities; user and team requests retain their separate
 uniqueness constraints. A stored protection rule retains its App owner's ID after App removal.
 Recorded issue-transfer redirects also validate former roots for issues, comments and

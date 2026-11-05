@@ -166,20 +166,17 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Runtime eb1c71056db64586b3b41c713e7bf631 covers those fixes, native publication,
     cleanup/restart, capacity and the new public two-cell gh/Git round. All 334 selected
     library tests pass without skips, including real foreign SSH push/clone and revocation;
-    integration targets are building.
-    Numeric child IDs for projects, issue types/fields, workflows, environments, Apps, gists
-    and review requests pass workspace 1487b9f424a84502bb0bcd2ff3ec9244 and WASM
-    edf39cc90ba646dbaf46f5036a524f2b. Clippy 38de16140bea48e1b8aee3ea92462455 found
-    only a macro documentation comment, now corrected for the next batch.
-    Review-request projections share one reader; both baseline schemas retain stable request
-    row IDs and protection-rule App owners. Project output assertions now expect rooted IDs;
-    former input IDs remain accepted as the architecture requires. New HTTP tests reject
-    forged project, draft, gist and team-review roots. The next unchecked batch queues remote
-    membership changes with grants, checks live cell keys and directory homes at pointer commit,
-    and reads remote repositories/orgs through their existing HTTP handlers. Home REST lists
-    merge bounded pages and retain original token checks; HTTP/TLS, rollback, replay and gh
-    pagination tests are written. Native/GraphQL home listing integration and synthetic node
-    families remain open. No stage 2 completion is claimed.
+    all 234 cluster tests also pass without skips; database tests are running.
+    Numeric child IDs and remote membership delivery/REST discovery pass workspace
+    95564883b4604fb5bbd2968e4c6c5188, Clippy dc45e3525fc74aaabc0f286151667188 and WASM
+    ba06675531a94ac0a434f8822c9a23ca. Both baselines retain stable review-request row IDs
+    and protection-rule App owners. Old output assertions now expect rooted IDs; former input
+    IDs remain accepted as the architecture requires. HTTP/TLS tests cover forged roots,
+    pointer rollback/replay, grant revocation and gh pagination; runtime is pending.
+    The next unchecked follow-up projects 64-bit IDs through GraphQL's nullable databaseId
+    and fullDatabaseId fields and prevents membership reads from calling their own home cell.
+    Native/GraphQL home listing integration and synthetic node families remain open.
+    No stage 2 completion is claimed.
     Stages 3 to 6 are not built. Automatic user moves and org regional presence remain
     documented owner decisions.
     Owner follow-ups: foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded

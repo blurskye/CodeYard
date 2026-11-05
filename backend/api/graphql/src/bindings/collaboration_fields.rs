@@ -51,7 +51,7 @@ impl gql::PullRequestResolver for Object {
         base_ref() -> Option<gql::Ref>;
         is_in_merge_queue() -> bool; is_merge_queue_enabled() -> bool;
         base_ref_oid() -> gql::GitObjectID; head_ref_oid() -> gql::GitObjectID;
-        full_database_id() -> Option<gql::BigInt>; is_cross_repository() -> bool;
+        is_cross_repository() -> bool;
         head_repository() -> Option<gql::Repository>; head_repository_owner() -> Option<gql::RepositoryOwner>;
         merged_by() -> Option<gql::Actor>; merge_commit() -> Option<gql::Commit>;
         potential_merge_commit() -> Option<gql::Commit>; auto_merge_request() -> Option<gql::AutoMergeRequest>;
@@ -62,7 +62,7 @@ impl gql::PullRequestResolver for Object {
 }
 impl gql::IssueCommentResolver for Object {
     fields!("IssueComment";
-        id() -> ID; database_id() -> Option<i32>; body() -> String; author() -> Option<gql::Actor>;
+        id() -> ID; database_id() -> Option<i32>; full_database_id() -> Option<gql::BigInt>; body() -> String; author() -> Option<gql::Actor>;
         created_at() -> gql::DateTime; updated_at() -> gql::DateTime;
         author_association() -> gql::CommentAuthorAssociation;
         includes_created_edit() -> bool; is_minimized() -> bool; minimized_reason() -> Option<String>;

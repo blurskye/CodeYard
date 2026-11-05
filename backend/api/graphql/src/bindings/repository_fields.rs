@@ -30,7 +30,7 @@ impl gql::OrganizationResolver for Object {
 impl gql::RepositoryResolver for Object {
     discussions::repository_fields!();
     fields!("Repository";
-        id() -> ID; database_id() -> Option<i32>; name() -> String; description() -> Option<String>;
+        id() -> ID; database_id() -> Option<i32>; full_database_id() -> Option<gql::BigInt>; name() -> String; description() -> Option<String>;
         is_private() -> bool; is_fork() -> bool; is_archived() -> bool; visibility() -> gql::RepositoryVisibility;
         created_at() -> gql::DateTime; updated_at() -> gql::DateTime; stargazer_count() -> i32; fork_count() -> i32;
         owner() -> gql::RepositoryOwner; name_with_owner() -> String; url() -> gql::URI; ssh_url() -> gql::GitSSHRemote;

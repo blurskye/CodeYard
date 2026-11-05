@@ -64,6 +64,37 @@ async fn contract(pg: bool) {
         .await,
         1
     );
+    // An active pointer whose source became this home must not fan out to itself.
+    f.execute("INSERT INTO remote_memberships(user_id,resource_kind,resource_id,source_cell,source_event,active) VALUES($1,'repository',$2,0,$3,true)",
+        &[user, first + 21, event.id]).await;
+    let session = codeyard_identity::sessions::fresh_id(f.pool()).unwrap();
+    codeyard_db_identity::users::sessions::create_session(
+        f.pool(),
+        &session,
+        user,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let actor = codeyard_db_core::queries::credentials::Actor::from((user, session.clone()));
+    let read = async {
+        match f.pool() {
+            codeyard_db_core::DbPool::Postgres(pool) => {
+                memberships::postgres::Reader::homes(pool, &actor, Default::default()).await
+            }
+            codeyard_db_core::DbPool::Sqlite(pool) => {
+                memberships::sqlite::Reader::homes(pool, &actor, Default::default()).await
+            }
+        }
+    };
+    assert_eq!(read.await.unwrap(), vec![Prefix::new(1)]);
+    f.execute(
+        "DELETE FROM remote_memberships WHERE user_id=$1 AND source_cell=0",
+        &[user],
+    )
+    .await;
     let mut removal = event.clone();
     removal.id += 1;
     removal.change.active = false;

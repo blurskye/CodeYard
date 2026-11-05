@@ -193,8 +193,8 @@ macro_rules! read_engine {
                 let credential = actor.credential().ok_or(codeyard_support::credentials::AccountRestricted)?;
                 ensure!(crate::queries::$module::users::transitions::credential_live(&mut tx,actor.user_id,&credential,false).await?,
                     codeyard_support::credentials::AccountRestricted);
-                let cells: Vec<i32> = sqlx::query_scalar("SELECT DISTINCT source_cell FROM remote_memberships WHERE user_id=$1 AND active ORDER BY source_cell LIMIT $2")
-                    .bind(actor.user_id).bind(config.maximum_cells as i64 + 1).fetch_all(&mut *tx).await?;
+                let cells: Vec<i32> = sqlx::query_scalar("SELECT DISTINCT source_cell FROM remote_memberships WHERE user_id=$1 AND active AND source_cell<>$3 ORDER BY source_cell LIMIT $2")
+                    .bind(actor.user_id).bind(config.maximum_cells as i64 + 1).bind(i32::from(pool.cell_id().get())).fetch_all(&mut *tx).await?;
                 ensure!(cells.len() <= config.maximum_cells,"Remote membership fanout exceeds its limit");
                 ensure!(crate::queries::$module::users::transitions::credential_live(&mut tx,actor.user_id,&credential,false).await?,
                     codeyard_support::credentials::AccountRestricted);

@@ -475,6 +475,23 @@ impl Object {
         {
             return Err(crate::token_denied());
         }
+        // Keep the complete identifier in the parent object for authorization and lookup.
+        // GraphQL Int cannot represent identifiers allocated outside cell zero.
+        if field == "databaseId" {
+            return Ok(self
+                .0
+                .get(field)
+                .and_then(Value::as_i64)
+                .and_then(|id| i32::try_from(id).ok())
+                .map_or(Value::Null, |id| json!(id)));
+        }
+        if field == "fullDatabaseId" {
+            return Ok(self
+                .0
+                .get("databaseId")
+                .and_then(Value::as_i64)
+                .map_or(Value::Null, |id| json!(id.to_string())));
+        }
         match (ty, field) {
             ("GitActor", "user") => {
                 let email = self.0["_email"].as_str().ok_or_else(missing)?;
@@ -738,7 +755,7 @@ impl gql::QueryResolver for Object {
 macro_rules! issue_fields {
     ($ty:literal) => {
         fields!($ty;
-            id() -> ID; database_id() -> Option<i32>; number() -> i32; title() -> String; body() -> String;
+            id() -> ID; database_id() -> Option<i32>; full_database_id() -> Option<gql::BigInt>; number() -> i32; title() -> String; body() -> String;
             created_at() -> gql::DateTime; closed_at() -> Option<gql::DateTime>; author() -> Option<gql::Actor>; url() -> gql::URI;
             labels(after: Option<String>, before: Option<String>, first: Option<i32>, last: Option<i32>, order_by: Option<gql::Input<gql::LabelOrder>>) -> Option<gql::LabelConnection>;
             comments(after: Option<String>, before: Option<String>, first: Option<i32>, last: Option<i32>, order_by: Option<gql::Input<gql::IssueCommentOrder>>) -> gql::IssueCommentConnection;

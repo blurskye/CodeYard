@@ -131,7 +131,7 @@ connection!(
 
 impl gql::ProjectV2Resolver for Object {
     fields!("ProjectV2";
-        id() -> ID; database_id() -> Option<i32>; number() -> i32; title() -> String;
+        id() -> ID; database_id() -> Option<i32>; full_database_id() -> Option<gql::BigInt>; number() -> i32; title() -> String;
         short_description() -> Option<String>; readme() -> Option<String>; public() -> bool; closed() -> bool; template() -> bool;
         url() -> gql::URI; resource_path() -> gql::URI; created_at() -> gql::DateTime; updated_at() -> gql::DateTime; closed_at() -> Option<gql::DateTime>;
         owner() -> gql::ProjectV2Owner; creator() -> Option<gql::Actor>;
@@ -143,7 +143,7 @@ impl gql::ProjectV2Resolver for Object {
 }
 impl gql::ProjectV2ItemResolver for Object {
     fields!("ProjectV2Item";
-        id() -> ID; database_id() -> Option<i32>; content() -> Option<gql::ProjectV2ItemContent>; project() -> gql::ProjectV2; is_archived() -> bool;
+        id() -> ID; database_id() -> Option<i32>; full_database_id() -> Option<gql::BigInt>; content() -> Option<gql::ProjectV2ItemContent>; project() -> gql::ProjectV2; is_archived() -> bool;
         created_at() -> gql::DateTime; updated_at() -> gql::DateTime; creator() -> Option<gql::Actor>;
         field_value_by_name(name: String) -> Option<gql::ProjectV2ItemFieldValue>;
         field_values(after: Option<String>, before: Option<String>, first: Option<i32>, last: Option<i32>, order_by: Option<gql::Input<gql::ProjectV2ItemFieldValueOrder>>) -> gql::ProjectV2ItemFieldValueConnection;

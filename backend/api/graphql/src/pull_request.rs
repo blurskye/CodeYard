@@ -276,7 +276,6 @@ pub(super) async fn resolve(
         "isInMergeQueue" | "isMergeQueueEnabled" => Ok(json!(false)),
         "baseRefOid" => Ok(json!(pull.base_sha)),
         "headRefOid" => Ok(json!(pull.head_sha)),
-        "fullDatabaseId" => Ok(json!(pull.id.to_string())),
         "isCrossRepository" => Ok(json!(pull.head_repo_id != Some(repo.id))),
         "headRepository" | "headRepositoryOwner" => {
             let Some(head_id) = pull.head_repo_id else {
