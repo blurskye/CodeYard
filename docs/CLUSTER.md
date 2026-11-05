@@ -735,7 +735,7 @@ routers' addresses so client rate limits retain the original address. Foreign to
 admission, exact Git proofs and resource scope checks pass source checks. Browser-session
 pages/forms reuse home CSRF and cached identity without local credentials; their source
 checks pass. Cold collaborator targets have directory-verified home metadata
-lookup before the invitation transaction; this follow-up is unchecked.
+lookup before the invitation transaction; this follow-up passes source checks.
 
 Rooted node readers and common repository/team projections pass source checks; remaining
 node-family issuance is unfinished. Range reservations and stopped-cell `cell renew-range

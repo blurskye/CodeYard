@@ -757,8 +757,8 @@ checks pass; finished-CI shutdown and measured capacity need a delegated cgroup.
 Stage 2 ranges, credentials, directory transport/cache, public HTTP/SSH routing, stubs,
 common rooted IDs and foreign token/SSH admission pass source checks. The browser-session,
 home-CSRF and native two-cell GraphQL follow-up passes workspace, Clippy and WASM.
-Cold collaborator metadata lookup and retained invitation credentials are written but
-unchecked. Runtime acceptance runs an earlier snapshot. Native signup/key claim publication,
+Cold collaborator metadata lookup and retained invitation credentials also pass source
+checks. Runtime acceptance runs an earlier snapshot. Native signup/key claim publication,
 remote membership pointers, remaining node families and two-cell gh/Git deployment are
 unfinished; stages 3 to 6 are not built. Range renewal is a deferred owner follow-up.
 [Cluster readiness](CLUSTER_PLAN.md) records current check jobs and runtime gaps.
