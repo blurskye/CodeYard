@@ -6,6 +6,7 @@ CREATE TABLE directory_cells (
     state TEXT NOT NULL CHECK(state IN ('open','closed','disabled')),
     web_urls JSONB NOT NULL CHECK(jsonb_typeof(web_urls)='array' AND jsonb_array_length(web_urls) BETWEEN 1 AND 1000 AND octet_length(web_urls::text)<=4194304),
     ssh_addresses JSONB NOT NULL CHECK(jsonb_typeof(ssh_addresses)='array' AND jsonb_array_length(ssh_addresses)<=1000 AND octet_length(ssh_addresses::text)<=4194304),
+    rpc_addresses JSONB NOT NULL CHECK(jsonb_typeof(rpc_addresses)='array' AND jsonb_array_length(rpc_addresses)<=1000 AND octet_length(rpc_addresses::text)<=4194304),
     database_bytes BIGINT NOT NULL CHECK(database_bytes>=0),
     write_rate BIGINT NOT NULL CHECK(write_rate>=0),
     maximum_database_bytes BIGINT NOT NULL CHECK(maximum_database_bytes BETWEEN 1 AND 4000000000000),

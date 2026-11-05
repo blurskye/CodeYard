@@ -159,7 +159,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 2 ranges, framed credentials/sessions, directory claims/TLS/cache, bounded HTTP and
     GraphQL dispatch, stub metadata/storage/credential/list guards and common rooted IDs pass
     source checks. Generated GraphQL is unchanged. Range renewal is committed as an owner follow-up;
-    stop expanding it unless stage 2 acceptance needs it. Issuer-history checks are pending.
+    stop expanding it unless stage 2 acceptance needs it. Issuer-history, public role and cache source checks pass.
     Acceptance 049f16eeb8324596b898b230885a66d3 finished on the earlier compiled snapshot. Libraries,
     CI 220 (19 existing ignored) and database 174 pass. Cluster 227 pass, with the new fake-cell
     outage fixture failing because listener abort left connections alive; its fix is compiled.
@@ -169,7 +169,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     spoofing, router revocation and outage tests are written but unchecked. Foreign authorization, remote membership
     pointers, remaining node families and stages 3 to 6 remain unimplemented. A bounded foreign
     answer cache and both-engine expiry/hostile-source/failure tests are written but unchecked;
-    no foreign credential is accepted yet. Automatic user
+    no foreign credential is accepted yet. Shared bounded node RPC, native home answers,
+    registered RPC listeners and live cell-key tests are written but unchecked; foreign ingress
+    and publication still remain. Automatic user
     moves and org regional presence are documented owner decisions.
 
 ## Decisions that settle the open questions

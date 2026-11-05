@@ -273,6 +273,7 @@ mod tests {
             state: State::Open,
             web_urls: vec![],
             ssh_addresses: vec![],
+            rpc_addresses: vec![],
             node_keys: vec![],
             database_bytes: 0,
             write_rate: 0,

@@ -259,6 +259,7 @@ async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_parti
             state: State::Open,
             web_urls: vec!["http://127.0.0.1:3000/".into()],
             ssh_addresses: vec![],
+            rpc_addresses: vec![],
             node_keys: vec![member.public_hex()],
             database_bytes: 0,
             write_rate: 0,

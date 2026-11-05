@@ -181,6 +181,7 @@ async fn two_cells_split_queries_keep_node_positions_and_validate_before_ordered
                 state: State::Open,
                 web_urls: vec![url],
                 ssh_addresses: vec![],
+                rpc_addresses: vec![],
                 node_keys: vec![member.public_hex()],
                 database_bytes: 0,
                 write_rate: 0,

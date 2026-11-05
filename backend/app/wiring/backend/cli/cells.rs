@@ -121,6 +121,8 @@ pub enum DirectoryCommand {
         web_url: Vec<String>,
         #[arg(long, num_args = 1.., value_delimiter = ',')]
         ssh_address: Vec<String>,
+        #[arg(long, num_args = 1.., value_delimiter = ',')]
+        rpc_address: Vec<String>,
         #[arg(long, required = true, num_args = 1.., value_delimiter = ',')]
         node_key: Vec<String>,
         /// Accept new accounts; otherwise keep the cell closed.
@@ -208,6 +210,7 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
                 region,
                 web_url,
                 ssh_address,
+                rpc_address,
                 node_key,
                 open,
                 maximum_database_bytes,
@@ -221,6 +224,7 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
                         state: if *open { State::Open } else { State::Closed },
                         web_urls: web_url.clone(),
                         ssh_addresses: ssh_address.clone(),
+                        rpc_addresses: rpc_address.clone(),
                         node_keys: node_key.clone(),
                         database_bytes: 0,
                         write_rate: 0,

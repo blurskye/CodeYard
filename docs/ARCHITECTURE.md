@@ -755,11 +755,13 @@ remain open. Stage 2 range allocation, credential framing, directory registry an
 transport are built and source-checked. Route metadata, shared GraphQL preflight and scoped
 session storage, catalogue selection and bounded HTTP/GraphQL forwarding pass workspace,
 Clippy and WASM. Their runtime tests are pending; upload cleanup and Git/ref routing also pass source checks. The public router
-role is written but unchecked; foreign authorization is not built. Stub schema, metadata upserts and local
+role passes source checks; public foreign authorization is not built. Stub schema, metadata upserts and local
 credential/storage/listing guards pass source checks, as do common rooted node IDs.
 Metadata-only root validation also passes checks. Successor-prefix reservations are
 source-checked, as is stopped-cell renewal. Its local issuer-history/OAuth follow-up is
-written but unchecked. Automatic renewal and
+written; its follow-up cache/public-role batch passes Clippy and WASM, with workspace passing.
+Shared cell authorization RPC and native home answers are written but unchecked; public
+foreign credential admission and publication are unfinished. Automatic renewal and
 stages 3 to 6 are not built.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.

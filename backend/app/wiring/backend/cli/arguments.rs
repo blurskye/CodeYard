@@ -38,6 +38,10 @@ pub(super) enum Commands {
         #[arg(long, env = "DIRECTORY_PUBLIC_KEY")]
         directory_key: Option<String>,
 
+        /// Cell-to-cell authorization listener, authenticated by the node key
+        #[arg(long, env = "CELL_RPC_ADDRESS")]
+        cell_rpc_address: Option<SocketAddr>,
+
         /// Region used by router placement
         #[arg(long, env = "CELL_REGION", default_value = "local")]
         region: String,

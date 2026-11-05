@@ -1,4 +1,5 @@
 mod backups;
+mod cells_authorization;
 mod cells_frontend;
 mod cells_graphql;
 mod cli;

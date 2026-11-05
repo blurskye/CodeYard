@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 pub struct ServeConfig {
     pub directory: Option<super::router::DirectorySettings>,
+    pub cell_rpc_address: Option<SocketAddr>,
     pub roles: NodeRoles,
     pub repos_path: PathBuf,
     pub state_dir: PathBuf,

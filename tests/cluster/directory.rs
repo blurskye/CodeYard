@@ -25,6 +25,7 @@ async fn directory_transport_pins_keys_and_read_only_routers_cannot_claim_names(
             state: State::Open,
             web_urls: vec!["http://127.0.0.1:3000/".into()],
             ssh_addresses: vec![],
+            rpc_addresses: vec![],
             node_keys: vec![member.public_hex()],
             database_bytes: 0,
             write_rate: 0,

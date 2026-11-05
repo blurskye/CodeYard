@@ -196,6 +196,7 @@ pub struct Cell {
     pub state: State,
     pub web_urls: Vec<String>,
     pub ssh_addresses: Vec<String>,
+    pub rpc_addresses: Vec<String>,
     pub node_keys: Vec<String>,
     pub database_bytes: i64,
     pub write_rate: i64,
@@ -218,6 +219,7 @@ impl Cell {
             !self.web_urls.is_empty()
                 && self.web_urls.len() <= MAX_ENDPOINTS
                 && self.ssh_addresses.len() <= MAX_ENDPOINTS
+                && self.rpc_addresses.len() <= MAX_ENDPOINTS
                 && !self.node_keys.is_empty()
                 && self.node_keys.len() <= MAX_ENDPOINTS,
             "Invalid cell endpoints"
@@ -240,7 +242,11 @@ impl Cell {
             );
             *address = url.as_str().trim_end_matches('/').to_owned();
         }
-        for address in &mut self.ssh_addresses {
+        for address in self
+            .ssh_addresses
+            .iter_mut()
+            .chain(self.rpc_addresses.iter_mut())
+        {
             *address = address.parse::<std::net::SocketAddr>()?.to_string();
         }
         for key in &mut self.node_keys {
@@ -254,6 +260,8 @@ impl Cell {
         self.web_urls.dedup();
         self.ssh_addresses.sort();
         self.ssh_addresses.dedup();
+        self.rpc_addresses.sort();
+        self.rpc_addresses.dedup();
         self.node_keys.sort();
         self.node_keys.dedup();
         ensure!(

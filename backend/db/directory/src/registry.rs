@@ -3,7 +3,7 @@ use anyhow::{ensure, Result};
 use codeyard_model::cells::{Cell, State};
 use codeyard_support::cells::Prefix;
 
-const COLUMNS: &str = "c.id,c.name,c.region,c.state,c.web_urls::text,c.ssh_addresses::text,c.database_bytes,c.write_rate,c.maximum_database_bytes,c.maximum_write_rate,(SELECT COALESCE(json_agg(public_key)::text,'[]') FROM (SELECT public_key FROM directory_node_keys WHERE cell_id=c.id ORDER BY public_key LIMIT 1001) keys) AS node_keys";
+const COLUMNS: &str = "c.id,c.name,c.region,c.state,c.web_urls::text,c.ssh_addresses::text,c.rpc_addresses::text,c.database_bytes,c.write_rate,c.maximum_database_bytes,c.maximum_write_rate,(SELECT COALESCE(json_agg(public_key)::text,'[]') FROM (SELECT public_key FROM directory_node_keys WHERE cell_id=c.id ORDER BY public_key LIMIT 1001) keys) AS node_keys";
 
 #[derive(sqlx::FromRow)]
 struct Row {
@@ -13,6 +13,7 @@ struct Row {
     state: String,
     web_urls: String,
     ssh_addresses: String,
+    rpc_addresses: String,
     database_bytes: i64,
     write_rate: i64,
     maximum_database_bytes: i64,
@@ -28,6 +29,7 @@ impl Row {
             state: State::parse(&self.state).ok_or(Refusal::Unavailable)?,
             web_urls: serde_json::from_str(&self.web_urls)?,
             ssh_addresses: serde_json::from_str(&self.ssh_addresses)?,
+            rpc_addresses: serde_json::from_str(&self.rpc_addresses)?,
             node_keys: serde_json::from_str(&self.node_keys)?,
             database_bytes: self.database_bytes,
             write_rate: self.write_rate,
@@ -45,8 +47,8 @@ impl Directory {
             let cell = cell.prepare().map_err(|_| Refusal::Invalid)?;
             let id = i32::from(cell.id.get());
             let mut tx = self.begin().await?;
-            sqlx::query("INSERT INTO directory_cells(id,name,region,state,web_urls,ssh_addresses,database_bytes,write_rate,maximum_database_bytes,maximum_write_rate) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET name=excluded.name,region=excluded.region,state=excluded.state,web_urls=excluded.web_urls,ssh_addresses=excluded.ssh_addresses,maximum_database_bytes=excluded.maximum_database_bytes,maximum_write_rate=excluded.maximum_write_rate")
-                .bind(id).bind(&cell.name).bind(&cell.region).bind(cell.state.as_str()).bind(serde_json::to_value(&cell.web_urls)?).bind(serde_json::to_value(&cell.ssh_addresses)?).bind(cell.database_bytes).bind(cell.write_rate).bind(cell.maximum_database_bytes).bind(cell.maximum_write_rate).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO directory_cells(id,name,region,state,web_urls,ssh_addresses,database_bytes,write_rate,maximum_database_bytes,maximum_write_rate,rpc_addresses) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) ON CONFLICT(id) DO UPDATE SET name=excluded.name,region=excluded.region,state=excluded.state,web_urls=excluded.web_urls,ssh_addresses=excluded.ssh_addresses,rpc_addresses=excluded.rpc_addresses,maximum_database_bytes=excluded.maximum_database_bytes,maximum_write_rate=excluded.maximum_write_rate")
+                .bind(id).bind(&cell.name).bind(&cell.region).bind(cell.state.as_str()).bind(serde_json::to_value(&cell.web_urls)?).bind(serde_json::to_value(&cell.ssh_addresses)?).bind(cell.database_bytes).bind(cell.write_rate).bind(cell.maximum_database_bytes).bind(cell.maximum_write_rate).bind(serde_json::to_value(&cell.rpc_addresses)?).execute(&mut *tx).await?;
             sqlx::query("INSERT INTO directory_cell_prefixes(prefix,cell_id) VALUES($1,$1) ON CONFLICT DO NOTHING")
                 .bind(id).execute(&mut *tx).await?;
             let assigned: i32 = sqlx::query_scalar("SELECT cell_id FROM directory_cell_prefixes WHERE prefix=$1 FOR UPDATE")
@@ -111,6 +113,18 @@ impl Directory {
             tx.commit().await?;
             Ok(())
         }).await
+    }
+
+    /// Resolve a transport-authenticated node's live cell enrollment, excluding router keys.
+    pub async fn node_cell_for(&self, peer: &str, key: &str) -> Result<Prefix> {
+        self.run(async {
+            let mut tx = self.begin().await?;
+            super::read_owner(&mut tx, peer).await?;
+            let cell = super::owner(&mut tx, key, false).await?;
+            tx.commit().await?;
+            Ok(cell)
+        })
+        .await
     }
 
     pub async fn router_key_for(&self, peer: &str, key: &str) -> Result<bool> {

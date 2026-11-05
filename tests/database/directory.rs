@@ -13,6 +13,7 @@ fn cell(prefix: u16, key: char) -> Cell {
         state: State::Open,
         web_urls: vec![format!("http://127.0.0.1:{}/", 10000 + u32::from(prefix))],
         ssh_addresses: vec![format!("127.0.0.1:{}", 20000 + u32::from(prefix))],
+        rpc_addresses: vec![],
         node_keys: vec![key.to_string().repeat(64)],
         database_bytes: 0,
         write_rate: 0,

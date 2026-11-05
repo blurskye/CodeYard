@@ -21,6 +21,7 @@ async-graphql-value.workspace = true
 codeyard-github-graphql.workspace = true
 codeyard-cluster-core.workspace = true
 codeyard-db-directory.workspace = true
+codeyard-db-core.workspace = true
 codeyard-model.workspace = true
 codeyard-support.workspace = true
 iroh.workspace = true

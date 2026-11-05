@@ -747,3 +747,5 @@ state/maintenance locks, reserves through pinned TLS and activates all sequence 
 the issuer together; rollback leaves old rows and stable cell ownership intact. Automatic
 renewal remains open. A local issuer-history follow-up is written but unchecked so pending
 OAuth and device codes can finish after their original range is retired.
+
+Cell authorization RPC source uses `CELL_RPC_ADDRESS` with the pinned directory settings; register that listener with `cell directory register --rpc-address`. It shares the directory’s bounded TLS transport. Only live cell keys may request home answers; read-only router keys cannot. Configure `HTTP_TRUSTED_PROXY_IPS` on cell web nodes for the public routers’ addresses so client rate limits retain the original address. Home answers and RPC are unchecked, and foreign ingress and publication are still unfinished. App user-token export is not implemented yet.

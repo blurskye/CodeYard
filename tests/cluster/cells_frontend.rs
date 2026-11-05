@@ -116,6 +116,7 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
                 state: State::Open,
                 web_urls: vec![server.url()],
                 ssh_addresses: vec![],
+                rpc_addresses: vec![],
                 node_keys: vec![member.public_hex()],
                 database_bytes: 0,
                 write_rate: 0,

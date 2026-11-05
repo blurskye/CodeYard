@@ -402,11 +402,34 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             s3,
         )
         .await?;
+        let cell_rpc = match (&config.directory, config.cell_rpc_address) {
+            (None, None) => None,
+            (Some(settings), Some(address)) => {
+                anyhow::ensure!(
+                    transport.mode != codeyard_support::ssh_mode::SshMode::Openssh,
+                    "Cells behind a router use builtin SSH or disabled SSH"
+                );
+                let directory = super::router::Directory::new(settings, &config.state_dir)?;
+                let key = codeyard_support::node_identity::load_or_create(&config.state_dir)?;
+                let listener = codeyard_cells_router::accounts::listen(
+                    directory.client.clone(),
+                    Arc::new(codeyard_identity::cells::Local { pool: pool.clone() }),
+                    &key,
+                    address,
+                )
+                .await?;
+                pool.set_foreign_authorization(Arc::new(
+                    codeyard_cells_router::accounts::Remote::new(key, directory.client)?,
+                ));
+                Some(listener)
+            }
+            _ => anyhow::bail!("A cell requires both directory settings and CELL_RPC_ADDRESS"),
+        };
         // Only the web socket subscribes to inbound notifications.
         if config.roles.contains(NodeRole::Web) {
             state.notification_broadcaster.start().await?;
         }
-        Ok::<_, anyhow::Error>((transport, repos_path, state))
+        Ok::<_, anyhow::Error>((transport, repos_path, state, cell_rpc))
     };
     let prepared = tokio::select! {
         biased;
@@ -417,7 +440,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         }
         result = prepared => result,
     };
-    let (transport, repos_path, state) = match prepared {
+    let (transport, repos_path, state, mut cell_rpc) = match prepared {
         Ok(prepared) => prepared,
         Err(error) => {
             if let Some(member) = &member {
@@ -606,16 +629,19 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         }
     };
     let mut servers = Box::pin(servers);
-    let (result, signalled) = tokio::select! {
+    let (result, drain_listeners) = tokio::select! {
         result = &mut servers => (
             result.and_then(|()| Err(anyhow::anyhow!("a listener stopped unexpectedly"))),
             false,
         ),
+        _ = async {
+            match &mut cell_rpc {Some(listener)=>listener.ended().await,None=>std::future::pending::<()>().await}
+        } => (Err(anyhow::anyhow!("Cell RPC listener stopped unexpectedly")),true),
         result = &mut signal => (result, true),
     };
     info!("shutting down");
     // Every local owner is told to stop before anything waits on one of them.
-    if signalled {
+    if drain_listeners {
         stop_listeners.send_replace(true);
     }
     stop_traffic.send_replace(true);
@@ -636,7 +662,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     }
     // The listeners, the upload sweep and the replica loop share one deadline.
     let deadline = tokio::time::Instant::now() + SHUTDOWN_GRACE;
-    if signalled {
+    if drain_listeners {
         info!("draining listeners");
         match tokio::time::timeout_at(deadline, servers).await {
             Ok(Err(error)) => warn!("listener failed while draining: {error}"),
@@ -648,6 +674,9 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     }
     // A failed listener is dropped before it can drain the Git pushes it already accepted.
     // A clean stop has drained them, so this returns at once.
+    if let Some(listener) = cell_rpc.take() {
+        let _ = tokio::time::timeout_at(deadline, listener.stop()).await;
+    }
     let _ = tokio::time::timeout_at(deadline, git_tasks.drain()).await;
     // Repository sessions from other nodes are waited for to the same deadline. One still
     // running after it ends with its connection in `member.shutdown()`.

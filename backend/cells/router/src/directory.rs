@@ -1,53 +1,21 @@
 //! One bounded directory exchange over the existing pinned node-key TLS transport.
-use anyhow::{ensure, Result};
-use codeyard_cluster_core::{link::read_to_end_within, tcp, tls};
+pub use crate::rpc::Config;
+use anyhow::Result;
 use codeyard_db_directory::{Directory, Refusal};
 use codeyard_model::cells::{Cell, Key, Location, Object};
 use codeyard_support::{cells::Prefix, node_identity::NodeKey};
 use iroh::PublicKey;
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, sync::Arc, time::Duration};
-use tokio::{
-    io::{split, AsyncWriteExt},
-    net::{TcpListener, TcpStream},
-    sync::{OwnedSemaphorePermit, Semaphore},
-    task::JoinSet,
-};
-use tokio_rustls::TlsAcceptor;
-use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
+use std::{net::SocketAddr, sync::Arc};
 
 pub const ALPN: &[u8] = b"codeyard/directory/1";
-
-#[derive(Clone, Copy)]
-pub struct Config {
-    pub exchange_seconds: u64,
-    pub maximum_bytes: usize,
-    pub maximum_connections: usize,
-}
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            exchange_seconds: 10,
-            maximum_bytes: 4 * 1024 * 1024,
-            maximum_connections: 128,
-        }
-    }
-}
-impl Config {
-    fn validate(self) -> Result<()> {
-        ensure!(
-            (1..=60).contains(&self.exchange_seconds)
-                && (1024..=16 * 1024 * 1024).contains(&self.maximum_bytes)
-                && (1..=4096).contains(&self.maximum_connections),
-            "Invalid directory transport limits"
-        );
-        Ok(())
-    }
-}
 
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Request {
+    NodeCell {
+        public_key: String,
+    },
     RouterKey {
         public_key: String,
     },
@@ -118,46 +86,23 @@ impl Failure {
 }
 
 #[derive(Clone)]
-pub struct Client {
-    key: NodeKey,
-    address: SocketAddr,
-    peer: PublicKey,
-    config: Config,
-}
+pub struct Client(crate::rpc::Client);
 impl Client {
     pub fn new(key: NodeKey, address: SocketAddr, peer: PublicKey, config: Config) -> Result<Self> {
-        config.validate()?;
-        Ok(Self {
-            key,
-            address,
-            peer,
-            config,
-        })
+        Ok(Self(crate::rpc::Client::new(
+            key, address, peer, ALPN, config,
+        )?))
     }
     pub async fn request(&self, request: &Request) -> Result<Reply> {
-        let bytes = serde_json::to_vec(request)?;
-        ensure!(bytes.len() <= self.config.maximum_bytes, Failure::Invalid);
-        tokio::time::timeout(Duration::from_secs(self.config.exchange_seconds), async {
-            let mut link = tcp::dial(&self.key, self.address, self.peer, ALPN).await?;
-            link.writer.write_all(&bytes).await?;
-            link.finish().await?;
-            let bytes = read_to_end_within(&mut link.reader, self.config.maximum_bytes).await?;
-            let reply: Reply = serde_json::from_slice(&bytes).map_err(|_| Failure::Unavailable)?;
-            match reply {
-                Reply::Error(error) => Err(error.into()),
-                reply => Ok(reply),
-            }
-        })
-        .await
-        .map_err(|_| Failure::Unavailable)?
+        match self.0.request(request).await? {
+            Reply::Error(error) => Err(error.into()),
+            reply => Ok(reply),
+        }
     }
 }
-
-/// The task owns every accepted connection. Dropping or stopping it closes them all.
 pub struct Listener {
     pub address: SocketAddr,
-    cancel: CancellationToken,
-    task: Option<AbortOnDropHandle<()>>,
+    inner: crate::rpc::Listener,
 }
 impl Listener {
     pub async fn bind(
@@ -166,112 +111,66 @@ impl Listener {
         address: SocketAddr,
         config: Config,
     ) -> Result<Self> {
-        config.validate()?;
-        let acceptor = TlsAcceptor::from(tls::server_config_for(key, &[ALPN])?);
-        let listener = TcpListener::bind(address).await?;
-        let address = listener.local_addr()?;
-        let cancel = CancellationToken::new();
-        let stop = cancel.clone();
-        let task = tokio::spawn(async move {
-            let slots = Arc::new(Semaphore::new(config.maximum_connections));
-            let mut tasks = JoinSet::new();
-            loop {
-                while tasks.try_join_next().is_some() {}
-                let accepted = tokio::select! {
-                    _ = stop.cancelled() => break,
-                    accepted = listener.accept() => accepted,
-                };
-                let (socket, _) = match accepted {
-                    Ok(socket) => socket,
-                    Err(error) => {
-                        tracing::warn!(%error, "directory listener failed");
-                        break;
-                    }
-                };
-                let Ok(slot) = slots.clone().try_acquire_owned() else {
-                    continue;
-                };
-                tasks.spawn(serve(
-                    socket,
-                    slot,
-                    acceptor.clone(),
-                    directory.clone(),
-                    config,
-                ));
-            }
-            drop(listener);
-            tasks.abort_all();
-            while tasks.join_next().await.is_some() {}
-        });
-        Ok(Self {
+        let inner = crate::rpc::Listener::bind(
+            Arc::new(DirectoryService {
+                directory,
+                maximum_bytes: config.maximum_bytes,
+            }),
+            key,
             address,
-            cancel,
-            task: Some(AbortOnDropHandle::new(task)),
+            ALPN,
+            config,
+        )
+        .await?;
+        Ok(Self {
+            address: inner.address,
+            inner,
         })
     }
-    /// Resolves if the listener fails or ends; the owner must stop serving too.
     pub async fn ended(&mut self) {
-        if let Some(task) = &mut self.task {
-            let _ = task.await;
-        }
-        let _ = self.task.take();
+        self.inner.ended().await;
     }
-
-    pub async fn stop(mut self) {
-        self.cancel.cancel();
-        if let Some(mut task) = self.task.take() {
-            let _ = tokio::time::timeout(Duration::from_secs(10), &mut task).await;
-        }
+    pub async fn stop(self) {
+        self.inner.stop().await;
     }
 }
-
-async fn serve(
-    socket: TcpStream,
-    _slot: OwnedSemaphorePermit,
-    acceptor: TlsAcceptor,
+struct DirectoryService {
     directory: Directory,
-    config: Config,
-) {
-    tcp::tune(&socket);
-    let _ = tokio::time::timeout(Duration::from_secs(config.exchange_seconds), async {
-        let stream = acceptor.accept(socket).await?;
-        ensure!(
-            stream.get_ref().1.alpn_protocol() == Some(ALPN),
-            Failure::Denied
-        );
-        let cert = stream
-            .get_ref()
-            .1
-            .peer_certificates()
-            .and_then(|certs| certs.first())
-            .ok_or(Failure::Denied)?;
-        let peer = tls::peer_key(cert)?.to_string();
-        // Authenticate before accepting any request body, including route lookups.
-        directory.authorize_read(&peer).await?;
-        let (mut reader, mut writer) = split(stream);
-        let bytes = read_to_end_within(&mut reader, config.maximum_bytes).await?;
-        let reply = match serde_json::from_slice::<Request>(&bytes) {
-            Ok(request) => match handle(&directory, &peer, request).await {
-                Ok(reply) => reply,
-                Err(error) => Reply::Error(Failure::from_error(&error)),
-            },
-            Err(_) => Reply::Error(Failure::Invalid),
-        };
-        let mut bytes = serde_json::to_vec(&reply)?;
-        if bytes.len() > config.maximum_bytes {
-            bytes = serde_json::to_vec(&Reply::Error(Failure::Unavailable))?;
-        }
-        writer.write_all(&bytes).await?;
-        writer.shutdown().await?;
-        anyhow::Ok(())
-    })
-    .await;
+    maximum_bytes: usize,
+}
+impl crate::rpc::Service for DirectoryService {
+    fn admit<'a>(&'a self, peer: PublicKey) -> futures_util::future::BoxFuture<'a, Result<()>> {
+        Box::pin(async move { self.directory.authorize_read(&peer.to_string()).await })
+    }
+    fn handle<'a>(
+        &'a self,
+        peer: PublicKey,
+        bytes: &'a [u8],
+    ) -> futures_util::future::BoxFuture<'a, Result<Vec<u8>>> {
+        Box::pin(async move {
+            let reply = match serde_json::from_slice::<Request>(bytes) {
+                Ok(request) => match handle(&self.directory, &peer.to_string(), request).await {
+                    Ok(reply) => reply,
+                    Err(error) => Reply::Error(Failure::from_error(&error)),
+                },
+                Err(_) => Reply::Error(Failure::Invalid),
+            };
+            let bytes = serde_json::to_vec(&reply)?;
+            if bytes.len() > self.maximum_bytes {
+                return Ok(serde_json::to_vec(&Reply::Error(Failure::Unavailable))?);
+            }
+            Ok(bytes)
+        })
+    }
 }
 
 async fn handle(directory: &Directory, peer: &str, request: Request) -> Result<Reply> {
     // A router key is read-only. Mutations recheck cell enrollment and retain it
     // inside their committing transaction, so this read admission grants no writes.
     Ok(match request {
+        Request::NodeCell { public_key } => {
+            Reply::Prefix(directory.node_cell_for(peer, &public_key).await?)
+        }
         Request::RouterKey { public_key } => {
             Reply::RouterKey(directory.router_key_for(peer, &public_key).await?)
         }
