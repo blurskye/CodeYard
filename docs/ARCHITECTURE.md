@@ -234,6 +234,12 @@ API crates depend on the app library, and binary wiring composes them from above
   organization picture. User pictures are managed only through the native settings
   upload and remove forms.
 
+Organization OIDC configuration lives only in the web nodes' environment. The existing
+OAuth routes bind state to the browser, provider configuration and PKCE verifier; signed
+ID tokens use the database clock. Login commits the session and organization audit event
+only after rechecking active membership. Private nodes enroll an existing member through
+`codeyard user enroll-oidc`; email claims never link identities.
+
 ### Data
 
 - `DATABASE_URL` selects PostgreSQL; without it the server uses SQLite at

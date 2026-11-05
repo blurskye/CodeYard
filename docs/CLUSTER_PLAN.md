@@ -70,7 +70,7 @@ part B that closes it. "Expected" is what the documents imply, not something alr
 | A12 | SIGTERM during running CI and a push | stops within 90 seconds, jobs end failed with a reason, no leaked containers or locks | pending builder acceptance |
 | A13 | Old and new release side by side | refused with a clear message, or both work | older protocol refused; B10 pending |
 | A14 | Join token: reuse, expiry, cancel, wrong role | each behaves as `CLUSTER.md` says | pending builder acceptance |
-| A15 | Clock skew of 5 minutes on one node | tokens, leases and take-over still behave | pending builder acceptance |
+| A15 | Clock skew of 5 minutes on one node | tokens, leases and take-over still behave | second web process runs five minutes ahead in OIDC and e2e acceptance; runtime pending |
 | A16 | Load test on stated hardware: pushes, clones, API reads, CI jobs, 50 organizations inviting at once | numbers recorded in `CLUSTER.md` limits | benchmark written; no measurements yet |
 
 Each of A2 to A10, A12 and A15 becomes a test in `tests/`, driven through HTTP, SSH and

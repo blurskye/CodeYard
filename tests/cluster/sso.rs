@@ -138,7 +138,13 @@ async fn web(
         &root.join(format!("{name}.log")),
         2,
         |addresses| {
-            let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_codeyard"));
+            let mut command = if name == "second" {
+                let mut command = std::process::Command::new("faketime");
+                command.args(["-f", "+5m", env!("CARGO_BIN_EXE_codeyard")]);
+                command
+            } else {
+                std::process::Command::new(env!("CARGO_BIN_EXE_codeyard"))
+            };
             command
                 .args(["serve"])
                 .current_dir(root)
@@ -146,6 +152,7 @@ async fn web(
                 .env("PATH", std::env::var_os("PATH").unwrap())
                 .env("DATABASE_URL", &url)
                 .env("WEBUI_DIST", &bundle)
+                .env("DONT_FAKE_MONOTONIC", "1")
                 .env("GITSERV_STATE_DIR", root.join(format!("{name}-state")))
                 .env("REPOS_PATH", root.join(format!("{name}-repos")))
                 .env("HTTP_ADDR", addresses[0].to_string())

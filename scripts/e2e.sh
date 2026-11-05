@@ -566,7 +566,12 @@ start_server() { # inline: starts a node and waits for its actual services
     touch "$dir/server.log"
     first_line=$(( $(wc -l <"$dir/server.log") + 1 ))
     echo "starting $node: HTTP ${HTTP_PORTS[$node]}, SSH ${SSH_PORTS[$node]}, iroh ${IROH_PORTS[$node]:-off}"
-    (cd "$dir" && node_exec "$BIN" serve < /dev/null) >>"$dir/server.log" 2>&1 &
+    local -a command=("$BIN" serve)
+    if [[ $node == web2 ]]; then
+        NODE_ENV+=("DONT_FAKE_MONOTONIC=1")
+        command=(faketime -f '+5m' "$BIN" serve)
+    fi
+    (cd "$dir" && node_exec "${command[@]}" < /dev/null) >>"$dir/server.log" 2>&1 &
     pid=$!
     SERVER_PIDS[$node]=$pid
     while ((waited < 120)); do
@@ -2717,7 +2722,10 @@ t_cluster_approve_worker() {
 }
 
 t_cluster_github_clients() {
-    local ticket old_pid=${SERVER_PIDS[web1]} rc=0
+    local ticket old_pid=${SERVER_PIDS[web1]} rc=0 skew
+    command -v faketime >/dev/null || { echo 'faketime is required for the five-minute clock skew check' >&2; return 1; }
+    skew=$(( $(DONT_FAKE_MONOTONIC=1 faketime -f '+5m' date +%s) - $(date +%s) ))
+    ((skew >= 299 && skew <= 301)) || { echo 'The test clock did not advance five minutes' >&2; return 1; }
     local -a ports
     read -r -a ports < <(free_ports 2)
     HTTP_PORTS[web2]=${ports[0]} SSH_PORTS[web2]=${ports[1]}
