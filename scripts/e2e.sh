@@ -3196,6 +3196,7 @@ run_round() {
 }
 
 run_cluster_round() {
+    CLUSTER_NODES=(web1 store1 store2 ci1)
     ROUND=cluster
     ROUND_BLOCKED=0
     STEP_NO=0
