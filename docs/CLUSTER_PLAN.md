@@ -8,8 +8,10 @@ keeps the longer plan for cells; this file comes first and does not repeat it.
 
 Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspace,
 Clippy and WASM checks pass, including the fault tests and full-disk placement fix.
-Earlier library and Helm checks pass; current runtime, backup/restore and end-to-end
-acceptance remain pending. Rolling upgrades need a previous-release target, and A16
+Library checks (1,158 tests), identity checks (161 tests) and Helm rendering pass.
+Cluster runtime and backup/restore acceptance remain pending. The end-to-end build
+found native dependencies in the app binary’s browser graph; that boundary is corrected
+in source and awaits a bundle build. Rolling upgrades need a previous-release target, and A16
 has no measured limits yet.
 Cluster mode stays hidden behind
 `CODEYARD_EXPERIMENTAL_CLUSTER=1` until part A passes and part B items 1 to 6 are done.

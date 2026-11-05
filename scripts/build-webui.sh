@@ -107,7 +107,7 @@ dx_version=$("$DX" --version)
 
 echo "== browser dependency graph"
 # The browser build must not pull in the server crates (database, git, SSH, S3).
-cargo tree --locked -p codeyard-webui --target wasm32-unknown-unknown --no-default-features \
+cargo tree --locked -p codeyard --target wasm32-unknown-unknown --no-default-features \
     --features web --edges normal --prefix none --format '{p}' | python3 scripts/check-web-dependencies.py
 
 echo "== dx build ($MODE)"

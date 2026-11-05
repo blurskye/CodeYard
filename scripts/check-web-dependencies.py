@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reject native authority in the actual resolved browser dependency graph.
 
-Feed `cargo tree --locked -p codeyard-webui --target wasm32-unknown-unknown
+Feed `cargo tree --locked -p codeyard --target wasm32-unknown-unknown
 --no-default-features --features web --edges normal --prefix none --format '{p}'`.
 This does not assert a host graph contains no WASM-support crates: Dioxus may
 legitimately depend on shared types there without enabling the web renderer.
@@ -13,6 +13,9 @@ FORBIDDEN = {
     'sqlx', 'sqlx-core', 'sqlx-postgres', 'sqlx-macros', 'sqlx-macros-core',
     'redis', 'deadpool-redis', 'git2', 'libgit2-sys', 'russh',
     'aws-sdk-s3', 'aws-config', 'axum', 'tower-http',
+    'codeyard-cluster', 'codeyard-cluster-core', 'codeyard-ci-engine',
+    'codeyard-repos-core', 'codeyard-repos-rpc', 'codeyard-repos-pulls',
+    'codeyard-storage', 'codeyard-webhooks', 'codeyard-ci', 'codeyard-repos',
 }
 packages = set()
 for line in sys.stdin:

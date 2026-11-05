@@ -19,16 +19,6 @@ web = ["codeyard-webui/web"]
 
 # Shared views and helpers compile for both targets.
 [dependencies]
-codeyard-repos-rpc.workspace = true
-codeyard-ci-engine.workspace = true
-codeyard-cluster.workspace = true
-codeyard-repos-pulls.workspace = true
-codeyard-repos-core.workspace = true
-codeyard-webhooks.workspace = true
-codeyard-cluster-core.workspace = true
-codeyard-ci.workspace = true
-codeyard-repos.workspace = true
-codeyard-storage.workspace = true
 codeyard-webui.workspace = true
 codeyard-support.workspace = true
 dioxus.workspace = true
@@ -46,6 +36,16 @@ unicode-normalization.workspace = true
 
 # No SQLx, SSH, Git, AWS, credentials or server crypto in the browser graph.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+codeyard-repos-rpc.workspace = true
+codeyard-ci-engine.workspace = true
+codeyard-cluster.workspace = true
+codeyard-repos-pulls.workspace = true
+codeyard-repos-core.workspace = true
+codeyard-webhooks.workspace = true
+codeyard-cluster-core.workspace = true
+codeyard-ci.workspace = true
+codeyard-repos.workspace = true
+codeyard-storage.workspace = true
 codeyard-ssh.workspace = true
 async-graphql.workspace = true
 async-graphql-derive.workspace = true
