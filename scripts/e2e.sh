@@ -2824,7 +2824,7 @@ t_cluster_quorum_primary_loss() {
 }
 
 t_cluster_storage_loss() {
-    local name=quorum-survival-http source=$RUN/work/quorum-survival-http expected primary pid mode destination
+    local name=quorum-survival-http source=$RUN/work/quorum-survival-http expected primary pid mode destination deadline
     for mode in clone push; do
         "$PYTHON" -I - "$source/loss-$mode.bin" <<'PYDATA' || return 1
 import os, sys
@@ -2838,9 +2838,17 @@ PYDATA
             git_with_token write -C "$source" push -q "$BASE/alice/$name.git" main || return 1
             expected=$(git_as alice -C "$source" rev-parse HEAD)
         fi
-        primary=$(repo_node alice "$name")
-        [[ $primary == store1 || $primary == store2 ]]
-        pid=${SERVER_PIDS[$primary]}
+        # Startup publication does not clear a frontend's short unreachable-peer
+        # backoff. Require a healthy, non-mutating write advertisement before the fault.
+        deadline=$((SECONDS + 60))
+        until git_with_token write -C "$source" push --dry-run -q "$BASE/alice/$name.git" main; do
+            ((SECONDS < deadline)) || { echo 'Storage did not recover write advertisement before the fault' >&2; return 1; }
+            sleep 1
+        done
+        primary=$(repo_node alice "$name") || return 1
+        [[ $primary == store1 || $primary == store2 ]] || return 1
+        pid=${SERVER_PIDS[$primary]:-}
+        [[ $pid =~ ^[0-9]+$ ]] || return 1
         "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" \
             --storage-loss "$mode" --repository "alice/$name" --primary-pid "$pid" --source "$source" || return 1
         wait "$pid" 2>/dev/null || true

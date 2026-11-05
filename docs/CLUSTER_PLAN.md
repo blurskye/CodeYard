@@ -8,7 +8,8 @@ keeps the longer plan for cells; this file comes first and does not repeat it.
 
 Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspace,
 Clippy and WASM checks pass, including the fault-test source and full-disk placement fix.
-Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed, 19 ignored) and Helm rendering pass.
+Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed,
+19 ignored), focused runner isolation and Helm rendering pass.
 Storage checks pass (99 passed, 3 ignored). All 221 cluster integration checks pass,
 including full-disk failure/retry and interrupted cluster backup/restore. Browser bundle publication, delivery, native and hydrated cluster forms, and live
 cross-node issue updates pass. The builder needs a writable delegated cgroup for finished-CI acceptance. Rolling upgrades need a previous-release target, and A16
