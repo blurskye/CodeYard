@@ -7,7 +7,7 @@ every open question. [Architecture](ARCHITECTURE.md#3-scaling-out-cells-behind-a
 keeps the longer plan for cells; this file comes first and does not repeat it.
 
 Items 1–9, 11 and 12 have source implementations and acceptance tests. Workspace,
-Clippy and WASM checks pass, including the fault tests and full-disk placement fix.
+Clippy and WASM checks pass, including the fault-test source and full-disk placement fix.
 Library checks (1,058 tests), identity checks (161 tests), CI checks (211 passed, 19 ignored) and Helm rendering pass.
 Storage checks pass (99 passed, 3 ignored). The cluster run passes 220 checks with one full-disk fixture ownership failure;
 its executable ownership correction passes source checks and awaits rerun. Cluster backup
@@ -27,7 +27,7 @@ round in `scripts/e2e.sh`.
 
 The experimental write path uses two storage voters, PostgreSQL decisions and a ref
 journal. Cluster files use two storage-node copies or optional shared S3. Repository initialization
-and copy now use the same quorum path; source checks pass and runtime tests are pending.
+and copy use the same quorum path and pass runtime checks on both database engines.
 
 Not complete: drain and failover acceptance, browser acceptance, rolling upgrades
 and measured load limits.
