@@ -285,7 +285,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     stamp their region on forwarded requests, a cell counts its authenticated requests per
     account, region and day (only from trusted proxies), and once an hour one web node
     adds or removes its organizations' presence by the site-settings policy (share, days
-    held, dry run, pause; audited; hand-set presence stays). Serving from a real replica
+    held, dry run, pause; audited; hand-set presence stays; `cells_regions`, job
+    4bc97cffa295491bae7a54bd6d778f06). Serving from a real replica
     and regional Git copies is runtime
     pending, needs a cell in cluster mode with a PostgreSQL streaming replica and storage
     nodes in a second region. Runtime STAGE5_RUN.
