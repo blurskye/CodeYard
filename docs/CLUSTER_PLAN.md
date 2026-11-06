@@ -194,15 +194,19 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     discovery with retained parent metadata are the next unchecked batch. Content
     reads retain their original authority independently of permission to create a fork.
     The unused HTTP Git-source URL is removed; copies exclusively use pinned RPC.
-    Metadata/publication checks are running as workspace 3e3916aee0ac4c74a978b80be4662525,
-    Clippy f49d17ec064545ae92afc1cbb4c5bf4f and WASM 9172c32344114cdd943797b7471b4ffa
-    pass; workspace 3e3916aee0ac4c74a978b80be4662525 is pending.
+    Metadata/publication passes workspace 3e3916aee0ac4c74a978b80be4662525,
+    Clippy f49d17ec064545ae92afc1cbb4c5bf4f and WASM 9172c32344114cdd943797b7471b4ffa.
     The next source follow-up adds exact-branch snapshots for pull heads and shares
     their private staging with fork copies; hostile selector/storage tests are written.
     Both baselines exclude metadata-only stub insert/delete from native fork counters.
+    This follow-up is checking in workspace 36669df79199436886e88c7961c5d8fd,
+    Clippy 73d4ef6b6117411493559eed584420ce and WASM 37c0dde00fa04564b6cf2a44c565de95.
     Runtime 67eb28f748434d8d839860a974a0fb07 passes all 235 cluster tests without skips
     on its earlier export snapshot. CI passes 220 with 19 existing environment-dependent
-    ignores; storage passes 100 with three existing ignores. Public cells are still running.
+    ignores; storage passes 100 with three existing S3-fixture ignores. The public cells
+    workflow passes its existing clients but fails before its new fork request because
+    gh rejects --remote=false with a repository argument. The invalid flag is removed;
+    the fork/push/PR/maintainer/checkout/merge assertions are unchanged.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
     object pools, mentions/home inbox/email, and repository transfers/redirects.
     Stages 4 to 6 remain unwritten; automatic user moves and org regional presence

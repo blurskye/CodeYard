@@ -337,7 +337,7 @@ def cross_cell_fork(deployment, client, directory):
     """The fork belongs to Bob's cell; the pull and its checked-out head belong to Alice's."""
     client.api("repos/alice/shared", "--method", "PATCH", "-F", "allow_forking=true")
     client.gh("repo", "fork", "alice/shared", "--fork-name", "forked",
-              "--clone=false", "--remote=false", who="bob")
+              "--clone=false", who="bob")
     fork = client.api("repos/bob/forked", who="bob")
     assert 2**37 <= fork["id"] < 2**53 and fork["fork"], fork
     assert fork["parent"]["full_name"] == "alice/shared", fork
