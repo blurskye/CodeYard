@@ -40,6 +40,7 @@ impl Owner {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Source {
+    pub reader_id: i64,
     pub repository: Repository,
     pub owner: Owner,
     pub allow_forking: bool,
@@ -51,6 +52,7 @@ impl Source {
     pub fn validate(&self, home: Prefix) -> Result<()> {
         let repo = &self.repository;
         Prefix::for_id(repo.id)?;
+        Prefix::for_id(self.reader_id)?;
         ensure!(
             repo.home_cell == i32::from(home.get())
                 && !repo.is_stub
@@ -112,5 +114,105 @@ impl Source {
         }
         super::stubs::repository(pool, home, &self.repository).await?;
         Ok(())
+    }
+}
+
+/// Original authority survives forwarding, storage preparation and the final write transaction.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Admission {
+    pub source: Source,
+    pub actor: crate::queries::credentials::Actor,
+    credential: String,
+}
+impl std::fmt::Debug for Admission {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("Fork admission ([redacted])")
+    }
+}
+impl Admission {
+    pub fn new(
+        source: Source,
+        actor: crate::queries::credentials::Actor,
+        credential: String,
+    ) -> Result<Self> {
+        let admission = Self {
+            source,
+            actor,
+            credential,
+        };
+        admission.proof()?;
+        ensure!(
+            admission.source.reader_id == admission.actor.user_id,
+            "Fork reader changed"
+        );
+        Ok(admission)
+    }
+    fn proof(&self) -> Result<super::authorization::Proof> {
+        use super::authorization::Proof;
+        use crate::queries::users::accounts::AccountCredential;
+        ensure!(
+            self.credential.len() <= 4096 && !self.credential.contains(['\r', '\n', '\0']),
+            "Invalid fork credential"
+        );
+        Ok(match self.actor.credential() {
+            Some(
+                AccountCredential::Token(id, hash) | AccountCredential::ForeignToken(id, hash),
+            ) => {
+                ensure!(
+                    codeyard_support::token_hash::token_hash(&self.credential) == hash,
+                    "Fork credential changed"
+                );
+                Proof::Token {
+                    home: Prefix::for_id(id)?,
+                    hash: hash.to_owned(),
+                }
+            }
+            Some(AccountCredential::Session(session)) => {
+                ensure!(session == self.credential, "Fork credential changed");
+                Proof::Session {
+                    home: codeyard_support::cells::Secret::cookie(session)?.cell,
+                    value: session.to_owned(),
+                }
+            }
+            None => anyhow::bail!("Fork requires its original account credential"),
+        })
+    }
+    pub fn header(&self) -> Result<(&'static str, String)> {
+        Ok(match self.proof()? {
+            super::authorization::Proof::Token { .. } => {
+                ("Authorization", format!("Bearer {}", self.credential))
+            }
+            super::authorization::Proof::Session { .. } => {
+                ("Cookie", format!("session_id={}", self.credential))
+            }
+            super::authorization::Proof::Ssh { .. } => unreachable!(),
+        })
+    }
+    pub async fn check(&self, pool: &crate::DbPool) -> Result<Source> {
+        let home = Prefix::new(u16::try_from(self.source.repository.home_cell)?);
+        self.source.validate(home)?;
+        ensure!(home != pool.cell_id(), "Fork source is native");
+        let proof = self.proof()?;
+        let provider = pool
+            .foreign_authorization()
+            .ok_or_else(|| anyhow::anyhow!("Fork source is unavailable"))?;
+        let source = provider
+            .repository_source(
+                self.source.owner.name(),
+                &self.source.repository.name,
+                &proof,
+            )
+            .await?
+            .ok_or(codeyard_support::credentials::AccountRestricted)?;
+        source.validate(home)?;
+        ensure!(
+            source.repository.id == self.source.repository.id
+                && source.reader_id == self.actor.user_id
+                && source.owner.object() == self.source.owner.object()
+                && (!source.repository.is_private || source.allow_forking),
+            codeyard_support::credentials::AccountRestricted
+        );
+        Ok(source)
     }
 }

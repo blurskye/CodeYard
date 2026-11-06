@@ -243,17 +243,52 @@ async fn insert_kind(
         return Ok(None);
     }
     // Lock the source first; a competing fork of it then waits here and sees this one.
-    let source = match input.source_id {
-        Some(id) => Some(fork_source(&mut tx, input.owner.actor_id, admin, id).await?),
-        None => None,
+    anyhow::ensure!(
+        admission.foreign_source.is_none() || input.source_id.is_some(),
+        RepositoryStorageRefusal::Denied
+    );
+    let source = match (input.source_id, admission.foreign_source) {
+        (Some(id), Some(foreign)) => {
+            anyhow::ensure!(
+                !gist
+                    && admission.advisory.is_none()
+                    && foreign.actor.user_id == creator
+                    && admission.authority == Some(&foreign.actor)
+                    && foreign.source.repository.id == id,
+                RepositoryStorageRefusal::Denied
+            );
+            let stored = sqlx::query_as::<_, Repository>(
+                "SELECT * FROM repositories WHERE id=$1 FOR NO KEY UPDATE",
+            )
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(RepositoryStorageRefusal::Denied)?;
+            anyhow::ensure!(
+                stored.is_stub
+                    && stored.home_cell == foreign.source.repository.home_cell
+                    && stored.home_cell != i32::from(pool.cell_id().get()),
+                RepositoryStorageRefusal::Denied
+            );
+            Some(
+                foreign
+                    .check(&codeyard_db_core::DbPool::Postgres(pool.clone()))
+                    .await?
+                    .repository,
+            )
+        }
+        (Some(id), None) => Some(fork_source(&mut tx, input.owner.actor_id, admin, id).await?),
+        (None, None) => None,
+        (None, Some(_)) => return Err(RepositoryStorageRefusal::Denied.into()),
     };
     anyhow::ensure!(
         source.as_ref().is_none_or(|source| source.is_gist == gist),
         RepositoryStorageRefusal::Denied
     );
-    if source
-        .as_ref()
-        .is_some_and(|source| source.storage_node_id != input.storage_node_id)
+    if admission.foreign_source.is_none()
+        && source
+            .as_ref()
+            .is_some_and(|source| source.storage_node_id != input.storage_node_id)
     {
         return Err(RepositoryStorageRefusal::StalePlacement.into());
     }
@@ -341,6 +376,18 @@ async fn insert_kind(
         grant_creator(&mut tx, input.owner, repository.id).await?;
         codeyard_db_core::cells::directory::postgres::repository(pool, &mut tx, repository).await?;
     }
+    if let Some(foreign) = admission.foreign_source {
+        let current = foreign
+            .check(&codeyard_db_core::DbPool::Postgres(pool.clone()))
+            .await?;
+        anyhow::ensure!(
+            (!current.repository.is_private || private)
+                && source.as_ref().is_some_and(
+                    |source| source.default_branch == current.repository.default_branch
+                ),
+            RepositoryStorageRefusal::StalePlacement
+        );
+    }
     if let Some(credential) = admission.authority.and_then(|actor| actor.credential()) {
         codeyard_db_identity::postgres::users::transitions::require_account(
             &mut tx,
@@ -360,4 +407,47 @@ pub async fn repository_visibility_locked(pool: &PgPool, repo_id: i64) -> Result
             .fetch_one(pool)
             .await?,
     )
+}
+
+/// Reads the native source with the same fork policy and retained credential used by creation.
+pub async fn read_fork_source(
+    pool: &PgPool,
+    actor: &codeyard_db_core::queries::credentials::Actor,
+    id: i64,
+) -> Result<Option<Repository>> {
+    let mut tx = pool.begin().await?;
+    codeyard_db_core::queries::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[actor.user_id],
+    )
+    .await?;
+    let admin: Option<bool> = sqlx::query_scalar("SELECT is_admin FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE")
+        .bind(actor.user_id).fetch_optional(&mut *tx).await?;
+    let Some(admin) = admin else {
+        return Ok(None);
+    };
+    let source = match fork_source(&mut tx, actor.user_id, admin, id).await {
+        Ok(source) => source,
+        Err(error) if error.is::<RepositoryStorageRefusal>() => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    if source.is_stub || source.is_gist || source.home_cell != i32::from(pool.cell_id().get()) {
+        return Ok(None);
+    }
+    if source.is_private {
+        let allowed: bool = sqlx::query_scalar("SELECT COALESCE((SELECT allow_forking FROM repository_features WHERE repo_id=$1),TRUE)")
+            .bind(id).fetch_one(&mut *tx).await?;
+        if !allowed {
+            return Ok(None);
+        }
+    }
+    if !codeyard_db_core::queries::postgres::credentials::repository(
+        &mut tx, actor, id, "contents", false,
+    )
+    .await?
+    {
+        return Ok(None);
+    }
+    tx.commit().await?;
+    Ok(Some(source))
 }

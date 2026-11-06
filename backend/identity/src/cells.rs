@@ -126,24 +126,16 @@ impl Local {
         else {
             return Ok(None);
         };
-        if !answer
-            .authority
-            .repository(user.id, &repository, "contents", false)?
-            || !crate::repository_access::can_read(&self.pool, Some(&user), &repository).await?
-        {
+        let Some(authorized) = codeyard_db_repos::repositories::creation::read_fork_source(
+            &self.pool,
+            &actor,
+            repository.id,
+        )
+        .await?
+        else {
             return Ok(None);
-        }
-        // Classic-token policy is owned by the resource organization, including foreign tokens.
-        if matches!(answer.authority, Authority::Classic) {
-            if let Some(org) = repository.owner_org_id {
-                if !codeyard_db_identity::fine_grained_tokens::policy(&self.pool, org)
-                    .await?
-                    .classic_allowed
-                {
-                    return Ok(None);
-                }
-            }
-        }
+        };
+        repository = authorized;
         let allow_forking = codeyard_db_repos::repositories::records::repository_features(
             &self.pool,
             repository.id,
@@ -179,13 +171,20 @@ impl Local {
             }
             _ => return Ok(None),
         };
-        let reader = crate::repository_access::credential_user(&self.pool, &actor, false).await?;
-        if !crate::repository_access::can_read(&self.pool, Some(&reader), &repository).await? {
+        let Some(current) = codeyard_db_repos::repositories::creation::read_fork_source(
+            &self.pool,
+            &actor,
+            repository.id,
+        )
+        .await?
+        else {
             return Ok(None);
-        }
+        };
+        repository = current;
         repository.disk_path.clear();
         repository.storage_node_id = None;
         let source = Source {
+            reader_id: actor.user_id,
             repository,
             owner,
             allow_forking,

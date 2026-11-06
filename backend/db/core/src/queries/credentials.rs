@@ -2,7 +2,7 @@ use crate::queries::users::accounts::AccountCredential;
 use crate::queries::users::accounts::OwnedAccountCredential;
 /// Bare IDs are trusted in-process calls. HTTP adapters must retain their original credential.
 /// The credential's own `Debug` redacts the session and token secret.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Actor {
     pub user_id: i64,
     pub credential: Option<OwnedAccountCredential>,

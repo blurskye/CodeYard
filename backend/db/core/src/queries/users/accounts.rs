@@ -6,7 +6,7 @@ pub enum AccountCredential<'a> {
 }
 
 /// An account credential retained across queues, owned tasks and authenticated RPC.
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum OwnedAccountCredential {
     Session(String),
     /// The token's id and stored hash, so a regenerated token stops the work it started.

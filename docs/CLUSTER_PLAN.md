@@ -172,7 +172,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Clippy 642e4e90dd194f728eed9b3b0fbaf20d and WASM
     95844ccaeecb4f5fae389147be54758a. Runtime
     5993a963beb74088a032f3f29c97fbdc covers the public cells round, changed library
-    crates, both-engine pointer contracts and the full cluster target; it is running.
+    crates, both-engine pointer contracts and the full cluster target. Its public
+    two-cell round passes all five checks without skips, including star counts/home
+    lists and outbox replay after SIGKILL; library/integration targets are running.
     The star-list follow-up retains native/foreign credential proofs, bounds card
     projection batches and tests malformed resource pages and a merged third browser
     page. Its checks pass: workspace
@@ -189,6 +191,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     report the same missing identity-to-db-orgs dependency, now declared.
     Recheck jobs are workspace 75d97024b4f44666a9f90ca4d05ee9b9, Clippy
     d8b75871128d4b1f94b7dcf4c1296ca6 and WASM 4159cd3c47b1446bb08fbb06763f85df.
+    All three pass. The next unchecked source retains
+    original fork proofs through both-engine creation transactions, shares native
+    source permission reads and tests access lost immediately before commit.
     Fork publication is not wired.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
     object pools, mentions/home inbox/email, and repository transfers/redirects.

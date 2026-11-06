@@ -145,6 +145,7 @@ pub async fn create_repo(
             owner: creation_owner,
             properties: &properties,
             admission: codeyard_db_repos::repositories::creation::CreationAdmission {
+                foreign_source: None,
                 authority: Some(&authority),
                 advisory: None,
             },
@@ -621,6 +622,7 @@ pub(crate) async fn create_repository(
                 owner: creation_owner,
                 properties: &property_values,
                 admission: codeyard_db_repos::repositories::creation::CreationAdmission {
+                    foreign_source: None,
                     authority: Some(&authority),
                     advisory: None,
                 },
@@ -739,6 +741,7 @@ async fn create_selection(
                 owner,
                 properties,
                 admission: codeyard_db_repos::repositories::creation::CreationAdmission {
+                    foreign_source: None,
                     authority: Some(authority),
                     advisory: None,
                 },

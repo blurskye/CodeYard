@@ -80,6 +80,7 @@ async fn private_fork_owned(
             owner: RepositoryCreationOwner::personal(actor),
             properties: &[],
             admission: CreationAdmission {
+                foreign_source: None,
                 authority: Some(&authority),
                 advisory: Some(ghsa),
             },

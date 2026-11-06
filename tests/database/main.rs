@@ -1,4 +1,5 @@
 mod account_transitions;
+mod cell_forks;
 mod cell_memberships;
 mod cell_stubs;
 mod cells;

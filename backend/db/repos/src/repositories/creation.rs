@@ -37,6 +37,7 @@ pub struct CreationAdmission<'a> {
     pub authority: Option<&'a codeyard_db_core::queries::credentials::Actor>,
     /// Only draft advisory remediation may have multiple forks per personal owner.
     pub advisory: Option<&'a str>,
+    pub foreign_source: Option<&'a codeyard_db_core::cells::repositories::Admission>,
 }
 
 pub struct NewRepository<'a> {
@@ -69,3 +70,7 @@ native_operation!(crate::postgres::repositories::creation::insert_gist_repositor
 native_operation!(crate::postgres::repositories::creation::repository_visibility_locked,
     crate::sqlite::repositories::creation::repository_visibility_locked,
     fn repository_visibility_locked(pool: &DbPool, repo_id: i64) -> Result<bool>);
+
+native_operation!(crate::postgres::repositories::creation::read_fork_source,
+    crate::sqlite::repositories::creation::read_fork_source,
+    fn read_fork_source(pool: &DbPool, actor: &codeyard_db_core::queries::credentials::Actor, id: i64) -> Result<Option<Repository>>);
