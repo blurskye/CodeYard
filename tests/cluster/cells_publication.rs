@@ -27,6 +27,7 @@ fn cell(prefix: Prefix, key: &NodeKey, server: &Server) -> Cell {
         write_rate: 0,
         maximum_database_bytes: 4_000_000_000_000,
         maximum_write_rate: 10_000,
+        read_regions: Vec::new(),
     }
 }
 async fn published_objects(directory: &PostgresDatabase, object: Object) -> i64 {
@@ -890,6 +891,7 @@ async fn capacity_reports_restore_fresh_placement_and_revoked_cells_cannot_refre
             write_rate: 0,
             maximum_database_bytes: 4_000_000_000_000,
             maximum_write_rate: 10_000,
+            read_regions: Vec::new(),
         })
         .await
         .unwrap();

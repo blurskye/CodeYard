@@ -151,6 +151,7 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
                 write_rate: 0,
                 maximum_database_bytes: 1000,
                 maximum_write_rate: 100,
+                read_regions: Vec::new(),
             })
             .await
             .unwrap();
@@ -217,6 +218,7 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
                 write_rate: 0,
                 maximum_database_bytes: 1000,
                 maximum_write_rate: 100,
+                read_regions: Vec::new(),
             })
             .await
             .unwrap();

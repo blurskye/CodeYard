@@ -202,8 +202,50 @@ pub struct Cell {
     pub write_rate: i64,
     pub maximum_database_bytes: i64,
     pub maximum_write_rate: i64,
+    /// Web nodes in other regions that serve this cell's reads from a local database replica
+    /// and Git copies, for organizations with presence there. Writes always go to `web_urls`.
+    /// Left out when empty, so routers that predate read regions still read the record.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub read_regions: Vec<ReadRegion>,
 }
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReadRegion {
+    pub region: String,
+    pub web_urls: Vec<String>,
+}
+
+pub const MAX_READ_REGIONS: usize = 16;
+
+/// A cell web address: HTTPS, or HTTP on loopback, with no path, query or credentials.
+fn web_url(address: &str) -> Result<String> {
+    ensure!(address.len() <= 2048, "Cell URL too long");
+    let url = url::Url::parse(address)?;
+    let local = matches!(url.host(), Some(url::Host::Ipv4(ip)) if ip.is_loopback())
+        || matches!(url.host(), Some(url::Host::Ipv6(ip)) if ip.is_loopback())
+        || url.host_str() == Some("localhost");
+    ensure!(
+        (url.scheme() == "https" || (url.scheme() == "http" && local))
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "Invalid cell URL"
+    );
+    Ok(url.as_str().trim_end_matches('/').to_owned())
+}
+
 impl Cell {
+    /// The web nodes that serve this cell's reads in `region`, when it has any there.
+    pub fn read_urls(&self, region: &str) -> Option<&[String]> {
+        self.read_regions
+            .iter()
+            .find(|read| read.region == region)
+            .map(|read| read.web_urls.as_slice())
+    }
     pub fn prepare(mut self) -> Result<Self> {
         ensure!(
             !self.name.is_empty()
@@ -225,23 +267,33 @@ impl Cell {
             "Invalid cell endpoints"
         );
         for address in &mut self.web_urls {
-            ensure!(address.len() <= 2048, "Cell URL too long");
-            let url = url::Url::parse(address)?;
-            let local = matches!(url.host(), Some(url::Host::Ipv4(ip)) if ip.is_loopback())
-                || matches!(url.host(), Some(url::Host::Ipv6(ip)) if ip.is_loopback())
-                || url.host_str() == Some("localhost");
-            ensure!(
-                (url.scheme() == "https" || (url.scheme() == "http" && local))
-                    && url.host_str().is_some()
-                    && url.username().is_empty()
-                    && url.password().is_none()
-                    && url.path() == "/"
-                    && url.query().is_none()
-                    && url.fragment().is_none(),
-                "Invalid cell URL"
-            );
-            *address = url.as_str().trim_end_matches('/').to_owned();
+            *address = web_url(address)?;
         }
+        ensure!(
+            self.read_regions.len() <= MAX_READ_REGIONS,
+            "Too many read regions"
+        );
+        for read in &mut self.read_regions {
+            validate_region(&read.region)?;
+            ensure!(
+                read.region != self.region
+                    && !read.web_urls.is_empty()
+                    && read.web_urls.len() <= MAX_ENDPOINTS,
+                "Invalid read region"
+            );
+            for address in &mut read.web_urls {
+                *address = web_url(address)?;
+            }
+            read.web_urls.sort();
+            read.web_urls.dedup();
+        }
+        self.read_regions.sort_by(|a, b| a.region.cmp(&b.region));
+        let regions = self.read_regions.len();
+        self.read_regions.dedup_by(|a, b| a.region == b.region);
+        ensure!(
+            self.read_regions.len() == regions,
+            "A read region is listed twice"
+        );
         for address in self
             .ssh_addresses
             .iter_mut()
@@ -288,6 +340,62 @@ pub struct Location {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cell_records_without_read_regions_keep_the_older_shape() {
+        let older = serde_json::json!({
+            "id": 0, "name": "zero", "region": "a", "state": "open",
+            "web_urls": ["http://127.0.0.1:1"], "ssh_addresses": [], "rpc_addresses": [],
+            "node_keys": ["a".repeat(64)], "database_bytes": 0, "write_rate": 0,
+            "maximum_database_bytes": 10, "maximum_write_rate": 10
+        });
+        let cell: Cell = serde_json::from_value(older.clone()).unwrap();
+        let cell = cell.prepare().unwrap();
+        assert!(cell.read_regions.is_empty());
+        assert_eq!(serde_json::to_value(&cell).unwrap(), older);
+        let mut nearby = cell.clone();
+        nearby.read_regions = vec![ReadRegion {
+            region: "b".into(),
+            web_urls: vec!["http://127.0.0.1:2/".into()],
+        }];
+        let nearby = nearby.prepare().unwrap();
+        assert_eq!(
+            nearby.read_urls("b"),
+            Some(&["http://127.0.0.1:2".to_owned()][..])
+        );
+        assert_eq!(nearby.read_urls("a"), None);
+        for hostile in [
+            vec![ReadRegion {
+                region: "a".into(),
+                web_urls: vec!["http://127.0.0.1:2".into()],
+            }],
+            vec![ReadRegion {
+                region: "b".into(),
+                web_urls: vec![],
+            }],
+            vec![ReadRegion {
+                region: "b".into(),
+                web_urls: vec!["http://example.test".into()],
+            }],
+            vec![ReadRegion {
+                region: "B".into(),
+                web_urls: vec!["http://127.0.0.1:2".into()],
+            }],
+            vec![
+                ReadRegion {
+                    region: "b".into(),
+                    web_urls: vec!["http://127.0.0.1:2".into()],
+                },
+                ReadRegion {
+                    region: "b".into(),
+                    web_urls: vec!["http://127.0.0.1:3".into()],
+                },
+            ],
+        ] {
+            let mut cell = cell.clone();
+            cell.read_regions = hostile;
+            assert!(cell.prepare().is_err());
+        }
+    }
     #[test]
     fn bot_names_share_the_directory_validator_and_only_name_users() {
         let bot = Key::new(KeyKind::Name, "Actions[BoT]").unwrap();

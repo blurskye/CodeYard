@@ -69,6 +69,7 @@ fn cell(prefix: Prefix, key: &NodeKey, rpc: Vec<String>) -> Cell {
         write_rate: 0,
         maximum_database_bytes: 1000,
         maximum_write_rate: 100,
+        read_regions: Vec::new(),
     }
 }
 #[tokio::test]

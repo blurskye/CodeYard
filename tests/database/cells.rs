@@ -266,6 +266,7 @@ async fn renewing_a_range_retries_its_directory_reservation_and_rolls_back_parti
             write_rate: 0,
             maximum_database_bytes: 1000,
             maximum_write_rate: 100,
+            read_regions: Vec::new(),
         })
         .await
         .unwrap();

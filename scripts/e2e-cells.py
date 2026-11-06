@@ -564,6 +564,47 @@ def global_search(deployment, client, tokens, http_get):
     converge(90)
 
 
+def presence_and_rollout(deployment, client):
+    """Operators add and remove org presence by name, and roll a change out to cells in waves."""
+    def operator(*arguments, env=None):
+        return subprocess.run([str(deployment.args.binary), *map(str, arguments)],
+                              env=env or deployment.settings["directory"], cwd=deployment.root / "directory",
+                              stdin=subprocess.DEVNULL, text=True, capture_output=True, timeout=300)
+
+    def presence(*arguments):
+        return json.loads(deployment.command("directory", "cell", "directory", "presence",
+                                             "--organization", "cell-org", "--region", "b", *arguments).stdout)
+    added = presence()
+    assert added["changed"] and added["regions"] == ["b"], added
+    again = presence()
+    assert not again["changed"] and again["regions"] == ["b"], again
+    removed = presence("--remove")
+    assert removed["changed"] and removed["regions"] == [], removed
+    for hostile in (("--organization", "alice", "--region", "b"), ("--organization", "cell-org", "--region", "B!")):
+        refused = operator("cell", "directory", "presence", *hostile)
+        assert refused.returncode != 0 and not refused.stdout, refused.stdout
+
+    log = deployment.root / "rollout.log"
+    script = deployment.root / "rollout-apply.sh"
+    script.write_text('#!/bin/sh\nprintf "%s %s\\n" "$1" "$2" >> "$ROLLOUT_LOG"\n[ "$1" != "$ROLLOUT_FAIL" ]\n')
+    script.chmod(0o700)
+    env = dict(deployment.settings["directory"], ROLLOUT_LOG=str(log), ROLLOUT_FAIL="0")
+    stopped = operator("cell", "directory", "rollout", "--apply", script, "--health-seconds", "30", env=env)
+    assert stopped.returncode != 0, stopped.stdout
+    reports = [json.loads(line) for line in stopped.stdout.splitlines()]
+    assert [(r["wave"], r["cell"], r["result"]) for r in reports] == [(1, 0, "failed")], reports
+    assert log.read_text() == "0 zero\n", "a failing canary must leave later cells unchanged"
+    log.unlink()
+    env["ROLLOUT_FAIL"] = "none"
+    finished = operator("cell", "directory", "rollout", "--apply", script, "--canary", "1", "--health-seconds", "30", env=env)
+    assert finished.returncode == 0, finished.stderr[-3000:]
+    reports = [json.loads(line) for line in finished.stdout.splitlines()]
+    assert [(r["wave"], r["cell"], r["result"]) for r in reports] == [(1, 1, "updated"), (2, 0, "updated")], reports
+    assert log.read_text() == "1 one\n0 zero\n"
+    client.checked("org presence is set by name and refused for users and bad regions; a rollout stops at "
+                   "a failing canary and otherwise covers every cell in waves after health checks")
+
+
 def acceptance(deployment):
     github = load("codeyard_cells_github", ROOT / "scripts/e2e-github.py")
     assert json.loads((deployment.root / "alice.json").read_text())["session_id"] == deployment.existing_session
@@ -815,6 +856,8 @@ def acceptance(deployment):
         assert client.gh("issue", "create", "-R", "alice/shared", "--title", "Must not be written", "--body", "revoked", who="bob", ok=(1,)).returncode == 1
         assert all(issue["title"] != "Must not be written" for issue in client.data("issue", "list", "-R", "alice/shared", "--json", "title"))
         client.checked("revoked home token stops foreign reads and writes within the cache lifetime")
+        with client.check("org presence and rollout waves through the operator commands"):
+            presence_and_rollout(deployment, client)
         assert not client.failures, client.diagnostics
 
 

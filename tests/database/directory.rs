@@ -19,6 +19,7 @@ fn cell(prefix: u16, key: char) -> Cell {
         write_rate: 0,
         maximum_database_bytes: 1000,
         maximum_write_rate: 100,
+        read_regions: Vec::new(),
     }
 }
 

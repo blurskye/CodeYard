@@ -24,6 +24,7 @@ fn cell(prefix: Prefix, key: &NodeKey) -> Cell {
         write_rate: 0,
         maximum_database_bytes: 4_000_000_000_000,
         maximum_write_rate: 10_000,
+        read_regions: Vec::new(),
     }
 }
 fn repository(id: i64, version: (i64, i64), name: &str, public: bool, readers: &[i64]) -> Batch {

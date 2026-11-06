@@ -31,6 +31,7 @@ async fn directory_transport_pins_keys_and_read_only_routers_cannot_claim_names(
             write_rate: 0,
             maximum_database_bytes: 1000,
             maximum_write_rate: 100,
+            read_regions: Vec::new(),
         })
         .await
         .unwrap();
@@ -242,6 +243,7 @@ async fn directory_transport_pins_keys_and_read_only_routers_cannot_claim_names(
             write_rate: 0,
             maximum_database_bytes: 1000,
             maximum_write_rate: 100,
+            read_regions: Vec::new(),
         })
         .await
         .unwrap();

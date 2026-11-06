@@ -11,6 +11,7 @@ CREATE TABLE directory_cells (
     write_rate BIGINT NOT NULL CHECK(write_rate>=0),
     maximum_database_bytes BIGINT NOT NULL CHECK(maximum_database_bytes BETWEEN 1 AND 4000000000000),
     maximum_write_rate BIGINT NOT NULL CHECK(maximum_write_rate BETWEEN 1 AND 10000),
+    read_regions JSONB NOT NULL DEFAULT '[]' CHECK(jsonb_typeof(read_regions)='array' AND jsonb_array_length(read_regions)<=16 AND octet_length(read_regions::text)<=4194304),
     observed_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 CREATE INDEX directory_cells_placement ON directory_cells(region,state,database_bytes,id);
@@ -149,3 +150,15 @@ CREATE TABLE search_packages (
     PRIMARY KEY(repository_id,provided,ecosystem,name)
 );
 CREATE INDEX search_packages_name ON search_packages(ecosystem,name,provided);
+
+-- Regions where an organization's members read from its home cell's regional web nodes.
+-- Writes still go to the one home cell. Rows appear by hand or from counted member requests.
+CREATE TABLE directory_presence (
+    kind TEXT NOT NULL DEFAULT 'organization' CHECK(kind='organization'),
+    organization_id BIGINT NOT NULL,
+    region TEXT NOT NULL CHECK(octet_length(region) BETWEEN 1 AND 63),
+    manual BOOLEAN NOT NULL,
+    added_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY(organization_id,region),
+    FOREIGN KEY(kind,organization_id) REFERENCES directory_objects(kind,id) ON DELETE CASCADE
+);

@@ -187,6 +187,7 @@ async fn two_cells_split_queries_keep_node_positions_and_validate_before_ordered
                 write_rate: 0,
                 maximum_database_bytes: 1000,
                 maximum_write_rate: 100,
+                read_regions: Vec::new(),
             })
             .await
             .unwrap();

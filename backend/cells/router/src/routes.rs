@@ -36,6 +36,15 @@ impl std::ops::Deref for ReadyCell {
     }
 }
 impl ReadyCell {
+    /// The same cell reached through its web nodes in `region`, for reads only.
+    pub fn reads_in(&self, region: &str) -> Option<Self> {
+        let urls = self.0.read_urls(region)?;
+        Some(Self(Arc::new(Cell {
+            web_urls: urls.to_vec(),
+            read_regions: Vec::new(),
+            ..(*self.0).clone()
+        })))
+    }
     pub(crate) fn new(cell: Cell) -> Result<Self> {
         let cell = cell.prepare().map_err(|_| Failure::Unavailable)?;
         ensure!(cell.state != State::Disabled, Failure::Unavailable);
@@ -48,12 +57,14 @@ enum RouteKey {
     Key([u8; 32]),
     Home(&'static str, i64),
     Cell(Prefix),
+    Presence(i64),
 }
 #[derive(Clone)]
 enum Value {
     Location(Location),
     Home(Prefix),
     Cell(Arc<Cell>),
+    Regions(Arc<[String]>),
 }
 struct Entry {
     value: Value,
@@ -93,6 +104,17 @@ impl Cache {
                 bytes += strings.capacity() * size_of::<String>();
                 bytes += strings.iter().map(String::capacity).sum::<usize>();
             }
+            for read in &cell.read_regions {
+                bytes += size_of::<codeyard_model::cells::ReadRegion>() + read.region.capacity();
+                bytes += read.web_urls.capacity() * size_of::<String>();
+                bytes += read.web_urls.iter().map(String::capacity).sum::<usize>();
+            }
+        }
+        if let Value::Regions(regions) = &value {
+            bytes += regions
+                .iter()
+                .map(|region| size_of::<String>() + region.len())
+                .sum::<usize>();
         }
         if let Some(old) = self.entries.remove(&key) {
             self.bytes -= old.bytes;
@@ -205,6 +227,30 @@ impl Routes {
         };
         Ok(Some(self.cell(cell).await?.ok_or(Failure::Unavailable)?))
     }
+    /// The regions where an organization reads from its home cell's regional web nodes.
+    pub async fn presence(&self, organization: i64) -> Result<Arc<[String]>> {
+        let key = RouteKey::Presence(organization);
+        if let Some(Value::Regions(regions)) = self.get(key) {
+            return Ok(regions);
+        }
+        let Reply::Regions(regions) = self
+            .directory
+            .request(&Request::Presence { organization })
+            .await?
+        else {
+            anyhow::bail!(Failure::Unavailable);
+        };
+        ensure!(
+            regions.len() as i64 <= codeyard_db_directory::MAXIMUM_PRESENCE_REGIONS
+                && regions
+                    .iter()
+                    .all(|region| codeyard_model::cells::validate_region(region).is_ok()),
+            Failure::Unavailable
+        );
+        let regions: Arc<[String]> = regions.into();
+        self.put(key, Value::Regions(regions.clone()));
+        Ok(regions)
+    }
     /// Placement is never cached; the reservation checks the live cell again at commit.
     pub async fn place(&self, region: &str) -> Result<Option<ReadyCell>> {
         codeyard_model::cells::validate_region(region).map_err(|_| Failure::Invalid)?;
@@ -279,6 +325,7 @@ mod tests {
             write_rate: 0,
             maximum_database_bytes: 1,
             maximum_write_rate: 1,
+            read_regions: Vec::new(),
         };
         cache.put(key, Value::Cell(Arc::new(large.clone())), now);
         assert!(

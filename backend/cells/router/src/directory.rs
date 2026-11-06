@@ -63,6 +63,9 @@ pub enum Request {
     Search {
         query: search::Query,
     },
+    Presence {
+        organization: i64,
+    },
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "result", content = "value", rename_all = "snake_case")]
@@ -76,6 +79,7 @@ pub enum Reply {
     Done,
     Indexed(search::Indexed),
     Results(search::Results),
+    Regions(Vec<String>),
     Error(Failure),
 }
 #[derive(Debug, Serialize, Deserialize, thiserror::Error)]
@@ -236,6 +240,9 @@ async fn handle(directory: &Directory, peer: &str, request: Request) -> Result<R
         }
         Request::Index { batch } => Reply::Indexed(directory.index(peer, &batch).await?),
         Request::Search { query } => Reply::Results(directory.search(peer, &query).await?),
+        Request::Presence { organization } => {
+            Reply::Regions(directory.presence_for(Some(peer), organization).await?)
+        }
     })
 }
 

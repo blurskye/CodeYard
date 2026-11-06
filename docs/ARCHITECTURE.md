@@ -1036,8 +1036,8 @@ outbox by cursor. No message bus until the consumers need one.
 | Code search | the same index, holding default-branch text files (up to 2,000 files and 16 MiB per repository), rewritten after a push | outbox delivery | under a minute |
 | User, label, topic, commit search | the local cell | none | none |
 | Activity feed | read from the event index when viewed, no copy per follower | outbox cursor | seconds |
-| Explore, trending | hourly batch into a table copied to every region | outbox cursor | an hour |
-| Dependency graph, "used by" | each cell parses manifests; a global index answers dependents | outbox cursor | minutes |
+| Explore, trending | the search index's public repository documents, ranked by stars or creation | outbox delivery | under a minute |
+| Dependency graph, "used by" | each cell parses manifests; the search index keeps each public repository's packages and answers dependents | outbox delivery | under a minute |
 | Security advisories | one dataset copied to every cell and matched locally | pull | minutes |
 | Stars, follows | rows and count in the target's cell, a pointer in the actor's home cell | outbox delivery | seconds |
 

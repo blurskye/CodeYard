@@ -16,7 +16,7 @@ use axum::{
 };
 use codeyard_model::{
     cell_routes::{Route, Rule},
-    cells::{validate_region, KeyKind},
+    cells::{validate_region, Key, KeyKind, ObjectKind},
 };
 use codeyard_support::cells::{Prefix, Secret};
 use serde_json::{json, Value};
@@ -147,6 +147,10 @@ impl Frontend {
             let body = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
             return self.graphql.execute(&parts.headers, body).await;
         }
+        let owner = match &rule {
+            Rule::Name(parameter) => Some(matched.parameter(parameter)?.to_owned()),
+            _ => None,
+        };
         let target = match rule {
             Rule::Name(_) | Rule::Id { .. } => self.routes.for_parameter(&matched).await?,
             Rule::PackagePath(parameter) => {
@@ -212,15 +216,100 @@ impl Frontend {
         let Some(target) = target else {
             return Ok(error(StatusCode::NOT_FOUND, "Not Found"));
         };
-        self.transport
-            .forward(
-                &target,
-                credential
-                    .as_ref()
-                    .map_or("", |credential| credential.value()),
-                request,
-            )
-            .await
+        let credential = credential
+            .as_ref()
+            .map_or("", |credential| credential.value());
+        if let Some(nearby) = self.nearby(owner.as_deref(), &target, &request).await {
+            return self.read_nearby(nearby, &target, credential, request).await;
+        }
+        self.transport.forward(&target, credential, request).await
+    }
+    /// An organization's reads go to its home cell's web nodes in this router's region when it
+    /// has presence here. Writes, upgrades and Git negotiations of unknown size go home, and so
+    /// does every request when the directory cannot answer.
+    async fn nearby(
+        &self,
+        owner: Option<&str>,
+        target: &ReadyCell,
+        request: &Request<Body>,
+    ) -> Option<ReadyCell> {
+        if !reads_only(request, self.config.maximum_control_bytes) {
+            return None;
+        }
+        let nearby = target.reads_in(&self.config.region)?;
+        let key = Key::new(KeyKind::Name, owner?).ok()?;
+        let location = self.routes.location(&key).await.ok()??;
+        if location.object.kind != ObjectKind::Organization {
+            return None;
+        }
+        let regions = self.routes.presence(location.object.id).await.ok()?;
+        regions
+            .iter()
+            .any(|region| *region == self.config.region)
+            .then_some(nearby)
+    }
+    /// A read is repeated at the home cell when the regional web nodes cannot answer it.
+    async fn read_nearby(
+        &self,
+        nearby: ReadyCell,
+        home: &ReadyCell,
+        credential: &str,
+        request: Request<Body>,
+    ) -> Result<Response> {
+        let (parts, body) = request.into_parts();
+        let body = tokio::time::timeout(
+            Duration::from_secs(self.config.control_seconds),
+            to_bytes(body, self.config.maximum_control_bytes),
+        )
+        .await
+        .map_err(|_| Failure::Invalid)?
+        .map_err(|_| Failure::Invalid)?;
+        let copy = || {
+            let mut request = Request::new(Body::from(body.clone()));
+            *request.method_mut() = parts.method.clone();
+            *request.uri_mut() = parts.uri.clone();
+            *request.version_mut() = parts.version;
+            *request.headers_mut() = parts.headers.clone();
+            request
+        };
+        match self.transport.forward(&nearby, credential, copy()).await {
+            Ok(response)
+                if !matches!(
+                    response.status(),
+                    StatusCode::BAD_GATEWAY
+                        | StatusCode::SERVICE_UNAVAILABLE
+                        | StatusCode::GATEWAY_TIMEOUT
+                ) =>
+            {
+                Ok(response)
+            }
+            _ => {
+                tracing::debug!(cell = %home.id, region = %self.config.region, "A regional read went to the home cell");
+                self.transport.forward(home, credential, copy()).await
+            }
+        }
+    }
+}
+/// GET and HEAD without a body, or a Git fetch negotiation of a known, bounded size.
+fn reads_only(request: &Request<Body>, limit: usize) -> bool {
+    let headers = request.headers();
+    if headers.contains_key(header::UPGRADE) || headers.contains_key(header::TRANSFER_ENCODING) {
+        return false;
+    }
+    let length = match headers.get(header::CONTENT_LENGTH) {
+        None => Some(0),
+        Some(value) => value
+            .to_str()
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok()),
+    };
+    match *request.method() {
+        Method::GET | Method::HEAD => length == Some(0),
+        Method::POST => {
+            request.uri().path().ends_with("/git-upload-pack")
+                && length.is_some_and(|length| length > 0 && length <= limit)
+        }
+        _ => false,
     }
 }
 fn fields(bytes: &[u8]) -> Result<BTreeMap<String, String>> {

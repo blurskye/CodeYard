@@ -378,6 +378,7 @@ mod tests {
             write_rate: 0,
             maximum_database_bytes: 100,
             maximum_write_rate: 100,
+            read_regions: Vec::new(),
         })
         .unwrap();
         let transport = Transport::new(Config {

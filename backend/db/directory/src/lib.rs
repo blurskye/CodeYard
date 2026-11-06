@@ -5,7 +5,10 @@ use codeyard_support::cells::Prefix;
 use sqlx::{Postgres, Transaction};
 use std::{future::Future, time::Duration};
 
+pub use presence::MAXIMUM_PRESENCE_REGIONS;
+
 mod claims;
+mod presence;
 mod registry;
 mod search;
 

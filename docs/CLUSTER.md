@@ -793,6 +793,42 @@ the index is down, pages keep working and search answers 503. To rebuild it, run
 --after <id> --limit 100` with the returned `after` until `count` is zero. Search for users,
 labels, topics and commits, and GraphQL search, still read only the local cell.
 
+Explore, dashboard Trending and a public repository's "Used by" list read the same index,
+so they cover every cell; when the index cannot answer they list the local cell. "Used by"
+matches the packages a public repository depends on against the npm package named by
+another public repository's root `package.json`. Dependabot alerts need no shared data:
+give every cell the same OSV source, and each cell matches its own repositories when a
+new advisory arrives.
+
+### Regions
+
+Each cell has one region, and a router has `CELL_REGION`. A signup through a router goes
+to the least full open cell of the router's region; an existing account stays in its home
+cell whichever region it works from.
+
+An organization can read from another region. Register its home cell's web nodes there
+with `cell directory register ... --read-region b=https://zero-b.example`, once per node.
+Those nodes are ordinary web nodes of the same cell: they run with the cell's primary
+`DATABASE_URL`, a `DATABASE_READ_URL` for the region's PostgreSQL replica, and storage
+nodes holding copies of the organization's repositories. Then turn presence on with
+`cell directory presence --organization acme --region b`, and off with `--remove`. A
+router in region B sends the organization's GET requests and Git fetch negotiations to
+those nodes and falls back to the home nodes when they do not answer. Writes, pushes and
+fetches over 1 MiB of negotiation always go home. The cell's read routing keeps a
+credential on the primary for a few seconds after it writes, so users see their own
+changes. Presence is set by hand for now.
+
+When a region is lost, restart its cells from their copies in the paired region, run
+`codeyard repo verify --repair` on each, and register each cell again with the paired
+region's web addresses. Routers follow within their 60-second route cache.
+
+`cell directory rollout --apply <program>` updates every enabled cell in waves: a canary
+(`--canary <prefix>`, or the lowest prefix), then up to 1%, 10% and the rest. It runs the
+program with each cell's prefix and name, then waits for every web node of the wave to
+answer `/health`. The first failure stops it and leaves later cells unchanged. A schema
+change goes out as expand first and contract in a later release, so the old and new
+binaries both work during the rollout.
+
 Remote membership grants/deletes now queue home pointers in their own transaction. Pointers
 carry ordered event IDs and never grant resource access. The receiving home rechecks the live
 cell key and both directory homes at commit; duplicate and older deliveries are harmless.

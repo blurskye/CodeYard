@@ -191,6 +191,32 @@ pub enum DirectoryCommand {
         maximum_database_bytes: i64,
         #[arg(long, default_value_t = 10_000_i64)]
         maximum_write_rate: i64,
+        /// A web node in another region that serves this cell's reads, as `region=url`.
+        /// Repeat it for each node.
+        #[arg(long)]
+        read_region: Vec<String>,
+    },
+    /// Serve an organization's reads from its home cell's web nodes in a region, or stop.
+    Presence {
+        #[arg(long)]
+        organization: String,
+        #[arg(long)]
+        region: String,
+        #[arg(long)]
+        remove: bool,
+    },
+    /// Update every cell in waves: a canary, then 1%, 10% and the rest. `--apply` runs once per
+    /// cell with its prefix and name, and each cell must answer `/health` before the next
+    /// wave. The first failure stops the rollout and leaves later cells unchanged.
+    Rollout {
+        #[arg(long)]
+        apply: std::path::PathBuf,
+        #[arg(long)]
+        canary: Option<Prefix>,
+        #[arg(long, default_value_t = 1800, value_parser = clap::value_parser!(u64).range(1..=86400))]
+        apply_seconds: u64,
+        #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u64).range(1..=3600))]
+        health_seconds: u64,
     },
     /// Empty the global search index; every cell then runs `cell search-reindex`.
     SearchReset,
@@ -276,7 +302,21 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
                 open,
                 maximum_database_bytes,
                 maximum_write_rate,
+                read_region,
             } => {
+                let mut read_regions: Vec<codeyard_model::cells::ReadRegion> = Vec::new();
+                for value in read_region {
+                    let (region, url) = value
+                        .split_once('=')
+                        .ok_or_else(|| anyhow::anyhow!("--read-region takes region=url"))?;
+                    match read_regions.iter_mut().find(|read| read.region == region) {
+                        Some(read) => read.web_urls.push(url.to_owned()),
+                        None => read_regions.push(codeyard_model::cells::ReadRegion {
+                            region: region.to_owned(),
+                            web_urls: vec![url.to_owned()],
+                        }),
+                    }
+                }
                 directory
                     .register_cell(Cell {
                         id: *prefix,
@@ -291,9 +331,55 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
                         write_rate: 0,
                         maximum_database_bytes: *maximum_database_bytes,
                         maximum_write_rate: *maximum_write_rate,
+                        read_regions,
                     })
                     .await?;
                 println!("Cell {prefix} registered.");
+            }
+            DirectoryCommand::Presence {
+                organization,
+                region,
+                remove,
+            } => {
+                let key = codeyard_model::cells::Key::new(
+                    codeyard_model::cells::KeyKind::Name,
+                    organization,
+                )?;
+                let location = directory
+                    .lookup(&key)
+                    .await?
+                    .filter(|location| {
+                        location.object.kind == codeyard_model::cells::ObjectKind::Organization
+                    })
+                    .ok_or_else(|| anyhow::anyhow!("No organization is named {organization}"))?;
+                let changed = directory
+                    .set_presence(location.object.id, region, !remove)
+                    .await?;
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "organization": organization,
+                        "region": region,
+                        "present": !remove,
+                        "changed": changed,
+                        "regions": directory.presence(location.object.id).await?,
+                    })
+                );
+            }
+            DirectoryCommand::Rollout {
+                apply,
+                canary,
+                apply_seconds,
+                health_seconds,
+            } => {
+                rollout(
+                    &directory,
+                    apply,
+                    *canary,
+                    std::time::Duration::from_secs(*apply_seconds),
+                    std::time::Duration::from_secs(*health_seconds),
+                )
+                .await?
             }
             DirectoryCommand::SearchReset => {
                 directory.reset_search().await?;
@@ -311,6 +397,118 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
     .await;
     directory.close().await;
     result
+}
+
+/// The rollout waves for `count` cells: one canary, then up to 1%, 10% and all of them.
+fn waves(count: usize) -> Vec<usize> {
+    let mut sizes = Vec::new();
+    let mut done = 0;
+    for target in [1, count.div_ceil(100), count.div_ceil(10), count] {
+        let target = target.min(count);
+        if target > done {
+            sizes.push(target - done);
+            done = target;
+        }
+    }
+    sizes
+}
+
+async fn rollout(
+    directory: &codeyard_db_directory::Directory,
+    apply: &Path,
+    canary: Option<Prefix>,
+    apply_limit: std::time::Duration,
+    health_limit: std::time::Duration,
+) -> Result<()> {
+    use codeyard_model::cells::State;
+    const MAXIMUM_CELLS: usize = 65_536;
+    let mut cells = Vec::new();
+    let mut after = None;
+    loop {
+        let page = directory.cells(after, 100).await?;
+        after = page.last().map(|cell| cell.id);
+        let last = page.len() < 100;
+        cells.extend(
+            page.into_iter()
+                .filter(|cell| cell.state != State::Disabled),
+        );
+        anyhow::ensure!(cells.len() <= MAXIMUM_CELLS, "Too many cells to roll out");
+        if last {
+            break;
+        }
+    }
+    if let Some(canary) = canary {
+        let index = cells
+            .iter()
+            .position(|cell| cell.id == canary)
+            .ok_or_else(|| anyhow::anyhow!("The canary {canary} is not an enabled cell"))?;
+        let cell = cells.remove(index);
+        cells.insert(0, cell);
+    }
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()?;
+    let mut cells = cells.into_iter();
+    for (wave, size) in waves(cells.len()).into_iter().enumerate() {
+        let wave = wave + 1;
+        let batch: Vec<_> = cells.by_ref().take(size).collect();
+        for cell in &batch {
+            let applied = tokio::time::timeout(
+                apply_limit,
+                tokio::process::Command::new(apply)
+                    .arg(cell.id.to_string())
+                    .arg(&cell.name)
+                    .stdin(std::process::Stdio::null())
+                    .kill_on_drop(true)
+                    .status(),
+            )
+            .await;
+            let failure = match applied {
+                Ok(Ok(status)) if status.success() => None,
+                Ok(Ok(status)) => Some(format!("the update exited with {status}")),
+                Ok(Err(error)) => Some(format!("the update did not start: {error}")),
+                Err(_) => Some("the update ran past its time limit".to_owned()),
+            };
+            if let Some(reason) = failure {
+                println!(
+                    "{}",
+                    serde_json::json!({"wave": wave, "cell": cell.id, "name": cell.name, "result": "failed", "reason": reason})
+                );
+                anyhow::bail!("Rollout stopped at wave {wave}; later cells were not changed");
+            }
+        }
+        for cell in &batch {
+            let deadline = tokio::time::Instant::now() + health_limit;
+            'nodes: for url in &cell.web_urls {
+                loop {
+                    let healthy = client
+                        .get(format!("{url}/health"))
+                        .send()
+                        .await
+                        .is_ok_and(|response| response.status().is_success());
+                    if healthy {
+                        continue 'nodes;
+                    }
+                    if tokio::time::Instant::now() >= deadline {
+                        println!(
+                            "{}",
+                            serde_json::json!({"wave": wave, "cell": cell.id, "name": cell.name, "result": "failed", "reason": format!("{url} is not healthy")})
+                        );
+                        anyhow::bail!(
+                            "Rollout stopped at wave {wave}; later cells were not changed"
+                        );
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+            println!(
+                "{}",
+                serde_json::json!({"wave": wave, "cell": cell.id, "name": cell.name, "result": "updated"})
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Native CLI constructors use the same pinned directory client as the server.
@@ -331,5 +529,17 @@ pub fn attach_directory(pool: &DbPool, state: &Path) -> Result<()> {
             );
             Ok(())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rollout_waves_start_with_one_canary_and_cover_every_cell_once() {
+        assert_eq!(super::waves(0), Vec::<usize>::new());
+        assert_eq!(super::waves(1), vec![1]);
+        assert_eq!(super::waves(2), vec![1, 1]);
+        assert_eq!(super::waves(20), vec![1, 1, 18]);
+        assert_eq!(super::waves(1000), vec![1, 9, 90, 900]);
     }
 }
