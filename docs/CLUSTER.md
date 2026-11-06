@@ -816,7 +816,18 @@ router in region B sends the organization's GET requests and Git fetch negotiati
 those nodes and falls back to the home nodes when they do not answer. Writes, pushes and
 fetches over 1 MiB of negotiation always go home. The cell's read routing keeps a
 credential on the primary for a few seconds after it writes, so users see their own
-changes. Presence is set by hand for now.
+changes.
+
+A cell can also set presence itself. Each router stamps `x-codeyard-region` on what it
+forwards; the cell keeps that header only from its `HTTP_TRUSTED_PROXY_IPS`, so list the
+routers there. Web nodes count authenticated requests per account, region and day in
+`cell_request_counts` (kept 60 days), and once an hour one of them checks the "Organization
+regions" policy in site settings. A region is added when the organization's members sent
+at least the set share of at least the minimum requests on the set number of days in a
+row, and removed after the set number of days below the removal share. The policy starts
+paused and in dry run; dry run only writes audit entries. Every change is audited, the
+home region is never added, an organization keeps at most 16 regions, and presence set
+by hand is never removed automatically. SSH requests are not counted.
 
 When a region is lost, restart its cells from their copies in the paired region, run
 `codeyard repo verify --repair` on each, and register each cell again with the paired

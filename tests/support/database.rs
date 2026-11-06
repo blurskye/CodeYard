@@ -15,14 +15,14 @@ use std::{
 
 pub enum Database {
     Postgres(Box<production::Fixture>),
-    Sqlite(native::NativeDatabase),
+    Sqlite(Box<native::NativeDatabase>),
 }
 impl Database {
     pub async fn new(pg: bool) -> Self {
         if pg {
             Self::Postgres(Box::new(production::Fixture::new().await))
         } else {
-            Self::Sqlite(native::NativeDatabase::new().await)
+            Self::Sqlite(Box::new(native::NativeDatabase::new().await))
         }
     }
     /// Empty repository catalogue; the regular PostgreSQL fixture seeds a CI repository.

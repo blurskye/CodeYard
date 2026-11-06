@@ -203,15 +203,14 @@ pub(crate) async fn settings_post(
             .await;
         }
         let number = |name| field(&form, name).parse::<i64>().ok();
-        let small = |name: &str| number(name).and_then(|value| i32::try_from(value).ok());
         let policy = (|| {
             Some(codeyard_support::cluster::PresencePolicy {
-                window_days: small("presence_window")?,
-                share_percent: small("presence_share")?,
+                window_days: i32::try_from(number("presence_window")?).ok()?,
+                share_percent: i32::try_from(number("presence_share")?).ok()?,
                 minimum_requests: number("presence_minimum")?,
-                held_days: small("presence_held")?,
-                remove_percent: small("presence_remove_share")?,
-                remove_days: small("presence_remove_days")?,
+                held_days: i32::try_from(number("presence_held")?).ok()?,
+                remove_percent: i32::try_from(number("presence_remove_share")?).ok()?,
+                remove_days: i32::try_from(number("presence_remove_days")?).ok()?,
                 dry_run: form.contains_key("presence_dry_run"),
                 paused: form.contains_key("presence_paused"),
             })

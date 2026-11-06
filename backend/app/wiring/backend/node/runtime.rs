@@ -148,10 +148,8 @@ pub(crate) async fn shutdown_signal() -> Result<()> {
 /// and replica loop to stop. These share this one deadline.
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 
-/// Runs the expiry sweeps every few minutes: pending uploads whose window passed,
-/// old transfer accounting, expired identity rows, staged uploads a crash left
-/// behind and, on a node that stores repositories, deleted repositories kept past the
-/// restore window. Safe to run on several nodes at once: each row is removed by only one.
+/// Writes counted regional requests once a minute, and a last time on stop, then asks
+/// whether this hour's presence evaluation is due. Only one web node of the cell gets it.
 async fn count_regions(
     pool: codeyard_db_core::pool::PgPool,
     mut stop: tokio::sync::watch::Receiver<bool>,
@@ -203,6 +201,10 @@ async fn count_regions(
     }
 }
 
+/// Runs the expiry sweeps every few minutes: pending uploads whose window passed,
+/// old transfer accounting, expired identity rows, staged uploads a crash left
+/// behind and, on a node that stores repositories, deleted repositories kept past the
+/// restore window. Safe to run on several nodes at once: each row is removed by only one.
 async fn remove_expired_rows(
     pool: DbPool,
     storage: std::sync::Arc<codeyard_storage::ObjectStore>,

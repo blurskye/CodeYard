@@ -489,11 +489,11 @@ async fn counted_member_requests_add_and_remove_organization_presence() {
         let request = client
             .get(format!("{}/", counting.url()))
             .header(codeyard_model::cells::REGION_HEADER, "b");
-        match token {
+        let request = match token {
             Some(token) => request.bearer_auth(token),
             None => request,
-        }
-        .send()
+        };
+        request.send()
     };
     let wrong = zero
         .pool

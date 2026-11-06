@@ -281,14 +281,19 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     not written: claims and their object rows commit in one transaction, so it needs that
     split and a move protocol first. (5) Presence is set by hand (`cell directory
     presence`), and routers in a present region send reads to the home cell's regional web
-    nodes, falling back home; writes go home (`cells_regions`). Automatic presence from
-    counted member requests is not written; it shares the request counting with stage 6's
-    automatic user moves. Serving from a real replica and regional Git copies is runtime
+    nodes, falling back home; writes go home (`cells_regions`). Automatic presence: routers
+    stamp their region on forwarded requests, a cell counts its authenticated requests per
+    account, region and day (only from trusted proxies), and once an hour one web node
+    adds or removes its organizations' presence by the site-settings policy (share, days
+    held, dry run, pause; audited; hand-set presence stays). Serving from a real replica
+    and regional Git copies is runtime
     pending, needs a cell in cluster mode with a PostgreSQL streaming replica and storage
     nodes in a second region. Runtime STAGE5_RUN.
     Stage 5 notes: SSH Git and package paths always go home; a router learns presence
     changes within its 60-second route cache; a rollout's apply program is killed on
-    timeout but its own children are not.
+    timeout but its own children are not. SSH requests are not counted; counts of a minute
+    whose write fails are dropped; routers must be in the cell's trusted proxies; a region
+    an admin removes by hand can be added again by the next evaluation.
     Stage 4 notes: users, labels, topics, commits and GraphQL search stay local; star counts
     in the index wait for the repository's next change; an issue document keeps its old
     `repository_url` after a rename until it changes; READMEs, comments and licenses are not
@@ -296,8 +301,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     `is_private`; App, fine-grained, job and foreign-session credentials see no private hits
     from other cells; an org that refuses classic tokens hides its other-cell hits from every
     whole-account credential, including ones that policy would exempt.
-    Stage 6 remains unwritten; automatic user moves and automatic org presence are
-    documented owner decisions. Owner follow-ups, outside this acceptance work:
+    Stage 6 remains unwritten; automatic user moves are a documented owner decision. Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
     scheduled bounded expired directory-claim collection.
 
