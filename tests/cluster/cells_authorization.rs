@@ -958,6 +958,11 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .await
     .unwrap();
     one.pool.set_foreign_authorization(remote_source.clone());
+    // Cell zero cached cell one's record before its web address was registered, and keeps
+    // it for the route cache lifetime; a fresh client reads the current record.
+    zero.pool.set_foreign_authorization(Arc::new(
+        accounts::Remote::new(zero_key.clone(), directory_client(zero_key.clone())).unwrap(),
+    ));
     let created = client
         .post(format!("{}/api/v3/repos/alice/private/forks", http.url()))
         .bearer_auth(&value)

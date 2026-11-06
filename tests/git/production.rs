@@ -792,7 +792,8 @@ async fn real_concurrent_fork_domain_preserves_winner_and_does_not_copy_hooks_or
         .unwrap()
         .get_bool("core.filemode")
         .unwrap());
-    // The loser's half-made directory is gone: only the source and the winner remain.
+    // The loser's half-made directory is gone: only the source, its shared object pool and
+    // the winner remain.
     let mut repositories: Vec<_> = std::fs::read_dir(temp.path())
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
@@ -800,6 +801,7 @@ async fn real_concurrent_fork_domain_preserves_winner_and_does_not_copy_hooks_or
     repositories.sort();
     let mut expected = vec![
         std::ffi::OsString::from("source.git"),
+        std::ffi::OsString::from("pools"),
         path.file_name().unwrap().to_owned(),
     ];
     expected.sort();
