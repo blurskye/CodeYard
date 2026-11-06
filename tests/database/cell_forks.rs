@@ -77,6 +77,22 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .is_some());
+    f.execute("INSERT INTO repository_features(repo_id,allow_forking) VALUES($1,FALSE) ON CONFLICT(repo_id) DO UPDATE SET allow_forking=FALSE", &[template.id]).await;
+    assert!(
+        creation::read_repository_source(f.pool(), &actor, template.id)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(creation::read_fork_source(f.pool(), &actor, template.id)
+        .await
+        .unwrap()
+        .is_none());
+    f.execute(
+        "UPDATE repository_features SET allow_forking=TRUE WHERE repo_id=$1",
+        &[template.id],
+    )
+    .await;
     let mut owner = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), user)
         .await
         .unwrap()
@@ -92,6 +108,8 @@ async fn contract(pg: bool) {
     repository.name = "source".into();
     repository.disk_path.clear();
     repository.storage_node_id = None;
+    repository.is_fork = true;
+    repository.forked_from_id = Some(template.id);
     let source = Source {
         reader_id: user,
         credential_id: None,
@@ -99,9 +117,12 @@ async fn contract(pg: bool) {
         repository,
         owner: Owner::User(Box::new(owner)),
         allow_forking: true,
-        git_url: None,
     };
     source.retain(f.pool()).await.unwrap();
+    assert_eq!(
+        f.repository(source.repository.id).await.forked_from_id,
+        Some(template.id)
+    );
     let gate = Arc::new(SourceHome {
         source: source.clone(),
         calls: AtomicUsize::new(0),
@@ -152,6 +173,28 @@ async fn contract(pg: bool) {
     assert_eq!(fork.forked_from_id, Some(source.repository.id));
     assert!(fork.is_fork && fork.is_private && !fork.is_stub);
     assert_eq!(fork.home_cell, 0);
+    assert_eq!(
+        codeyard_db_repos::repositories::discovery::named_owner_fork(
+            f.pool(),
+            "fork-owner",
+            source.repository.id
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .id,
+        fork.id
+    );
+    assert!(
+        codeyard_db_repos::repositories::discovery::named_owner_fork(
+            f.pool(),
+            "remote-owner",
+            source.repository.id
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
     f.execute("DELETE FROM repositories WHERE id=$1", &[fork.id])
         .await;
     codeyard_db_identity::users::sessions::delete_session(f.pool(), &session)

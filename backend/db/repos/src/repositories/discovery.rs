@@ -201,3 +201,27 @@ native_operation!(crate::postgres::repositories::discovery::search_users,
 native_operation!(crate::postgres::repositories::discovery::count_users,
     crate::sqlite::repositories::discovery::count_users,
     fn count_users(pool: &DbPool, query: &str, cap: i64) -> Result<i64>);
+
+/// Native fork discovery shares owner lookup and the id-based fork query.
+pub async fn named_owner_fork(pool: &DbPool, name: &str, base: i64) -> Result<Option<Repository>> {
+    use crate::repositories::creation::RepositoryTarget;
+    codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, name)?;
+    let owner = if let Some(user) =
+        codeyard_db_identity::users::accounts::get_user_by_username(pool, name)
+            .await?
+            .filter(|user| !user.is_stub && user.home_cell == i32::from(pool.cell_id().get()))
+    {
+        RepositoryTarget::Personal(user.id)
+    } else if let Some(org) =
+        codeyard_db_orgs::organizations::profiles::get_public_organization(pool, name)
+            .await?
+            .filter(|org| !org.is_stub && org.home_cell == i32::from(pool.cell_id().get()))
+    {
+        RepositoryTarget::Organization(org.id)
+    } else {
+        return Ok(None);
+    };
+    Ok(get_owner_fork(pool, owner, base)
+        .await?
+        .filter(|repo| !repo.is_stub))
+}

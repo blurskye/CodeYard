@@ -26,15 +26,23 @@ impl RepoStore {
         actor: &Actor,
         repository: i64,
         default_branch_only: bool,
+        branch: Option<&str>,
     ) -> Result<Snapshot> {
+        ensure!(
+            branch.is_none_or(
+                |branch| !default_branch_only && codeyard_git::branch_ref(branch).is_some()
+            ),
+            "Invalid snapshot branch selection"
+        );
         ensure!(
             actor.credential.is_some(),
             "Fork snapshot requires its original credential"
         );
-        let source =
-            codeyard_db_repos::repositories::creation::read_fork_source(pool, actor, repository)
-                .await?
-                .context("Fork source is unavailable")?;
+        let source = codeyard_db_repos::repositories::creation::read_repository_source(
+            pool, actor, repository,
+        )
+        .await?
+        .context("Fork source is unavailable")?;
         ensure!(
             crate::wire::repository_uuid(&source.disk_path)?
                 == crate::wire::repository_uuid(self.location())?,
@@ -42,7 +50,9 @@ impl RepoStore {
         );
         let mut refs = self.refs().await?;
         refs.retain(|name, _| {
-            if default_branch_only {
+            if let Some(branch) = branch {
+                name == &format!("refs/heads/{branch}")
+            } else if default_branch_only {
                 name == &format!("refs/heads/{}", source.default_branch)
             } else {
                 name.starts_with("refs/heads/") || name.starts_with("refs/tags/")
@@ -61,15 +71,16 @@ impl RepoStore {
         actor: &Actor,
         repository: i64,
         default_branch_only: bool,
+        branch: Option<&str>,
         streams: GitStreams<'_>,
     ) -> Result<Snapshot> {
         if let Backend::Remote(remote) = &self.0 {
             return remote
-                .fork_snapshot(actor, repository, default_branch_only, streams)
+                .fork_snapshot(actor, repository, default_branch_only, branch, streams)
                 .await;
         }
         let snapshot = self
-            .fork_listing(pool, actor, repository, default_branch_only)
+            .fork_listing(pool, actor, repository, default_branch_only, branch)
             .await?;
         let targets: Vec<_> = snapshot.refs.values().cloned().collect();
         let mut bounded = crate::git_transport::LimitedWriter::new(streams.output, pack_bytes()?);
@@ -85,7 +96,7 @@ impl RepoStore {
             )
             .await?;
         ensure!(status.success(), "Fork snapshot pack failed");
-        codeyard_db_repos::repositories::creation::read_fork_source(pool, actor, repository)
+        codeyard_db_repos::repositories::creation::read_repository_source(pool, actor, repository)
             .await?
             .context("Fork source access was revoked")?;
         Ok(snapshot)

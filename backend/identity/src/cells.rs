@@ -10,6 +10,32 @@ pub struct Local {
     pub pool: DbPool,
 }
 impl Home for Local {
+    fn repository_fork<'a>(
+        &'a self,
+        owner: &'a str,
+        base: i64,
+        proof: &'a Proof,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Option<codeyard_db_core::cells::repositories::Source>>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)?;
+            codeyard_support::cells::Prefix::for_id(base)?;
+            proof.validate()?;
+            let Some(fork) = codeyard_db_repos::repositories::discovery::named_owner_fork(
+                &self.pool, owner, base,
+            )
+            .await?
+            else {
+                return Ok(None);
+            };
+            self.source(owner, &fork.name, proof).await
+        })
+    }
     fn repository_source<'a>(
         &'a self,
         owner: &'a str,
@@ -137,7 +163,7 @@ impl Local {
         else {
             return Ok(None);
         };
-        let Some(authorized) = codeyard_db_repos::repositories::creation::read_fork_source(
+        let Some(authorized) = codeyard_db_repos::repositories::creation::read_repository_source(
             &self.pool,
             &actor,
             repository.id,
@@ -147,12 +173,6 @@ impl Local {
             return Ok(None);
         };
         repository = authorized;
-        let allow_forking = codeyard_db_repos::repositories::records::repository_features(
-            &self.pool,
-            repository.id,
-        )
-        .await?
-        .allow_forking;
         let owner = match repository.owner_kind.as_str() {
             "user" => {
                 let Some(mut owner) = codeyard_db_identity::users::accounts::get_user_by_id(
@@ -182,7 +202,7 @@ impl Local {
             }
             _ => return Ok(None),
         };
-        let Some(current) = codeyard_db_repos::repositories::creation::read_fork_source(
+        let Some(current) = codeyard_db_repos::repositories::creation::read_repository_source(
             &self.pool,
             &actor,
             repository.id,
@@ -192,6 +212,19 @@ impl Local {
             return Ok(None);
         };
         repository = current;
+        let allow_forking = codeyard_db_repos::repositories::records::repository_features(
+            &self.pool,
+            repository.id,
+        )
+        .await?
+        .allow_forking
+            && codeyard_db_repos::repositories::creation::read_fork_source(
+                &self.pool,
+                &actor,
+                repository.id,
+            )
+            .await?
+            .is_some();
         repository.forks_count = codeyard_db_repos::repositories::discovery::public_fork_counts(
             &self.pool,
             &[repository.id],
@@ -209,7 +242,6 @@ impl Local {
             repository,
             owner,
             allow_forking,
-            git_url: None,
         };
         source.validate(self.pool.cell_id())?;
         Ok(Some(source))

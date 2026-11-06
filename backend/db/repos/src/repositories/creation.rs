@@ -74,3 +74,7 @@ native_operation!(crate::postgres::repositories::creation::repository_visibility
 native_operation!(crate::postgres::repositories::creation::read_fork_source,
     crate::sqlite::repositories::creation::read_fork_source,
     fn read_fork_source(pool: &DbPool, actor: &codeyard_db_core::queries::credentials::Actor, id: i64) -> Result<Option<Repository>>);
+
+native_operation!(crate::postgres::repositories::creation::read_repository_source,
+    crate::sqlite::repositories::creation::read_repository_source,
+    fn read_repository_source(pool: &DbPool, actor: &codeyard_db_core::queries::credentials::Actor, id: i64) -> Result<Option<Repository>>);

@@ -34,6 +34,11 @@ enum Request {
         name: String,
         proof: Proof,
     },
+    RepositoryFork {
+        owner: String,
+        base: i64,
+        proof: Proof,
+    },
     Snapshot(codeyard_db_core::cells::repositories::SnapshotRequest),
     Pointer(codeyard_db_core::cells::pointers::Event),
 }
@@ -87,6 +92,70 @@ impl Remote {
     }
 }
 impl Remote {
+    async fn source(
+        &self,
+        owner: &str,
+        proof: &Proof,
+        request: Request,
+    ) -> Result<Option<codeyard_db_core::cells::repositories::Source>> {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(rpc::Config::default().exchange_seconds),
+            async move {
+                Key::new(KeyKind::Name, owner)?;
+                let (name, base) = match &request {
+                    Request::RepositorySource { name, .. } => {
+                        ensure!(
+                            codeyard_support::repository_names::valid(name),
+                            "Invalid fork source name"
+                        );
+                        (Some(name.as_str()), None)
+                    }
+                    Request::RepositoryFork { base, .. } => {
+                        codeyard_support::cells::Prefix::for_id(*base)?;
+                        (None, Some(*base))
+                    }
+                    _ => anyhow::bail!("Invalid repository metadata request"),
+                };
+                proof.validate()?;
+                let _slot = self.slots.clone().try_acquire_owned()?;
+                let Some(cell) = self.routes.by_name(owner).await? else {
+                    return Ok(None);
+                };
+                let Reply::RepositorySource(source) = self.exchange(&cell, &request).await? else {
+                    anyhow::bail!("Invalid fork source answer");
+                };
+                let Some(source) = source else {
+                    return Ok(None);
+                };
+                let source = *source;
+                source.validate(cell.id)?;
+                ensure!(
+                    source.owner.name() == owner
+                        && name
+                            .is_none_or(|name| source.repository.name.eq_ignore_ascii_case(name))
+                        && base.is_none_or(|base| source.repository.forked_from_id == Some(base)),
+                    "Fork source coordinates changed"
+                );
+                for object in [
+                    source.owner.object(),
+                    Object {
+                        kind: ObjectKind::Repository,
+                        id: source.repository.id,
+                    },
+                ] {
+                    ensure!(
+                        self.routes
+                            .by_object(object)
+                            .await?
+                            .is_some_and(|home| home.id == cell.id),
+                        "Fork source has another home"
+                    );
+                }
+                Ok(Some(source))
+            },
+        )
+        .await?
+    }
     async fn metadata(
         &self,
         cell: &ReadyCell,
@@ -295,68 +364,35 @@ impl Home for Remote {
         proof: &'a Proof,
     ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Source>>> {
         Box::pin(async move {
-            tokio::time::timeout(
-                std::time::Duration::from_secs(rpc::Config::default().exchange_seconds),
-                async move {
-                    Key::new(KeyKind::Name, owner)?;
-                    ensure!(
-                        codeyard_support::repository_names::valid(name),
-                        "Invalid fork source name"
-                    );
-                    proof.validate()?;
-                    let _slot = self.slots.clone().try_acquire_owned()?;
-                    let Some(cell) = self.routes.by_name(owner).await? else {
-                        return Ok(None);
-                    };
-                    let request = Request::RepositorySource {
-                        owner: owner.to_owned(),
-                        name: name.to_owned(),
-                        proof: proof.clone(),
-                    };
-                    let Reply::RepositorySource(source) = self.exchange(&cell, &request).await?
-                    else {
-                        anyhow::bail!("Invalid fork source answer");
-                    };
-                    let Some(source) = source else {
-                        return Ok(None);
-                    };
-                    let mut source = *source;
-                    source.validate(cell.id)?;
-                    ensure!(
-                        source.owner.name() == owner
-                            && source.repository.name.eq_ignore_ascii_case(name),
-                        "Fork source coordinates changed"
-                    );
-                    for object in [
-                        source.owner.object(),
-                        Object {
-                            kind: ObjectKind::Repository,
-                            id: source.repository.id,
-                        },
-                    ] {
-                        ensure!(
-                            self.routes
-                                .by_object(object)
-                                .await?
-                                .is_some_and(|home| home.id == cell.id),
-                            "Fork source has another home"
-                        );
-                    }
-                    let mut url = url::Url::parse(crate::routes::web_node(&cell, &proof.hash())?)?;
-                    {
-                        let mut segments = url
-                            .path_segments_mut()
-                            .map_err(|_| anyhow::anyhow!("Invalid source address"))?;
-                        segments
-                            .pop_if_empty()
-                            .push(source.owner.name())
-                            .push(&format!("{}.git", source.repository.name));
-                    }
-                    source.git_url = Some(url.into());
-                    Ok(Some(source))
+            self.source(
+                owner,
+                proof,
+                Request::RepositorySource {
+                    owner: owner.to_owned(),
+                    name: name.to_owned(),
+                    proof: proof.clone(),
                 },
             )
-            .await?
+            .await
+        })
+    }
+    fn repository_fork<'a>(
+        &'a self,
+        owner: &'a str,
+        base: i64,
+        proof: &'a Proof,
+    ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Source>>> {
+        Box::pin(async move {
+            self.source(
+                owner,
+                proof,
+                Request::RepositoryFork {
+                    owner: owner.to_owned(),
+                    base,
+                    proof: proof.clone(),
+                },
+            )
+            .await
         })
     }
     fn user_id<'a>(&'a self, id: i64) -> BoxFuture<'a, Result<Option<User>>> {
@@ -796,6 +832,12 @@ impl rpc::Service for Accounts {
                 Request::Snapshot(_) => anyhow::bail!("Snapshot requires streaming"),
                 Request::RepositorySource { owner, name, proof } => {
                     match self.home.repository_source(&owner, &name, &proof).await {
+                        Ok(source) => Reply::RepositorySource(source.map(Box::new)),
+                        Err(_) => Reply::Unavailable,
+                    }
+                }
+                Request::RepositoryFork { owner, base, proof } => {
+                    match self.home.repository_fork(&owner, base, &proof).await {
                         Ok(source) => Reply::RepositorySource(source.map(Box::new)),
                         Err(_) => Reply::Unavailable,
                     }

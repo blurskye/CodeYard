@@ -187,15 +187,20 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     eaa2326fa6a84df2b38414b5cc68bd7f, Clippy cdaa8df107424d6282023027ce9d41fb
     and WASM cd0f45142a474baf9d0e175b46f61792. The rebalance fixture starts its third
     node only after verifying its initial copy, preserving every assertion.
-    The next unchecked batch forwards original HTTP authentication/CSRF to the destination,
-    cold-loads authorized source metadata for REST/native APIs and forms, and exposes
-    bounded foreign parent metadata to authenticated REST/GraphQL readers. Real HTTP/TLS
-    fork/form, hostile forwarding, metadata and interruption/retry tests are written.
-    First checks found two native-API compile errors: an error-message borrow and a
-    form encoder retained across an await. Both are fixed together; WASM
-    b69c8ff4b7e848ae8c8c26bfda48f7d6 passes. The combined recheck is next. Runtime
-    67eb28f748434d8d839860a974a0fb07 covers the touched libraries, store/write tests,
-    database cell contracts, cluster, CI, storage and the mandatory public cells fixture.
+    Original-authentication HTTP/CSRF forwarding, native fork forms and authenticated
+    foreign parent metadata pass workspace ede3384871e6430fa4ed4a476bb89d4c,
+    Clippy b4712c300df94108a7c009e3cf4160f3 and WASM 351812a025d9448ab7a8bf2e3497f655.
+    A real storage-node publication/interrupted-stream test and renamed foreign-fork
+    discovery with retained parent metadata are the next unchecked batch. Content
+    reads retain their original authority independently of permission to create a fork.
+    The unused HTTP Git-source URL is removed; copies exclusively use pinned RPC.
+    Metadata/publication checks are running as workspace 3e3916aee0ac4c74a978b80be4662525,
+    Clippy f49d17ec064545ae92afc1cbb4c5bf4f and WASM 9172c32344114cdd943797b7471b4ffa.
+    The next source follow-up adds exact-branch snapshots for pull heads and shares
+    their private staging with fork copies; hostile selector/storage tests are written.
+    Runtime 67eb28f748434d8d839860a974a0fb07 passes all 235 cluster tests without skips
+    on its earlier export snapshot. CI passes 220 with 19 existing environment-dependent
+    ignores; storage and public cells are still running.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
     object pools, mentions/home inbox/email, and repository transfers/redirects.
     Stages 4 to 6 remain unwritten; automatic user moves and org regional presence

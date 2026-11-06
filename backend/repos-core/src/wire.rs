@@ -580,6 +580,7 @@ pub enum Operation {
     ForkPack {
         authority: codeyard_db_core::queries::credentials::Actor,
         default_branch_only: bool,
+        branch: Option<String>,
     },
     /// A replica copy asks its primary for the objects it lacks. `have` lists the tips the
     /// copy already holds. The reply lists HEAD and refs before the object stream.

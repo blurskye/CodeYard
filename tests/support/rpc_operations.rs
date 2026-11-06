@@ -627,7 +627,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             }),
             false,
         ),
-        (Operation::ForkPack { authority: 1.into(), default_branch_only: false }, false),
+        (Operation::ForkPack { authority: 1.into(), default_branch_only: false, branch: None }, false),
         (
             Operation::ReplicaPack {
                 have: vec![sha.into()],

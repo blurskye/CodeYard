@@ -4641,6 +4641,7 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
     let tip = repo
         .save("main", "copy.txt", "unborn", b"remote fork bytes\n")
         .await;
+    repo.branch("fork-topic", &tip).await;
     let session = codeyard_identity::sessions::fresh_id(&database.pool).unwrap();
     codeyard_db_identity::users::sessions::create_session(
         &database.pool,
@@ -4663,6 +4664,7 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
             &actor,
             repo.id(),
             true,
+            None,
             GitStreams {
                 input: &mut tokio::io::empty(),
                 output: &mut bytes,
@@ -4673,6 +4675,40 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
         .unwrap();
     assert_eq!(snapshot.refs.len(), 1);
     assert_eq!(snapshot.refs["refs/heads/main"], tip);
+    let selected = remote
+        .fork_snapshot(
+            &database.pool,
+            &actor,
+            repo.id(),
+            false,
+            Some("fork-topic"),
+            GitStreams {
+                input: &mut tokio::io::empty(),
+                output: &mut tokio::io::sink(),
+                errors: &mut tokio::io::sink(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        selected.refs,
+        HashMap::from([("refs/heads/fork-topic".into(), tip.clone())])
+    );
+    assert!(remote
+        .fork_snapshot(
+            &database.pool,
+            &actor,
+            repo.id(),
+            false,
+            Some("../invalid"),
+            GitStreams {
+                input: &mut tokio::io::empty(),
+                output: &mut tokio::io::sink(),
+                errors: &mut tokio::io::sink()
+            },
+        )
+        .await
+        .is_err());
     let pack = root.path().join("fork.pack");
     tokio::fs::write(&pack, &bytes).await.unwrap();
     let target = root.path().join("fork.git");
@@ -4706,7 +4742,6 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
         repository: foreign,
         owner: Owner::User(Box::new(owner)),
         allow_forking: true,
-        git_url: None,
     };
     source.retain(&database.pool).await.unwrap();
     let gate = Arc::new(ForkPackHome {
@@ -4775,6 +4810,7 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
             &actor,
             repo.id(),
             false,
+            None,
             GitStreams {
                 input: &mut tokio::io::empty(),
                 output: &mut tokio::io::sink(),

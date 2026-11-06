@@ -46,9 +46,6 @@ pub struct Source {
     pub repository: Repository,
     pub owner: Owner,
     pub allow_forking: bool,
-    // Only the directory-backed client supplies a URL, never the answering cell's JSON.
-    #[serde(skip)]
-    pub git_url: Option<String>,
 }
 impl Source {
     pub fn validate(&self, home: Prefix) -> Result<()> {
@@ -60,6 +57,10 @@ impl Source {
         );
         let repo = &self.repository;
         Prefix::for_id(repo.id)?;
+        if let Some(parent) = repo.forked_from_id {
+            Prefix::for_id(parent)?;
+            ensure!(parent != repo.id, "Repository cannot fork itself");
+        }
         Prefix::for_id(self.reader_id)?;
         if let Some(id) = self.credential_id {
             Prefix::for_id(id)?;
@@ -175,6 +176,7 @@ impl Admission {
             name: self.source.repository.name.clone(),
             proof: self.proof()?,
             default_branch_only,
+            branch: None,
             maximum_bytes,
             timeout_seconds: 300,
         };
@@ -182,6 +184,14 @@ impl Admission {
         Ok(request)
     }
     pub async fn check(&self, pool: &crate::DbPool) -> Result<Source> {
+        let source = self.read(pool).await?;
+        ensure!(
+            !source.repository.is_private || source.allow_forking,
+            codeyard_support::credentials::AccountRestricted
+        );
+        Ok(source)
+    }
+    pub async fn read(&self, pool: &crate::DbPool) -> Result<Source> {
         let home = Prefix::new(u16::try_from(self.source.repository.home_cell)?);
         self.source.validate(home)?;
         ensure!(home != pool.cell_id(), "Fork source is native");
@@ -202,8 +212,7 @@ impl Admission {
             source.repository.id == self.source.repository.id
                 && source.reader_id == self.actor.user_id
                 && source.credential_id == self.actor.token_id()
-                && source.owner.object() == self.source.owner.object()
-                && (!source.repository.is_private || source.allow_forking),
+                && source.owner.object() == self.source.owner.object(),
             codeyard_support::credentials::AccountRestricted
         );
         Ok(source)
@@ -261,6 +270,7 @@ pub struct SnapshotRequest {
     pub name: String,
     pub proof: super::authorization::Proof,
     pub default_branch_only: bool,
+    pub branch: Option<String>,
     pub maximum_bytes: u64,
     pub timeout_seconds: u64,
 }
@@ -270,6 +280,13 @@ impl SnapshotRequest {
             (1..=64 * 1024 * 1024 * 1024).contains(&self.maximum_bytes)
                 && (1..=300).contains(&self.timeout_seconds),
             "Invalid fork snapshot limits"
+        );
+        ensure!(
+            self.branch
+                .as_deref()
+                .is_none_or(|branch| !self.default_branch_only
+                    && codeyard_git::branch_ref(branch).is_some()),
+            "Invalid snapshot branch selection"
         );
         Prefix::for_id(self.repository_id)?;
         Prefix::for_id(self.reader_id)?;
@@ -313,8 +330,12 @@ impl Snapshot {
                 "Invalid fork snapshot reference"
             );
             ensure!(
-                !request.default_branch_only
-                    || name == &format!("refs/heads/{}", self.default_branch),
+                request
+                    .branch
+                    .as_deref()
+                    .is_none_or(|branch| name == &format!("refs/heads/{branch}"))
+                    && (!request.default_branch_only
+                        || name == &format!("refs/heads/{}", self.default_branch)),
                 "Fork snapshot includes unrequested references"
             );
         }
@@ -337,6 +358,7 @@ mod snapshot_tests {
                 hash: "a".repeat(64),
             },
             default_branch_only: true,
+            branch: None,
             maximum_bytes: 1024,
             timeout_seconds: 10,
         };
@@ -348,6 +370,16 @@ mod snapshot_tests {
             refs: std::collections::HashMap::from([("refs/heads/main".into(), "a".repeat(40))]),
         };
         snapshot.validate(&request).unwrap();
+        let mut branch = request.clone();
+        branch.branch = Some("main".into());
+        assert!(branch.validate().is_err());
+        branch.default_branch_only = false;
+        branch.validate().unwrap();
+        snapshot.validate(&branch).unwrap();
+        branch.branch = Some("other".into());
+        assert!(snapshot.validate(&branch).is_err());
+        branch.branch = Some("../invalid".into());
+        assert!(branch.validate().is_err());
         snapshot.reader_id = 3;
         assert!(snapshot.validate(&request).is_err());
         snapshot.reader_id = 2;

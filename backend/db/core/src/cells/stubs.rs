@@ -47,9 +47,9 @@ const ORGANIZATION: &str = "INSERT INTO organizations(id,name,display_name,descr
 VALUES($1,$2,$3,$4,$5,$6,TRUE,$7,$8)
 ON CONFLICT(id) DO UPDATE SET name=excluded.name,display_name=excluded.display_name,description=excluded.description,is_verified=excluded.is_verified,updated_at=excluded.updated_at
 WHERE organizations.is_stub AND organizations.home_cell=excluded.home_cell AND organizations.updated_at<=excluded.updated_at";
-const REPOSITORY: &str = "INSERT INTO repositories(id,owner_kind,owner_user_id,owner_org_id,name,description,website,is_private,is_archived,is_fork,is_gist,is_template,is_internal,default_branch,home_cell,stars_count,forks_count,watchers_count,open_issues_count,allow_merge_commit,allow_squash_merge,allow_rebase_merge,created_at,updated_at,is_stub,disk_path)
-VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,TRUE,'')
-ON CONFLICT(id) DO UPDATE SET owner_kind=excluded.owner_kind,owner_user_id=excluded.owner_user_id,owner_org_id=excluded.owner_org_id,name=excluded.name,description=excluded.description,website=excluded.website,is_private=excluded.is_private,is_archived=excluded.is_archived,is_fork=excluded.is_fork,is_gist=excluded.is_gist,is_template=excluded.is_template,is_internal=excluded.is_internal,default_branch=excluded.default_branch,stars_count=excluded.stars_count,forks_count=excluded.forks_count,watchers_count=excluded.watchers_count,open_issues_count=excluded.open_issues_count,allow_merge_commit=excluded.allow_merge_commit,allow_squash_merge=excluded.allow_squash_merge,allow_rebase_merge=excluded.allow_rebase_merge,updated_at=excluded.updated_at
+const REPOSITORY: &str = "INSERT INTO repositories(id,owner_kind,owner_user_id,owner_org_id,name,description,website,is_private,is_archived,is_fork,is_gist,is_template,is_internal,default_branch,home_cell,stars_count,forks_count,watchers_count,open_issues_count,allow_merge_commit,allow_squash_merge,allow_rebase_merge,created_at,updated_at,is_stub,disk_path,forked_from_id)
+VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,TRUE,'',(SELECT id FROM repositories WHERE id=$25))
+ON CONFLICT(id) DO UPDATE SET owner_kind=excluded.owner_kind,owner_user_id=excluded.owner_user_id,owner_org_id=excluded.owner_org_id,name=excluded.name,description=excluded.description,website=excluded.website,is_private=excluded.is_private,is_archived=excluded.is_archived,is_fork=excluded.is_fork,forked_from_id=excluded.forked_from_id,is_gist=excluded.is_gist,is_template=excluded.is_template,is_internal=excluded.is_internal,default_branch=excluded.default_branch,stars_count=excluded.stars_count,forks_count=excluded.forks_count,watchers_count=excluded.watchers_count,open_issues_count=excluded.open_issues_count,allow_merge_commit=excluded.allow_merge_commit,allow_squash_merge=excluded.allow_squash_merge,allow_rebase_merge=excluded.allow_rebase_merge,updated_at=excluded.updated_at
 WHERE repositories.is_stub AND repositories.home_cell=excluded.home_cell AND repositories.updated_at<=excluded.updated_at";
 
 /// The caller verifies the source node against the directory's current object home.
@@ -177,6 +177,10 @@ pub async fn repository(pool: &DbPool, source: Prefix, value: &Repository) -> Re
         "Invalid stub owner"
     );
     Prefix::for_id(value.owner_id())?;
+    if let Some(parent) = value.forked_from_id {
+        Prefix::for_id(parent)?;
+        ensure!(parent != value.id, "Repository cannot fork itself");
+    }
     let changed = match pool {
         DbPool::Postgres(pool) => sqlx::query(REPOSITORY)
             .bind(value.id)
@@ -203,6 +207,7 @@ pub async fn repository(pool: &DbPool, source: Prefix, value: &Repository) -> Re
             .bind(value.allow_rebase_merge)
             .bind(value.created_at)
             .bind(value.updated_at)
+            .bind(value.forked_from_id)
             .execute(pool)
             .await?
             .rows_affected(),
@@ -239,6 +244,7 @@ pub async fn repository(pool: &DbPool, source: Prefix, value: &Repository) -> Re
                     .updated_at
                     .to_rfc3339_opts(chrono::SecondsFormat::Micros, true),
             )
+            .bind(value.forked_from_id)
             .execute(pool)
             .await?
             .rows_affected(),

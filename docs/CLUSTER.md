@@ -771,7 +771,8 @@ pending OAuth/device codes usable. Automatic renewal is deferred.
 and acceptance gaps. Runtime 15c77f36a9794468ac72f976e6c78209 passes all five public
 two-cell gh/Git checks, 68 core library, 61 store and all 234 cluster tests without skips.
 Stage 2 runnable acceptance passes. Stage 3 public star/outbox replay passes; fork export
-is in source work. Two cluster regressions await retry; stage 3 acceptance is incomplete.
+and public fork ingress pass source checks. All 235 cluster tests pass on the export
+snapshot; stage 3 acceptance remains incomplete.
 
 Remote membership grants/deletes now queue home pointers in their own transaction. Pointers
 carry ordered event IDs and never grant resource access. The receiving home rechecks the live
@@ -796,13 +797,14 @@ source guard and native Git advertisement regressions pass source checks. The re
 push and foreign invitation acceptance now pass; the fixture's JSON parsing of an empty 204
 reply is fixed. The next checked cells snapshot also verifies standalone cell-zero data,
 JavaScript ID precision and native-only member lists and counts; those real-client checks
-pass, as do cell-1 HTTP/SSH push/clone and foreign pushes/PR creation. The merge publication
-check still treats a foreign proof as a native token ID. Its typed-proof/workflow fix and
-Git-store regressions pass workspace, Clippy and WASM; runtime is next.
+pass, as do cell-1 HTTP/SSH push/clone and foreign pushes/PR creation. Typed-proof merge
+publication and its Git-store regressions pass source checks, 68 library tests, 61 store
+tests and the real two-cell merge round. Stage 2 runnable acceptance passes.
 
 Fork exports use pinned cell TLS and retain the initiating token or session through
 the source permission checks. `FORK_MAX_PACK_BYTES` bounds each export (128 MiB by
 default, at most 64 GiB); the request also has a byte limit and a 300-second ceiling.
 Destination copy staging and publication share the native/quorum copy path and pass
-source checks. Public REST/native/form forwarding and foreign parent metadata are written
-but unchecked. Cross-cell pull-request publication is not wired.
+source checks. Public REST/native/form forwarding and authenticated foreign parent metadata
+also pass source checks. Renamed-fork discovery, retained parent metadata and storage-node
+publication tests are the next unchecked batch. Cross-cell pull-request publication is not wired.

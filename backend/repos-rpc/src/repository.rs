@@ -617,7 +617,7 @@ impl RpcHandler {
             if request.actor != Some(authority.user_id) || authority.credential.is_none() {
                 return Err(invalid("Fork credential actor mismatch"));
             }
-            codeyard_db_repos::repositories::creation::read_fork_source(
+            codeyard_db_repos::repositories::creation::read_repository_source(
                 pool,
                 authority,
                 repo_id.ok_or_else(unavailable)?,

@@ -702,10 +702,6 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     assert_eq!(source.repository.id, repository.id);
     assert!(source.repository.disk_path.is_empty());
     assert_eq!(source.repository.storage_node_id, None);
-    assert_eq!(
-        source.git_url.as_deref(),
-        Some(format!("{}/alice/private.git", http.url()).as_str())
-    );
     let response = client
         .put(format!(
             "{}/api/v3/repos/alice/private/contents/copy.txt",
@@ -726,6 +722,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         name: "private".into(),
         proof: fork_proof.clone(),
         default_branch_only: false,
+        branch: None,
         maximum_bytes: 1024 * 1024,
         timeout_seconds: 30,
     };
@@ -939,6 +936,35 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .unwrap()
             .is_none()
     );
+    let discovered = zero
+        .pool
+        .foreign_authorization()
+        .unwrap()
+        .repository_fork("bob", repository.id, &fork_proof)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(discovered.repository.id, fork_id);
+    assert_eq!(discovered.repository.name, "http-fork");
+    assert_eq!(discovered.repository.forked_from_id, Some(repository.id));
+    assert_eq!(discovered.reader_id, user.id);
+    discovered.retain(&zero.pool).await.unwrap();
+    assert_eq!(
+        codeyard_db_repos::repositories::records::get_repository_by_id(&zero.pool, fork_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .forked_from_id,
+        Some(repository.id)
+    );
+    assert!(zero
+        .pool
+        .foreign_authorization()
+        .unwrap()
+        .repository_fork("bob", native_repository.id, &fork_proof)
+        .await
+        .unwrap()
+        .is_none());
     let parent = client.post(format!("{}/api/graphql", bob_http.url())).bearer_auth(&value)
         .json(&serde_json::json!({"query":r#"{repository(owner:"bob",name:"http-fork"){parent{id nameWithOwner owner{login} defaultBranchRef{name}}}}"#}))
         .send().await.unwrap().json::<serde_json::Value>().await.unwrap();

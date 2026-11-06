@@ -451,3 +451,28 @@ pub async fn read_fork_source(
     tx.commit().await?;
     Ok(Some(source))
 }
+
+/// A native metadata/content read retains the original credential and repository authority.
+pub async fn read_repository_source(
+    pool: &PgPool,
+    actor: &codeyard_db_core::queries::credentials::Actor,
+    id: i64,
+) -> Result<Option<Repository>> {
+    let mut tx = pool.begin().await?;
+    if !codeyard_db_core::queries::postgres::repositories::access::lock_readable_repository_in_transaction(
+        &mut tx, actor.user_id, id, codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Shared,
+    ).await? || !codeyard_db_core::queries::postgres::credentials::repository(
+        &mut tx, actor, id, "contents", false,
+    ).await? {
+        return Ok(None);
+    }
+    let source: Option<Repository> = sqlx::query_as(
+        "SELECT * FROM repositories WHERE id=$1 AND NOT is_stub AND NOT is_gist AND home_cell=$2",
+    )
+    .bind(id)
+    .bind(i32::from(pool.cell_id().get()))
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(source)
+}

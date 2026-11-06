@@ -40,6 +40,22 @@ impl Home for Native {
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move { self.identity().receive_pointer(event, admission).await })
     }
+    fn repository_fork<'a>(
+        &'a self,
+        owner: &'a str,
+        base: i64,
+        proof: &'a Proof,
+    ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Source>>> {
+        Box::pin(async move {
+            let Some(source) = self.identity().repository_fork(owner, base, proof).await? else {
+                return Ok(None);
+            };
+            Ok(self
+                .repository_source(owner, &source.repository.name, proof)
+                .await?
+                .filter(|source| source.repository.forked_from_id == Some(base)))
+        })
+    }
     fn repository_source<'a>(
         &'a self,
         owner: &'a str,
@@ -108,13 +124,14 @@ impl Home for Native {
                         .fork_actor(&request.proof)
                         .await?
                         .context("Fork credential was revoked")?;
-                    let repository = codeyard_db_repos::repositories::creation::read_fork_source(
-                        &self.state.pool,
-                        &actor,
-                        request.repository_id,
-                    )
-                    .await?
-                    .context("Fork source was revoked")?;
+                    let repository =
+                        codeyard_db_repos::repositories::creation::read_repository_source(
+                            &self.state.pool,
+                            &actor,
+                            request.repository_id,
+                        )
+                        .await?
+                        .context("Fork source was revoked")?;
                     let store = codeyard_repos_core::repositories::store::repo_store(
                         &repository,
                         self.state.cluster.as_ref(),
@@ -129,6 +146,7 @@ impl Home for Native {
                             &actor,
                             repository.id,
                             request.default_branch_only,
+                            request.branch.as_deref(),
                             codeyard_repos_core::store_types::GitStreams {
                                 input: &mut tokio::io::empty(),
                                 output: &mut bounded,

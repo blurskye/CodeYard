@@ -323,6 +323,7 @@ impl RemoteStore {
         actor: &codeyard_db_core::queries::credentials::Actor,
         repository: i64,
         default_branch_only: bool,
+        branch: Option<&str>,
         streams: crate::store_types::GitStreams<'_>,
     ) -> anyhow::Result<codeyard_db_core::cells::repositories::Snapshot> {
         let context = self.context.as_ref().ok_or_else(crate::wire::unavailable)?;
@@ -334,6 +335,7 @@ impl RemoteStore {
                     operation: Operation::ForkPack {
                         authority: actor.clone(),
                         default_branch_only,
+                        branch: branch.map(str::to_owned),
                     },
                     actor: Some(actor.user_id),
                     ci_run: None,
