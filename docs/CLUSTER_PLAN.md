@@ -157,41 +157,27 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 2 source covers directory claims/TLS/cache, public HTTP/SSH routing, scoped
     credentials and IDs, stable homes, stubs, home authorization, native publication,
     durable cleanup, capacity reporting and bounded home membership discovery.
-    Workspace bad033568e234119ad4595d644d37994, Clippy 359ef851d1604bf2b876936c851278c7
-    and WASM a2af9c6ef72249e0ba936570573c2cde pass. Generated GraphQL is unchanged.
-    New output assertions use rooted IDs; former input IDs remain accepted as required.
-    Runtime eb1c71056db64586b3b41c713e7bf631 passes 334 selected library tests,
-    42 Git tests, 166 identity tests and both exhaustive GraphQL contracts. CI passes
-    220 with 19 existing cgroup-dependent ignores; pull requests pass 324 with two.
-    Later targeted retries pass both-engine membership, stub, foreign browser, project,
-    reviewer, organization connection and selected gist/CI contracts without skips.
-    Shared mutation preflight rejects forged project and review-request roots. Native
-    private home/org lists, GraphQL discovery and home revocation checks pass.
-    Runtime 72a0f3463856498c89dd47fc7baea36f passes all nine router library tests and
-    all 234 cluster tests without skips, including negotiated backend compression.
-    Real clients complete setup, cell-1 signup, cross-cell duplicate-name refusal,
-    both gh logins and both repository creations. The first HTTP Git push receives
-    404 because three Git constructors bypass the catalogue. Their shared declarations
-    and an AST-based source guard pass workspace e61baa09e6034fafa8a91863eaf3311d,
-    Clippy c27f3283f3184921b50ac3b9e0133afe and WASM 82d549a4627049fa85f94f2e34842033.
-    Runtime c1b52bba8227426b9bd3d054d5c85bb1 covers REST, the route guard, all cluster
-    tests and the real public cells round. HTTP Git push and foreign invitation
-    creation/acceptance pass; the fixture then tries to JSON-decode the successful
-    empty 204 response. Its fix asserts the gh HTTP status directly. The next snapshot
-    also adds browser JavaScript precision checks for cell-1 account/repository IDs.
-    Those fixture changes pass workspace 245d0c996f6c4bc2a11736e1c149f0f0, Clippy
-    fccc5bc15490436392c6f19bf8c72d25 and WASM eb68fc08c42d4a218b972875f7f457c7.
-    The next source fixture starts an existing standalone account/session/repository,
-    writes a commit, enrolls it as cell zero and checks unchanged IDs/session/Git data
-    through HTTP, gh and clone. It passes workspace d7cca32c08ff442ea69ef26b8dd42c74,
-    Clippy 4f81ccaaf4a74e72bae0a9b170545a76 and WASM 05a37dc0d556468a9134ff146219c08e.
-    The next cells snapshot also checks real gh org/team grants, home org discovery and
-    native-only member lists/counts, and asserts both empty stub search items and count.
-    This fixture passes workspace 08d754e0cf0c4ae5879eabc77fcaae94, Clippy
-    f08876b7483b4f3eb08b1020204211e5 and WASM 14d8227ddd0340128ff5e403162ab855.
-    The revocation fixture now requires 401 within a strict 60-second deadline; a
-    rate limit or outage cannot count as successful revocation. Its syntax is checked.
-    Fixture runtime remains pending. The current job passes all 67 REST library tests.
+    Latest source checks pass: workspace c502a2c8f87648999500ef84e95b6621,
+    Clippy 44d810cde4d348fe99b551cf8bb75125 and WASM 682078b4d17f46168e82309f02404429.
+    Generated GraphQL is unchanged. New output IDs are rooted; former input IDs still
+    resolve as required. Earlier runtime passes 334 selected library, 42 Git and 166
+    identity tests and both exhaustive GraphQL contracts. CI passes 220 with 19 existing
+    cgroup-dependent ignores; pull requests pass 324 with two. Later targeted retries pass
+    both-engine membership, stub, foreign browser, project, reviewer and organization
+    connection contracts without skips, including forged mutation roots.
+    Runtime 72a0f3463856498c89dd47fc7baea36f passes all nine router library and 234 cluster
+    tests without skips, including native private home/org lists, GraphQL discovery,
+    home revocation and negotiated compression. Real clients pass cell-1 signup,
+    duplicate-name refusal, both gh logins and both repository creations.
+    Runtime c1b52bba8227426b9bd3d054d5c85bb1 confirms the fixed HTTP Git catalogue through
+    an actual push and foreign invitation creation/acceptance. Its client fixture then
+    JSON-decodes a correct empty 204 response; the checked fix asserts the gh HTTP status.
+    All 67 REST tests pass. The repository guard and cluster targets are still running.
+    The next checked cells snapshot also covers standalone-to-cell-zero account/session/
+    repository/commit preservation, JavaScript ID precision, gh org/team grants, home org
+    discovery and native-only member lists/counts and search. Revocation must return 401
+    within a strict 60-second deadline; rate limits and outages cannot satisfy it. Fixture
+    runtime remains pending; retry only the failed targets after the current job finishes.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:
