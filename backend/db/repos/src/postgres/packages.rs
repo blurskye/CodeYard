@@ -1327,7 +1327,7 @@ pub async fn collector_lock(pool: &PgPool) -> Result<Option<sqlx::PgConnection>>
     let taken: bool = sqlx::query_scalar(
         "SELECT pg_try_advisory_lock(hashtext(COALESCE(current_schema(),'')), 723947123)",
     )
-    .fetch_one(&mut *connection)
+    .fetch_one(&mut connection)
     .await?;
     Ok(taken.then_some(connection))
 }

@@ -299,7 +299,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 4 notes: users, labels, topics, commits and GraphQL search stay local; star counts
     in the index wait for the repository's next change; an issue document keeps its old
     `repository_url` after a rename until it changes; READMEs, comments and licenses are not
-    indexed; matching is ILIKE with no trigram index; internal repositories follow
+    indexed; internal repositories follow
     `is_private`; App, fine-grained, job and foreign-session credentials see no private hits
     from other cells; an org that refuses classic tokens hides its other-cell hits from every
     whole-account credential, including ones that policy would exempt.
@@ -453,6 +453,22 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     runners, webhooks deliveries in flight and CI jobs registered with the source cell; (e)
     a freeze that also stops the source cell's own background writers, not only routers.
     Each is a design decision for the owner before the move is built.
+
+    Stage 7, written so far (Runtime STAGE7_RUN): (2) packing is a geometric repack with a
+    multi-pack index, a bitmap (not for pool forks) and a split commit-graph instead of
+    `git gc` (`backend/git/src/maintenance.rs`). (3) Search matches substrings through
+    `pg_trgm` GIN indexes on names, descriptions, titles, bodies, paths and file text; file
+    text is stored once per content in `search_blobs`, keyed by a SHA-256 the directory
+    computes, and text no file uses is deleted; totals are counted up to the 1,000-result
+    window. (1, part) `DATABASE_DIRECT_URL` carries the serving, maintenance and
+    package-collection leases and migrations past a transaction-pooling PgBouncer, and the
+    PgBouncer e2e round sets it. Not written: `tsvector` ranking (it would change matching
+    from substrings to words, an owner choice); keyset paging (the GitHub API pages by
+    number, and OFFSET is already capped at 1,000); the privacy gap where a delivered
+    cross-cell notice stays visible after its repository turns private (the recipient's
+    stub is never refreshed); read routing from the session's last write position (token
+    clients carry no position, so a primary-free check needs shared state such as the
+    optional cache); item 4, the heartbeat-proved credential read; item 5, the cache.
 
     Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;

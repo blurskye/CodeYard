@@ -428,7 +428,7 @@ pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::PgConne
     let allowed: bool = sqlx::query_scalar(
         "SELECT pg_try_advisory_lock_shared(723947122,hashtext(COALESCE(current_schema(),'')))",
     )
-    .fetch_one(&mut *connection)
+    .fetch_one(&mut connection)
     .await?;
     ensure!(allowed, "cluster restore or offline repair is in progress");
     // Advisory locks are per database, and the installation's tables live in its schema, so
@@ -437,7 +437,7 @@ pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::PgConne
         "SELECT pg_try_advisory_lock(723947121,hashtext(COALESCE(current_schema(),'')||'/'||$1))",
     )
     .bind(identity)
-    .fetch_one(&mut *connection)
+    .fetch_one(&mut connection)
     .await?;
     ensure!(
         locked,
@@ -1114,7 +1114,7 @@ pub async fn maintenance_lock(pool: &PgPool) -> Result<PgConnection> {
     let allowed: bool = sqlx::query_scalar(
         "SELECT pg_try_advisory_lock(723947122,hashtext(COALESCE(current_schema(),'')))",
     )
-    .fetch_one(&mut *connection)
+    .fetch_one(&mut connection)
     .await?;
     ensure!(
         allowed,
