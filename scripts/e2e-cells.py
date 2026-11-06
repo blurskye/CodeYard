@@ -270,6 +270,7 @@ def acceptance(deployment):
     deployment.web("duplicate", "form", "/register", "--action", "/register", "--has", "username",
                    "--set", "username=alice", "--set", "email=duplicate@example.test",
                    "--set", "password=cell-acceptance-password", "--set", "confirm_password=cell-acceptance-password", "--status", "409")
+    print("PASS real-client native setup, cell one signup and cross-cell duplicate name refusal", flush=True)
     deployment.register(0)
     tokens = {who: deployment.token(who) for who in ("alice", "bob")}
     assert tokens["bob"].startswith("cy_pat_1_")
