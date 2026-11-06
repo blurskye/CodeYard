@@ -767,15 +767,10 @@ round passes all five checks and all 234 cluster tests without skips. Stage 2 ru
 acceptance passes.
 Stage 3 star pointers and bounded home lists address acceptance items 5 and 7.
 Their source checks and the real public two-cell star/SIGKILL replay round pass.
-The next runtime passes all 235 cluster tests without skips on the export snapshot;
-its CI, storage and public cells steps are still running. Original-proof fork-source
-admission, bounded pinned-TLS exports, destination staging/publication and public
-REST/native/form ingress with authenticated foreign parent metadata pass source checks.
-Renamed foreign-fork discovery, retained parent metadata and storage publication tests
-pass source checks. Initial cross-cell PR creation and retained-head publication are
-written. Push following, maintainer pushes, object pools and cross-cell mention
-notices are written; cross-cell repository transfers remain open, as do stages 4 to 6. Range renewal is a
-deferred owner follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
+Cross-cell forks and pulls that follow pushes, maintainer pushes over HTTP and SSH,
+object pools and cross-cell mention notices pass the public cells workflow. Cross-cell
+repository transfers remain open, as do stages 4 to 6. Range renewal is a deferred owner
+follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.
 

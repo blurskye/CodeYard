@@ -223,11 +223,21 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     subscription/admission transactions and a durable per-pull refresh cursor are written;
     transport, storage delivery and maintainer grants are not wired yet. This batch is
     unchecked and has not run acceptance.
-    Stage 3 items 1 to 4 are written and pass workspace, Clippy and WASM checks:
-    the head cell queues `repository.push` after a branch moves and the base follows it;
-    maintainer pushes use the base cell's live grant; public forks on standalone storage
-    share `pools/<id>.git`; mentions of foreign accounts reach their home inbox once per
-    event with one email. Item 6, cross-cell repository transfer, is not written: it needs
+    Stage 3 items 1 to 4 pass. The head cell queues `repository.push` after a branch moves
+    and the base follows it; maintainer pushes use the base cell's live grant over HTTP and
+    SSH; public forks on standalone storage share `pools/<id>.git`; mentions of foreign
+    accounts reach their home inbox once per event with one email. Runtime
+    07c720ed82c04c5ab170002893bbe5e2 passes the public cells workflow (cross-cell fork,
+    followed pushes, `gh pr checkout`, `gh pr merge`, maintainer SSH push, mention in
+    `gh api notifications`, outage and revocation checks), object pools (2), the concurrent
+    fork and native SSH maintainer tests; 9a0617eca5484ff3b023592c0a81fb67 passes the six
+    cluster `cells_` tests; 19757052dce8440bb55447cb4d7bb1b3 passes git 43, cluster 235,
+    storage 100 (3 ignored), the pull-request maintainer tests and the changed libraries.
+    Checks: Clippy 9acd223d78e34af3992158a6182d73d0, WASM
+    d716c381b8bc42e5a8fe6a5a427448a7. Runtime 789032d15eb1405b844c84629373faa5 on the
+    previous source ran database 185, pull requests 324, CI 220, storage 100,
+    collaboration 230, notification polling 5, identity 166 and the changed libraries
+    without failures. Item 6, cross-cell repository transfer, is not written: it needs
     the stage 6 row-ownership copy for one repository.
     Owner notes: every followed push ships the whole branch pack; a pull that keeps failing
     holds back later pulls on the same refresh event, with backoff; the outbox holds its row
@@ -236,7 +246,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     cross-cell fork (head.repo is null for them); pools are never pruned when forks go and
     are not used in cluster storage; private-repository mentions stay in their cell; a
     delivered notice stays visible if its repository later turns private, because the
-    home's stub is not refreshed.
+    home's stub is not refreshed; a base merges a foreign head from its followed pull ref and
+    does not see a head branch deleted in the fork; an SSH maintainer of a cross-cell fork
+    must have the key in the base's cell; a cell keeps another cell's directory record,
+    including its web addresses, for the route cache lifetime.
     Stages 4 to 6 remain unwritten; automatic user moves and org regional presence
     are documented owner decisions. Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;

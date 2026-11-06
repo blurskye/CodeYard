@@ -770,9 +770,9 @@ pending OAuth/device codes usable. Automatic renewal is deferred.
 [Cluster readiness](CLUSTER_PLAN.md) records exact source checks, the combined runtime job
 and acceptance gaps. Runtime 15c77f36a9794468ac72f976e6c78209 passes all five public
 two-cell gh/Git checks, 68 core library, 61 store and all 234 cluster tests without skips.
-Stage 2 runnable acceptance passes. Stage 3 public star/outbox replay passes; fork export
-and public fork ingress pass source checks. All 235 cluster tests pass on the export
-snapshot; stage 3 acceptance remains incomplete.
+Stage 2 runnable acceptance passes. Stage 3 items 1 to 5 and 7 pass in the public cells
+workflow: stars, cross-cell forks and pulls that follow pushes, maintainer pushes, object
+pools and mentions. Item 6, cross-cell repository transfer, is not written.
 
 Cross-cell pull requests follow fork pushes: after a branch moves, the head cell queues
 `repository.push`, and the base cell fetches the consented head branch and moves the pull.
