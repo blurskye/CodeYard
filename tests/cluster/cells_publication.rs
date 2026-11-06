@@ -232,7 +232,7 @@ async fn queued_key_release(
 }
 /// The event's claim count and whether it is delivered or leased.
 async fn outbox_state(raw: &codeyard_db_core::pool::PgPool, event: i64) -> (i64, bool, bool) {
-    sqlx::query_as("SELECT attempts,delivered_at IS NOT NULL,next_attempt_at>clock_timestamp() FROM cell_outbox WHERE id=$1")
+    sqlx::query_as("SELECT attempts,delivered_at IS NOT NULL,delivered_at IS NULL AND next_attempt_at>clock_timestamp() FROM cell_outbox WHERE id=$1")
         .bind(event)
         .fetch_one(raw)
         .await
