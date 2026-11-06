@@ -279,10 +279,7 @@ pub const TABLES: &[(&str, Rule)] = &[
         Owned(&[Repository("repo_id"), Account("org_id")]),
     ),
     ("issue_assignees", Owned(&[Parent("issue_id", "issues")])),
-    (
-        "issue_attribute_guard",
-        Owned(&[Account("owner_user_id"), Account("owner_org_id")]),
-    ),
+    ("issue_attribute_guard", Cell),
     (
         "issue_attribute_options",
         Owned(&[Parent("attribute_id", "issue_attributes")]),
@@ -298,10 +295,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("issue_labels", Owned(&[Parent("issue_id", "issues")])),
     ("issue_linked_branches", Owned(&[Repository("repo_id")])),
     ("issue_redirects", Owned(&[Repository("repo_id")])),
-    (
-        "issue_relation_guard",
-        Owned(&[Parent("source_id", "issues")]),
-    ),
+    ("issue_relation_guard", Cell),
     ("issue_relations", Owned(&[Parent("source_id", "issues")])),
     ("issue_suggestions", Owned(&[Parent("issue_id", "issues")])),
     (

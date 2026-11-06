@@ -359,16 +359,15 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       secret_scanning_patterns (repo_id, org_id); secret_scanning_settings (repo_id); stars
       (repo_id); team_repo_access (repo_id); timeline_events (repo_id); vulnerability_jobs
       (repo_id); watches (repo_id); webhooks (repo_id, org_id).
-    - **Account first, 58:** action_runner_groups (org_id); actions_oidc_org_settings (org_id);
+    - **Account first, 57:** action_runner_groups (org_id); actions_oidc_org_settings (org_id);
       artifact_metadata_jobs (org_id); artifact_metadata_records (org_id); audit_log (org_id);
       cell_presence (organization_id); code_security_configurations (org_id); email_tokens
       (user_id); follows (following_id); github_app_installations (org_id, user_id);
       github_app_manifests (user_id); github_app_requests (org_id, user_id); github_apps
-      (owner_id); gpg_keys (user_id); immutable_release_owner_names (owner_id);
-      issue_attribute_guard (owner_user_id, owner_org_id); issue_attributes (owner_user_id,
-      owner_org_id); notification_threads (user_id); notifications (user_id); oauth_accounts
-      (user_id); oauth_app_grants (user_id); oauth_applications (owner_id); org_actions_keys
-      (org_id); org_actions_settings (org_id); org_actions_values (org_id);
+      (owner_id); gpg_keys (user_id); immutable_release_owner_names (owner_id); issue_attributes
+      (owner_user_id, owner_org_id); notification_threads (user_id); notifications (user_id);
+      oauth_accounts (user_id); oauth_app_grants (user_id); oauth_applications (owner_id);
+      org_actions_keys (org_id); org_actions_settings (org_id); org_actions_values (org_id);
       org_dependabot_access (org_id); org_dependabot_keys (org_id); org_dependabot_secrets
       (org_id); org_memberships (org_id); org_private_registries (org_id); organization_blocks
       (org_id); organization_external_property_installations (org_id);
@@ -383,7 +382,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       (org_id); two_factor_auth (user_id); two_factor_recovery_codes (user_id); user_blocks
       (user_id); user_emails (user_id); user_profile_settings (user_id); user_social_accounts
       (user_id); users (id).
-    - **Parent row, 73:** actions_blob_grants (object_id>actions_objects); actions_blob_parts
+    - **Parent row, 72:** actions_blob_grants (object_id>actions_objects); actions_blob_parts
       (object_id>actions_objects); actions_deployment_reviews (run_id>ci_runs);
       actions_github_tokens (run_id>ci_runs); actions_job_annotations (job_id>actions_jobs);
       actions_job_states (run_id>ci_runs); actions_jobs (run_id>ci_runs); actions_oidc_jobs
@@ -407,12 +406,11 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       (token_id>personal_access_tokens); issue_assignees (issue_id>issues);
       issue_attribute_options (attribute_id>issue_attributes); issue_comment_pins
       (issue_id>issues); issue_comments (issue_id>issues); issue_duplicates (issue_id>issues);
-      issue_field_values (issue_id>issues); issue_labels (issue_id>issues); issue_relation_guard
-      (source_id>issues); issue_relations (source_id>issues); issue_suggestions
-      (issue_id>issues); issue_type_assignments (issue_id>issues);
-      notification_thread_subscriptions (thread_id>notification_threads); oauth_app_tokens
-      (token_id>personal_access_tokens); package_blob_grants (package_id>packages);
-      package_files (package_id>packages); package_registry_tokens
+      issue_field_values (issue_id>issues); issue_labels (issue_id>issues); issue_relations
+      (source_id>issues); issue_suggestions (issue_id>issues); issue_type_assignments
+      (issue_id>issues); notification_thread_subscriptions (thread_id>notification_threads);
+      oauth_app_tokens (token_id>personal_access_tokens); package_blob_grants
+      (package_id>packages); package_files (package_id>packages); package_registry_tokens
       (token_id>personal_access_tokens); package_tags (package_id>packages); package_uploads
       (package_id>packages); package_version_blobs (version_id>package_versions);
       package_versions (package_id>packages); pr_assignees (pull_request_id>pull_requests);
@@ -427,14 +425,15 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       repository_security_replies (report_id>repository_security_reports); team_ancestors
       (team_id>teams); team_invitations (team_id>teams); team_memberships (team_id>teams);
       webhook_deliveries (webhook_id>webhooks).
-    - **Cell (never moves), 40:** actions_oidc_key; actions_settings; anonymous_sessions;
+    - **Cell (never moves), 42:** actions_oidc_key; actions_settings; anonymous_sessions;
       auth_login_limits; cell_outbox; cell_prefixes; cell_region_policy; cell_request_counts;
       cluster_leases; cluster_scaling_policies; cluster_ssh_host_key; download_rate_limit;
       email_outbox; email_settings; file_reason_limits; foreign_credentials; github_api_limits;
-      graphql_rate_limits; join_tokens; node_configuration; node_drain_repositories; nodes;
-      notification_events; oauth_states; pending_object_deletions; repo_language_cache;
-      repo_storage_history; repository_committed_refs; repository_move_nodes; repository_moves;
-      repository_replicas; repository_voters; repository_write_control; repository_write_refs;
+      graphql_rate_limits; issue_attribute_guard; issue_relation_guard; join_tokens;
+      node_configuration; node_drain_repositories; nodes; notification_events; oauth_states;
+      pending_object_deletions; repo_language_cache; repo_storage_history;
+      repository_committed_refs; repository_move_nodes; repository_moves; repository_replicas;
+      repository_voters; repository_write_control; repository_write_refs;
       repository_write_votes; repository_writes; signup_requests; storage_object_copies;
       upload_rate_limit; vulnerability_settings.
     - **Shared (copied when a moved row points at it), 12:** attestation_bundles;
