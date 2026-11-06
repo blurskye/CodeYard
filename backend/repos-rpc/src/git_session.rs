@@ -230,26 +230,17 @@ impl RpcHandler {
             } else {
                 None
             };
-            Ok::<_, RepoError>((store, admission, targets, receive, permit, checkout, read_guard, pack_admission, repo_id))
+            Ok::<_, RepoError>((store, admission, targets, receive, permit, checkout, read_guard, pack_admission))
         })
         .await.unwrap_or_else(|_| Err(unavailable()));
-        let (
-            store,
-            admission,
-            targets,
-            receive,
-            _permit,
-            checkout,
-            _read_guard,
-            _pack_admission,
-            repo_id,
-        ) = match prepared {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                crate::refuse(&mut link, error).await?;
-                return Ok(());
-            }
-        };
+        let (store, admission, targets, receive, _permit, checkout, _read_guard, _pack_admission) =
+            match prepared {
+                Ok(prepared) => prepared,
+                Err(error) => {
+                    crate::refuse(&mut link, error).await?;
+                    return Ok(());
+                }
+            };
         // The permit is held while the reply is written, so the write has a deadline too.
         tokio::time::timeout_at(
             deadline,
@@ -265,11 +256,8 @@ impl RpcHandler {
         let (mut output, mut reader) = tokio::io::duplex(git_process::CHUNK);
         let receiving = receive.is_some();
         let input = &mut link.reader;
-        let fork_database = self.context.database()?.clone();
-        let fork_authority = match &request.operation {
-            Operation::ForkPack { authority, .. } => Some(authority.clone()),
-            _ => None,
-        };
+        let fork_request =
+            matches!(request.operation, Operation::ForkPack { .. }).then(|| request.clone());
         let run = async move {
             let mut errors = git_process::StderrTail::default();
             let streams = GitStreams {
@@ -327,15 +315,11 @@ impl RpcHandler {
                 }
                 _ => unreachable!("only streamed operations are served here"),
             };
-            let status = if let Some(authority) = fork_authority {
-                match codeyard_db_repos::repositories::creation::read_fork_source(
-                    &fork_database,
-                    &authority,
-                    repo_id.unwrap_or_default(),
-                )
-                .await
+            let status = if let Some(request) = fork_request {
+                match tokio::time::timeout_at(deadline, self.authorize_request(&request, caller))
+                    .await
                 {
-                    Ok(Some(_)) => status,
+                    Ok(Ok(_)) => status,
                     _ => Err(anyhow::anyhow!("Fork source access was revoked")),
                 }
             } else {

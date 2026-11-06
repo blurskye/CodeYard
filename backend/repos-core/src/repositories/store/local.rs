@@ -58,6 +58,7 @@ mod branches;
 mod gists;
 
 mod exports;
+mod foreign;
 mod imports;
 mod writes;
 
@@ -753,6 +754,70 @@ pub(super) async fn recover_term(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum CopySource<'a> {
+    Native { id: i64, store: &'a LocalStore },
+    Foreign(&'a codeyard_db_core::cells::repositories::Admission),
+}
+impl CopySource<'_> {
+    async fn check(
+        self,
+        pool: &codeyard_db_core::DbPool,
+        authority: &codeyard_db_core::queries::credentials::Actor,
+        repository: i64,
+    ) -> Result<(), RepoError> {
+        match self {
+            Self::Foreign(admission) => {
+                if &admission.actor != authority {
+                    return Err(RepoError::write_denied());
+                }
+                let source = admission.check(pool).await.map_err(RepoError::from)?;
+                if let Some(
+                    codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
+                        id,
+                        hash,
+                    ),
+                ) = &authority.credential
+                {
+                    if !codeyard_db_identity::users::tokens::find_native_token(pool, hash)
+                        .await
+                        .map_err(RepoError::from)?
+                        .is_some_and(|token| token.id == *id)
+                    {
+                        return Err(RepoError::write_denied());
+                    }
+                }
+                let destination = access::current_repository(pool, repository)
+                    .await
+                    .map_err(|_| RepoError::authority_unavailable())?;
+                if !destination.is_fork
+                    || destination.is_gist
+                    || destination.forked_from_id != Some(source.repository.id)
+                    || (source.repository.is_private && !destination.is_private)
+                {
+                    return Err(RepoError::write_denied());
+                }
+                crate::repositories::access::check_publication_actor(pool, authority, &destination)
+                    .await
+                    .map_err(RepoError::from)?;
+            }
+            Self::Native { id, store } => {
+                live_read(pool, id, authority.user_id, store.path(), store.node_id).await?;
+                if let Some(token_id) = authority.token_id() {
+                    let source = access::current_repository(pool, id)
+                        .await
+                        .map_err(|_| RepoError::authority_unavailable())?;
+                    crate::repositories::git_sessions::ReceiveCredential::Token(token_id)
+                        .authorize(pool, &source, false)
+                        .await
+                        .map_err(RepoError::from)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
 impl LocalStore {
     pub(super) async fn restore_refs(
         &self,
@@ -1412,6 +1477,30 @@ impl LocalStore {
                 "Source is not a template",
             ));
         }
+        self.publish_copy(
+            pool,
+            repo_id,
+            authority,
+            CopySource::Native {
+                id: source_repo_id,
+                store: source,
+            },
+            temporary,
+            default_branch,
+        )
+        .await
+    }
+
+    async fn publish_copy(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        repo_id: i64,
+        authority: codeyard_db_core::queries::credentials::Actor,
+        source: CopySource<'_>,
+        temporary: tempfile::TempDir,
+        default_branch: &str,
+    ) -> Result<(), RepoError> {
+        let actor = authority.user_id;
         // Quorum publication owns its process mutex and interprocess lease together.
         // Retaining the legacy mutex while acquiring that lease would deadlock copying.
         let quorum = self.quorum_context(pool, repo_id).await?.is_some();
@@ -1482,17 +1571,7 @@ impl LocalStore {
         )
         .await?;
         // Retain the initiating credential through copying, lock waits and namespace checks.
-        live_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
-        if let Some(token_id) = authority.token_id() {
-            let source_repository =
-                codeyard_identity::repository_access::current_repository(pool, source_repo_id)
-                    .await
-                    .map_err(|_| RepoError::authority_unavailable())?;
-            crate::repositories::git_sessions::ReceiveCredential::Token(token_id)
-                .authorize(pool, &source_repository, false)
-                .await
-                .map_err(RepoError::from)?;
-        }
+        source.check(pool, &authority, repo_id).await?;
         if !destination.is_gist {
             live_write(
                 pool,
@@ -1519,7 +1598,6 @@ impl LocalStore {
             self.publish_quorum_copy(
                 pool,
                 repo_id,
-                source_repo_id,
                 &authority,
                 source,
                 &staged,

@@ -706,6 +706,7 @@ async fn create_selection(
                 &ctx.state.repos_path,
                 &ctx.state.notification_broadcaster,
                 codeyard_repos_core::repositories::lifecycle::ForkOptions {
+                    foreign_source: None,
                     owner,
                     name: Some(&values.name),
                     default_branch_only: !values.all_branches,

@@ -141,8 +141,13 @@ pub enum Operation {
         source: Option<Uuid>,
         default_branch: String,
     },
-    /// Kept separate from Initialize so older nodes reject new copy semantics rather than
-    /// silently preserving history when a template requested its removal.
+    /// Fetches a foreign source privately before the normal authorized copy publication.
+    InitializeForeignCopy {
+        admission: Box<codeyard_db_core::cells::repositories::Admission>,
+        default_branch: String,
+        default_branch_only: bool,
+    },
+    /// Local fork/template copy with the original credential.
     InitializeCopy {
         source: Uuid,
         default_branch: PublicationText,
@@ -669,6 +674,7 @@ impl Operation {
             | Self::CiWorkflowFile { .. } => false,
             Self::Initialize { .. }
             | Self::InitializeCopy { .. }
+            | Self::InitializeForeignCopy { .. }
             | Self::Remove
             | Self::Retire
             | Self::FetchPullHead { .. }

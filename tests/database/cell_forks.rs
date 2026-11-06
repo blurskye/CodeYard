@@ -94,6 +94,7 @@ async fn contract(pg: bool) {
     repository.storage_node_id = None;
     let source = Source {
         reader_id: user,
+        credential_id: None,
         repository,
         owner: Owner::User(Box::new(owner)),
         allow_forking: true,

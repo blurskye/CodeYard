@@ -79,6 +79,7 @@ async fn fork(
         &state.repos_path,
         &state.notification_broadcaster,
         codeyard_repos_core::repositories::lifecycle::ForkOptions {
+            foreign_source: None,
             owner: target,
             name: input.name.as_deref(),
             default_branch_only: input.default_branch_only,

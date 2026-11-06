@@ -441,9 +441,8 @@ impl LocalStore {
         &self,
         pool: &codeyard_db_core::DbPool,
         repository: i64,
-        source_id: i64,
         authority: &codeyard_db_core::queries::credentials::Actor,
-        source: &LocalStore,
+        source: super::CopySource<'_>,
         staged: &LocalStore,
         refs: &std::collections::HashMap<String, String>,
         publication: &git::locks::PublicationGuard,
@@ -489,24 +488,7 @@ impl LocalStore {
             .collect();
         publication
             .scope(self.publish_quorum_refs(pool, repository, &changes, async {
-                super::live_read(
-                    pool,
-                    source_id,
-                    authority.user_id,
-                    source.path(),
-                    source.node_id,
-                )
-                .await?;
-                if let Some(token) = authority.token_id() {
-                    let row =
-                        codeyard_identity::repository_access::current_repository(pool, source_id)
-                            .await
-                            .map_err(|_| RepoError::authority_unavailable())?;
-                    crate::repositories::git_sessions::ReceiveCredential::Token(token)
-                        .authorize(pool, &row, false)
-                        .await
-                        .map_err(RepoError::from)?;
-                }
+                source.check(pool, authority, repository).await?;
                 let destination =
                     codeyard_identity::repository_access::current_repository(pool, repository)
                         .await

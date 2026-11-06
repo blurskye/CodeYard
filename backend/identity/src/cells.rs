@@ -196,6 +196,7 @@ impl Local {
         repository.storage_node_id = None;
         let source = Source {
             reader_id: actor.user_id,
+            credential_id: actor.token_id(),
             repository,
             owner,
             allow_forking,

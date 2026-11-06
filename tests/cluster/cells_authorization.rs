@@ -7,6 +7,54 @@ use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use codeyard_support::{cells::Prefix, node_identity::NodeKey, token_hash::token_hash};
 use std::sync::Arc;
 
+struct InterruptedCopy {
+    inner: authorization::Provider,
+    fail: std::sync::atomic::AtomicBool,
+}
+impl Home for InterruptedCopy {
+    fn authorize<'a>(
+        &'a self,
+        proof: &'a Proof,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<authorization::Answer>>> {
+        self.inner.authorize(proof)
+    }
+    fn user<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::models::User>>>
+    {
+        self.inner.user(name)
+    }
+    fn repository_source<'a>(
+        &'a self,
+        owner: &'a str,
+        name: &'a str,
+        proof: &'a Proof,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        anyhow::Result<Option<codeyard_db_core::cells::repositories::Source>>,
+    > {
+        self.inner.repository_source(owner, name, proof)
+    }
+    fn snapshot<'a>(
+        &'a self,
+        request: &'a codeyard_db_core::cells::repositories::SnapshotRequest,
+        output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        anyhow::Result<codeyard_db_core::cells::repositories::Snapshot>,
+    > {
+        Box::pin(async move {
+            let snapshot = self.inner.snapshot(request, output).await?;
+            anyhow::ensure!(
+                !self.fail.load(std::sync::atomic::Ordering::SeqCst),
+                "Copy interrupted after receiving objects"
+            );
+            Ok(snapshot)
+        })
+    }
+}
+
 fn cell(prefix: Prefix, key: &NodeKey, rpc: Vec<String>) -> Cell {
     Cell {
         id: prefix,
@@ -735,6 +783,137 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .unwrap()
             .is_stub
     );
+    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Token(
+        token.id,
+        &token.token_hash,
+    );
+    let authority = codeyard_db_core::queries::credentials::Actor::from((user.id, &credential));
+    let admission = codeyard_db_core::cells::repositories::Admission::new(
+        source.clone(),
+        authority.clone(),
+        value.clone(),
+    )
+    .unwrap();
+    let mut forged_admission = admission.clone();
+    forged_admission.actor.credential = Some(
+        codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
+            token.id + 1,
+            token.token_hash.clone(),
+        ),
+    );
+    forged_admission.source.credential_id = Some(token.id + 1);
+    assert!(forged_admission.check(&one.pool).await.is_err());
+    assert_eq!(source.credential_id, Some(token.id));
+    let operation = codeyard_repos_core::wire::Operation::InitializeForeignCopy {
+        admission: Box::new(admission.clone()),
+        default_branch: "main".into(),
+        default_branch_only: false,
+    };
+    for (role, allowed) in [
+        ("web", true),
+        ("ssh", true),
+        ("storage", false),
+        ("runner", false),
+    ] {
+        assert_eq!(
+            codeyard_repos_rpc::repository::authorize_operation(&[role.to_owned()], &operation)
+                .is_ok(),
+            allowed
+        );
+    }
+    let native_store =
+        codeyard_repos_core::repositories::store::repo_store(&native_repository, None);
+    assert!(native_store
+        .initialize_foreign_copy(
+            &one.pool,
+            native_repository.id,
+            &admission,
+            &codeyard_repos_core::repositories::store::CopyOptions {
+                default_branch: "main".into(),
+                template: false,
+                default_branch_only: false
+            }
+        )
+        .await
+        .is_err());
+    assert!(native_store.refs().await.unwrap().is_empty());
+    let interrupted = Arc::new(InterruptedCopy {
+        inner: remote_source.clone(),
+        fail: true.into(),
+    });
+    one.pool.set_foreign_authorization(interrupted.clone());
+    let notifications = codeyard_notifications::broadcast::NotificationBroadcaster::new(&one.pool);
+    let fork_options = || codeyard_repos_core::repositories::lifecycle::ForkOptions {
+        owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
+            user.id,
+        ),
+        name: Some("copied-fork"),
+        default_branch_only: false,
+        properties: &[],
+        authority: Some(&authority),
+        foreign_source: Some(&admission),
+    };
+    assert!(codeyard_repos_core::repositories::lifecycle::fork_into(
+        &one.pool,
+        None,
+        bob_root.path(),
+        &notifications,
+        fork_options(),
+        repository.id,
+        "alice"
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM repositories WHERE name='copied-fork'")
+            .fetch_one(&one.raw)
+            .await
+            .unwrap(),
+        0
+    );
+    interrupted
+        .fail
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let forked = codeyard_repos_core::repositories::lifecycle::fork_into(
+        &one.pool,
+        None,
+        bob_root.path(),
+        &notifications,
+        fork_options(),
+        repository.id,
+        "alice",
+    )
+    .await
+    .unwrap();
+    assert_eq!(forked.forked_from_id, Some(repository.id));
+    assert_eq!(forked.home_cell, 1);
+    assert!(forked.is_private && forked.is_fork && !forked.is_stub);
+    let clone_path = bob_root.path().join("copied-clone");
+    let cloned = tokio::process::Command::new("git")
+        .arg("clone")
+        .arg(&forked.disk_path)
+        .arg(&clone_path)
+        .output()
+        .await
+        .unwrap();
+    assert!(
+        cloned.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cloned.stderr)
+    );
+    assert_eq!(
+        tokio::fs::read(clone_path.join("copy.txt")).await.unwrap(),
+        b"copy bytes\n"
+    );
+    codeyard_repos_core::repositories::lifecycle::delete(
+        &one.pool,
+        None,
+        authority.clone(),
+        forked.id,
+    )
+    .await
+    .unwrap();
+    one.pool.set_foreign_authorization(remote_source.clone());
     assert!(remote_source
         .repository_source(
             "alice",

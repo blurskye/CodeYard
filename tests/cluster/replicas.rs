@@ -4485,12 +4485,12 @@ async fn rebalance_reserves_nodes_and_resumes_retirement_after_a_busy_reader() {
         .unwrap();
     let root = tempfile::tempdir().unwrap();
     let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
-    let destination = start_storage(&database.pool, root.path(), "store-c").await;
     let repo = create_repository(&database.pool, &primary, "rebalanced").await;
     let commit = repo
         .save("main", "README.md", "unborn", b"rebalanced bytes\n")
         .await;
     assert_current(&primary, &copy, &repo).await;
+    let destination = start_storage(&database.pool, root.path(), "store-c").await;
     let uuid = codeyard_repos_core::wire::repository_uuid(&repo.repository.disk_path).unwrap();
     let DbPool::Postgres(raw) = &database.pool else {
         unreachable!()

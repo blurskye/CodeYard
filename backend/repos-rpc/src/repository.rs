@@ -48,6 +48,7 @@ pub fn authorize_operation(
 ) -> Result<&'static str, RepoError> {
     let (name, worker_read) = match operation {
         Operation::Initialize { .. } => ("Initialize", false),
+        Operation::InitializeForeignCopy { .. } => ("InitializeForeignCopy", false),
         Operation::InitializeCopy { .. } => ("InitializeCopy", false),
         Operation::Remove => ("Remove", false),
         Operation::Retire => ("Retire", false),
@@ -188,6 +189,7 @@ fn requires_actor(operation: &Operation) -> bool {
             source: Some(_),
             ..
         } | Operation::InitializeCopy { .. }
+            | Operation::InitializeForeignCopy { .. }
             | Operation::ForkPack { .. }
             | Operation::FetchPullHead { .. }
             | Operation::RenameBranch { .. }
@@ -464,7 +466,9 @@ impl RpcHandler {
         }
         if matches!(
             request.operation,
-            Operation::Initialize { .. } | Operation::InitializeCopy { .. }
+            Operation::Initialize { .. }
+                | Operation::InitializeCopy { .. }
+                | Operation::InitializeForeignCopy { .. }
         ) && codeyard_db_cluster::cluster::writes::write_settings(pool)
             .await
             .map_err(|_| unavailable())?
@@ -876,6 +880,25 @@ impl RpcHandler {
                 )),
                 None => json!(store.initialize(None, &default_branch)),
             },
+            Operation::InitializeForeignCopy {
+                admission,
+                default_branch,
+                default_branch_only,
+            } => {
+                if actor != Some(admission.actor.user_id) {
+                    return Err(invalid("Fork actor mismatch").into());
+                }
+                json!(store.initialize_foreign_copy(
+                    pool,
+                    repo_id.ok_or_else(unavailable)?,
+                    &admission,
+                    &codeyard_repos_core::repositories::store::CopyOptions {
+                        default_branch,
+                        template: false,
+                        default_branch_only,
+                    }
+                ))
+            }
             Operation::InitializeCopy {
                 source,
                 default_branch,

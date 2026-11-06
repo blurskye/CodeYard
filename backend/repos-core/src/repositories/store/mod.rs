@@ -502,6 +502,38 @@ impl RepoStore {
         }
     }
 
+    pub async fn initialize_foreign_copy(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        repository: i64,
+        admission: &codeyard_db_core::cells::repositories::Admission,
+        options: &CopyOptions,
+    ) -> Result<(), RepoError> {
+        if options.template || git::branch_ref(&options.default_branch).is_none() {
+            return Err(crate::wire::invalid("Invalid foreign fork copy options"));
+        }
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .initialize_foreign_copy(pool, repository, admission, options)
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        admission.actor.user_id,
+                        Operation::InitializeForeignCopy {
+                            admission: Box::new(admission.clone()),
+                            default_branch: options.default_branch.clone(),
+                            default_branch_only: options.default_branch_only,
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
     /// Copies privately, then checks live source read and destination write authority before publication.
     pub async fn initialize_copy(
         &self,

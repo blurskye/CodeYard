@@ -803,4 +803,5 @@ Git-store regressions pass workspace, Clippy and WASM; runtime is next.
 Fork exports use pinned cell TLS and retain the initiating token or session through
 the source permission checks. `FORK_MAX_PACK_BYTES` bounds each export (128 MiB by
 default, at most 64 GiB); the request also has a byte limit and a 300-second ceiling.
-Fork creation and cross-cell pull-request publication are not wired yet.
+Destination copy staging and publication share the native/quorum copy path; this source
+is unchecked. Public fork ingress and cross-cell pull-request publication are not wired.

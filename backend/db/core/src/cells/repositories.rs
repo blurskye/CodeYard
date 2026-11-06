@@ -41,6 +41,7 @@ impl Owner {
 #[serde(deny_unknown_fields)]
 pub struct Source {
     pub reader_id: i64,
+    pub credential_id: Option<i64>,
     pub repository: Repository,
     pub owner: Owner,
     pub allow_forking: bool,
@@ -53,6 +54,9 @@ impl Source {
         let repo = &self.repository;
         Prefix::for_id(repo.id)?;
         Prefix::for_id(self.reader_id)?;
+        if let Some(id) = self.credential_id {
+            Prefix::for_id(id)?;
+        }
         ensure!(
             repo.home_cell == i32::from(home.get())
                 && !repo.is_stub
@@ -143,7 +147,8 @@ impl Admission {
         };
         admission.proof()?;
         ensure!(
-            admission.source.reader_id == admission.actor.user_id,
+            admission.source.reader_id == admission.actor.user_id
+                && admission.source.credential_id == admission.actor.token_id(),
             "Fork reader changed"
         );
         Ok(admission)
@@ -178,16 +183,23 @@ impl Admission {
             None => anyhow::bail!("Fork requires its original account credential"),
         })
     }
-    pub fn header(&self) -> Result<(&'static str, String)> {
-        Ok(match self.proof()? {
-            super::authorization::Proof::Token { .. } => {
-                ("Authorization", format!("Bearer {}", self.credential))
-            }
-            super::authorization::Proof::Session { .. } => {
-                ("Cookie", format!("session_id={}", self.credential))
-            }
-            super::authorization::Proof::Ssh { .. } => unreachable!(),
-        })
+    pub fn snapshot_request(
+        &self,
+        default_branch_only: bool,
+        maximum_bytes: u64,
+    ) -> Result<SnapshotRequest> {
+        let request = SnapshotRequest {
+            repository_id: self.source.repository.id,
+            reader_id: self.actor.user_id,
+            owner: self.source.owner.name().to_owned(),
+            name: self.source.repository.name.clone(),
+            proof: self.proof()?,
+            default_branch_only,
+            maximum_bytes,
+            timeout_seconds: 300,
+        };
+        request.validate()?;
+        Ok(request)
     }
     pub async fn check(&self, pool: &crate::DbPool) -> Result<Source> {
         let home = Prefix::new(u16::try_from(self.source.repository.home_cell)?);
@@ -209,6 +221,7 @@ impl Admission {
         ensure!(
             source.repository.id == self.source.repository.id
                 && source.reader_id == self.actor.user_id
+                && source.credential_id == self.actor.token_id()
                 && source.owner.object() == self.source.owner.object()
                 && (!source.repository.is_private || source.allow_forking),
             codeyard_support::credentials::AccountRestricted

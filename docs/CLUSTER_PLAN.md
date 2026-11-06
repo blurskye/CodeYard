@@ -182,7 +182,12 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Hostile roots/readers, revoked access and failed/oversized stream tests are written.
     Recheck passes: workspace 693c4fdac519429e8ea01446c01f4402, Clippy
     35d9047eb87840b096823571b58623a6 and WASM a5bd1ceff3ca4a118123667d3a00f703. The gh/Git cross-cell fork/PR fixture is written; public fork creation
-    and publication are not wired, and their runtime acceptance is pending. Runtime
+    is not wired, and its runtime acceptance is pending. The next unchecked source
+    adds destination staging/strict indexing through the shared native/quorum copy
+    publisher, binds token row ids to home proofs and checks native storage membership
+    after export. Real TLS copy interruption/retry, hostile destination and Git clone
+    assertions are written. The rebalance fixture now starts its third node only
+    after verifying its initial copy, preserving every assertion. Runtime
     67eb28f748434d8d839860a974a0fb07 covers the touched libraries, store/write tests,
     database cell contracts, cluster, CI, storage and the mandatory public cells fixture.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared

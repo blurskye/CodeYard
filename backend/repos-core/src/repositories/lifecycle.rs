@@ -343,6 +343,7 @@ async fn provision_from(
     options: ProvisionOptions<'_>,
     chosen: &[codeyard_db_core::queries::organizations::properties::ValueInput],
     authority: Option<&codeyard_db_core::queries::credentials::Actor>,
+    foreign_source: Option<&codeyard_db_core::cells::repositories::Admission>,
 ) -> Result<Repository, StorageError> {
     let mut properties = inherited_properties(node.0, owner, options.creation_source).await?;
     // Values chosen in the creation form replace inherited ones.
@@ -361,7 +362,7 @@ async fn provision_from(
             owner,
             properties: &properties,
             admission: codeyard_db_repos::repositories::creation::CreationAdmission {
-                foreign_source: None,
+                foreign_source,
                 authority,
                 advisory: None,
             },
@@ -447,6 +448,7 @@ async fn provision_stored(
     let owner = creation.owner;
     let authority = creation.admission.authority.cloned();
     let advisory = creation.admission.advisory.map(str::to_owned);
+    let foreign_source = creation.admission.foreign_source.cloned();
     let (private, gist) = (options.private, options.gist);
     let source = options
         .creation_source
@@ -488,7 +490,7 @@ async fn provision_stored(
                     owner,
                     properties: &properties,
                     admission: codeyard_db_repos::repositories::creation::CreationAdmission {
-                        foreign_source: None,
+                        foreign_source: foreign_source.as_ref(),
                         authority: authority.as_ref(),
                         advisory: advisory.as_deref(),
                     },
@@ -528,9 +530,16 @@ async fn provision_stored_owned(
     let owner = creation.owner;
     validate_name(name)?;
     let (pool, context) = node;
-    let storage_node_id = crate::cluster::placement::storage_node(context, source)
-        .await
-        .map_err(git_storage_error)?;
+    let storage_node_id = crate::cluster::placement::storage_node(
+        context,
+        if creation.admission.foreign_source.is_some() {
+            None
+        } else {
+            source
+        },
+    )
+    .await
+    .map_err(git_storage_error)?;
     let root = std::path::absolute(repos_path).map_err(|_| unavailable())?;
     let location = crate::repositories::store::primary_path(&root, Uuid::new_v4());
     let disk_path = location.to_str().ok_or_else(unavailable)?;
@@ -590,36 +599,43 @@ async fn provision_stored_owned(
                 Some(CreationSource::Template { all_branches, .. }) => !all_branches,
                 None => false,
             };
-            store
-                .initialize_copy(
-                    pool,
-                    repository.id,
-                    source.id,
-                    creation
-                        .admission
-                        .authority
-                        .cloned()
-                        .unwrap_or_else(|| owner.actor_id.into()),
-                    &repo_store(source, context),
-                    &crate::repositories::store::CopyOptions {
-                        default_branch: repository.default_branch.clone(),
-                        template,
-                        default_branch_only,
-                    },
-                )
-                .await
-                .map_err(|error| StorageError {
-                    kind: match error.kind {
-                        ErrorKind::Invalid => LifecycleFailure::Denied,
-                        ErrorKind::Conflict => LifecycleFailure::Conflict,
-                        _ => LifecycleFailure::Unavailable,
-                    },
-                    message: if error.kind == ErrorKind::Conflict {
-                        "Repository copy conflicts with reserved immutable tag names."
-                    } else {
-                        "Repository is not available for copying."
-                    },
-                })?;
+            let copy_options = crate::repositories::store::CopyOptions {
+                default_branch: repository.default_branch.clone(),
+                template,
+                default_branch_only,
+            };
+            let copied = if let Some(foreign) = creation.admission.foreign_source {
+                store
+                    .initialize_foreign_copy(pool, repository.id, foreign, &copy_options)
+                    .await
+            } else {
+                store
+                    .initialize_copy(
+                        pool,
+                        repository.id,
+                        source.id,
+                        creation
+                            .admission
+                            .authority
+                            .cloned()
+                            .unwrap_or_else(|| owner.actor_id.into()),
+                        &repo_store(source, context),
+                        &copy_options,
+                    )
+                    .await
+            };
+            copied.map_err(|error| StorageError {
+                kind: match error.kind {
+                    ErrorKind::Invalid => LifecycleFailure::Denied,
+                    ErrorKind::Conflict => LifecycleFailure::Conflict,
+                    _ => LifecycleFailure::Unavailable,
+                },
+                message: if error.kind == ErrorKind::Conflict {
+                    "Repository copy conflicts with reserved immutable tag names."
+                } else {
+                    "Repository is not available for copying."
+                },
+            })?;
         } else {
             store
                 .initialize(None, &repository.default_branch)
@@ -1025,6 +1041,7 @@ pub async fn fork(
         repos_path,
         broadcaster,
         ForkOptions {
+            foreign_source: None,
             owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
                 actor,
             ),
@@ -1040,6 +1057,7 @@ pub async fn fork(
 }
 
 pub struct ForkOptions<'a> {
+    pub foreign_source: Option<&'a codeyard_db_core::cells::repositories::Admission>,
     pub owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner,
     pub name: Option<&'a str>,
     pub default_branch_only: bool,
@@ -1062,18 +1080,29 @@ pub async fn fork_into(
     codeyard_db_repos::repositories::creation::check_creation_authority(pool, options.owner)
         .await
         .map_err(storage_error)?;
-    let source = codeyard_identity::repository_access::check_read(pool, source_id, Some(actor))
-        .await
-        .map_err(|error| StorageError {
-            kind: if error == codeyard_identity::repository_access::AccessError::Unavailable {
-                LifecycleFailure::Unavailable
-            } else {
-                LifecycleFailure::Denied
-            },
-            message: "Repository is not available for forking.",
-        })?;
+    let source = if let Some(foreign) = options.foreign_source {
+        if options.authority != Some(&foreign.actor) || foreign.source.repository.id != source_id {
+            return Err(StorageError {
+                kind: LifecycleFailure::Denied,
+                message: "Fork source authority changed.",
+            });
+        }
+        foreign.check(pool).await.map_err(storage_error)?.repository
+    } else {
+        codeyard_identity::repository_access::check_read(pool, source_id, Some(actor))
+            .await
+            .map_err(|error| StorageError {
+                kind: if error == codeyard_identity::repository_access::AccessError::Unavailable {
+                    LifecycleFailure::Unavailable
+                } else {
+                    LifecycleFailure::Denied
+                },
+                message: "Repository is not available for forking.",
+            })?
+    };
     // As on GitHub, the switch only governs forks of private and internal repositories.
-    if source.is_private
+    if options.foreign_source.is_none()
+        && source.is_private
         && !codeyard_db_repos::repositories::records::repository_features(pool, source.id)
             .await
             .map_err(|_| unavailable())?
@@ -1142,6 +1171,7 @@ pub async fn fork_into(
         },
         options.properties,
         options.authority,
+        options.foreign_source,
     )
     .await
     {
@@ -1157,6 +1187,9 @@ pub async fn fork_into(
         }
         Err(error) => return Err(error),
     };
+    if options.foreign_source.is_some() {
+        return Ok(fork);
+    }
     if let Some(recipient) = source.personal_owner_id().filter(|id| *id != actor) {
         let title = format!("{} forked {}/{}", user.username, owner, source.name);
         let body = format!("New fork: {fork_owner}/{}", fork.name);
@@ -1366,6 +1399,7 @@ pub async fn generate(
             },
             &properties,
             authority.as_ref(),
+            None,
         )
         .await
     });
