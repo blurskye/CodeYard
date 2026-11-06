@@ -157,8 +157,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 2 source covers directory claims/TLS/cache, public HTTP/SSH routing, scoped
     credentials and IDs, stable homes, stubs, home authorization, native publication,
     durable cleanup, capacity reporting and bounded home membership discovery.
-    Latest source checks pass: workspace c502a2c8f87648999500ef84e95b6621,
-    Clippy 44d810cde4d348fe99b551cf8bb75125 and WASM 682078b4d17f46168e82309f02404429.
+    Latest source checks pass: workspace 6e3ff2fae29948338c4fbcfb98312368,
+    Clippy 426d7872a9a249899d1fb2cffad51248 and WASM 15b9db025ccd4d45b3c2eb363a381de6.
     Generated GraphQL is unchanged. New output IDs are rooted; former input IDs still
     resolve as required. Earlier runtime passes 334 selected library, 42 Git and 166
     identity tests and both exhaustive GraphQL contracts. CI passes 220 with 19 existing
@@ -179,8 +179,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     within a strict 60-second deadline; rate limits and outages cannot satisfy it. Fixture
     runtime remains pending; retry only the failed targets after the current job finishes.
     Cell-zero preservation now also reuses a pre-enrollment PAT and SSH key through gh
-    login, HTTP push and SSH clone. This fixture extension is syntax-checked; source
-    checks are next.
+    login, HTTP push and SSH clone. This extension passes the source checks above;
+    runtime is pending.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:
