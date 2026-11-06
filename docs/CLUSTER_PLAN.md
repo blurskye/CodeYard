@@ -194,6 +194,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     All three pass. The next unchecked source retains
     original fork proofs through both-engine creation transactions, shares native
     source permission reads and tests access lost immediately before commit.
+    Checks are workspace e401f6085a944da88801854b240a525d, Clippy
+    25ac9880ad294027a1ac8a783e8f92a4 and WASM 7078759ffd0242dcb456214cdb71a296;
+    WASM passes, native jobs are running.
     Fork publication is not wired.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
     object pools, mentions/home inbox/email, and repository transfers/redirects.
