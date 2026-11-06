@@ -188,7 +188,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     workflow checks. New store tests cover forged proof, revoked grant, expired home
     answer, a valid foreign merge and workflow-scope denial with unchanged refs.
     Its first native check round reports two test-only API errors (a private error
-    constant and a unit-returning setter); both are corrected together. WASM passes.
+    constant and a unit-returning setter); both are corrected together. Recheck passes
+    workspace 1eea95d5da154951a089895b7e135cbc, Clippy 5bbeecaa23534c9086bf16bc198a3001
+    and WASM 045f16dfddd44168a4379af54001a42c. Core library/store, cluster and the
+    public cells client round are next.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:

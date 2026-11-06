@@ -795,4 +795,4 @@ reply is fixed. The next checked cells snapshot also verifies standalone cell-ze
 JavaScript ID precision and native-only member lists and counts; those real-client checks
 pass, as do cell-1 HTTP/SSH push/clone and foreign pushes/PR creation. The merge publication
 check still treats a foreign proof as a native token ID. Its typed-proof/workflow fix and
-Git-store regressions await source checks and runtime.
+Git-store regressions pass workspace, Clippy and WASM; runtime is next.

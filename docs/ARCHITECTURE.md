@@ -772,7 +772,8 @@ its successful empty 204 response. That fixture is fixed and source-checked. The
 snapshot passes standalone cell-zero data/credential preservation, JavaScript ID precision,
 native-only org/team lists/counts, raw/hydrated navigation and cell-1 HTTP/SSH push/clone.
 Foreign pushes and gh pr create pass; gh pr merge finds a native-token-only publication
-check. Its typed-proof/workflow fix and hostile store regressions are written; checks are next.
+check. Its typed-proof/workflow fix and hostile store regressions pass workspace, Clippy
+and WASM; core library/store, cluster and public-client runtime are next.
 Public two-cell gh/Git acceptance remains open. Stages 3 to 6 are not built; range renewal
 is a deferred owner follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and
 runtime gaps. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
