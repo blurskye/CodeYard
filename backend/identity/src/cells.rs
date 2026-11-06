@@ -13,13 +13,13 @@ impl Home for Local {
     fn cell(&self) -> Option<codeyard_support::cells::Prefix> {
         Some(self.pool.cell_id())
     }
-    fn receive_membership<'a>(
+    fn receive_pointer<'a>(
         &'a self,
-        event: &'a codeyard_db_core::cells::memberships::Event,
-        admission: &'a dyn codeyard_db_core::cells::memberships::Admission,
+        event: &'a codeyard_db_core::cells::pointers::Event,
+        admission: &'a dyn codeyard_db_core::cells::pointers::Admission,
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            codeyard_db_core::cells::memberships::apply(&self.pool, event, admission).await
+            codeyard_db_core::cells::pointers::apply(&self.pool, event, admission).await
         })
     }
     fn user<'a>(

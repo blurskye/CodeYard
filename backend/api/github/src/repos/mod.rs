@@ -664,11 +664,11 @@ async fn list(
             if let Some(since) = query.since {
                 parameters.push(("since".into(), since.to_string()));
             }
-            codeyard_app::api_shared::github::memberships::remote(
+            codeyard_app::api_shared::github::pointers::remote(
                 &state.pool,
                 auth,
                 &headers,
-                codeyard_db_core::cells::memberships::List::Repositories,
+                codeyard_db_core::cells::pointers::List::Repositories,
                 parameters,
                 offset.saturating_add(limit).saturating_add(1),
             )
@@ -739,7 +739,7 @@ async fn list(
         }
         if remote.is_some()
             && scanned
-                >= codeyard_db_core::cells::memberships::Config::default().maximum_scan as i64
+                >= codeyard_db_core::cells::pointers::Config::default().maximum_scan as i64
         {
             return Err(Error::unavailable(anyhow::anyhow!(
                 "Membership scan exceeds its limit"
@@ -759,7 +759,7 @@ async fn list(
     .await?;
     if let Some(mut remote) = remote {
         remote.extend(values);
-        let (values, next) = codeyard_app::api_shared::github::memberships::page(
+        let (values, next) = codeyard_app::api_shared::github::pointers::page(
             remote, sort, descending, offset, limit,
         )?;
         return page.response(&uri, values, next);

@@ -296,27 +296,27 @@ pub trait Home: Send + Sync {
     fn cell(&self) -> Option<Prefix> {
         None
     }
-    fn membership_page<'a>(
+    fn resource_page<'a>(
         &'a self,
         _cell: Prefix,
-        _page: &'a super::memberships::Page,
-        _credential: &'a str,
-    ) -> BoxFuture<'a, Result<super::memberships::PageResult>> {
-        Box::pin(async { anyhow::bail!("Remote membership reads are unavailable") })
+        _page: &'a super::pointers::Page,
+        _credential: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<super::pointers::PageResult>> {
+        Box::pin(async { anyhow::bail!("Remote resource reads are unavailable") })
     }
 
-    fn send_membership<'a>(
+    fn send_pointer<'a>(
         &'a self,
-        _event: &'a super::memberships::Event,
+        _event: &'a super::pointers::Event,
     ) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async { anyhow::bail!("Membership delivery is unavailable") })
+        Box::pin(async { anyhow::bail!("Pointer delivery is unavailable") })
     }
-    fn receive_membership<'a>(
+    fn receive_pointer<'a>(
         &'a self,
-        _event: &'a super::memberships::Event,
-        _admission: &'a dyn super::memberships::Admission,
+        _event: &'a super::pointers::Event,
+        _admission: &'a dyn super::pointers::Admission,
     ) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async { anyhow::bail!("Membership admission is unavailable") })
+        Box::pin(async { anyhow::bail!("Pointer admission is unavailable") })
     }
     fn authorize<'a>(&'a self, proof: &'a Proof) -> BoxFuture<'a, Result<Option<Answer>>>;
     fn user_id<'a>(&'a self, _id: i64) -> BoxFuture<'a, Result<Option<User>>> {

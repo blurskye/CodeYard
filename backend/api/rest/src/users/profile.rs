@@ -20,24 +20,16 @@ use std::sync::Arc;
 /// that tab is the open one. The list is read only for the open tab.
 async fn profile_stars(
     ctx: &PageContext,
-    target: i64,
+    target: &codeyard_db_core::models::User,
     page: i64,
 ) -> Result<users::ProfileStars, Response> {
-    let viewer = ctx.user.as_ref().map(|viewer| viewer.id);
     let unavailable = || {
         ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,
             "Unable to load this user's stars.",
         )
     };
-    let count = codeyard_db_repos::repositories::engagement::count_starred_repositories(
-        &ctx.state.pool,
-        target,
-        viewer,
-        "",
-    )
-    .await
-    .map_err(|_| unavailable())?;
+    let count = crate::discovery::stars::starred_count(ctx,target).await.map_err(|_| unavailable())?;
     if ctx.query.get("tab").map(String::as_str) != Some("stars") {
         return Ok(users::ProfileStars {
             count,
@@ -47,7 +39,7 @@ async fn profile_stars(
     let (sort, text) = star_order_and_text(&ctx.query)
         .map_err(|message| ctx.error(StatusCode::BAD_REQUEST, message))?;
     let page = usize::try_from(page.clamp(1, 10_000)).unwrap_or(1);
-    let listed = starred_page(&ctx.state, target, viewer, &text, star_sort(&sort), page)
+    let listed = starred_page(ctx, target, &text, star_sort(&sort), page)
         .await
         .map_err(|_| unavailable())?;
     Ok(users::ProfileStars {
@@ -201,7 +193,7 @@ pub(crate) async fn profile_response(
             }
         }
     };
-    let stars = match profile_stars(ctx, target.id, page).await {
+    let stars = match profile_stars(ctx, &target, page).await {
         Ok(stars) => stars,
         Err(response) => return response,
     };

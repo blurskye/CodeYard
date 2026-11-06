@@ -6,7 +6,7 @@ use sqlx::PgConnection;
 pub mod authorization;
 pub mod capacity;
 pub mod directory;
-pub mod memberships;
+pub mod pointers;
 pub mod outbox;
 pub mod stubs;
 

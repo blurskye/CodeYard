@@ -191,9 +191,12 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     constant and a unit-returning setter); both are corrected together. Recheck passes
     workspace 1eea95d5da154951a089895b7e135cbc, Clippy 5bbeecaa23534c9086bf16bc198a3001
     and WASM 045f16dfddd44168a4379af54001a42c. Runtime 15c77f36a9794468ac72f976e6c78209
-    covers core library/store, cluster and the real public cells client round; it is running.
-    No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
-    and org regional presence remain documented owner decisions.
+    passes all five real public cells checks, 68 core library tests and 61 store tests,
+    without skips. The final cluster rerun is still running.
+    Stage 3 items 5/7 are in source work: shared membership/star pointer delivery,
+    bounded home REST/browser star lists and SIGKILL replay acceptance. This batch is
+    unchecked; the remaining stage 3 items and stages 4 to 6 remain unwritten.
+    Automatic user moves and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:
     foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded expired
     directory-claim collection.

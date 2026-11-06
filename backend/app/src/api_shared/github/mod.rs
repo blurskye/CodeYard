@@ -61,4 +61,4 @@ pub mod labels;
 
 pub mod repos;
 
-pub mod memberships;
+pub mod pointers;

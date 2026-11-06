@@ -105,6 +105,11 @@ class Deployment:
             raise AssertionError(f"{name} did not stop within its shutdown deadline") from None
         assert result == 0, f"{name} exited {result}; see {self.root / name / 'server.log'}"
 
+    def crash(self, name):
+        process = self.processes.pop(name)
+        os.killpg(process.pid, signal.SIGKILL)
+        assert process.wait(timeout=10) == -signal.SIGKILL
+
     def close(self):
         failures = []
         owned = list(self.processes.items())[::-1]
@@ -413,6 +418,49 @@ def acceptance(deployment):
         assert dashboard["shared_count"] == 1, dashboard
         assert dashboard["shared"][0]["repository"]["name"] == "shared", dashboard
         client.checked("the home dashboard shows the foreign private repository in raw HTML and hydration data")
+        with client.check("cross-cell stars survive a resource-cell crash and never disclose private repositories"):
+            for method in ("PUT", "PUT"):
+                response = client.gh("api", "user/starred/alice/shared", "--method", method, "--include", who="bob")
+                assert re.match(r"HTTP/\S+ 204(?: |$)", response.stdout), response.stdout
+            deadline = time.monotonic() + 30
+            while not any(repo["full_name"] == "alice/shared" for repo in client.api("user/starred", who="bob")):
+                assert time.monotonic() < deadline, "the home star list did not receive its resource pointer"
+                threading.Event().wait(0.1)
+            assert client.api("repos/alice/shared")["stargazers_count"] == 1
+            stamped = client.api("user/starred", "-H", "Accept: application/vnd.github.star+json", who="bob")
+            assert len(stamped) == 1 and stamped[0]["repo"]["full_name"] == "alice/shared" and stamped[0]["starred_at"], stamped
+            anonymous = urllib.request.Request(deployment.base + "/api/v3/users/bob/starred")
+            with deployment.http.open(anonymous, timeout=15) as response:
+                assert json.load(response) == []
+            deployment.web("bob", "req", "GET", "/stars", "--no-scripts", "--contains", "/alice/shared")
+            stars = json.loads(deployment.web("bob", "req", "GET", "/stars", "--accept", "application/vnd.codeyard.page+json", "--print", "body"))["page"]["model"]["Stars"]
+            assert len(stars["repositories"]) == 1 and stars["repositories"][0]["name"] == "shared", stars
+            client.gh("api", "user/starred/alice/shared", "--method", "DELETE", who="bob")
+            deadline = time.monotonic() + 30
+            while client.api("user/starred", who="bob"):
+                assert time.monotonic() < deadline, "the home star pointer did not receive removal"
+                threading.Event().wait(0.1)
+            # Keep the destination down through the committed star and kill its source before retry.
+            deployment.stop("one")
+            client.gh("api", "user/starred/alice/shared", "--method", "PUT", who="bob")
+            deployment.crash("zero")
+            deployment.start("zero", "serve")
+            deployment.start("one", "serve")
+            deployment.wait("zero", deployment.native[0][0])
+            deployment.wait("one", deployment.native[1][0])
+            deadline = time.monotonic() + 60
+            while not client.api("user/starred", who="bob"):
+                assert time.monotonic() < deadline, "the committed star outbox did not recover after SIGKILL"
+                threading.Event().wait(0.1)
+            rows = client.api("user/starred", who="bob")
+            assert len(rows) == 1 and rows[0]["full_name"] == "alice/shared", rows
+            assert client.api("repos/alice/shared")["stargazers_count"] == 1
+            client.gh("api", "user/starred/alice/shared", "--method", "DELETE", who="bob")
+            deadline = time.monotonic() + 30
+            while client.api("user/starred", who="bob"):
+                assert time.monotonic() < deadline, "the recovered star could not be removed"
+                threading.Event().wait(0.1)
+            assert client.api("repos/alice/shared")["stargazers_count"] == 0
         with client.check("foreign org and team grants work while member lists and counts exclude metadata stubs"):
             deployment.web("alice", "form", "/settings/organizations", "--action", "/settings/organizations",
                 "--has", "action=create", "--set", "slug=cell-org", "--set", "display_name=Cell organization",

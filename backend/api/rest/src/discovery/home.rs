@@ -36,7 +36,7 @@ pub(super) async fn home(
         .unwrap_or_default();
     // This scope comes from the verified session, never from a query/form owner.
     let page_size =
-        codeyard_db_core::cells::memberships::Config::default().browser_repository_page_size as i64;
+        codeyard_db_core::cells::pointers::Config::default().browser_repository_page_size as i64;
     let page = ctx
         .query
         .get("page")
@@ -48,12 +48,12 @@ pub(super) async fn home(
         .unwrap_or(i64::MAX);
     let wanted = usize::try_from(offset.saturating_add(page_size)).unwrap_or(usize::MAX);
     let remote = if let Some(session) = ctx.session_id.as_deref() {
-        match codeyard_app::api_shared::github::memberships::browser(
+        match codeyard_app::api_shared::github::pointers::browser(
             &ctx.state.pool,
             &ctx.database_actor(user.id),
             user.is_stub,
             session,
-            codeyard_db_core::cells::memberships::List::BrowserRepositories,
+            codeyard_db_core::cells::pointers::List::BrowserRepositories,
             vec![("q".into(), find.clone())],
             wanted,
         )
@@ -97,7 +97,7 @@ pub(super) async fn home(
         Err(()) => return unavailable(&ctx, "home_shared_repositories"),
     };
     if let Some(remote) = remote {
-        let Ok(mut budget) = codeyard_db_core::cells::memberships::Budget::new(Default::default())
+        let Ok(mut budget) = codeyard_db_core::cells::pointers::Budget::new(Default::default())
         else {
             return unavailable(&ctx, "home_membership_limits");
         };
@@ -197,12 +197,12 @@ async fn shared_cards(
     wanted: usize,
     offset: i64,
 ) -> Result<(Vec<SharedRepositoryCard>, i64), ()> {
-    let config = codeyard_db_core::cells::memberships::Config::default();
+    let config = codeyard_db_core::cells::pointers::Config::default();
     if wanted == 0 || wanted > config.maximum_scan {
         return Err(());
     }
     let mut cards = Vec::new();
-    let mut budget = codeyard_db_core::cells::memberships::Budget::new(config).map_err(|_| ())?;
+    let mut budget = codeyard_db_core::cells::pointers::Budget::new(config).map_err(|_| ())?;
     let mut count = 0;
     while cards.len() < wanted {
         let limit = (wanted - cards.len()).min(config.page_size);

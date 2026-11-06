@@ -1,6 +1,6 @@
 //! Pointer delivery is ordered and atomic; a pointer never becomes native account authority.
 use crate::support::database::Database;
-use codeyard_db_core::cells::memberships::{self, Admission, Change, Event};
+use codeyard_db_core::cells::pointers::{self, Admission, Change, Event};
 use codeyard_model::cells::{Object, ObjectKind};
 use codeyard_support::cells::Prefix;
 use futures_util::future::BoxFuture;
@@ -37,17 +37,17 @@ impl codeyard_db_core::cells::authorization::Home for PendingPage {
     ) -> BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::cells::authorization::Answer>>> {
         Box::pin(async { Ok(None) })
     }
-    fn membership_page<'a>(
+    fn resource_page<'a>(
         &'a self,
         _cell: Prefix,
-        _page: &'a memberships::Page,
-        credential: &'a str,
-    ) -> BoxFuture<'a, anyhow::Result<memberships::PageResult>> {
+        _page: &'a pointers::Page,
+        credential: Option<&'a str>,
+    ) -> BoxFuture<'a, anyhow::Result<pointers::PageResult>> {
         Box::pin(async move {
-            assert_eq!(credential, self.session);
+            assert_eq!(credential, Some(self.session.as_str()));
             self.started.notify_one();
             self.release.notified().await;
-            Ok(memberships::PageResult {
+            Ok(pointers::PageResult {
                 rows: vec![
                     serde_json::json!({"repository":{"id":*Prefix::new(1).ids().start(),
                     "owner":"remote","name":"never-disclose","description":null,"is_private":true,
@@ -67,6 +67,7 @@ async fn contract(pg: bool) {
     let event = Event {
         id: first + 1,
         change: Change {
+            kind: pointers::Kind::Membership,
             user_id: user,
             object: Object {
                 kind: ObjectKind::Repository,
@@ -79,12 +80,12 @@ async fn contract(pg: bool) {
         checks: AtomicUsize::new(0),
         fail: 3,
     };
-    assert!(memberships::apply(f.pool(), &event, &revoked)
+    assert!(pointers::apply(f.pool(), &event, &revoked)
         .await
         .is_err());
     assert_eq!(
         f.scalar(
-            "SELECT COUNT(*) FROM remote_memberships WHERE user_id=$1",
+            "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1",
             &[user]
         )
         .await,
@@ -94,18 +95,18 @@ async fn contract(pg: bool) {
         checks: AtomicUsize::new(0),
         fail: 0,
     };
-    memberships::apply(f.pool(), &event, &gate).await.unwrap();
-    memberships::apply(f.pool(), &event, &gate).await.unwrap();
+    pointers::apply(f.pool(), &event, &gate).await.unwrap();
+    pointers::apply(f.pool(), &event, &gate).await.unwrap();
     assert_eq!(
         f.scalar(
-            "SELECT COUNT(*) FROM remote_memberships WHERE user_id=$1 AND active",
+            "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active",
             &[user]
         )
         .await,
         1
     );
     // An active pointer whose source became this home must not fan out to itself.
-    f.execute("INSERT INTO remote_memberships(user_id,resource_kind,resource_id,source_cell,source_event,active) VALUES($1,'repository',$2,0,$3,true)",
+    f.execute("INSERT INTO remote_pointers(user_id,kind,resource_kind,resource_id,source_cell,source_event,active) VALUES($1,'membership','repository',$2,0,$3,true)",
         &[user, first + 21, event.id]).await;
     let session = codeyard_identity::sessions::fresh_id(f.pool()).unwrap();
     codeyard_db_identity::users::sessions::create_session(
@@ -122,22 +123,22 @@ async fn contract(pg: bool) {
     let read = async {
         match f.pool() {
             codeyard_db_core::DbPool::Postgres(pool) => {
-                memberships::postgres::Reader::homes(pool, &actor, Default::default()).await
+                pointers::postgres::Reader::homes(pool, user, Some(&actor), pointers::Kind::Membership, Default::default()).await
             }
             codeyard_db_core::DbPool::Sqlite(pool) => {
-                memberships::sqlite::Reader::homes(pool, &actor, Default::default()).await
+                pointers::sqlite::Reader::homes(pool, user, Some(&actor), pointers::Kind::Membership, Default::default()).await
             }
         }
     };
     assert_eq!(read.await.unwrap(), vec![Prefix::new(1)]);
     f.execute(
-        "DELETE FROM remote_memberships WHERE user_id=$1 AND source_cell=0",
+        "DELETE FROM remote_pointers WHERE user_id=$1 AND source_cell=0",
         &[user],
     )
     .await;
     // Revoke the original browser session while its remote list is in flight.
     let request_limit =
-        std::time::Duration::from_secs(memberships::Config::default().request_seconds * 2);
+        std::time::Duration::from_secs(pointers::Config::default().request_seconds * 2);
     let provider = std::sync::Arc::new(PendingPage {
         session: session.clone(),
         started: tokio::sync::Notify::new(),
@@ -178,11 +179,11 @@ async fn contract(pg: bool) {
     let mut removal = event.clone();
     removal.id += 1;
     removal.change.active = false;
-    memberships::apply(f.pool(), &removal, &gate).await.unwrap();
-    memberships::apply(f.pool(), &event, &gate).await.unwrap();
+    pointers::apply(f.pool(), &removal, &gate).await.unwrap();
+    pointers::apply(f.pool(), &event, &gate).await.unwrap();
     assert_eq!(
         f.scalar(
-            "SELECT COUNT(*) FROM remote_memberships WHERE user_id=$1 AND active",
+            "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active",
             &[user]
         )
         .await,
@@ -190,17 +191,35 @@ async fn contract(pg: bool) {
     );
     let mut conflict = removal.clone();
     conflict.change.active = true;
-    assert!(memberships::apply(f.pool(), &conflict, &gate)
+    assert!(pointers::apply(f.pool(), &conflict, &gate)
         .await
         .is_err());
     assert_eq!(
         f.scalar(
-            "SELECT COUNT(*) FROM remote_memberships WHERE user_id=$1 AND active",
+            "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active",
             &[user]
         )
         .await,
         0
     );
+    // A star and collaborator membership are independent pointers for the same resource.
+    let mut star = event.clone();
+    star.change.kind = pointers::Kind::Star;
+    pointers::apply(f.pool(), &star, &gate).await.unwrap();
+    pointers::apply(f.pool(), &star, &gate).await.unwrap();
+    assert_eq!(f.scalar("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active AND kind='star'", &[user]).await, 1);
+    assert_eq!(f.scalar("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active AND kind='membership'", &[user]).await, 0);
+    let mut unstar = star.clone();
+    unstar.id += 2;
+    unstar.change.active = false;
+    let revoked = Gate { checks: AtomicUsize::new(0), fail: 3 };
+    assert!(pointers::apply(f.pool(), &unstar, &revoked).await.is_err());
+    assert_eq!(f.scalar("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active AND kind='star'", &[user]).await, 1);
+    pointers::apply(f.pool(), &unstar, &gate).await.unwrap();
+    pointers::apply(f.pool(), &star, &gate).await.unwrap();
+    assert_eq!(f.scalar("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active AND kind='star'", &[user]).await, 0);
+    star.change.object.kind = ObjectKind::Organization;
+    assert!(pointers::apply(f.pool(), &star, &gate).await.is_err());
     let mut remote = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), user)
         .await
         .unwrap()
@@ -216,13 +235,13 @@ async fn contract(pg: bool) {
         .unwrap();
     let mut hostile = event.clone();
     hostile.change.user_id = remote.id;
-    assert!(memberships::apply(f.pool(), &hostile, &gate).await.is_err());
+    assert!(pointers::apply(f.pool(), &hostile, &gate).await.is_err());
     hostile.change.user_id = user;
     hostile.change.object.kind = ObjectKind::User;
-    assert!(memberships::apply(f.pool(), &hostile, &gate).await.is_err());
+    assert!(pointers::apply(f.pool(), &hostile, &gate).await.is_err());
     assert_eq!(
         f.scalar(
-            "SELECT COUNT(*) FROM remote_memberships WHERE user_id=$1",
+            "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1",
             &[remote.id]
         )
         .await,

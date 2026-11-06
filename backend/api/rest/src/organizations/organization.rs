@@ -292,7 +292,7 @@ pub(super) async fn selected(
 }
 
 /// Rows per list page. A full page may have rows after it, so its next link is shown.
-pub(super) const PAGE_LIMIT: i64 = codeyard_db_core::cells::memberships::DEFAULT_PAGE_SIZE as i64;
+pub(super) const PAGE_LIMIT: i64 = codeyard_db_core::cells::pointers::DEFAULT_PAGE_SIZE as i64;
 
 pub(super) fn cursor(ctx: &PageContext, name: &str) -> Option<(i64, OrganizationPage)> {
     cursor_with_limit(ctx, name, PAGE_LIMIT)
@@ -969,12 +969,12 @@ pub(super) async fn respond_with_hook_draft(
             };
         if let Some(session) = ctx.session_id.as_deref() {
             let stub = ctx.user.as_ref().is_none_or(|user| user.is_stub);
-            let remote = codeyard_app::api_shared::github::memberships::browser(
+            let remote = codeyard_app::api_shared::github::pointers::browser(
                 &ctx.state.pool,
                 &ctx.database_actor(actor),
                 stub,
                 session,
-                codeyard_db_core::cells::memberships::List::BrowserOrganizations,
+                codeyard_db_core::cells::pointers::List::BrowserOrganizations,
                 vec![("after".into(), after.to_string())],
                 PAGE_LIMIT as usize + 1,
             )
@@ -982,7 +982,7 @@ pub(super) async fn respond_with_hook_draft(
             match remote {
                 Ok(Some(remote)) => {
                     let Ok(mut budget) =
-                        codeyard_db_core::cells::memberships::Budget::new(Default::default())
+                        codeyard_db_core::cells::pointers::Budget::new(Default::default())
                     else {
                         return unavailable(ctx);
                     };

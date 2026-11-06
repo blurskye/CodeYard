@@ -20,9 +20,9 @@ pub(super) async fn organizations(
     request.require_oauth_scope("read:org")?;
     crate::connection::validate(ctx)?;
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
-    let config = codeyard_db_core::cells::memberships::Config::default();
+    let config = codeyard_db_core::cells::pointers::Config::default();
     let mut budget =
-        codeyard_db_core::cells::memberships::Budget::new(config).map_err(unavailable)?;
+        codeyard_db_core::cells::pointers::Budget::new(config).map_err(unavailable)?;
     let mut nodes = Vec::new();
     let mut after = 0;
     loop {
@@ -49,11 +49,11 @@ pub(super) async fn organizations(
         }
     }
     if id == request.auth.user.id {
-        if let Some(remote) = codeyard_app::api_shared::github::memberships::remote(
+        if let Some(remote) = codeyard_app::api_shared::github::pointers::remote(
             &request.state.pool,
             &request.auth,
             &request.headers,
-            codeyard_db_core::cells::memberships::List::GraphqlOrganizations,
+            codeyard_db_core::cells::pointers::List::GraphqlOrganizations,
             Vec::new(),
             config.maximum_scan,
         )
@@ -71,7 +71,7 @@ pub(super) async fn organizations(
                 request.charge(serde_json::to_vec(&node).map_err(unavailable)?.len())?;
                 nodes.push(node);
             }
-            codeyard_app::api_shared::github::memberships::recheck(
+            codeyard_app::api_shared::github::pointers::recheck(
                 &request.state.pool,
                 &request.auth,
             )

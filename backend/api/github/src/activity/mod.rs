@@ -161,49 +161,36 @@ async fn list_stars(
         per_page: query.per_page,
     };
     let (offset, limit) = page.window()?;
+    let wanted = offset.checked_add(limit).and_then(|n| n.checked_add(1)).ok_or_else(|| Error::invalid("Star page exceeds its limit"))?;
+    let actor = auth.as_ref().map(|auth| auth.database_actor());
+    let remote = codeyard_app::api_shared::github::pointers::stars(
+        &state.pool, &user, actor.as_ref(), codeyard_identity::github_auth::credential(headers),
+        codeyard_db_core::cells::pointers::List::StarredRepositories,
+        vec![("username".into(),user.username.clone()),("sort".into(),query.sort.clone().unwrap_or_else(|| "created".into())),("direction".into(),query.direction.clone().unwrap_or_else(|| "desc".into()))],
+        wanted,
+    ).await?;
     let rows = codeyard_db_repos::repositories::engagement::list_starred_repositories(
-        &state.pool,
-        user.id,
-        auth.as_ref().map(|auth| auth.user.id),
-        "",
-        sort,
-        (limit + 1) as i64,
-        offset as i64,
-    )
-    .await
-    .map_err(Error::unavailable)?;
-    let has_next = rows.len() > limit;
+        &state.pool, user.id, auth.as_ref().map(|auth| auth.user.id), "", sort,
+        if remote.is_some() { wanted } else { limit + 1 } as i64,
+        if remote.is_some() { 0 } else { offset } as i64,
+    ).await.map_err(Error::unavailable)?;
+    let local_next = rows.len() > limit;
     let readable = codeyard_identity::github_auth::readable_repositories(
-        state,
-        auth.as_ref(),
-        &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(),
-        "metadata",
-    )
-    .await?;
-    let mut items = Vec::new();
-    for repo in rows
-        .iter()
-        .take(limit)
-        .filter(|repo| readable.contains(&repo.id))
-    {
-        let value =
-            codeyard_app::api_shared::github::repos::document(state, repo, auth.as_ref()).await?;
-        items.push(if timestamps(headers) {
-            let Some(at) = codeyard_db_repos::repositories::engagement::starred_at(
-                &state.pool,
-                user.id,
-                repo.id,
-            )
-            .await
-            .map_err(Error::unavailable)?
-            else {
-                continue;
-            };
-            json!({"starred_at": at, "repo": value})
-        } else {
-            value
-        });
+        state, auth.as_ref(), &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(), "metadata",
+    ).await?;
+    let mut items = remote.as_ref().map(|page| page.rows.clone()).unwrap_or_default();
+    for repo in rows.iter().filter(|repo| readable.contains(&repo.id)) {
+        let value = codeyard_app::api_shared::github::repos::document(state, repo, auth.as_ref()).await?;
+        let Some(at) = codeyard_db_repos::repositories::engagement::starred_at(&state.pool, user.id, repo.id)
+            .await.map_err(Error::unavailable)? else { continue; };
+        items.push(json!({"starred_at": at, "repo": value}));
     }
+    let (items, has_next) = if remote.is_some() {
+        codeyard_app::api_shared::github::pointers::page(items,
+            if matches!(sort, codeyard_db_repos::repositories::engagement::StarSort::Updated | codeyard_db_repos::repositories::engagement::StarSort::UpdatedOldest) { "updated" } else { "starred" },
+            query.direction.as_deref().unwrap_or("desc") == "desc", offset, limit)?
+    } else { (items.into_iter().take(limit).collect(), local_next) };
+    let items = if timestamps(headers) { items } else { items.into_iter().map(|row| row["repo"].clone()).collect() };
     page.response(uri, items, has_next)
 }
 

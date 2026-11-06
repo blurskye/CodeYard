@@ -1,13 +1,26 @@
-//! Home-cell pointers discover remote resources; they never grant access to them.
+//! Home-cell membership and star pointers discover remote resources; they never grant access.
 use anyhow::{ensure, Result};
 use codeyard_model::cells::{Object, ObjectKind};
 use codeyard_support::cells::Prefix;
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    Membership,
+    Star,
+}
+impl Kind {
+    pub fn as_str(self) -> &'static str {
+        match self { Self::Membership => "membership", Self::Star => "star" }
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Change {
+    pub kind: Kind,
     pub user_id: i64,
     pub object: Object,
     pub active: bool,
@@ -16,12 +29,13 @@ impl Change {
     pub fn validate(&self) -> Result<()> {
         Prefix::for_id(self.user_id)?;
         self.object.validate()?;
+        ensure!(self.kind != Kind::Star || self.object.kind == ObjectKind::Repository, "Invalid starred resource");
         ensure!(
             matches!(
                 self.object.kind,
                 ObjectKind::Organization | ObjectKind::Repository
             ),
-            "Invalid membership resource"
+            "Invalid resource resource"
         );
         Ok(())
     }
@@ -77,7 +91,7 @@ impl Config {
                 && (1..=100).contains(&self.page_size)
                 && (1..=100).contains(&self.browser_repository_page_size)
                 && (1..=60).contains(&self.request_seconds),
-            "Invalid remote membership limits"
+            "Invalid remote resource limits"
         );
         Ok(())
     }
@@ -108,14 +122,14 @@ impl Budget {
         let count = self
             .count
             .checked_add(count)
-            .ok_or_else(|| anyhow::anyhow!("Membership response exceeds its limit"))?;
+            .ok_or_else(|| anyhow::anyhow!("Resource response exceeds its limit"))?;
         let bytes = self
             .bytes
             .checked_add(bytes)
-            .ok_or_else(|| anyhow::anyhow!("Membership response exceeds its limit"))?;
+            .ok_or_else(|| anyhow::anyhow!("Resource response exceeds its limit"))?;
         ensure!(
             count <= self.config.maximum_scan && bytes <= self.config.maximum_bytes,
-            "Membership response exceeds its limit"
+            "Resource response exceeds its limit"
         );
         self.count = count;
         self.bytes = bytes;
@@ -143,17 +157,17 @@ macro_rules! engine {
                 let user: Option<(bool, i32)> = sqlx::query_as(concat!("SELECT is_stub,home_cell FROM users WHERE id=$1", $lock))
                     .bind(event.change.user_id).fetch_optional(&mut *tx).await?;
                 let Some((stub, home)) = user else { return Ok(()); };
-                ensure!(!stub && home == i32::from(pool.cell_id().get()), "Membership recipient has another home");
-                ensure!(admission.check(event).await? == source, "Membership source changed");
-                let changed = sqlx::query("INSERT INTO remote_memberships(user_id,resource_kind,resource_id,source_cell,source_event,active) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(user_id,resource_kind,resource_id) DO UPDATE SET source_cell=excluded.source_cell,source_event=excluded.source_event,active=excluded.active WHERE remote_memberships.source_cell<>excluded.source_cell OR remote_memberships.source_event<excluded.source_event")
+                ensure!(!stub && home == i32::from(pool.cell_id().get()), "Pointer recipient has another home");
+                ensure!(admission.check(event).await? == source, "Pointer source changed");
+                let changed = sqlx::query("INSERT INTO remote_pointers(user_id,resource_kind,resource_id,source_cell,source_event,active,kind) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(user_id,kind,resource_kind,resource_id) DO UPDATE SET source_cell=excluded.source_cell,source_event=excluded.source_event,active=excluded.active WHERE remote_pointers.source_cell<>excluded.source_cell OR remote_pointers.source_event<excluded.source_event")
                     .bind(event.change.user_id).bind(event.change.object.kind.as_str()).bind(event.change.object.id)
-                    .bind(i32::from(source.get())).bind(event.id).bind(event.change.active).execute(&mut *tx).await?;
+                    .bind(i32::from(source.get())).bind(event.id).bind(event.change.active).bind(event.change.kind.as_str()).execute(&mut *tx).await?;
                 if changed.rows_affected() == 0 {
-                    let (version, active): (i64, bool) = sqlx::query_as("SELECT source_event,active FROM remote_memberships WHERE user_id=$1 AND resource_kind=$2 AND resource_id=$3")
-                        .bind(event.change.user_id).bind(event.change.object.kind.as_str()).bind(event.change.object.id).fetch_one(&mut *tx).await?;
-                    ensure!(version != event.id || active == event.change.active, "Membership event conflicts with its prior delivery");
+                    let (version, active): (i64, bool) = sqlx::query_as("SELECT source_event,active FROM remote_pointers WHERE user_id=$1 AND resource_kind=$2 AND resource_id=$3 AND kind=$4")
+                        .bind(event.change.user_id).bind(event.change.object.kind.as_str()).bind(event.change.object.id).bind(event.change.kind.as_str()).fetch_one(&mut *tx).await?;
+                    ensure!(version != event.id || active == event.change.active, "Pointer event conflicts with its prior delivery");
                 }
-                ensure!(admission.check(event).await? == source, "Membership source changed");
+                ensure!(admission.check(event).await? == source, "Pointer source changed");
                 tx.commit().await?;
                 Ok(())
             }
@@ -198,11 +212,14 @@ pub enum List {
     Repositories,
     BrowserRepositories,
     BrowserOrganizations,
+    StarredRepositories,
+    BrowserStars,
 }
 impl List {
     pub fn browser(self) -> bool {
-        matches!(self, Self::BrowserRepositories | Self::BrowserOrganizations)
+        matches!(self, Self::BrowserRepositories | Self::BrowserOrganizations | Self::BrowserStars)
     }
+    pub fn stars(self) -> bool { matches!(self, Self::StarredRepositories | Self::BrowserStars) }
     pub fn page_size(self, config: Config) -> usize {
         if matches!(self, Self::BrowserRepositories) {
             config.browser_repository_page_size
@@ -229,9 +246,14 @@ impl Page {
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.number > 0 && (1..=100).contains(&self.size) && self.query.len() <= 16,
-            "Invalid membership page"
+            "Invalid resource page"
         );
+        if self.list.stars() {
+            ensure!(self.query.iter().filter(|(key, _)| key == "username").count() == 1, "Invalid star owner");
+        }
+        let mut keys = std::collections::HashSet::new();
         for (key, value) in &self.query {
+            ensure!(keys.insert(key), "Duplicate resource query");
             ensure!(
                 value.len() <= 4096
                     && !value.chars().any(char::is_control)
@@ -246,9 +268,16 @@ impl Page {
                                 && value.parse::<i64>().ok().is_some_and(|id| (0
                                     ..=codeyard_support::cells::MAX_ID)
                                     .contains(&id)),
+                        List::StarredRepositories | List::BrowserStars => match key.as_str() {
+                            "username" => codeyard_model::account_input::validate_namespace(value, 1).is_ok(),
+                            "sort" => matches!(value.as_str(), "created" | "updated" | "stars" | "name"),
+                            "direction" => matches!(value.as_str(), "asc" | "desc"),
+                            "q" => value.len() <= 256,
+                            _ => false,
+                        },
                         _ => false,
                     },
-                "Invalid membership query"
+                "Invalid resource query"
             );
         }
         Ok(())
@@ -258,20 +287,25 @@ impl Page {
 macro_rules! read_engine {
     ($module:ident, $pool:ty, $begin:literal, $lock:literal, $retain:ident) => {
         impl $module::Reader {
-            pub async fn homes(pool: &$pool, actor: &crate::queries::credentials::Actor, config: Config) -> Result<Vec<Prefix>> {
+            pub async fn homes(pool: &$pool, owner: i64, actor: Option<&crate::queries::credentials::Actor>, kind: Kind, config: Config) -> Result<Vec<Prefix>> {
                 let mut tx = pool.begin_with($begin).await?;
-                $retain(&mut tx,&[actor.user_id]).await?;
+                let mut users = vec![owner];
+                if let Some(actor) = actor { users.push(actor.user_id); }
+                $retain(&mut tx,&users).await?;
                 let native: Option<i64> = sqlx::query_scalar(concat!("SELECT id FROM users WHERE id=$1 AND NOT is_stub AND home_cell=$2 AND NOT is_banned AND NOT must_change_password",$lock))
-                    .bind(actor.user_id).bind(i32::from(pool.cell_id().get())).fetch_optional(&mut *tx).await?;
+                    .bind(owner).bind(i32::from(pool.cell_id().get())).fetch_optional(&mut *tx).await?;
                 ensure!(native.is_some(),codeyard_support::credentials::AccountRestricted);
-                let credential = actor.credential().ok_or(codeyard_support::credentials::AccountRestricted)?;
-                ensure!(crate::queries::$module::users::transitions::credential_live(&mut tx,actor.user_id,&credential,false).await?,
-                    codeyard_support::credentials::AccountRestricted);
-                let cells: Vec<i32> = sqlx::query_scalar("SELECT DISTINCT source_cell FROM remote_memberships WHERE user_id=$1 AND active AND source_cell<>$3 ORDER BY source_cell LIMIT $2")
-                    .bind(actor.user_id).bind(config.maximum_cells as i64 + 1).bind(i32::from(pool.cell_id().get())).fetch_all(&mut *tx).await?;
-                ensure!(cells.len() <= config.maximum_cells,"Remote membership fanout exceeds its limit");
-                ensure!(crate::queries::$module::users::transitions::credential_live(&mut tx,actor.user_id,&credential,false).await?,
-                    codeyard_support::credentials::AccountRestricted);
+                if let Some(actor) = actor {
+                    let credential = actor.credential().ok_or(codeyard_support::credentials::AccountRestricted)?;
+                    ensure!(crate::queries::$module::users::transitions::credential_live(&mut tx,actor.user_id,&credential,false).await?, codeyard_support::credentials::AccountRestricted);
+                }
+                let cells: Vec<i32> = sqlx::query_scalar("SELECT DISTINCT source_cell FROM remote_pointers WHERE user_id=$1 AND active AND source_cell<>$3 AND kind=$4 ORDER BY source_cell LIMIT $2")
+                    .bind(owner).bind(config.maximum_cells as i64 + 1).bind(i32::from(pool.cell_id().get())).bind(kind.as_str()).fetch_all(&mut *tx).await?;
+                ensure!(cells.len() <= config.maximum_cells,"Remote resource fanout exceeds its limit");
+                if let Some(actor) = actor {
+                    let credential = actor.credential().ok_or(codeyard_support::credentials::AccountRestricted)?;
+                    ensure!(crate::queries::$module::users::transitions::credential_live(&mut tx,actor.user_id,&credential,false).await?, codeyard_support::credentials::AccountRestricted);
+                }
                 tx.commit().await?;
                 cells.into_iter().map(|cell| Prefix::try_from(i64::from(cell)).map_err(Into::into)).collect()
             }
@@ -293,25 +327,21 @@ read_engine!(
     retain_sqlite
 );
 
-pub async fn homes(
-    pool: &crate::DbPool,
-    actor: &crate::queries::credentials::Actor,
-    config: Config,
-) -> Result<Vec<Prefix>> {
+pub async fn homes(pool: &crate::DbPool, actor: &crate::queries::credentials::Actor, config: Config) -> Result<Vec<Prefix>> {
+    read_homes(pool, actor.user_id, Some(actor), Kind::Membership, config).await
+}
+pub async fn star_homes(pool: &crate::DbPool, owner: i64, viewer: Option<&crate::queries::credentials::Actor>, config: Config) -> Result<Vec<Prefix>> {
+    read_homes(pool, owner, viewer, Kind::Star, config).await
+}
+async fn read_homes(pool: &crate::DbPool, owner: i64, actor: Option<&crate::queries::credentials::Actor>, kind: Kind, config: Config) -> Result<Vec<Prefix>> {
     config.validate()?;
-    if pool.foreign_authorization().is_none() {
-        return Ok(Vec::new());
-    }
-    tokio::time::timeout(
-        std::time::Duration::from_secs(config.request_seconds),
-        async {
-            match pool {
-                crate::DbPool::Postgres(pool) => postgres::Reader::homes(pool, actor, config).await,
-                crate::DbPool::Sqlite(pool) => sqlite::Reader::homes(pool, actor, config).await,
-            }
-        },
-    )
-    .await?
+    if pool.foreign_authorization().is_none() { return Ok(Vec::new()); }
+    tokio::time::timeout(std::time::Duration::from_secs(config.request_seconds), async {
+        match pool {
+            crate::DbPool::Postgres(pool) => postgres::Reader::homes(pool, owner, actor, kind, config).await,
+            crate::DbPool::Sqlite(pool) => sqlite::Reader::homes(pool, owner, actor, kind, config).await,
+        }
+    }).await?
 }
 
 #[cfg(test)]
@@ -335,7 +365,7 @@ mod tests {
         assert_eq!(budget.count, 2);
     }
     #[test]
-    fn browser_membership_pages_reject_hostile_and_unrelated_queries() {
+    fn browser_resource_pages_reject_hostile_and_unrelated_queries() {
         for (list, key, value) in [
             (List::BrowserRepositories, "q", "x".repeat(101)),
             (List::BrowserRepositories, "q", "a\rb".into()),

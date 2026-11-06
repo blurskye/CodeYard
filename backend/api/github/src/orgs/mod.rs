@@ -322,11 +322,11 @@ async fn own_orgs(
         .await?
         .ok_or_else(codeyard_identity::github_auth::required)?;
     let (offset, limit) = page.window()?;
-    if let Some(mut remote) = codeyard_app::api_shared::github::memberships::remote(
+    if let Some(mut remote) = codeyard_app::api_shared::github::pointers::remote(
         &state.pool,
         &actor,
         &headers,
-        codeyard_db_core::cells::memberships::List::Organizations,
+        codeyard_db_core::cells::pointers::List::Organizations,
         Vec::new(),
         offset.saturating_add(limit).saturating_add(1),
     )
@@ -343,10 +343,10 @@ async fn own_orgs(
         .await
         .map_err(Error::unavailable)?;
         remote.extend(native.iter().map(codeyard_webhooks::payloads::organization));
-        let (values, next) = codeyard_app::api_shared::github::memberships::page(
+        let (values, next) = codeyard_app::api_shared::github::pointers::page(
             remote, "id", false, offset, limit,
         )?;
-        codeyard_app::api_shared::github::memberships::recheck(&state.pool, &actor).await?;
+        codeyard_app::api_shared::github::pointers::recheck(&state.pool, &actor).await?;
         return page.response(&uri, values, next);
     }
     organization_list(&state, actor.user.id, true, page, uri).await

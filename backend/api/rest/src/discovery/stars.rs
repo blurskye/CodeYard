@@ -27,33 +27,123 @@ pub(crate) struct StarredPage {
 
 /// One page (1-based, at least 1) of the repositories `starred_by` starred whose name or
 /// description contains `text` and that `viewer` can read.
+async fn local_stars(
+    ctx: &PageContext,
+    target: i64,
+    text: &str,
+    sort: StarSort,
+    limit: usize,
+    offset: usize,
+) -> Result<Vec<serde_json::Value>, DiscoveryReadError> {
+    let viewer = ctx.user.as_ref().map(|viewer| viewer.id);
+    let repos = codeyard_db_repos::repositories::engagement::list_starred_repositories(
+        &ctx.state.pool, target, viewer, text, sort, limit as i64, offset as i64,
+    ).await.map_err(|_| DiscoveryReadError::Unavailable)?;
+    let mut times = HashMap::with_capacity(repos.len());
+    for repo in &repos {
+        if let Some(at) = codeyard_db_repos::repositories::engagement::starred_at(&ctx.state.pool, target, repo.id)
+            .await.map_err(|_| DiscoveryReadError::Unavailable)? { times.insert(repo.id, at); }
+    }
+    let cards = repository_cards(&ctx.state, viewer, repos).await?;
+    Ok(cards.into_iter().filter_map(|repo| times.remove(&repo.id).map(|at| serde_json::json!({"repo":repo,"starred_at":at}))).collect())
+}
+
+async fn remote_stars(
+    ctx: &PageContext,
+    target: &codeyard_db_core::models::User,
+    text: &str,
+    sort: StarSort,
+    wanted: usize,
+) -> Result<Option<codeyard_db_core::cells::pointers::PageResult>, DiscoveryReadError> {
+    let actor = ctx.user.as_ref().map(|user| ctx.database_actor(user.id));
+    codeyard_app::api_shared::github::pointers::stars(
+        &ctx.state.pool, target, actor.as_ref(), ctx.session_id.as_deref(),
+        codeyard_db_core::cells::pointers::List::BrowserStars,
+        vec![("username".into(),target.username.clone()),("q".into(),text.into()),("sort".into(),match sort { StarSort::Stars=>"stars",StarSort::Name=>"name",_=>"created" }.into())], wanted,
+    ).await.map_err(|_| DiscoveryReadError::Unavailable)
+}
+
+pub(crate) async fn starred_count(
+    ctx: &PageContext,
+    target: &codeyard_db_core::models::User,
+) -> Result<i64, DiscoveryReadError> {
+    let local = codeyard_db_repos::repositories::engagement::count_starred_repositories(
+        &ctx.state.pool, target.id, ctx.user.as_ref().map(|user| user.id), "",
+    ).await.map_err(|_| DiscoveryReadError::Unavailable)?;
+    match remote_stars(ctx, target, "", StarSort::Recent, 1).await? {
+        None => Ok(local),
+        Some(remote) => remote.total.and_then(|count| local.checked_add(count)).ok_or(DiscoveryReadError::Unavailable),
+    }
+}
+
 pub(crate) async fn starred_page(
-    state: &AppState,
-    starred_by: i64,
-    viewer: Option<i64>,
+    ctx: &PageContext,
+    target: &codeyard_db_core::models::User,
     text: &str,
     sort: StarSort,
     page: usize,
 ) -> Result<StarredPage, DiscoveryReadError> {
-    let offset = i64::try_from((page - 1).saturating_mul(STARS_PAGE_SIZE)).unwrap_or(i64::MAX);
-    // One row past the page shows whether an older page exists.
-    let mut repos = codeyard_db_repos::repositories::engagement::list_starred_repositories(
-        &state.pool,
-        starred_by,
-        viewer,
-        text,
-        sort,
-        STARS_PAGE_SIZE as i64 + 1,
-        offset,
-    )
-    .await
-    .map_err(|_| DiscoveryReadError::Unavailable)?;
-    let has_older = repos.len() > STARS_PAGE_SIZE;
-    repos.truncate(STARS_PAGE_SIZE);
-    Ok(StarredPage {
-        repositories: repository_cards(state, viewer, repos).await?,
-        has_older,
-    })
+    let offset = page.checked_sub(1).and_then(|n| n.checked_mul(STARS_PAGE_SIZE)).ok_or(DiscoveryReadError::Unavailable)?;
+    let wanted = offset.checked_add(STARS_PAGE_SIZE + 1).ok_or(DiscoveryReadError::Unavailable)?;
+    let remote = remote_stars(ctx, target, text, sort, wanted).await?;
+    let mut rows = local_stars(ctx, target.id, text, sort,
+        if remote.is_some() { wanted } else { STARS_PAGE_SIZE + 1 },
+        if remote.is_some() { 0 } else { offset },
+    ).await?;
+    let has_older = if let Some(remote) = remote {
+        rows.extend(remote.rows);
+        // Cards use their existing field names; retain each star's timestamp for ordering.
+        for row in &mut rows {
+            let card = &mut row["repo"];
+            card["stargazers_count"] = card["stars"].clone();
+            card["full_name"] = card["name"].clone();
+        }
+        let (page, more) = codeyard_app::api_shared::github::pointers::page(rows,
+            match sort { StarSort::Stars=>"stars",StarSort::Name=>"full_name",_=>"starred" },
+            sort != StarSort::Name, offset, STARS_PAGE_SIZE,
+        ).map_err(|_| DiscoveryReadError::Unavailable)?;
+        rows = page;
+        more
+    } else {
+        let more = rows.len() > STARS_PAGE_SIZE;
+        rows.truncate(STARS_PAGE_SIZE);
+        more
+    };
+    let repositories = rows.into_iter().map(|row| serde_json::from_value(row["repo"].clone()))
+        .collect::<Result<Vec<RepositoryCard>,_>>().map_err(|_| DiscoveryReadError::Unavailable)?;
+    Ok(StarredPage { repositories, has_older })
+}
+
+/// Resource-cell projection for a home user's star list. Stub identities remain internal.
+pub(super) async fn star_rows(
+    State(state): State<Arc<AppState>>,
+    axum::extract::Path(username): axum::extract::Path<String>,
+    headers: HeaderMap,
+    uri: Uri,
+) -> Response {
+    use axum::response::IntoResponse;
+    let ctx = match PageContext::load(state, headers, &uri).await { Ok(ctx)=>ctx,Err(response)=>return response };
+    let page = match page_number(&ctx.query) { Ok(page)=>page,Err(message)=>return ctx.error(StatusCode::BAD_REQUEST,message) };
+    let size = match ctx.query.get("per_page").map_or(Some(100),|value| value.parse::<usize>().ok()).filter(|size| (1..=100).contains(size)) {
+        Some(size)=>size,None=>return ctx.error(StatusCode::BAD_REQUEST,"Invalid star page size"),
+    };
+    let Some(offset) = (page-1).checked_mul(size).filter(|offset| *offset <= 10000) else { return ctx.error(StatusCode::BAD_REQUEST,"Star page exceeds its limit"); };
+    let sort = match ctx.query.get("sort").map(String::as_str).unwrap_or("created") {
+        "created"=>StarSort::Recent,"stars"=>StarSort::Stars,"name"=>StarSort::Name,
+        _=>return ctx.error(StatusCode::BAD_REQUEST,"Invalid star sort"),
+    };
+    let text = ctx.query.get("q").map(String::as_str).unwrap_or("");
+    if text.len()>256 || text.chars().any(char::is_control) { return ctx.error(StatusCode::BAD_REQUEST,"Invalid star filter"); }
+    let target = match codeyard_db_identity::users::accounts::get_user_by_username(&ctx.state.pool,&username).await {
+        Ok(Some(target))=>target,Ok(None)=>return ctx.error(StatusCode::NOT_FOUND,"User not found"),Err(_)=>return unavailable(&ctx,"star_target"),
+    };
+    let rows = match local_stars(&ctx,target.id,text,sort,size,offset).await { Ok(rows)=>rows,Err(_)=>return unavailable(&ctx,"star_rows") };
+    let total = if page==1 {
+        match codeyard_db_repos::repositories::engagement::count_starred_repositories(&ctx.state.pool,target.id,ctx.user.as_ref().map(|user|user.id),text).await {
+            Ok(total)=>Some(total),Err(_)=>return unavailable(&ctx,"star_count"),
+        }
+    } else { None };
+    axum::Json(serde_json::json!({"rows":rows,"total":total})).into_response()
 }
 
 /// The filters of /stars: the order, the page, and the text the name or description must contain.
@@ -114,9 +204,8 @@ pub(super) async fn stars_page(
         Err(message) => return ctx.error(StatusCode::BAD_REQUEST, message),
     };
     let page = match starred_page(
-        &ctx.state,
-        user.id,
-        Some(user.id),
+        &ctx,
+        user,
         &filters.query,
         star_sort(&filters.sort),
         filters.page,

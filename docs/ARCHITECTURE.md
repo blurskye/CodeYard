@@ -761,11 +761,13 @@ Both-engine data/HTTP contracts, exhaustive GraphQL contracts, all 234 cluster t
 both route catalogue guards pass. Real clients prove standalone cell-zero data/credential
 preservation, gh login and repository creation, foreign membership discovery, native-only
 member lists/counts, raw/hydrated navigation, JavaScript ID precision, cell-1 HTTP/SSH
-push/clone, foreign pushes and gh pr create. The last run finds a native-token-only merge
-publication check. Its typed-proof/workflow fix and hostile store regressions pass source
-checks; core library/store, cluster and the public client retry are running. Stage 2
-end-to-end acceptance remains incomplete. Stages 3 to 6 are not built; range renewal is a
-deferred owner follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
+push/clone, foreign pushes, gh pr create and gh pr merge. The typed-proof publication fix
+and hostile store regression pass 68 library and 61 store tests. The real public cells
+round passes all five checks without skips; its final cluster rerun is still running.
+Stage 3 star pointers and bounded home lists are being written against acceptance items
+5 and 7; that source is unchecked. Cross-cell forks, pull requests, notifications,
+transfers and pools remain open, as do stages 4 to 6. Range renewal is a deferred owner
+follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.
 

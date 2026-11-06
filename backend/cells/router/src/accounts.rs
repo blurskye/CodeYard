@@ -29,7 +29,7 @@ enum Request {
     Authorize(Proof),
     User(String),
     UserId(i64),
-    Membership(codeyard_db_core::cells::memberships::Event),
+    Pointer(codeyard_db_core::cells::pointers::Event),
 }
 #[derive(Serialize, Deserialize)]
 #[serde(
@@ -140,33 +140,40 @@ impl Home for Remote {
             self.metadata(&cell, &Request::UserId(id), id, None).await
         })
     }
-    fn membership_page<'a>(
+    fn resource_page<'a>(
         &'a self,
         cell: codeyard_support::cells::Prefix,
-        page: &'a codeyard_db_core::cells::memberships::Page,
-        credential: &'a str,
-    ) -> BoxFuture<'a, Result<codeyard_db_core::cells::memberships::PageResult>> {
+        page: &'a codeyard_db_core::cells::pointers::Page,
+        credential: Option<&'a str>,
+    ) -> BoxFuture<'a, Result<codeyard_db_core::cells::pointers::PageResult>> {
         Box::pin(async move {
-            use codeyard_db_core::cells::memberships::List;
+            use codeyard_db_core::cells::pointers::List;
             page.validate()?;
-            ensure!(credential.len() <= 4096, "Invalid membership credential");
+            ensure!(credential.is_none_or(|value| value.len() <= 4096) && (page.list.stars() || credential.is_some()), "Invalid resource credential");
             let cell = self
                 .routes
                 .cell(cell)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("The resource cell is unavailable"))?;
+            let username = page.query.iter().find(|(key, _)| key == "username").map(|(_, value)| value.as_str()).unwrap_or("");
+            let encoded: String = url::form_urlencoded::byte_serialize(username.as_bytes()).collect();
+            let star_path = if matches!(page.list, List::BrowserStars) {
+                format!("/api/users/{encoded}/starred")
+            } else { format!("/api/v3/users/{encoded}/starred") };
             let (path, kind) = match page.list {
                 List::Organizations => ("/api/v3/user/orgs", ObjectKind::Organization),
                 List::GraphqlOrganizations => ("/api/graphql", ObjectKind::Organization),
                 List::Repositories => ("/api/v3/user/repos", ObjectKind::Repository),
                 List::BrowserRepositories => ("/", ObjectKind::Repository),
                 List::BrowserOrganizations => ("/settings/organizations", ObjectKind::Organization),
+                List::StarredRepositories | List::BrowserStars => (star_path.as_str(), ObjectKind::Repository),
             };
             let request = {
                 let mut query = url::form_urlencoded::Serializer::new(String::new());
                 query.extend_pairs(
                     page.query
                         .iter()
+                        .filter(|(key, _)| key != "username")
                         .map(|(key, value)| (key.as_str(), value.as_str())),
                 );
                 query
@@ -175,7 +182,7 @@ impl Home for Remote {
                 let graphql = matches!(page.list, List::GraphqlOrganizations);
                 let offset = (i64::from(page.number) - 1)
                     .checked_mul(i64::from(page.size))
-                    .ok_or_else(|| anyhow::anyhow!("Invalid membership page"))?;
+                    .ok_or_else(|| anyhow::anyhow!("Invalid resource page"))?;
                 let body = if graphql {
                     axum::body::Body::from(serde_json::to_vec(&serde_json::json!({
                         "query":"query($first:Int!,$after:String){viewer{organizations(first:$first,after:$after){nodes{__typename id databaseId login name url avatarUrl createdAt description viewerCanCreateProjects}}}}",
@@ -185,44 +192,33 @@ impl Home for Remote {
                     axum::body::Body::empty()
                 };
                 let browser = page.list.browser();
-                let request = axum::http::Request::builder()
+                let mut request = axum::http::Request::builder()
                     .method(if graphql { "POST" } else { "GET" })
                     .uri(if graphql {
                         path.to_owned()
                     } else {
                         format!("{path}?{}", query.finish())
                     })
-                    .header(axum::http::header::CONTENT_TYPE, "application/json");
-                if browser {
-                    codeyard_support::cells::Secret::cookie(credential)?;
-                    request
-                        .header(
-                            axum::http::header::COOKIE,
-                            format!("session_id={credential}"),
-                        )
-                        .header(
-                            axum::http::header::ACCEPT,
-                            "application/vnd.codeyard.page+json",
-                        )
-                        .body(body)?
-                } else {
-                    request
-                        .header(
-                            axum::http::header::AUTHORIZATION,
-                            format!("Bearer {credential}"),
-                        )
-                        .body(body)?
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .header(axum::http::header::ACCEPT_ENCODING, "identity");
+                if let Some(credential) = credential {
+                    if browser {
+                        codeyard_support::cells::Secret::cookie(credential)?;
+                        request = request.header(axum::http::header::COOKIE, format!("session_id={credential}"));
+                    } else {
+                        request = request.header(axum::http::header::AUTHORIZATION, format!("Bearer {credential}"));
+                    }
                 }
+                request = request.header(axum::http::header::ACCEPT, if browser {
+                    "application/vnd.codeyard.page+json"
+                } else if page.list.stars() { "application/vnd.github.star+json" } else { "application/json" });
+                request.body(body)?
             };
-            ensure!(
-                crate::selection::Credential::from_headers(request.headers(), "session_id")?
-                    .is_some(),
-                "Invalid membership credential"
-            );
-            let response = self.http.forward(&cell, credential, request).await?;
+            ensure!(crate::selection::Credential::from_headers(request.headers(), "session_id")?.is_some() == credential.is_some(), "Invalid resource credential");
+            let response = self.http.forward(&cell, credential.unwrap_or(""), request).await?;
             ensure!(
                 response.status().is_success(),
-                "Remote membership read is unavailable"
+                "Remote resource read is unavailable"
             );
             let bytes = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024).await?;
             let document: serde_json::Value = serde_json::from_slice(&bytes)?;
@@ -235,13 +231,19 @@ impl Home for Remote {
                     document["page"]["model"]["Home"]["shared_count"]
                         .as_i64()
                         .filter(|count| *count >= 0)
-                        .ok_or_else(|| anyhow::anyhow!("Invalid membership count"))?,
+                        .ok_or_else(|| anyhow::anyhow!("Invalid resource count"))?,
                 )
+            } else if matches!(page.list, List::BrowserStars) {
+                let count = document["total"].as_i64();
+                ensure!(page.number != 1 || count.is_some_and(|count| count >= 0), "Invalid star count");
+                count
             } else {
                 None
             };
             let rows: Vec<serde_json::Value> = if matches!(page.list, List::BrowserRepositories) {
                 serde_json::from_value(document["page"]["model"]["Home"]["shared"].clone())?
+            } else if matches!(page.list, List::BrowserStars) {
+                serde_json::from_value(document["rows"].clone())?
             } else if matches!(page.list, List::BrowserOrganizations) {
                 ensure!(
                     document["page"]["lane"] == "Organizations",
@@ -251,7 +253,7 @@ impl Home for Remote {
             } else if matches!(page.list, List::GraphqlOrganizations) {
                 ensure!(
                     document.get("errors").is_none(),
-                    "Remote membership read is unavailable"
+                    "Remote resource read is unavailable"
                 );
                 serde_json::from_value(
                     document["data"]["viewer"]["organizations"]["nodes"].clone(),
@@ -261,7 +263,7 @@ impl Home for Remote {
             };
             ensure!(
                 rows.len() <= usize::from(page.size),
-                "Remote membership page exceeds its limit"
+                "Remote resource page exceeds its limit"
             );
             let mut seen = std::collections::HashSet::new();
             for row in &rows {
@@ -271,25 +273,27 @@ impl Home for Remote {
                         .and_then(codeyard_model::node_id::decode)
                         .filter(|(kind, _)| *kind == "O")
                         .map(|(_, id)| id)
+                } else if page.list.stars() {
+                    row["repo"]["id"].as_i64()
                 } else if matches!(page.list, List::BrowserRepositories) {
                     row["repository"]["id"].as_i64()
                 } else {
                     row["id"].as_i64()
                 }
-                .ok_or_else(|| anyhow::anyhow!("Invalid membership document"))?;
-                ensure!(seen.insert(id), "Duplicate membership document");
+                .ok_or_else(|| anyhow::anyhow!("Invalid resource document"))?;
+                ensure!(seen.insert(id), "Duplicate resource document");
                 let home = self.routes.by_object(Object { kind, id }).await?;
                 ensure!(
                     home.is_some_and(|home| home.id == cell.id),
-                    "Membership document has another home"
+                    "Resource document has another home"
                 );
             }
-            Ok(codeyard_db_core::cells::memberships::PageResult { rows, total })
+            Ok(codeyard_db_core::cells::pointers::PageResult { rows, total })
         })
     }
-    fn send_membership<'a>(
+    fn send_pointer<'a>(
         &'a self,
-        event: &'a codeyard_db_core::cells::memberships::Event,
+        event: &'a codeyard_db_core::cells::pointers::Event,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move {
             event.validate()?;
@@ -304,11 +308,11 @@ impl Home for Remote {
                 .ok_or_else(|| anyhow::anyhow!("The account home is unavailable"))?;
             ensure!(
                 matches!(
-                    self.exchange(&cell, &Request::Membership(event.clone()))
+                    self.exchange(&cell, &Request::Pointer(event.clone()))
                         .await?,
                     Reply::Done
                 ),
-                "Membership delivery is unavailable"
+                "Pointer delivery is unavailable"
             );
             Ok(())
         })
@@ -398,15 +402,15 @@ async fn enrolled(
         _ => anyhow::bail!("Caller is not an enrolled cell"),
     }
 }
-struct MembershipAdmission {
+struct PointerAdmission {
     directory: Directory,
     peer: PublicKey,
     recipient: codeyard_support::cells::Prefix,
 }
-impl codeyard_db_core::cells::memberships::Admission for MembershipAdmission {
+impl codeyard_db_core::cells::pointers::Admission for PointerAdmission {
     fn check<'a>(
         &'a self,
-        event: &'a codeyard_db_core::cells::memberships::Event,
+        event: &'a codeyard_db_core::cells::pointers::Event,
     ) -> BoxFuture<'a, Result<codeyard_support::cells::Prefix>> {
         Box::pin(async move {
             event.validate()?;
@@ -432,7 +436,7 @@ impl codeyard_db_core::cells::memberships::Admission for MembershipAdmission {
                 matches!(resource,DirectoryReply::Home(Some(home)) if home == source)
                     && matches!(recipient,DirectoryReply::Home(Some(home)) if home == self.recipient)
                     && matches!(issuer,DirectoryReply::Cell(Some(cell)) if cell.id == source),
-                "Membership source or recipient has another home"
+                "Pointer source or recipient has another home"
             );
             Ok(source)
         })
@@ -456,8 +460,8 @@ impl rpc::Service for Accounts {
             self.admitted(peer).await?;
             let request: Request = serde_json::from_slice(bytes)?;
             let reply = match request {
-                Request::Membership(event) => {
-                    let admission = MembershipAdmission {
+                Request::Pointer(event) => {
+                    let admission = PointerAdmission {
                         directory: self.directory.clone(),
                         peer,
                         recipient: self
@@ -465,7 +469,7 @@ impl rpc::Service for Accounts {
                             .cell()
                             .ok_or_else(|| anyhow::anyhow!("No native home"))?,
                     };
-                    match self.home.receive_membership(&event, &admission).await {
+                    match self.home.receive_pointer(&event, &admission).await {
                         Ok(()) => Reply::Done,
                         Err(_) => Reply::Unavailable,
                     }
