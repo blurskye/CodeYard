@@ -35,40 +35,68 @@ async fn local_stars(
     limit: usize,
     offset: usize,
 ) -> Result<Vec<serde_json::Value>, DiscoveryReadError> {
-    let viewer = ctx.user.as_ref().map(|viewer| viewer.id);
-    let repos = codeyard_db_repos::repositories::engagement::list_starred_repositories(
-        &ctx.state.pool,
-        target,
-        viewer,
-        text,
-        sort,
-        limit as i64,
-        offset as i64,
+    let config = codeyard_db_core::cells::pointers::Config::default();
+    if limit > config.maximum_scan {
+        return Err(DiscoveryReadError::Unavailable);
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(config.request_seconds),
+        async {
+            let viewer = ctx.user.as_ref().map(|viewer| viewer.id);
+            let mut values = Vec::new();
+            let mut budget = codeyard_db_core::cells::pointers::Budget::new(config)
+                .map_err(|_| DiscoveryReadError::Unavailable)?;
+            let mut scanned = 0;
+            while scanned < limit {
+                let size = (limit - scanned).min(config.page_size);
+                let offset = offset
+                    .checked_add(scanned)
+                    .and_then(|offset| i64::try_from(offset).ok())
+                    .ok_or(DiscoveryReadError::Unavailable)?;
+                let repos = codeyard_db_repos::repositories::engagement::list_starred_repositories(
+                    &ctx.state.pool,
+                    target,
+                    viewer,
+                    text,
+                    sort,
+                    size as i64,
+                    offset,
+                )
+                .await
+                .map_err(|_| DiscoveryReadError::Unavailable)?;
+                let done = repos.len() < size;
+                scanned += repos.len();
+                let mut times = HashMap::with_capacity(repos.len());
+                for repo in &repos {
+                    if let Some(at) = codeyard_db_repos::repositories::engagement::starred_at(
+                        &ctx.state.pool,
+                        target,
+                        repo.id,
+                    )
+                    .await
+                    .map_err(|_| DiscoveryReadError::Unavailable)?
+                    {
+                        times.insert(repo.id, at);
+                    }
+                }
+                for repo in repository_cards(&ctx.state, viewer, repos).await? {
+                    if let Some(at) = times.remove(&repo.id) {
+                        let row = serde_json::json!({"repo":repo,"starred_at":at});
+                        budget
+                            .add(&row)
+                            .map_err(|_| DiscoveryReadError::Unavailable)?;
+                        values.push(row);
+                    }
+                }
+                if done {
+                    break;
+                }
+            }
+            Ok(values)
+        },
     )
     .await
-    .map_err(|_| DiscoveryReadError::Unavailable)?;
-    let mut times = HashMap::with_capacity(repos.len());
-    for repo in &repos {
-        if let Some(at) = codeyard_db_repos::repositories::engagement::starred_at(
-            &ctx.state.pool,
-            target,
-            repo.id,
-        )
-        .await
-        .map_err(|_| DiscoveryReadError::Unavailable)?
-        {
-            times.insert(repo.id, at);
-        }
-    }
-    let cards = repository_cards(&ctx.state, viewer, repos).await?;
-    Ok(cards
-        .into_iter()
-        .filter_map(|repo| {
-            times
-                .remove(&repo.id)
-                .map(|at| serde_json::json!({"repo":repo,"starred_at":at}))
-        })
-        .collect())
+    .map_err(|_| DiscoveryReadError::Unavailable)?
 }
 
 async fn remote_stars(
@@ -244,6 +272,9 @@ pub(super) async fn star_rows(
     let text = ctx.query.get("q").map(String::as_str).unwrap_or("");
     if text.len() > 256 || text.chars().any(char::is_control) {
         return ctx.error(StatusCode::BAD_REQUEST, "Invalid star filter");
+    }
+    if codeyard_model::account_input::validate_namespace(&username, 1).is_err() {
+        return ctx.error(StatusCode::BAD_REQUEST, "Invalid star owner");
     }
     let target = match codeyard_db_identity::users::accounts::get_user_by_username(
         &ctx.state.pool,

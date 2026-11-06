@@ -208,12 +208,16 @@ impl Authentication {
     /// Checks that the token still works, for a request whose body took long to arrive after
     /// it authenticated: a token revoked meanwhile must not publish that body.
     pub async fn require_live(&self, pool: &codeyard_db_core::DbPool) -> Result<()> {
-        codeyard_db_identity::users::tokens::token_user(pool, self.token.id, true)
+        crate::repository_access::credential_user(pool, &self.database_actor(), true)
             .await
-            .map_err(Error::unavailable)?
-            .filter(|user| user.id == self.user.id)
             .map(|_| ())
-            .ok_or_else(|| Error::new(StatusCode::UNAUTHORIZED, "Bad credentials"))
+            .map_err(|error| {
+                if error.is::<codeyard_support::credentials::AccountRestricted>() {
+                    Error::new(StatusCode::UNAUTHORIZED, "Bad credentials")
+                } else {
+                    Error::unavailable(error)
+                }
+            })
     }
 
     pub fn require_write(&self) -> Result<()> {
@@ -239,14 +243,17 @@ pub async fn readable_repositories(
     scope: &str,
 ) -> Result<std::collections::HashSet<i64>> {
     if let Some(auth) = auth {
-        if codeyard_db_identity::users::tokens::token_user(state.pool(), auth.token.id, false)
+        crate::repository_access::credential_user(state.pool(), &auth.database_actor(), false)
             .await
-            .map_err(Error::unavailable)?
-            .is_none_or(|user| user.id != auth.user.id)
-        {
-            return Err(required());
-        }
+            .map_err(|error| {
+                if error.is::<codeyard_support::credentials::AccountRestricted>() {
+                    required()
+                } else {
+                    Error::unavailable(error)
+                }
+            })?;
     }
+
     let mut readable = std::collections::HashSet::new();
     for chunk in ids.chunks(100) {
         let visible = codeyard_db_repos::repositories::access::readable_repository_ids(
@@ -267,7 +274,7 @@ pub async fn readable_repositories(
         .await
         .map_err(Error::unavailable)?
         {
-            if !repo.is_private {
+            if !repo.is_private && !auth.user.is_stub {
                 if !codeyard_db_identity::fine_grained_tokens::classic_refused_repository(
                     state.pool(),
                     auth.token.id,

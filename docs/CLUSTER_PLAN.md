@@ -198,7 +198,13 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     passes workspace 21e6c57489b04937a62801e83dc6c96d and WASM
     95844ccaeecb4f5fae389147be54758a; Clippy 642e4e90dd194f728eed9b3b0fbaf20d
     passes. Review follow-ups retain foreign proofs in shared list filtering and
-    project larger browser lists in bounded card batches. Runtime is pending.
+    project larger browser lists in bounded card batches. Runtime 5993a963beb74088a032f3f29c97fbdc covers the public cells round,
+    changed library crates, both-engine pointer contracts and the full cluster target.
+    The star-list follow-up retains native/foreign credential proofs, bounds card
+    projection batches and tests malformed resource pages and a merged third browser
+    page. Its source checks are workspace 1e483729c5ba4ee3b5ca63ab06bc8212,
+    Clippy 4b28e2a861b34559a3a9e540f49b5eb3 and WASM
+    c6a1a0038b3147bb82688256662a5028, pending.
     The remaining stage 3 items and stages 4 to 6 remain unwritten.
     Automatic user moves and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:

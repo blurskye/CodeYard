@@ -674,6 +674,70 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         browser["page"]["model"]["Stars"]["repositories"][0]["id"], repository.id,
         "{browser}"
     );
+    for path in [
+        "/api/users/bob/starred?per_page=101",
+        "/api/users/bob/starred?page=0",
+        "/api/users/bob/starred?q=%00",
+        "/api/users/bad%20name/starred",
+    ] {
+        assert_eq!(
+            client
+                .get(format!("{}{path}", http.url()))
+                .header("cookie", format!("session_id={session}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            400
+        );
+    }
+    // A merged third page scans more than one card batch in the native home as well.
+    let mut bulk_ids = Vec::new();
+    for number in 0..101 {
+        let repo = codeyard_db_repos::repositories::records::create_repository(
+            &one.pool,
+            user.id,
+            &format!("star-page-{number:03}"),
+            None,
+            false,
+            &uuid::Uuid::new_v4().to_string(),
+        )
+        .await
+        .unwrap();
+        assert!(codeyard_db_repos::repositories::engagement::star_repo(
+            &one.pool, user.id, repo.id
+        )
+        .await
+        .unwrap());
+        bulk_ids.push(repo.id);
+    }
+    let response = client
+        .get(format!("{}/stars?page=3", bob_http.url()))
+        .header("cookie", format!("session_id={session}"))
+        .header("accept", "application/vnd.codeyard.page+json")
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let browser: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, 200, "{browser}");
+    assert_eq!(
+        browser["page"]["model"]["Stars"]["repositories"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2,
+        "{browser}"
+    );
+    assert_eq!(
+        browser["page"]["model"]["Stars"]["has_older"], false,
+        "{browser}"
+    );
+    sqlx::query("DELETE FROM repositories WHERE id=ANY($1)")
+        .bind(&bulk_ids)
+        .execute(&one.raw)
+        .await
+        .unwrap();
     let response = client
         .put(format!("{}/api/v3/user/starred/bob/native", bob_http.url()))
         .bearer_auth(&value)
