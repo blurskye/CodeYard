@@ -212,7 +212,7 @@ impl Gateway {
                 let (repo, _) = self.operation_repository(operation).await?;
                 let (actor, _) = operation
                     .credential
-                    .authorize(&self.pool, &repo, true)
+                    .authorize_receive(&self.pool, &repo, Some(updates))
                     .await?;
                 ensure!(actor.id == operation.actor_id, "identity changed");
                 let cluster = self.ci.cluster().context("cluster unavailable")?;
@@ -263,7 +263,7 @@ impl Gateway {
                     let (repo, path) = self.operation_repository(operation).await?;
                     let (actor, _) = operation
                         .credential
-                        .authorize(&self.pool, &repo, true)
+                        .authorize_receive(&self.pool, &repo, Some(updates))
                         .await?;
                     ensure!(actor.id == operation.actor_id, "identity changed");
                     let via = if matches!(operation.credential, ReceiveCredential::DeployKey(_)) {
@@ -534,7 +534,7 @@ impl Gateway {
         let (repo, path) = self.operation_repository(operation).await?;
         let (identity, _) = operation
             .credential
-            .authorize(&self.pool, &repo, true)
+            .authorize_receive(&self.pool, &repo, Some(updates))
             .await?;
         ensure!(identity.id == operation.actor_id, "identity changed");
         crate::repositories::releases::immutable::check_current_tag_updates(
@@ -716,7 +716,7 @@ impl Gateway {
                         let (repo, _) = self.operation_repository(operation).await?;
                         let (actor, _) = operation
                             .credential
-                            .authorize(&self.pool, &repo, true)
+                            .authorize_receive(&self.pool, &repo, Some(updates))
                             .await?;
                         ensure!(actor.id == operation.actor_id, "identity changed");
                         self.check_publication_branches(&repo, &actor, updates, &history, via)
@@ -740,7 +740,7 @@ impl Gateway {
         let (current, _) = self.operation_repository(operation).await?;
         let (identity, _) = operation
             .credential
-            .authorize(&self.pool, &current, true)
+            .authorize_receive(&self.pool, &current, Some(updates))
             .await?;
         ensure!(identity.id == operation.actor_id, "identity changed");
         self.check_publication_branches(&current, &identity, updates, &history, via)

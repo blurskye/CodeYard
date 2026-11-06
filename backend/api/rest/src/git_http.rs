@@ -173,7 +173,7 @@ async fn authorize_repository(
     let credential =
         ReceiveCredential::personal(&token, &authenticated_user).map_err(|_| unavailable())?;
     let (user, _) = credential
-        .authorize(&state.pool, &repo, write)
+        .authorize_session(&state.pool, &repo, write)
         .await
         .map_err(credential_refusal)?;
     Ok(AuthorizedRepository {

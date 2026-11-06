@@ -195,13 +195,10 @@ impl ReceiveCredential {
             .map_err(|_| anyhow::anyhow!(CredentialRefusal::Credential))?;
         Ok(Self::ForeignSsh { id, fingerprint })
     }
-    async fn foreign(
-        self,
-        pool: &DbPool,
-    ) -> Result<codeyard_db_core::cells::authorization::Credential> {
+    fn proof(self) -> Result<(i64, codeyard_db_core::cells::authorization::Proof)> {
         use base64::Engine;
-        use codeyard_db_core::cells::authorization::{self, Proof, Query};
-        let (id, proof) = match self {
+        use codeyard_db_core::cells::authorization::Proof;
+        Ok(match self {
             Self::ForeignToken { id, hash } => (
                 id,
                 Proof::Token {
@@ -219,7 +216,14 @@ impl ReceiveCredential {
                 },
             ),
             _ => anyhow::bail!(CredentialRefusal::Credential),
-        };
+        })
+    }
+    async fn foreign(
+        self,
+        pool: &DbPool,
+    ) -> Result<codeyard_db_core::cells::authorization::Credential> {
+        use codeyard_db_core::cells::authorization::{self, Query};
+        let (id, proof) = self.proof()?;
         authorization::authorize(pool, &proof)
             .await?
             .ok_or(CredentialRefusal::Credential)?;
@@ -267,6 +271,44 @@ impl ReceiveCredential {
         pool: &DbPool,
         repo: &codeyard_db_core::models::Repository,
         write: bool,
+    ) -> Result<(
+        codeyard_db_core::models::User,
+        codeyard_db_core::models::AccessLevel,
+    )> {
+        self.check(pool, repo, write, None).await
+    }
+    /// A Git receive also admits a maintainer who may edit the head branch of an open pull
+    /// request from this fork. `updates` are the pushed references once Git reports them;
+    /// before that, one such branch is enough to start the session.
+    pub async fn authorize_receive(
+        self,
+        pool: &DbPool,
+        repo: &codeyard_db_core::models::Repository,
+        updates: Option<&[codeyard_repos::validation::RefUpdate]>,
+    ) -> Result<(
+        codeyard_db_core::models::User,
+        codeyard_db_core::models::AccessLevel,
+    )> {
+        self.check(pool, repo, true, Some(updates)).await
+    }
+    /// Starts a Git session: a fetch needs read access, a receive `authorize_receive`.
+    pub async fn authorize_session(
+        self,
+        pool: &DbPool,
+        repo: &codeyard_db_core::models::Repository,
+        write: bool,
+    ) -> Result<(
+        codeyard_db_core::models::User,
+        codeyard_db_core::models::AccessLevel,
+    )> {
+        self.check(pool, repo, write, write.then_some(None)).await
+    }
+    async fn check(
+        self,
+        pool: &DbPool,
+        repo: &codeyard_db_core::models::Repository,
+        write: bool,
+        receive: Option<Option<&[codeyard_repos::validation::RefUpdate]>>,
     ) -> Result<(
         codeyard_db_core::models::User,
         codeyard_db_core::models::AccessLevel,
@@ -430,7 +472,13 @@ impl ReceiveCredential {
         let level =
             codeyard_db_repos::repositories::access::git_access(pool, identity.id, repo.id, false)
                 .await?;
-        anyhow::ensure!(level.can_read(), CredentialRefusal::Missing);
+        let maintainer = match receive {
+            Some(updates) if write && !level.can_write() => {
+                maintainer_edits(pool, self, &identity, repo, updates).await?
+            }
+            _ => false,
+        };
+        anyhow::ensure!(level.can_read() || maintainer, CredentialRefusal::Missing);
         if let Self::Token(id) = self {
             anyhow::ensure!(
                 !write
@@ -440,7 +488,10 @@ impl ReceiveCredential {
                 CredentialRefusal::ReadOnly
             );
         }
-        anyhow::ensure!(!write || level.can_write(), CredentialRefusal::Denied);
+        anyhow::ensure!(
+            !write || level.can_write() || maintainer,
+            CredentialRefusal::Denied
+        );
         anyhow::ensure!(!write || !repo.is_archived, CredentialRefusal::Archived);
         anyhow::ensure!(
             !write || !codeyard_db_repos::repository_exports::locked(pool, repo.id).await?,
@@ -458,6 +509,151 @@ impl ReceiveCredential {
             | Self::ForeignSsh { id, .. } => id,
         }
     }
+}
+
+/// The most consented pull requests one fork is searched for.
+const MAINTAINER_BINDINGS: usize = 1000;
+
+/// Whether every pushed branch, or before Git reports them at least one branch, is the head
+/// of an open pull request whose maintainer edits this actor may make. Only branch updates
+/// qualify; a maintainer never deletes a branch, pushes a tag or writes another branch.
+async fn maintainer_edits(
+    pool: &DbPool,
+    credential: ReceiveCredential,
+    actor: &codeyard_db_core::models::User,
+    head: &codeyard_db_core::models::Repository,
+    updates: Option<&[codeyard_repos::validation::RefUpdate]>,
+) -> Result<bool> {
+    use std::collections::BTreeSet;
+    let Some(base_id) = head.forked_from_id else {
+        return Ok(false);
+    };
+    if head.is_gist
+        || head.is_stub
+        || head.owner_kind != "user"
+        || matches!(credential, ReceiveCredential::DeployKey(_))
+    {
+        return Ok(false);
+    }
+    let wanted = match updates {
+        None => None,
+        Some(updates) => {
+            let mut wanted = BTreeSet::new();
+            // Git's transaction may name HEAD for the branch it points to; that branch is listed too.
+            for update in updates.iter().filter(|update| update.reference != "HEAD") {
+                let Some(branch) = update.reference.strip_prefix("refs/heads/") else {
+                    return Ok(false);
+                };
+                if update.new == codeyard_repos::validation::ZERO_SHA {
+                    return Ok(false);
+                }
+                wanted.insert(branch.to_owned());
+            }
+            if wanted.is_empty() {
+                return Ok(false);
+            }
+            Some(wanted)
+        }
+    };
+    let asked = |branch: &str| wanted.as_ref().is_none_or(|wanted| wanted.contains(branch));
+    let done = |granted: &BTreeSet<String>| match &wanted {
+        None => !granted.is_empty(),
+        Some(wanted) => wanted.is_subset(granted),
+    };
+    let mut granted = BTreeSet::new();
+    let base = codeyard_db_repos::repositories::records::get_repository_by_id(pool, base_id)
+        .await?
+        .ok_or(CredentialRefusal::Missing)?;
+    if !base.is_stub {
+        let open = codeyard_db_repos::pull_requests::records::list_open_pull_request_revisions(
+            pool, head.id,
+        )
+        .await?;
+        for revision in open.into_iter().filter(|pull| {
+            pull.repo_id == base.id
+                && pull.head_repo_id == Some(head.id)
+                && asked(&pull.head_branch)
+        }) {
+            if granted.contains(&revision.head_branch) {
+                continue;
+            }
+            let Some(pull) = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
+                pool,
+                revision.id,
+            )
+            .await?
+            else {
+                continue;
+            };
+            if codeyard_repos::maintainer_edit::can_update_head(pool, actor, &base, head, &pull)
+                .await?
+            {
+                granted.insert(pull.head_branch);
+                if done(&granted) {
+                    return Ok(true);
+                }
+            }
+        }
+        return Ok(false);
+    }
+    // A base in another cell decides the maintainer's write access there; this cell keeps
+    // the publisher's consent and the fork owner's grant.
+    if !matches!(
+        credential,
+        ReceiveCredential::ForeignSsh { .. } | ReceiveCredential::ForeignToken { .. }
+    ) {
+        return Ok(false);
+    }
+    let (_, proof) = credential.proof()?;
+    let provider = pool
+        .foreign_authorization()
+        .ok_or_else(|| anyhow::anyhow!("Base cell is unavailable"))?;
+    let mut after = 0;
+    let mut seen = 0;
+    while seen < MAINTAINER_BINDINGS {
+        let page =
+            codeyard_db_repos::pull_requests::cells::bindings(pool, head.id, after, 100).await?;
+        let Some(last) = page.last() else {
+            break;
+        };
+        after = last.number;
+        seen += page.len();
+        for binding in page {
+            if binding.base_repo_id != base.id
+                || !asked(&binding.head_branch)
+                || granted.contains(&binding.head_branch)
+            {
+                continue;
+            }
+            let Some(grant) = provider.pull_grant(&binding, Some(&proof)).await? else {
+                continue;
+            };
+            grant.validate(&binding)?;
+            let grantor = match grant.maintainer_edit_granted_by_id {
+                Some(id) if Some(id) == head.personal_owner_id() => {
+                    codeyard_db_identity::users::accounts::get_user_by_id(pool, id).await?
+                }
+                _ => None,
+            };
+            if grant.actor_id == Some(actor.id)
+                && grantor.is_some_and(|owner| !owner.is_banned && !owner.must_change_password)
+                && codeyard_db_repos::pull_requests::cells::publisher(pool, &binding).await?
+                    == Some(grant.publisher_id)
+                && codeyard_repos::maintainer_edit::publication_authorized(
+                    pool,
+                    Some(grant.publisher_id),
+                    head,
+                )
+                .await?
+            {
+                granted.insert(binding.head_branch);
+                if done(&granted) {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
 }
 
 pub struct ReceiveSession<'a> {

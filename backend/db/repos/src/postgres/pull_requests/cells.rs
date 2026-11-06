@@ -13,7 +13,7 @@ async fn readable(
     head: i64,
 ) -> Result<bool> {
     Ok(actor.credential.is_some() && codeyard_db_core::queries::postgres::repositories::access::lock_readable_repository_in_transaction(
-        &mut **tx, actor.user_id, head, codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Shared,
+        tx, actor.user_id, head, codeyard_db_core::queries::postgres::repositories::access::RepositoryRowLock::Shared,
     ).await? && codeyard_db_core::queries::postgres::credentials::repository(tx, actor, head, "contents", false).await?)
 }
 pub async fn subscribe(

@@ -48,6 +48,7 @@ async fn contract(pg: bool) {
     let bob = Client::login(&router, f.pool(), bob_id).await;
     let carol = Client::login(&router, f.pool(), carol_id).await;
     let mut credentials = Vec::new();
+    let mut token_ids = Vec::new();
     for (id, client, scope) in [
         (alice_id, &alice, "write"),
         (bob_id, &bob, "write"),
@@ -67,6 +68,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
         credentials.push(format!("Bearer {}", token.value));
+        token_ids.push(token.token.id);
     }
     let (owner, author, stranger, reader) = (
         credentials[0].as_str(),
@@ -123,6 +125,32 @@ async fn contract(pg: bool) {
         .unwrap();
     let target = repo_store(&fork, None);
     let source = repo_store(&base, None);
+    // A Git receive by the base owner may move this pull head branch, and nothing else.
+    {
+        use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
+        let push = |reference: &str| codeyard_repos::validation::RefUpdate {
+            old: fork_sha.clone(),
+            new: "c".repeat(40),
+            reference: reference.into(),
+        };
+        let maintainer = ReceiveCredential::Token(token_ids[0]);
+        let (pusher, _) = maintainer
+            .authorize_receive(f.pool(), &fork, Some(&[push("refs/heads/main")]))
+            .await
+            .unwrap();
+        assert_eq!(pusher.id, alice_id);
+        assert!(maintainer
+            .authorize_receive(f.pool(), &fork, Some(&[push("refs/heads/other")]))
+            .await
+            .is_err());
+        assert!(maintainer.authorize(f.pool(), &fork, true).await.is_err());
+        for refused in [token_ids[2], token_ids[3]] {
+            assert!(ReceiveCredential::Token(refused)
+                .authorize_receive(f.pool(), &fork, Some(&[push("refs/heads/main")]))
+                .await
+                .is_err());
+        }
+    }
     let upstream = alice.save("main", "upstream.txt", &first).await;
     // Consent never grants general repository mutation, nor weakens the native metadata gate.
     alice.expect("POST", "/api/repos/bob/proj/contents/unscoped.txt", json!({"content":base64::engine::general_purpose::STANDARD.encode("Not scoped"),"message":"Unscoped","branch":"main","expected_revision":fork_sha}), StatusCode::FORBIDDEN).await;

@@ -694,7 +694,7 @@ impl Gateway {
             "SSH credential required"
         );
         let (actor, _) = credential
-            .authorize(&self.pool, &repo, command.write)
+            .authorize_session(&self.pool, &repo, command.write)
             .await?;
         let visitor = match credential {
             ReceiveCredential::DeployKey(id) => {
@@ -722,7 +722,7 @@ impl Gateway {
         let path = self.bare_path(&repo).await?;
         let (current, _) = timeout(
             Duration::from_secs(5),
-            credential.authorize(&self.pool, &repo, command.write),
+            credential.authorize_session(&self.pool, &repo, command.write),
         )
         .await??;
         ensure!(current.id == actor.id, "identity changed");
@@ -813,7 +813,9 @@ impl Gateway {
     ) -> Result<std::process::ExitStatus> {
         let write = options.service == GitService::ReceivePack;
         let credential = options.credential.context("Git credential required")?;
-        let (actor, _) = credential.authorize(&self.pool, repo, write).await?;
+        let (actor, _) = credential
+            .authorize_session(&self.pool, repo, write)
+            .await?;
         // Inherit an unlocked description now; pre-receive locks that same description.
         // This keeps negotiation concurrent without leaving a crash gap before publication.
         let publication_lease = if write {

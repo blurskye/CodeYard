@@ -227,7 +227,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     let alice_token = Prefix::ZERO
         .token(codeyard_support::tokens::PAT_PREFIX, &"b".repeat(64))
         .unwrap();
-    codeyard_db_identity::users::tokens::create_token(
+    let alice_pat = codeyard_db_identity::users::tokens::create_token(
         &zero.pool,
         alice.id,
         &alice_session,
@@ -1231,6 +1231,83 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .unwrap();
     assert!(!unchanged);
     assert_eq!(followed(number).await, followed_tip);
+    // The base owner in cell zero may push this pull head in cell one, and nothing else.
+    let maintainer =
+        codeyard_repos_core::repositories::git_sessions::ReceiveCredential::ForeignToken {
+            id: alice_pat.id,
+            hash: hex::decode(token_hash(&alice_token))
+                .unwrap()
+                .try_into()
+                .unwrap(),
+        };
+    let fork = codeyard_db_repos::repositories::records::get_repository_by_id(&one.pool, fork_id)
+        .await
+        .unwrap()
+        .unwrap();
+    let update = |reference: &str, new: &str| codeyard_repos::validation::RefUpdate {
+        old: followed_tip.clone(),
+        new: new.into(),
+        reference: reference.into(),
+    };
+    let pushed = maintainer
+        .authorize_receive(
+            &one.pool,
+            &fork,
+            Some(&[update("refs/heads/foreign-topic", &"c".repeat(40))]),
+        )
+        .await
+        .unwrap();
+    assert_eq!(pushed.0.id, alice.id);
+    assert_eq!(
+        maintainer
+            .authorize_session(&one.pool, &fork, true)
+            .await
+            .unwrap()
+            .0
+            .id,
+        alice.id
+    );
+    for refused in [
+        vec![update("refs/heads/main", &"c".repeat(40))],
+        vec![update(
+            "refs/heads/foreign-topic",
+            codeyard_repos::validation::ZERO_SHA,
+        )],
+        vec![update("refs/tags/maintainer", &"c".repeat(40))],
+        vec![
+            update("refs/heads/foreign-topic", &"c".repeat(40)),
+            update("refs/heads/other", &"c".repeat(40)),
+        ],
+    ] {
+        assert!(maintainer
+            .authorize_receive(&one.pool, &fork, Some(&refused))
+            .await
+            .is_err());
+    }
+    // The grant covers Git receives only; API writes still need write access to the fork.
+    assert!(maintainer.authorize(&one.pool, &fork, true).await.is_err());
+    let withdrawn = client
+        .patch(format!(
+            "{}/api/v3/repos/alice/private/pulls/{number}",
+            http.url()
+        ))
+        .bearer_auth(&value)
+        .json(&serde_json::json!({"maintainer_can_modify":false}))
+        .send()
+        .await
+        .unwrap();
+    let status = withdrawn.status();
+    let withdrawn: serde_json::Value = withdrawn.json().await.unwrap();
+    assert_eq!(status, 200, "{withdrawn}");
+    assert_eq!(withdrawn["maintainer_can_modify"], false);
+    assert!(maintainer
+        .authorize_receive(
+            &one.pool,
+            &fork,
+            Some(&[update("refs/heads/foreign-topic", &"c".repeat(40))])
+        )
+        .await
+        .is_err());
     let source_by_id = zero
         .pool
         .foreign_authorization()
