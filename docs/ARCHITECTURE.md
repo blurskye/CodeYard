@@ -765,8 +765,9 @@ lists and GraphQL org discovery. Both cells start and complete signup/key setup;
 client round passes both real gh logins and repository creations after the checked backend
 JSON compression fix. Router library tests and all 234 cluster checks pass. The first HTTP
 Git push finds missing catalogue declarations; those three routes now use the shared owner,
-with source-guard and native advertisement regressions. Source checks and all 67 REST tests
-pass; the client reaches foreign invitation acceptance, where a fixture incorrectly parses
+with source-guard and native advertisement regressions. Source checks, all 67 REST tests,
+both catalogue guard tests and all 234 cluster tests pass without skips. The client reaches
+foreign invitation acceptance, where a fixture incorrectly parses
 its successful empty 204 response. That fixture is fixed and source-checked. The next cells
 snapshot also checks standalone cell-zero preservation, actual JavaScript ID precision and
 native-only org/team member lists and counts; runtime remains pending.

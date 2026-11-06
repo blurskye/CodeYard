@@ -172,7 +172,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Runtime c1b52bba8227426b9bd3d054d5c85bb1 confirms the fixed HTTP Git catalogue through
     an actual push and foreign invitation creation/acceptance. Its client fixture then
     JSON-decodes a correct empty 204 response; the checked fix asserts the gh HTTP status.
-    All 67 REST tests pass. The repository guard and cluster targets are still running.
+    All 67 REST tests, both repository catalogue guard tests and all 234 cluster tests
+    pass without skips, including the new two-cell native Git advertisements.
     The next checked cells snapshot also covers standalone-to-cell-zero account/session/
     repository/commit preservation, JavaScript ID precision, gh org/team grants, home org
     discovery and native-only member lists/counts and search. Revocation must return 401
