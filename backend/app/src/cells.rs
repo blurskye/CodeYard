@@ -63,8 +63,18 @@ impl Native {
         if !pull.maintainer_edits_enabled() {
             return Ok(None);
         }
-        let Some(actor) = self.identity().fork_actor(proof).await? else {
-            return Ok(None);
+        let actor = if let Proof::Ssh { .. } = proof {
+            // An SSH key acts as its whole account, as a native key does. Only a key homed
+            // in this cell answers here.
+            let Some(answer) = Home::authorize(&self.identity(), proof).await? else {
+                return Ok(None);
+            };
+            codeyard_db_core::queries::credentials::Actor::from(answer.user.id)
+        } else {
+            let Some(actor) = self.identity().fork_actor(proof).await? else {
+                return Ok(None);
+            };
+            actor
         };
         // Any failure, including an outage, refuses the edit.
         Ok(
