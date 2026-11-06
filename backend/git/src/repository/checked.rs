@@ -551,7 +551,74 @@ pub async fn initialize_repository(
     source: Option<&Path>,
     default_branch: &str,
 ) -> Result<()> {
-    initialize_repository_copy(path, source, default_branch, false, false).await
+    initialize_repository_copy(path, source, default_branch, false, false, None).await
+}
+
+/// Forks of one public repository on one disk share its objects through a pool repository at
+/// `<root>/pools/<name>.git`, next to the forks in `<root>`. The pool holds only what the
+/// source's branches and tags reach, keeps those refs as fetch bases and never prunes, so a
+/// member never loses a borrowed object and stores only the objects it adds itself.
+async fn join_pool(path: &Path, pool: &Path, source: &str) -> Result<()> {
+    let name = pool
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| name.ends_with(".git") && !name.starts_with('.'))
+        .ok_or_else(|| anyhow!("Invalid object pool path"))?;
+    let pools = pool
+        .parent()
+        .ok_or_else(|| anyhow!("Invalid object pool path"))?;
+    ensure!(
+        pools.file_name() == Some(std::ffi::OsStr::new("pools")) && pools.parent() == path.parent(),
+        "The object pool is not beside the repository"
+    );
+    let _lock = super::locks::lock(pool).await;
+    if !tokio::fs::try_exists(pool.join("objects")).await? {
+        tokio::fs::create_dir_all(pools).await?;
+        // A pool appears only complete, with its no-prune settings, so no Git command ever
+        // collects a member's objects from it.
+        let staging = tempfile::Builder::new()
+            .prefix(".pool-")
+            .tempdir_in(pools)?;
+        let (status, _) =
+            command(staging.path(), &["init", "--bare", "--quiet"], b"", None).await?;
+        ensure!(status.success(), "Git object pool initialization failed");
+        for (key, value) in [
+            ("gc.auto", "0"),
+            ("gc.pruneExpire", "never"),
+            ("gc.reflogExpireUnreachable", "never"),
+            ("maintenance.auto", "false"),
+            ("transfer.unpackLimit", "1"),
+            ("core.logAllRefUpdates", "false"),
+        ] {
+            let (status, _) = command(staging.path(), &["config", key, value], b"", None).await?;
+            ensure!(status.success(), "Git object pool configuration failed");
+        }
+        tokio::fs::rename(staging.keep(), pool).await?;
+    }
+    let (status, _) = command(
+        pool,
+        &[
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--no-write-fetch-head",
+            "--",
+            source,
+            "+refs/heads/*:refs/heads/*",
+            "+refs/tags/*:refs/tags/*",
+        ],
+        b"",
+        None,
+    )
+    .await?;
+    ensure!(status.success(), "Git object pool update failed");
+    // Relative, so a backup or a restored copy of the whole storage root keeps working.
+    tokio::fs::write(
+        path.join("objects/info/alternates"),
+        format!("../../pools/{name}/objects\n"),
+    )
+    .await?;
+    Ok(())
 }
 
 pub async fn initialize_repository_copy(
@@ -560,6 +627,7 @@ pub async fn initialize_repository_copy(
     default_branch: &str,
     default_branch_only: bool,
     template: bool,
+    pool: Option<&Path>,
 ) -> Result<()> {
     validate_merge_revision(default_branch, "0000000000000000000000000000000000000000")?;
     let branch = format!("--initial-branch={default_branch}");
@@ -571,6 +639,9 @@ pub async fn initialize_repository_copy(
         let source = source
             .to_str()
             .ok_or_else(|| anyhow!("Invalid source storage path"))?;
+        if let Some(pool) = pool.filter(|_| !template) {
+            join_pool(path, pool, source).await?;
+        }
         let default_ref = format!("+refs/heads/{default_branch}:refs/heads/{default_branch}");
         let mut arguments = vec!["fetch", "--quiet", "--no-tags", "--no-write-fetch-head"];
         if template {

@@ -24,6 +24,7 @@ mod insights;
 mod label_authority;
 mod language_cache;
 mod languages;
+mod object_pools;
 mod readme;
 mod ref_paths;
 mod regressions;

@@ -261,6 +261,28 @@ impl LocalStore {
             if snapshot.default_branch != options.default_branch {
                 return Err(RepoError::write_denied());
             }
+            // The staged snapshot fills this disk's pool, and the fork keeps what the pool lacks.
+            let source = &admission.source.repository;
+            let temporary = match self.object_pool(pool, source.id, None).await? {
+                Some(shared) if !source.is_private => {
+                    let pooled = tempfile::Builder::new()
+                        .prefix(".fork-")
+                        .tempdir_in(parent)
+                        .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
+                    git::initialize_repository_copy(
+                        pooled.path(),
+                        Some(temporary.path()),
+                        &snapshot.default_branch,
+                        false,
+                        false,
+                        Some(&shared),
+                    )
+                    .await
+                    .map_err(RepoError::from)?;
+                    pooled
+                }
+                _ => temporary,
+            };
             self.publish_copy(
                 pool,
                 repository,

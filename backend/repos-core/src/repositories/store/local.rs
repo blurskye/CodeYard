@@ -1530,6 +1530,32 @@ impl LocalStore {
             .map_err(RepoError::from)
     }
 
+    /// The object pool that forks of a public repository share on this disk. Private sources
+    /// and replicated storage keep whole copies: a pool member can read every pooled object.
+    pub(super) async fn object_pool(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        source_repo_id: i64,
+        source_path: Option<&Path>,
+    ) -> Result<Option<std::path::PathBuf>, RepoError> {
+        let root = self
+            .path()
+            .parent()
+            .ok_or_else(|| unavailable("Invalid storage path"))?;
+        if self.context.is_some()
+            || self.node_id != Some(None)
+            || source_path.is_some_and(|path| path.parent() != Some(root))
+        {
+            return Ok(None);
+        }
+        let public =
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, source_repo_id)
+                .await
+                .map_err(RepoError::from)?
+                .is_some_and(|source| !source.is_private && !source.is_gist);
+        Ok(public.then(|| root.join("pools").join(format!("{source_repo_id}.git"))))
+    }
+
     pub(super) async fn initialize_copy(
         &self,
         pool: &codeyard_db_core::DbPool,
@@ -1564,12 +1590,16 @@ impl LocalStore {
                     .ok_or_else(|| unavailable("Invalid storage path"))?,
             )
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
+        let shared = self
+            .object_pool(pool, source_repo_id, Some(source.path()))
+            .await?;
         git::initialize_repository_copy(
             temporary.path(),
             Some(source.path()),
             default_branch,
             options.default_branch_only,
             options.template,
+            shared.as_deref(),
         )
         .await
         .map_err(RepoError::from)?;
