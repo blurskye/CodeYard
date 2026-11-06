@@ -183,7 +183,13 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     The next cells round also checks both repository node IDs in one query and real foreign
     private dashboard navigation with and without hydration. Browser failures remain required
     and are collected with the independent Git/gh checks. The fixture batch passes the
-    source checks above; the failed cluster/cells targets are next.
+    source checks above. Retry c9a5b064d462417d86331bb9592ab72f passes all 234 cluster
+    tests without skips, including native home/org lists and GraphQL org discovery.
+    The cells round reaches real gh login, whose current-user GraphQL query returns 503.
+    Dispatch parses backend JSON but preserves the client's compression preference;
+    the next unchecked fix requests identity encoding for its generated backend requests.
+    A native HTTP regression proves the cell emits gzip, then exercises token-scheme
+    viewer queries in both cells and a compressed-client split query through the router.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:

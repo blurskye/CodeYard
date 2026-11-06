@@ -127,7 +127,7 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
     codeyard_db_core::cells::initialize(&one.pool, Prefix::new(1))
         .await
         .unwrap();
-    let (mut alice, alice_id, _alice_token) = native(&zero, "alice").await;
+    let (mut alice, alice_id, alice_token) = native(&zero, "alice").await;
     let (mut bob, bob_id, bob_token) = native(&one, "bob").await;
     let directory_key = NodeKey::generate();
     let router_key = NodeKey::generate();
@@ -252,6 +252,43 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
         .timeout(Duration::from_secs(15))
         .build()
         .unwrap();
+    let encoded_client = reqwest::Client::builder()
+        .no_gzip()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let compressed = encoded_client
+        .post(format!("{}/api/graphql", bob.url()))
+        .header("accept-encoding", "gzip")
+        .bearer_auth(&bob_token)
+        .json(&json!({"query":"{viewer{id login avatarUrl url}}"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(compressed.status(), 200);
+    assert_eq!(compressed.headers()["content-encoding"], "gzip");
+    let compressed = axum::body::to_bytes(
+        axum::body::Body::from_stream(compressed.bytes_stream()),
+        codeyard_cells_router::graphql_dispatch::Config::default().maximum_bytes,
+    )
+    .await
+    .unwrap();
+    assert!(compressed.starts_with(&[0x1f, 0x8b]));
+    for (name, token) in [("alice", &alice_token), ("bob", &bob_token)] {
+        let response = client
+            .post(format!("{}/api/graphql", router.url()))
+            .header("accept-encoding", "gzip")
+            .header("authorization", format!("token {token}"))
+            .json(&json!({"query":"query UserCurrent{viewer{login}}"}))
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(status, 200, "{body}");
+        assert!(body.get("errors").is_none(), "{body}");
+        assert_eq!(body["data"]["viewer"]["login"], name, "{body}");
+    }
     for (name, id) in [("alice", alice_id), ("bob", bob_id)] {
         let response = client
             .get(format!("{}/api/v3/users/{name}", router.url()))
@@ -295,6 +332,7 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
     let response = client
         .post(format!("{}/api/graphql", router.url()))
         .bearer_auth(&bob_token)
+        .header("accept-encoding", "gzip")
         .json(&query)
         .send()
         .await

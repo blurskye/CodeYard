@@ -81,6 +81,11 @@ impl Dispatcher {
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("application/json"),
         );
+        // Dispatch parses these replies; the shared streaming transport preserves encodings.
+        request.headers_mut().ok_or(Failure::Invalid)?.insert(
+            header::ACCEPT_ENCODING,
+            header::HeaderValue::from_static("identity"),
+        );
         self.transport
             .forward(
                 cell,
