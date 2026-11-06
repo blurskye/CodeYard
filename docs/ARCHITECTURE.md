@@ -763,7 +763,8 @@ preservation, gh login and repository creation, foreign membership discovery, na
 member lists/counts, raw/hydrated navigation, JavaScript ID precision, cell-1 HTTP/SSH
 push/clone, foreign pushes, gh pr create and gh pr merge. The typed-proof publication fix
 and hostile store regression pass 68 library and 61 store tests. The real public cells
-round passes all five checks without skips; its final cluster rerun is still running.
+round passes all five checks and all 234 cluster tests without skips. Stage 2 runnable
+acceptance passes.
 Stage 3 star pointers and bounded home lists are being written against acceptance items
 5 and 7; that source is unchecked. Cross-cell forks, pull requests, notifications,
 transfers and pools remain open, as do stages 4 to 6. Range renewal is a deferred owner

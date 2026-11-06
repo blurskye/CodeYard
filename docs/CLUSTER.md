@@ -769,8 +769,8 @@ pending OAuth/device codes usable. Automatic renewal is deferred.
 
 [Cluster readiness](CLUSTER_PLAN.md) records exact source checks, the combined runtime job
 and acceptance gaps. Runtime 15c77f36a9794468ac72f976e6c78209 passes all five public
-two-cell gh/Git checks, 68 core library and 61 store tests without skips. The final
-cluster rerun remains running. Stage 3 star/outbox source work is unchecked.
+two-cell gh/Git checks, 68 core library, 61 store and all 234 cluster tests without skips.
+Stage 2 runnable acceptance passes. Stage 3 star/outbox source work is unchecked.
 
 Remote membership grants/deletes now queue home pointers in their own transaction. Pointers
 carry ordered event IDs and never grant resource access. The receiving home rechecks the live

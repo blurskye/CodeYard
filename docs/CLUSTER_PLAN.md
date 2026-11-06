@@ -192,10 +192,13 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     workspace 1eea95d5da154951a089895b7e135cbc, Clippy 5bbeecaa23534c9086bf16bc198a3001
     and WASM 045f16dfddd44168a4379af54001a42c. Runtime 15c77f36a9794468ac72f976e6c78209
     passes all five real public cells checks, 68 core library tests and 61 store tests,
-    without skips. The final cluster rerun is still running.
+    and all 234 cluster tests, without skips. Stage 2 runnable acceptance passes.
     Stage 3 items 5/7 are in source work: shared membership/star pointer delivery,
     bounded home REST/browser star lists and SIGKILL replay acceptance. This batch is
-    unchecked; the remaining stage 3 items and stages 4 to 6 remain unwritten.
+    submitted together for workspace 21e6c57489b04937a62801e83dc6c96d, Clippy
+    642e4e90dd194f728eed9b3b0fbaf20d and WASM 95844ccaeecb4f5fae389147be54758a;
+    results and runtime are pending. The remaining stage 3 items and stages 4 to 6
+    remain unwritten.
     Automatic user moves and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:
     foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded expired
