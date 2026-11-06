@@ -732,7 +732,8 @@ reserve and confirm directory claims before their native transaction commits; fa
 leave no usable local account or key. Claim removals are queued in `cell_outbox` in the
 native transaction and retried by owned web workers, so directory outages do not interrupt
 committed deletions or storage cleanup. The publication, capacity-report and foreign GraphQL quota source passes workspace, Clippy
-and WASM. New runtime tests and the public two-cell gh/Git round are pending. Reports use
+and WASM. Native publication and cluster runtime checks pass; the public two-cell gh/Git
+round remains incomplete. Reports use
 bounded per-schema PostgreSQL counters and relation sizes; stale samples exclude new
 placements while existing account routes continue working.
 
@@ -755,8 +756,8 @@ lookup before the invitation transaction; this follow-up passes source checks.
 
 Rooted numeric node readers and projections pass workspace, Clippy and WASM, including
 GraphQL's nullable databaseId and complete fullDatabaseId output. Review requests share one
-reader and stable row IDs. Computed project fields now carry their owning account and project;
-that follow-up passes source checks and awaits runtime.
+reader and stable row IDs. Computed project fields carry their owning account and project;
+both-engine HTTP contracts and forged-root project/review mutations pass.
 Range reservations and stopped-cell `cell renew-range
 --directory-address <address> --directory-key <public key>` are source-checked, committed
 owner follow-ups. Renewal preserves stable homes and existing rows. Issuer history keeps
@@ -770,16 +771,18 @@ carry ordered event IDs and never grant resource access. The receiving home rech
 cell key and both directory homes at commit; duplicate and older deliveries are harmless.
 Home REST repository/org listings fetch bounded pages through the resource cell's existing
 HTTP handlers with the original token, then recheck that token before answering. This batch
-passes source checks; its HTTP/TLS, rollback, replay and gh pagination tests await runtime.
-GraphQL organization discovery, cold numeric invitation targets and repository chrome's
-shared package-session check pass source checks; runtime is pending. Native home repository
+passes source checks and HTTP/TLS, rollback and replay tests. Public gh pagination is
+part of the remaining two-cell round. GraphQL organization discovery, cold numeric invitation
+targets and repository chrome's shared package-session checks pass runtime tests. Native home repository
 and org lists now read the resource cells' existing authorized page models with the original
 cookie. They share the bounded collector and row/byte budget, then recheck the home session.
 Both engines exclude stub organizations from private indexes and creation choices. This
-follow-up passes workspace, Clippy and WASM; its HTML, page-model, revocation-during-read
-and hostile-limit tests await runtime. The two-cell client round also checks native cell-1
+follow-up passes workspace, Clippy, WASM and its HTML, page-model, revocation-during-read
+and hostile-limit tests. The two-cell client round also checks native cell-1
 Git storage through HTTP and SSH pushes/clones and explicit scoped-ID bounds.
 The browser package-session retries pass on both engines. GraphQL discovery now uses
 the actual organization-list resolver, and every mutation family shares rooted-ID
-preflight; workspace, Clippy and WASM pass. Their runtime retry includes native lists,
-both database engines, cluster and the public two-cell gh/Git round.
+preflight; source checks, both database engines and all 234 cluster tests pass. The real
+client round passes gh login and repository creation in both cells. Its first HTTP Git push
+found three missing route declarations, now fixed through the shared catalogue. The updated
+source guard and native Git advertisement regressions pass source checks; runtime is next.

@@ -195,7 +195,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     all 234 cluster tests without skips. Both real gh logins and repository creations
     pass; the first HTTP Git push receives 404 because the three Git constructors did
     not declare catalogue routes. Their shared declarations and an AST-based source
-    guard fix are written, with native-cell Git advertisement coverage; checks are next.
+    guard fix pass workspace e61baa09e6034fafa8a91863eaf3311d, Clippy
+    c27f3283f3184921b50ac3b9e0133afe and WASM 82d549a4627049fa85f94f2e34842033.
+    Native-cell Git advertisement and source-guard tests join the runtime retry.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:
