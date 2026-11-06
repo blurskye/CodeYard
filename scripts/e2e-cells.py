@@ -472,10 +472,10 @@ def acceptance(deployment):
         assert people["total_count"] == 0 and people["items"] == [], "a local search must not expose metadata stubs"
         client.checked("node lookup and one native GraphQL query span both cells; stubs stay out of account search")
 
-        def http_get(path, token=None):
+        def http_get(path, token=None, timeout=15):
             request = urllib.request.Request(deployment.base + path, headers={"Accept": "application/json", **({"Authorization": "Bearer " + token} if token else {})})
             try:
-                response = deployment.http.open(request, timeout=15)
+                response = deployment.http.open(request, timeout=timeout)
             except urllib.error.HTTPError as error:
                 response = error
             with response:
@@ -495,10 +495,16 @@ def acceptance(deployment):
         token_id = deployment.web("bob", "req", "GET", "/settings?tab=tokens", "--print", r"re:/settings/tokens/([0-9]+)/delete")
         assert token_id.isdecimal()
         deployment.web("bob", "form", "/settings?tab=tokens", "--action", f"/settings/tokens/{token_id}/delete", "--set", "confirm=yes", "--status", "303")
-        deadline = time.monotonic() + 61
-        while http_get("/api/v3/repos/alice/shared", tokens["bob"])[0] == 200:
-            assert time.monotonic() < deadline, "home token revocation did not reach the resource cell within 60 seconds"
-            threading.Event().wait(0.1)
+        deadline = time.monotonic() + 60
+        while True:
+            remaining = deadline - time.monotonic()
+            assert remaining > 0, "home token revocation did not reach the resource cell within 60 seconds"
+            status, body = http_get("/api/v3/repos/alice/shared", tokens["bob"], timeout=min(15, remaining))
+            assert status in (200, 401), f"revocation must deny authentication, got {status}: {body!r}"
+            if status == 401:
+                assert time.monotonic() <= deadline, "home token revocation exceeded 60 seconds"
+                break
+            threading.Event().wait(min(0.5, max(0, deadline - time.monotonic())))
         assert client.gh("issue", "create", "-R", "alice/shared", "--title", "Must not be written", "--body", "revoked", who="bob", ok=(1,)).returncode == 1
         assert all(issue["title"] != "Must not be written" for issue in client.data("issue", "list", "-R", "alice/shared", "--json", "title"))
         client.checked("revoked home token stops foreign reads and writes within the cache lifetime")
