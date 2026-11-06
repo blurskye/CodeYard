@@ -785,4 +785,7 @@ the actual organization-list resolver, and every mutation family shares rooted-I
 preflight; source checks, both database engines and all 234 cluster tests pass. The real
 client round passes gh login and repository creation in both cells. Its first HTTP Git push
 found three missing route declarations, now fixed through the shared catalogue. The updated
-source guard and native Git advertisement regressions pass source checks; runtime is next.
+source guard and native Git advertisement regressions pass source checks. The real HTTP
+push and foreign invitation acceptance now pass; the fixture's JSON parsing of an empty 204
+reply is fixed. The next checked cells snapshot also verifies standalone cell-zero data,
+JavaScript ID precision and native-only member lists and counts. Runtime remains pending.

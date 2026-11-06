@@ -187,6 +187,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Clippy 4f81ccaaf4a74e72bae0a9b170545a76 and WASM 05a37dc0d556468a9134ff146219c08e.
     The next cells snapshot also checks real gh org/team grants, home org discovery and
     native-only member lists/counts, and asserts both empty stub search items and count.
+    This fixture passes workspace 08d754e0cf0c4ae5879eabc77fcaae94, Clippy
+    f08876b7483b4f3eb08b1020204211e5 and WASM 14d8227ddd0340128ff5e403162ab855.
     Fixture runtime remains pending. The current job passes all 67 REST library tests.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
