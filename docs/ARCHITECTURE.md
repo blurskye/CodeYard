@@ -749,35 +749,25 @@ the round rather than skipping it.
   release-candidate crypto crates that cannot share a dependency graph with
   them, so russh moved to 0.63. Re-check both pins when upgrading either.
 
-## 3. Scaling out: cells behind a router (plan, not built)
+## 3. Scaling out: cells behind a router
 
 Stage 0 reuses cluster plan items 3 and 11; automated durability acceptance passes,
 while hard-reset acceptance needs a disposable VM. Stage 1's 51 PgBouncer/replica/quorum
 checks pass; finished-CI shutdown and measured capacity need a delegated cgroup.
-Stage 2 source covers directory transport/claims/cache, public HTTP/SSH routing, scoped
-credentials and rooted IDs, stable homes, stubs, home authorization, native publication
-and cleanup, capacity reporting and bounded home membership lists. Workspace, Clippy and
-WASM pass; generated GraphQL is unchanged. Runtime 9a78fe9 passes 114 selected library
-checks and both-engine membership, stub, reviewer, project, organization connection and
-exhaustive GraphQL contracts. Project and review mutations reject forged roots. Cluster
-passes all 234 checks after installing the existing test bundle, including native home/org
-lists and GraphQL org discovery. Both cells start and complete signup/key setup; the
-client round passes both real gh logins and repository creations after the checked backend
-JSON compression fix. Router library tests and all 234 cluster checks pass. The first HTTP
-Git push finds missing catalogue declarations; those three routes now use the shared owner,
-with source-guard and native advertisement regressions. Source checks, all 67 REST tests,
-both catalogue guard tests and all 234 cluster tests pass without skips. The client reaches
-foreign invitation acceptance, where a fixture incorrectly parses
-its successful empty 204 response. That fixture is fixed and source-checked. The next cells
-snapshot passes standalone cell-zero data/credential preservation, JavaScript ID precision,
-native-only org/team lists/counts, raw/hydrated navigation and cell-1 HTTP/SSH push/clone.
-Foreign pushes and gh pr create pass; gh pr merge finds a native-token-only publication
-check. Its typed-proof/workflow fix and hostile store regressions pass workspace, Clippy
-and WASM; core library/store, cluster and public-client runtime are next.
-Public two-cell gh/Git acceptance remains open. Stages 3 to 6 are not built; range renewal
-is a deferred owner follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and
-runtime gaps. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
-numbers remain assumptions until stage 1 measures a real cell.
+Stage 2 source covers the directory, public HTTP/SSH router, scoped credentials and rooted
+IDs, stable homes, stubs, home authorization, native publication/cleanup and bounded home
+membership discovery. Workspace, Clippy and WASM pass; generated GraphQL is unchanged.
+Both-engine data/HTTP contracts, exhaustive GraphQL contracts, all 234 cluster tests and
+both route catalogue guards pass. Real clients prove standalone cell-zero data/credential
+preservation, gh login and repository creation, foreign membership discovery, native-only
+member lists/counts, raw/hydrated navigation, JavaScript ID precision, cell-1 HTTP/SSH
+push/clone, foreign pushes and gh pr create. The last run finds a native-token-only merge
+publication check. Its typed-proof/workflow fix and hostile store regressions pass source
+checks; core library/store, cluster and the public client retry are running. Stage 2
+end-to-end acceptance remains incomplete. Stages 3 to 6 are not built; range renewal is a
+deferred owner follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
+The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
+assumptions until stage 1 measures a real cell.
 
 Two findings set the order of work:
 
