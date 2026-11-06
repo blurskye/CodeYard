@@ -45,7 +45,7 @@ enum Request {
     },
     Snapshot(codeyard_db_core::cells::repositories::SnapshotRequest),
     Pointer(codeyard_db_core::cells::pointers::Event),
-    Notice(codeyard_db_core::cells::notices::Event),
+    Notice(Box<codeyard_db_core::cells::notices::Event>),
     Push(codeyard_db_core::cells::pulls::Event),
     Subscribe {
         binding: codeyard_db_core::cells::pulls::Binding,
@@ -847,7 +847,7 @@ impl Home for Remote {
             };
             ensure!(
                 matches!(
-                    self.exchange(&cell, &Request::Notice(event.clone()))
+                    self.exchange(&cell, &Request::Notice(Box::new(event.clone())))
                         .await?,
                     Reply::Done
                 ),

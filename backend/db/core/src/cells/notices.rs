@@ -101,7 +101,7 @@ pub async fn queue(pool: &DbPool, notice: &Notice) -> Result<bool> {
                 .bind(TOPIC)
                 .bind(payload)
                 .execute(pool)
-                .await?
+                .await?;
         }
         DbPool::Sqlite(pool) => {
             sqlx::query(QUEUE)
@@ -109,9 +109,9 @@ pub async fn queue(pool: &DbPool, notice: &Notice) -> Result<bool> {
                 .bind(TOPIC)
                 .bind(payload)
                 .execute(pool)
-                .await?
+                .await?;
         }
-    };
+    }
     Ok(true)
 }
 

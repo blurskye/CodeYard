@@ -583,7 +583,10 @@ pub async fn public_owner(
 
 /// Queues a mention notice for a recipient homed in another cell, and says whether it did.
 /// Only a public native repository sends one; the outbox checks it again before delivery.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "a notice names each part of the mention"
+)]
 pub async fn queue_notice(
     pool: &DbPool,
     recipient: i64,
