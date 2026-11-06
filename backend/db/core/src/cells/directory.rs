@@ -1,6 +1,6 @@
 //! Directory publication runs while the caller retains its local namespace and authority locks.
 use anyhow::{ensure, Result};
-use codeyard_model::cells::{Key, KeyKind, Location, Object, ObjectKind};
+use codeyard_model::cells::{Cell, Key, KeyKind, Location, Object, ObjectKind};
 use futures_util::future::BoxFuture;
 use std::{fmt, sync::Arc, time::Duration};
 
@@ -62,6 +62,14 @@ pub trait Directory: Send + Sync {
     ) -> BoxFuture<'a, Result<()>>;
     fn release<'a>(&'a self, object: Object, keys: &'a [Key]) -> BoxFuture<'a, Result<()>>;
     fn forget(&self, object: Object) -> BoxFuture<'_, Result<()>>;
+    fn cell(&self, prefix: codeyard_support::cells::Prefix) -> BoxFuture<'_, Result<Option<Cell>>>;
+    /// Automatic presence of one of this cell's organizations; hand-set presence stays.
+    fn set_presence<'a>(
+        &'a self,
+        organization: i64,
+        region: &'a str,
+        present: bool,
+    ) -> BoxFuture<'a, Result<bool>>;
 }
 pub type Provider = Arc<dyn Directory>;
 

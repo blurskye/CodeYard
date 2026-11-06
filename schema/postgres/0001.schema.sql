@@ -61,6 +61,23 @@ CREATE INDEX cell_outbox_pending ON cell_outbox(next_attempt_at,id) WHERE delive
 CREATE UNIQUE INDEX cell_outbox_search_pending ON cell_outbox(root_id,payload)
     WHERE topic='search' AND delivered_at IS NULL;
 
+-- Authenticated requests a router forwarded, per account (native or stub), router region
+-- and UTC day. Anonymous requests are never counted.
+CREATE TABLE cell_request_counts (
+    user_id BIGINT NOT NULL CHECK(user_id BETWEEN 1 AND 9007199254740991),
+    region TEXT NOT NULL CHECK(octet_length(region) BETWEEN 1 AND 63),
+    day DATE NOT NULL,
+    requests BIGINT NOT NULL CHECK(requests>0),
+    PRIMARY KEY(user_id,region,day)
+);
+CREATE INDEX cell_request_counts_day ON cell_request_counts(day);
+-- The regional presence policy, edited in site settings, and the last hourly evaluation.
+CREATE TABLE cell_region_policy (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    configuration JSONB NOT NULL CHECK(jsonb_typeof(configuration)='object' AND octet_length(configuration::text)<=4096),
+    evaluated_at TIMESTAMPTZ
+);
+
 --------------------------------------------------------------------------------
 -- PART 2: USERS
 --------------------------------------------------------------------------------
@@ -288,6 +305,15 @@ CREATE TABLE IF NOT EXISTS org_memberships (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE(org_id, user_id)
+);
+
+-- Presence regions this cell settled with the directory for its organizations from counted
+-- member requests. Presence set by hand is never removed from the directory automatically.
+CREATE TABLE cell_presence (
+    organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    region TEXT NOT NULL CHECK(octet_length(region) BETWEEN 1 AND 63),
+    added_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY(organization_id,region)
 );
 CREATE INDEX IF NOT EXISTS idx_org_memberships_user_id ON org_memberships(user_id);
 

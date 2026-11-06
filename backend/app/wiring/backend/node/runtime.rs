@@ -152,6 +152,57 @@ const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 /// old transfer accounting, expired identity rows, staged uploads a crash left
 /// behind and, on a node that stores repositories, deleted repositories kept past the
 /// restore window. Safe to run on several nodes at once: each row is removed by only one.
+async fn count_regions(
+    pool: codeyard_db_core::pool::PgPool,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    loop {
+        let stopping = tokio::select! {
+            _ = stop.changed() => true,
+            _ = interval.tick() => false,
+        };
+        // Counts gathered before a stop are still written.
+        let flushed = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            codeyard_db_core::cells::regions::flush(&pool),
+        )
+        .await;
+        if !matches!(flushed, Ok(Ok(()))) {
+            warn!("could not write counted regional requests");
+        }
+        if stopping {
+            break;
+        }
+        let evaluation = tokio::time::timeout(std::time::Duration::from_secs(600), async {
+            match codeyard_db_cluster::regions::due(&pool).await? {
+                Some(policy) => codeyard_db_cluster::regions::evaluate(&pool, &policy).await,
+                None => Ok(Vec::new()),
+            }
+        });
+        let evaluation = tokio::select! {
+            _ = stop.changed() => break,
+            result = evaluation => result,
+        };
+        match evaluation {
+            Ok(Ok(changes)) => {
+                for change in changes {
+                    info!(
+                        organization = change.organization,
+                        region = %change.region,
+                        present = change.present,
+                        applied = change.applied,
+                        "organization presence evaluated"
+                    );
+                }
+            }
+            Ok(Err(error)) => warn!(%error, "could not evaluate organization presence"),
+            Err(_) => warn!("organization presence evaluation timed out"),
+        }
+    }
+}
+
 async fn remove_expired_rows(
     pool: DbPool,
     storage: std::sync::Arc<codeyard_storage::ObjectStore>,
@@ -602,6 +653,17 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             outbox_stop,
         ))
     });
+    // Directory-enrolled cells write the requests routers forwarded once a minute and
+    // evaluate organization presence once an hour on one web node.
+    let (stop_regions, regions_stop) = tokio::sync::watch::channel(false);
+    let regions = match &pool {
+        DbPool::Postgres(postgres)
+            if config.roles.contains(NodeRole::Web) && pool.directory().is_some() =>
+        {
+            Some(tokio::spawn(count_regions(postgres.clone(), regions_stop)))
+        }
+        _ => None,
+    };
     let (stop_metadata, metadata_stop) = tokio::sync::watch::channel(false);
     let metadata = config.roles.contains(NodeRole::Web).then(|| {
         tokio::spawn(codeyard_app::artifact_metadata::run(
@@ -695,6 +757,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     stop_email.send_replace(true);
     stop_metadata.send_replace(true);
     stop_outbox.send_replace(true);
+    stop_regions.send_replace(true);
     stop_capacity.send_replace(true);
     stop_secret_scanning.send_replace(true);
     stop_auto_merge.send_replace(true);
@@ -736,6 +799,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     drain_worker(email, deadline).await;
     drain_worker(metadata, deadline).await;
     drain_worker(outbox, deadline).await;
+    drain_worker(regions, deadline).await;
     drain_worker(capacity, deadline).await;
     drain_worker(secret_scanning, deadline).await;
     // A merge may already have published Git. Stop between PRs, but never abort

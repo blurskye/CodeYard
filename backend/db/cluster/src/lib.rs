@@ -14,6 +14,8 @@ pub mod sqlite;
 
 pub mod drain;
 
+pub mod regions;
+
 pub mod scaling;
 
 pub mod rebalance;

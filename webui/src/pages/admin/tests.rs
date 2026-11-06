@@ -298,6 +298,7 @@ fn site_settings_change_the_signup_mode_and_the_ai_crawler_policy() {
         let output = html(admin_settings_page(
             AdminSettings {
                 scaling: Vec::new(),
+                presence: None,
                 private: true,
                 ai_crawlers: "block".into(),
                 osv_base_url: "https://osv-vulnerabilities.storage.googleapis.com".into(),
@@ -322,6 +323,7 @@ fn site_settings_change_the_signup_mode_and_the_ai_crawler_policy() {
         let public = html(admin_settings_page(
             AdminSettings {
                 scaling: Vec::new(),
+                presence: None,
                 private: false,
                 ai_crawlers: "allow".into(),
                 osv_base_url: "https://osv-vulnerabilities.storage.googleapis.com".into(),

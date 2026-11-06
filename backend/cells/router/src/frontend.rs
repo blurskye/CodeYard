@@ -16,7 +16,7 @@ use axum::{
 };
 use codeyard_model::{
     cell_routes::{Route, Rule},
-    cells::{validate_region, Key, KeyKind, ObjectKind},
+    cells::{Key, KeyKind, ObjectKind},
 };
 use codeyard_support::cells::{Prefix, Secret};
 use serde_json::{json, Value};
@@ -51,7 +51,7 @@ impl Frontend {
         catalog: Vec<Route>,
         config: Config,
     ) -> Result<Self> {
-        validate_region(&config.region)?;
+        let transport = transport.in_region(&config.region)?;
         ensure!(
             (1024..=8 * 1024 * 1024).contains(&config.maximum_control_bytes)
                 && (1..=60).contains(&config.control_seconds),

@@ -58,6 +58,7 @@ pub struct Transport {
     slots: Arc<Semaphore>,
     config: Config,
     owner: Arc<Owner>,
+    region: Option<header::HeaderValue>,
 }
 impl Transport {
     pub fn new(config: Config) -> Result<Self> {
@@ -90,7 +91,15 @@ impl Transport {
                 stop: CancellationToken::new(),
                 tasks: TaskTracker::new(),
             }),
+            region: None,
         })
+    }
+    /// A public router names its region on every request it forwards, so cells can count
+    /// where their accounts work from.
+    pub fn in_region(mut self, region: &str) -> Result<Self> {
+        codeyard_model::cells::validate_region(region)?;
+        self.region = Some(header::HeaderValue::from_str(region)?);
+        Ok(self)
     }
     pub async fn shutdown(&self) {
         self.owner.stop.cancel();
@@ -141,6 +150,11 @@ impl Transport {
             "Request is too large"
         );
         clean_headers(&mut parts.headers, websocket, true);
+        if let Some(region) = &self.region {
+            parts
+                .headers
+                .insert(codeyard_model::cells::REGION_HEADER, region.clone());
+        }
         let incoming = SyncBody(Mutex::new(Limited::new(
             incoming,
             self.config.maximum_request_bytes,

@@ -48,3 +48,52 @@ impl ScalingPolicy {
         Ok(())
     }
 }
+
+/// When an organization gains or loses a presence region, from its members' authenticated
+/// requests that routers counted per region. Counts cover `window_days` ending on a day; a
+/// region is added when its share meets `share_percent` of at least `minimum_requests` on
+/// `held_days` days in a row, and removed after `remove_days` days below `remove_percent`.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PresencePolicy {
+    pub window_days: i32,
+    pub share_percent: i32,
+    pub minimum_requests: i64,
+    pub held_days: i32,
+    pub remove_percent: i32,
+    pub remove_days: i32,
+    pub dry_run: bool,
+    pub paused: bool,
+}
+
+impl Default for PresencePolicy {
+    /// Starts paused and in dry-run mode, as the scaling policies do.
+    fn default() -> Self {
+        Self {
+            window_days: 7,
+            share_percent: 15,
+            minimum_requests: 500,
+            held_days: 3,
+            remove_percent: 5,
+            remove_days: 14,
+            dry_run: true,
+            paused: true,
+        }
+    }
+}
+
+impl PresencePolicy {
+    /// The window and the longest run of days fit in the 60 days of kept counts.
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if !(1..=30).contains(&self.window_days)
+            || !(1..=100).contains(&self.share_percent)
+            || !(1..=1_000_000_000).contains(&self.minimum_requests)
+            || !(1..=14).contains(&self.held_days)
+            || !(0..self.share_percent).contains(&self.remove_percent)
+            || !(1..=30).contains(&self.remove_days)
+        {
+            return Err("Invalid presence policy.");
+        }
+        Ok(())
+    }
+}

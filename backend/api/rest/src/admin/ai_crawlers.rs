@@ -59,6 +59,21 @@ async fn settings_response(
             )
         }
     };
+    // Only a cell enrolled in a directory has other regions to place organizations in.
+    let presence = match &ctx.state.pool {
+        codeyard_db_core::DbPool::Postgres(pool) if pool.directory().is_some() => {
+            match codeyard_db_cluster::regions::policy(pool).await {
+                Ok(policy) => Some(policy),
+                Err(_) => {
+                    return ctx.error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Unable to load the region policy.",
+                    )
+                }
+            }
+        }
+        _ => None,
+    };
     let private = config.as_ref().is_some_and(|config| config.is_private());
     let ai_crawlers = config.map_or_else(|| BLOCK.to_owned(), |config| config.ai_crawlers);
     ctx.page_model_status(
@@ -68,6 +83,7 @@ async fn settings_response(
             model: AdminSettings {
                 private,
                 scaling,
+                presence,
                 ai_crawlers,
                 osv_base_url: submitted
                     .map(|form| field(form, "osv_base_url").to_owned())
@@ -98,6 +114,7 @@ pub(crate) async fn settings_get(
     };
     let message = match ctx.query.get("saved").map(String::as_str) {
         Some("scaling") => Some("Scaling policy saved."),
+        Some("regions") => Some("Region policy saved."),
         Some("crawlers") => Some("AI crawler setting saved."),
         Some("signup") => Some("Sign-up setting saved."),
         Some("vulnerabilities") => Some("Vulnerability sources saved."),
@@ -160,6 +177,66 @@ pub(crate) async fn settings_post(
                         StatusCode::SERVICE_UNAVAILABLE
                     },
                     Some("Unable to save scaling policy."),
+                    Some(&form),
+                )
+                .await
+            }
+        };
+    }
+    if form.contains_key("presence_window") {
+        let codeyard_db_core::DbPool::Postgres(pool) = &ctx.state.pool else {
+            return settings_response(
+                &ctx,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Some("Regions need a cell enrolled in a directory."),
+                Some(&form),
+            )
+            .await;
+        };
+        if pool.directory().is_none() {
+            return settings_response(
+                &ctx,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Some("Regions need a cell enrolled in a directory."),
+                Some(&form),
+            )
+            .await;
+        }
+        let number = |name| field(&form, name).parse::<i64>().ok();
+        let small = |name: &str| number(name).and_then(|value| i32::try_from(value).ok());
+        let policy = (|| {
+            Some(codeyard_support::cluster::PresencePolicy {
+                window_days: small("presence_window")?,
+                share_percent: small("presence_share")?,
+                minimum_requests: number("presence_minimum")?,
+                held_days: small("presence_held")?,
+                remove_percent: small("presence_remove_share")?,
+                remove_days: small("presence_remove_days")?,
+                dry_run: form.contains_key("presence_dry_run"),
+                paused: form.contains_key("presence_paused"),
+            })
+        })();
+        let Some(policy) = policy.filter(|policy| policy.validate().is_ok()) else {
+            return settings_response(
+                &ctx,
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Some("Invalid region policy."),
+                Some(&form),
+            )
+            .await;
+        };
+        let authority = (actor, session).into();
+        return match codeyard_db_cluster::regions::save(pool, &authority, &policy).await {
+            Ok(()) => ctx.redirect("/admin/settings?saved=regions"),
+            Err(error) => {
+                settings_response(
+                    &ctx,
+                    if error.is::<codeyard_db_cluster::drain::Refusal>() {
+                        StatusCode::FORBIDDEN
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
+                    },
+                    Some("Unable to save region policy."),
                     Some(&form),
                 )
                 .await

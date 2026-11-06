@@ -28,6 +28,7 @@ pub struct Pool<DB: Database> {
     search: Arc<std::sync::RwLock<Option<crate::cells::search::Provider>>>,
     foreign_authorization: Arc<std::sync::RwLock<Option<crate::cells::authorization::Provider>>>,
     log_objects: Arc<std::sync::RwLock<Option<std::sync::Weak<dyn crate::ci_logs::LogObjects>>>>,
+    request_counts: Arc<crate::cells::regions::Counts>,
 }
 impl<DB: Database> std::fmt::Debug for Pool<DB> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -48,6 +49,7 @@ impl<DB: Database> Clone for Pool<DB> {
             foreign_authorization: self.foreign_authorization.clone(),
             directory: self.directory.clone(),
             search: self.search.clone(),
+            request_counts: self.request_counts.clone(),
         }
     }
 }
@@ -65,6 +67,7 @@ impl<DB: Database> From<sqlx::Pool<DB>> for Pool<DB> {
             foreign_authorization: Arc::default(),
             directory: Arc::default(),
             search: Arc::default(),
+            request_counts: Arc::default(),
         }
     }
 }
@@ -125,6 +128,10 @@ impl<DB: Database> Pool<DB> {
             .read()
             .unwrap_or_else(|error| error.into_inner())
             .clone()
+    }
+    /// Requests routers forwarded, per account, region and day, waiting to be written.
+    pub fn request_counts(&self) -> &crate::cells::regions::Counts {
+        &self.request_counts
     }
     /// The global search index; only directory-enrolled PostgreSQL cells set it.
     pub fn search(&self) -> Option<crate::cells::search::Provider> {

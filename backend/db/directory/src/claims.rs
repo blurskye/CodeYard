@@ -103,36 +103,39 @@ impl Directory {
         self.run(async {
             let (keys, nonce) = checked(object, keys, nonce)?;
             let mut tx = self.begin().await?;
-            let cell = super::owner(&mut tx, peer, false).await?;
-            let prefix = Prefix::for_id(object.id).map_err(|_| Refusal::Invalid)?;
-            let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM directory_cell_prefixes WHERE prefix=$1 AND cell_id=$2)")
-                .bind(i32::from(prefix.get())).bind(i32::from(cell.get())).fetch_one(&mut *tx).await?;
-            if owned {
-                sqlx::query("INSERT INTO directory_objects(kind,id,home_cell,nonce_hash,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+$5::bigint*INTERVAL '1 second') ON CONFLICT DO NOTHING")
-                    .bind(object.kind.as_str()).bind(object.id).bind(i32::from(cell.get())).bind(&nonce).bind(self.config.claim_seconds).execute(&mut *tx).await?;
-            }
-            let root = home(&mut tx, object, cell).await?;
-            if !root.active {
-                ensure!(root.live && root.nonce_hash == nonce, Refusal::Conflict);
-                ensure!(object.kind == ObjectKind::Repository || keys.iter().filter(|key| key.kind()==KeyKind::Name).count()==1, Refusal::Invalid);
-                if object.kind != ObjectKind::Repository {
-                    let open: bool = sqlx::query_scalar("SELECT state='open' AND database_bytes::numeric<maximum_database_bytes::numeric/2 AND write_rate::numeric<maximum_write_rate::numeric/2 FROM directory_cells WHERE id=$1 AND observed_at>clock_timestamp()-$2::bigint*INTERVAL '1 second'")
-                        .bind(i32::from(cell.get())).bind(self.config.stale_seconds).fetch_one(&mut *tx).await?;
-                    ensure!(open, Refusal::Unavailable);
+            let result = async {
+                let cell = super::owner(&mut tx, peer, false).await?;
+                let prefix = Prefix::for_id(object.id).map_err(|_| Refusal::Invalid)?;
+                let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM directory_cell_prefixes WHERE prefix=$1 AND cell_id=$2)")
+                    .bind(i32::from(prefix.get())).bind(i32::from(cell.get())).fetch_one(&mut *tx).await?;
+                if owned {
+                    sqlx::query("INSERT INTO directory_objects(kind,id,home_cell,nonce_hash,expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+$5::bigint*INTERVAL '1 second') ON CONFLICT DO NOTHING")
+                        .bind(object.kind.as_str()).bind(object.id).bind(i32::from(cell.get())).bind(&nonce).bind(self.config.claim_seconds).execute(&mut *tx).await?;
                 }
+                let root = home(&mut tx, object, cell).await?;
+                if !root.active {
+                    ensure!(root.live && root.nonce_hash == nonce, Refusal::Conflict);
+                    ensure!(object.kind == ObjectKind::Repository || keys.iter().filter(|key| key.kind()==KeyKind::Name).count()==1, Refusal::Invalid);
+                    if object.kind != ObjectKind::Repository {
+                        let open: bool = sqlx::query_scalar("SELECT state='open' AND database_bytes::numeric<maximum_database_bytes::numeric/2 AND write_rate::numeric<maximum_write_rate::numeric/2 FROM directory_cells WHERE id=$1 AND observed_at>clock_timestamp()-$2::bigint*INTERVAL '1 second'")
+                            .bind(i32::from(cell.get())).bind(self.config.stale_seconds).fetch_one(&mut *tx).await?;
+                        ensure!(open, Refusal::Unavailable);
+                    }
+                }
+                for key in &keys {
+                    sqlx::query("INSERT INTO directory_claims(shard,kind,key_hash,value,object_kind,object_id,nonce_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+$8::bigint*INTERVAL '1 second') ON CONFLICT(shard,kind,key_hash) DO UPDATE SET object_kind=excluded.object_kind,object_id=excluded.object_id,nonce_hash=excluded.nonce_hash,expires_at=excluded.expires_at WHERE directory_claims.value=excluded.value AND NOT directory_claims.confirmed AND directory_claims.expires_at<=clock_timestamp()")
+                        .bind(key.shard()).bind(key.kind().as_str()).bind(key.hash().to_vec()).bind(key.value()).bind(object.kind.as_str()).bind(object.id).bind(&nonce).bind(self.config.claim_seconds).execute(&mut *tx).await?;
+                    let row = claim(&mut tx, key).await?;
+                    ensure!(row.belongs(object, key) && (row.confirmed || (row.live && row.nonce_hash==nonce)), Refusal::Conflict);
+                }
+                if !root.active {
+                    let current = home(&mut tx, object, cell).await?;
+                    ensure!(current.claim_count as usize == keys.len(), Refusal::Conflict);
+                }
+                Ok::<_, anyhow::Error>(root.expires_at)
             }
-            for key in &keys {
-                sqlx::query("INSERT INTO directory_claims(shard,kind,key_hash,value,object_kind,object_id,nonce_hash,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+$8::bigint*INTERVAL '1 second') ON CONFLICT(shard,kind,key_hash) DO UPDATE SET object_kind=excluded.object_kind,object_id=excluded.object_id,nonce_hash=excluded.nonce_hash,expires_at=excluded.expires_at WHERE directory_claims.value=excluded.value AND NOT directory_claims.confirmed AND directory_claims.expires_at<=clock_timestamp()")
-                    .bind(key.shard()).bind(key.kind().as_str()).bind(key.hash().to_vec()).bind(key.value()).bind(object.kind.as_str()).bind(object.id).bind(&nonce).bind(self.config.claim_seconds).execute(&mut *tx).await?;
-                let row = claim(&mut tx, key).await?;
-                ensure!(row.belongs(object, key) && (row.confirmed || (row.live && row.nonce_hash==nonce)), Refusal::Conflict);
-            }
-            if !root.active {
-                let current = home(&mut tx, object, cell).await?;
-                ensure!(current.claim_count as usize == keys.len(), Refusal::Conflict);
-            }
-            tx.commit().await?;
-            Ok(root.expires_at)
+            .await;
+            super::settle(tx, result).await
         }).await
     }
 
@@ -147,22 +150,25 @@ impl Directory {
         self.run(async {
             let (keys, nonce) = checked(object, keys, nonce)?;
             let mut tx = self.begin().await?;
-            let cell = super::owner(&mut tx, peer, false).await?;
-            let root = home(&mut tx, object, cell).await?;
-            if !root.active {
-                ensure!(root.live && root.nonce_hash==nonce, Refusal::Conflict);
-                ensure!(root.claim_count as usize == keys.len(), Refusal::Conflict);
+            let result = async {
+                let cell = super::owner(&mut tx, peer, false).await?;
+                let root = home(&mut tx, object, cell).await?;
+                if !root.active {
+                    ensure!(root.live && root.nonce_hash==nonce, Refusal::Conflict);
+                    ensure!(root.claim_count as usize == keys.len(), Refusal::Conflict);
+                }
+                for key in &keys {
+                    let row = claim(&mut tx, key).await?;
+                    ensure!(row.belongs(object, key) && (row.confirmed || (row.live && row.nonce_hash==nonce)), Refusal::Conflict);
+                    sqlx::query("UPDATE directory_claims SET confirmed=true,expires_at=NULL WHERE shard=$1 AND kind=$2 AND key_hash=$3")
+                        .bind(key.shard()).bind(key.kind().as_str()).bind(key.hash().to_vec()).execute(&mut *tx).await?;
+                }
+                sqlx::query("UPDATE directory_objects SET active=true,expires_at=NULL WHERE kind=$1 AND id=$2")
+                    .bind(object.kind.as_str()).bind(object.id).execute(&mut *tx).await?;
+                Ok::<_, anyhow::Error>(())
             }
-            for key in &keys {
-                let row = claim(&mut tx, key).await?;
-                ensure!(row.belongs(object, key) && (row.confirmed || (row.live && row.nonce_hash==nonce)), Refusal::Conflict);
-                sqlx::query("UPDATE directory_claims SET confirmed=true,expires_at=NULL WHERE shard=$1 AND kind=$2 AND key_hash=$3")
-                    .bind(key.shard()).bind(key.kind().as_str()).bind(key.hash().to_vec()).execute(&mut *tx).await?;
-            }
-            sqlx::query("UPDATE directory_objects SET active=true,expires_at=NULL WHERE kind=$1 AND id=$2")
-                .bind(object.kind.as_str()).bind(object.id).execute(&mut *tx).await?;
-            tx.commit().await?;
-            Ok(())
+            .await;
+            super::settle(tx, result).await
         }).await
     }
 
@@ -171,16 +177,19 @@ impl Directory {
         self.run(async {
             let keys = checked_keys(object, keys)?;
             let mut tx = self.begin().await?;
-            let cell = super::owner(&mut tx, peer, false).await?;
-            removal_home(&mut tx, object, cell).await?;
-            for key in keys {
-                sqlx::query("DELETE FROM directory_claims WHERE shard=$1 AND kind=$2 AND key_hash=$3 AND value=$4 AND object_kind=$5 AND object_id=$6")
-                    .bind(key.shard()).bind(key.kind().as_str()).bind(key.hash().to_vec())
-                    .bind(key.value()).bind(object.kind.as_str()).bind(object.id)
-                    .execute(&mut *tx).await?;
+            let result = async {
+                let cell = super::owner(&mut tx, peer, false).await?;
+                removal_home(&mut tx, object, cell).await?;
+                for key in keys {
+                    sqlx::query("DELETE FROM directory_claims WHERE shard=$1 AND kind=$2 AND key_hash=$3 AND value=$4 AND object_kind=$5 AND object_id=$6")
+                        .bind(key.shard()).bind(key.kind().as_str()).bind(key.hash().to_vec())
+                        .bind(key.value()).bind(object.kind.as_str()).bind(object.id)
+                        .execute(&mut *tx).await?;
+                }
+                Ok::<_, anyhow::Error>(())
             }
-            tx.commit().await?;
-            Ok(())
+            .await;
+            super::settle(tx, result).await
         }).await
     }
 
@@ -189,17 +198,22 @@ impl Directory {
         self.run(async {
             object.validate().map_err(|_| Refusal::Invalid)?;
             let mut tx = self.begin().await?;
-            let cell = super::owner(&mut tx, peer, false).await?;
-            removal_home(&mut tx, object, cell).await?;
-            // The schema bounds an object's keys to 1000; its existing FK removes them together.
-            sqlx::query("DELETE FROM directory_objects WHERE kind=$1 AND id=$2 AND home_cell=$3")
+            let result = async {
+                let cell = super::owner(&mut tx, peer, false).await?;
+                removal_home(&mut tx, object, cell).await?;
+                // The schema bounds an object's keys to 1000; its existing FK removes them together.
+                sqlx::query(
+                    "DELETE FROM directory_objects WHERE kind=$1 AND id=$2 AND home_cell=$3",
+                )
                 .bind(object.kind.as_str())
                 .bind(object.id)
                 .bind(i32::from(cell.get()))
                 .execute(&mut *tx)
                 .await?;
-            tx.commit().await?;
-            Ok(())
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
+            super::settle(tx, result).await
         })
         .await
     }

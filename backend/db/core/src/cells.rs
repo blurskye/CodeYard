@@ -10,6 +10,7 @@ pub mod notices;
 pub mod outbox;
 pub mod pointers;
 pub mod pulls;
+pub mod regions;
 pub mod repositories;
 pub mod search;
 pub mod stubs;

@@ -1,6 +1,7 @@
 //! Regions through the real router: signups land in the router's region, accounts keep their
 //! home, an organization with presence reads from its home cell's web nodes in that region and
-//! writes at home, and a cell moved to its paired region is served there.
+//! writes at home, and a cell moved to its paired region is served there. Counted member
+//! requests add and remove an organization's presence.
 use super::cells_frontend::Server;
 use crate::support::native_database::PostgresDatabase;
 use codeyard_cells_router::{
@@ -13,13 +14,25 @@ use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, ReadRegion, 
 use codeyard_support::{cells::Prefix, node_identity::NodeKey};
 use std::time::Duration;
 
-/// A stand-in cell web node that names itself in every response.
+/// A stand-in cell web node that names itself in every response. On `/alice/stamp` it also
+/// names the region the router stamped.
 async fn web_node(name: &'static str) -> Server {
-    Server::start(axum::Router::new().fallback(
-        move |method: axum::http::Method, uri: axum::http::Uri| async move {
-            format!("{name} {method} {}", uri.path())
-        },
-    ))
+    Server::start(
+        axum::Router::new().fallback(
+            move |method: axum::http::Method,
+                  uri: axum::http::Uri,
+                  headers: axum::http::HeaderMap| async move {
+                let mut reply = format!("{name} {method} {}", uri.path());
+                if uri.path() == "/alice/stamp" {
+                    for region in headers.get_all(codeyard_model::cells::REGION_HEADER) {
+                        reply.push(' ');
+                        reply.push_str(region.to_str().unwrap());
+                    }
+                }
+                reply
+            },
+        ),
+    )
     .await
 }
 
@@ -200,6 +213,16 @@ async fn regions_place_signups_keep_homes_and_serve_present_organizations_nearby
         .await,
         "zero POST /enter"
     );
+    // Routers name their own region, replacing one the client sent.
+    for (router, region) in [(&a, "a"), (&b, "b")] {
+        assert_eq!(
+            answered(
+                get(router, "/alice/stamp").header(codeyard_model::cells::REGION_HEADER, "evil")
+            )
+            .await,
+            format!("zero GET /alice/stamp {region}")
+        );
+    }
     // An account keeps its home cell whichever region it works from.
     assert_eq!(
         answered(get(&b, "/api/v3/users/alice")).await,
@@ -301,5 +324,270 @@ async fn regions_place_signups_keep_homes_and_serve_present_organizations_nearby
             "zero-paired GET /acme/tools"
         );
     }
+    listener.stop().await;
+}
+
+async fn counted(pool: &codeyard_db_core::pool::PgPool) -> Vec<(i64, String, i64)> {
+    codeyard_db_core::cells::regions::flush(pool).await.unwrap();
+    sqlx::query_as(
+        "SELECT user_id,region,requests FROM cell_request_counts ORDER BY user_id,region",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// Sets each of the last seven days' counts for one account and region.
+async fn set_counts(pool: &codeyard_db_core::pool::PgPool, user: i64, region: &str, requests: i64) {
+    sqlx::query("DELETE FROM cell_request_counts WHERE user_id=$1 AND region=$2")
+        .bind(user)
+        .bind(region)
+        .execute(pool)
+        .await
+        .unwrap();
+    if requests > 0 {
+        sqlx::query("INSERT INTO cell_request_counts(user_id,region,day,requests) SELECT $1,$2,(clock_timestamp() AT TIME ZONE 'UTC')::date-g,$3 FROM generate_series(0,6) AS g")
+            .bind(user)
+            .bind(region)
+            .bind(requests)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+}
+
+async fn local_presence(pool: &codeyard_db_core::pool::PgPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT region FROM cell_presence ORDER BY region")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
+
+async fn audits(pool: &codeyard_db_core::pool::PgPool, action: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM audit_log WHERE action=$1")
+        .bind(action)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn counted_member_requests_add_and_remove_organization_presence() {
+    use codeyard_db_cluster::regions::{self, Change};
+    use codeyard_support::cluster::PresencePolicy;
+    crate::support::fake_webui_bundle::install();
+    let registry = PostgresDatabase::unmigrated().await;
+    let directory = Directory::connect(&registry.connection_url(), Default::default())
+        .await
+        .unwrap();
+    directory.migrate().await.unwrap();
+    let zero = PostgresDatabase::new().await;
+    let codeyard_db_core::DbPool::Postgres(pool) = &zero.pool else {
+        unreachable!()
+    };
+    let (mut alice_server, alice, alice_token) =
+        super::cells_frontend::native(&zero, "alice").await;
+    let acme = crate::support::organizations::applied(
+        codeyard_db_orgs::organizations::profiles::create_organization(
+            &zero.pool,
+            alice,
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
+                "acme",
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap(),
+    )
+    .id;
+    let [zero_key, directory_key] = [(); 2].map(|()| NodeKey::generate());
+    directory
+        .register_cell(record(
+            Prefix::ZERO,
+            "a",
+            alice_server.url(),
+            &zero_key,
+            vec![],
+        ))
+        .await
+        .unwrap();
+    let object = Object {
+        kind: ObjectKind::Organization,
+        id: acme,
+    };
+    let keys = [Key::new(KeyKind::Name, "acme").unwrap()];
+    let nonce = "d".repeat(64);
+    directory
+        .reserve(&zero_key.public_hex(), object, &keys, &nonce)
+        .await
+        .unwrap();
+    directory
+        .confirm(&zero_key.public_hex(), object, &keys, &nonce)
+        .await
+        .unwrap();
+    let listener = directory::Listener::bind(
+        directory.clone(),
+        &directory_key,
+        "127.0.0.1:0".parse().unwrap(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    zero.pool
+        .set_directory(std::sync::Arc::new(
+            directory::Client::new(
+                zero_key.clone(),
+                listener.address,
+                directory_key.public_key(),
+                Default::default(),
+            )
+            .unwrap(),
+        ))
+        .unwrap();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+
+    // A region header from a peer that is not a trusted proxy is dropped, so nothing counts.
+    let response = client
+        .get(format!("{}/api/v3/user", alice_server.url()))
+        .bearer_auth(&alice_token)
+        .header(codeyard_model::cells::REGION_HEADER, "b")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    assert!(counted(pool).await.is_empty());
+
+    // Behind the stamp, only requests that authenticate count, under the stamped region.
+    let root = tempfile::tempdir().unwrap();
+    let state = codeyard_app::app::AppState::new(
+        zero.pool.clone(),
+        root.path().into(),
+        std::sync::Arc::new(
+            codeyard_storage::ObjectStore::open(root.path(), None)
+                .await
+                .unwrap(),
+        ),
+        None,
+        Default::default(),
+        None,
+    );
+    let mut counting = Server::start(
+        axum::Router::new()
+            .fallback(|| async { "ok" })
+            .layer(axum::middleware::from_fn(
+                codeyard_api_http::middleware::count_regional_requests,
+            ))
+            .layer(axum::Extension(std::sync::Arc::new(state))),
+    )
+    .await;
+    let send = |token: Option<&str>| {
+        let request = client
+            .get(format!("{}/", counting.url()))
+            .header(codeyard_model::cells::REGION_HEADER, "b");
+        match token {
+            Some(token) => request.bearer_auth(token),
+            None => request,
+        }
+        .send()
+    };
+    let wrong = zero
+        .pool
+        .cell_prefix()
+        .token(codeyard_support::tokens::PAT_PREFIX, &"e".repeat(64))
+        .unwrap();
+    for token in [None, Some(wrong.as_str()), Some(alice_token.as_str())] {
+        assert_eq!(send(token).await.unwrap().status(), 200);
+    }
+    assert_eq!(counted(pool).await, [(alice, "b".to_owned(), 1)]);
+
+    // The default policy is paused and dry run. Saving needs an administrator.
+    let mut policy = regions::policy(pool).await.unwrap();
+    assert_eq!(policy, PresencePolicy::default());
+    assert!(regions::save(pool, &alice.into(), &policy).await.is_err());
+    assert!(regions::due(pool).await.unwrap().is_some());
+    assert!(regions::due(pool).await.unwrap().is_none());
+    set_counts(pool, alice, "a", 300).await;
+    set_counts(pool, alice, "b", 700).await;
+    assert!(regions::evaluate(pool, &policy).await.unwrap().is_empty());
+
+    // Dry run only records what it would do.
+    policy.paused = false;
+    let would = Change {
+        organization: acme,
+        region: "b".into(),
+        present: true,
+        applied: false,
+    };
+    assert_eq!(regions::evaluate(pool, &policy).await.unwrap(), [would]);
+    assert!(directory.presence(acme).await.unwrap().is_empty());
+    assert!(local_presence(pool).await.is_empty());
+    assert_eq!(audits(pool, "regions.presence_would_add").await, 1);
+
+    // Live, region B is added. The home region never becomes a presence region.
+    policy.dry_run = false;
+    assert_eq!(
+        regions::evaluate(pool, &policy).await.unwrap(),
+        [Change {
+            organization: acme,
+            region: "b".into(),
+            present: true,
+            applied: true,
+        }]
+    );
+    assert_eq!(directory.presence(acme).await.unwrap(), ["b"]);
+    assert_eq!(local_presence(pool).await, ["b"]);
+    assert_eq!(audits(pool, "regions.presence_added").await, 1);
+    assert!(regions::evaluate(pool, &policy).await.unwrap().is_empty());
+
+    // Requests from B stop: once the presence is old enough, B is removed. Presence set by
+    // hand stays in the directory.
+    assert!(directory.set_presence(acme, "c", true).await.unwrap());
+    sqlx::query("INSERT INTO cell_presence(organization_id,region) VALUES($1,'c')")
+        .bind(acme)
+        .execute(pool)
+        .await
+        .unwrap();
+    set_counts(pool, alice, "b", 0).await;
+    assert!(regions::evaluate(pool, &policy).await.unwrap().is_empty());
+    sqlx::query("UPDATE cell_presence SET added_at=clock_timestamp()-INTERVAL '30 days'")
+        .execute(pool)
+        .await
+        .unwrap();
+    let removed = regions::evaluate(pool, &policy).await.unwrap();
+    assert_eq!(
+        removed
+            .iter()
+            .map(|change| (change.region.as_str(), change.present, change.applied))
+            .collect::<Vec<_>>(),
+        [("b", false, true), ("c", false, false)]
+    );
+    assert_eq!(directory.presence(acme).await.unwrap(), ["c"]);
+    assert!(local_presence(pool).await.is_empty());
+    assert_eq!(audits(pool, "regions.presence_removed").await, 1);
+
+    // The directory refuses presence for an organization another cell owns.
+    let other = NodeKey::generate();
+    directory
+        .register_cell(record(
+            Prefix::new(1),
+            "b",
+            alice_server.url(),
+            &other,
+            vec![],
+        ))
+        .await
+        .unwrap();
+    assert!(directory
+        .set_presence_for(&other.public_hex(), acme, "d", true)
+        .await
+        .is_err());
+    assert_eq!(directory.presence(acme).await.unwrap(), ["c"]);
+    counting.stop().await;
+    alice_server.stop().await;
     listener.stop().await;
 }

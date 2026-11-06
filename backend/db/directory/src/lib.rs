@@ -115,6 +115,22 @@ impl Directory {
     }
 }
 
+/// Commits on success and rolls back at once on failure. A dropped transaction only queues
+/// its rollback until the pool takes the connection back, so a refused request would keep
+/// its row locks, and an immediate cleanup with SKIP LOCKED would pass over those rows.
+async fn settle<T>(tx: Transaction<'_, Postgres>, result: Result<T>) -> Result<T> {
+    match result {
+        Ok(value) => {
+            tx.commit().await?;
+            Ok(value)
+        }
+        Err(error) => {
+            let _ = tx.rollback().await;
+            Err(error)
+        }
+    }
+}
+
 /// The transport must authenticate this public key. Retain its live enrollment through commit.
 async fn owner(
     tx: &mut Transaction<'_, Postgres>,

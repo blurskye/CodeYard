@@ -153,6 +153,17 @@ impl publication::Directory for LostConfirmation {
     fn forget(&self, object: Object) -> BoxFuture<'_, anyhow::Result<()>> {
         publication::Directory::forget(&self.client, object)
     }
+    fn cell(&self, prefix: Prefix) -> BoxFuture<'_, anyhow::Result<Option<Cell>>> {
+        publication::Directory::cell(&self.client, prefix)
+    }
+    fn set_presence<'a>(
+        &'a self,
+        organization: i64,
+        region: &'a str,
+        present: bool,
+    ) -> BoxFuture<'a, anyhow::Result<bool>> {
+        publication::Directory::set_presence(&self.client, organization, region, present)
+    }
 }
 
 /// Holds a release call open until the test resumes it, then fails it.
@@ -193,6 +204,17 @@ impl publication::Directory for StalledRelease {
     }
     fn forget(&self, object: Object) -> BoxFuture<'_, anyhow::Result<()>> {
         publication::Directory::forget(&self.client, object)
+    }
+    fn cell(&self, prefix: Prefix) -> BoxFuture<'_, anyhow::Result<Option<Cell>>> {
+        publication::Directory::cell(&self.client, prefix)
+    }
+    fn set_presence<'a>(
+        &'a self,
+        organization: i64,
+        region: &'a str,
+        present: bool,
+    ) -> BoxFuture<'a, anyhow::Result<bool>> {
+        publication::Directory::set_presence(&self.client, organization, region, present)
     }
 }
 

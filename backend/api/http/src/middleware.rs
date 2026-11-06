@@ -34,6 +34,16 @@ pub async fn stamp_client_address(
     request
         .headers_mut()
         .remove(codeyard_identity::client_address::CLIENT_HEADER);
+    // Only a router, as a trusted proxy, names the region a request came through.
+    let region = request
+        .headers_mut()
+        .remove(codeyard_model::cells::REGION_HEADER)
+        .filter(|value| {
+            value
+                .to_str()
+                .is_ok_and(|value| codeyard_model::cells::validate_region(value).is_ok())
+        })
+        .filter(|_| from_trusted_proxy(&request, &config.trusted_proxies));
     if let Some(Ok(value)) = client_key(&request, &config.trusted_proxies)
         .map(|client| client.parse::<header::HeaderValue>())
     {
@@ -41,7 +51,114 @@ pub async fn stamp_client_address(
             .headers_mut()
             .insert(codeyard_identity::client_address::CLIENT_HEADER, value);
     }
+    if let Some(region) = region {
+        request
+            .headers_mut()
+            .insert(codeyard_model::cells::REGION_HEADER, region);
+    }
     next.run(request).await
+}
+
+fn from_trusted_proxy(request: &Request, trusted_proxies: &HashSet<IpAddr>) -> bool {
+    request
+        .extensions()
+        .get::<ConnectInfo<SocketAddr>>()
+        .is_some_and(|ConnectInfo(peer)| trusted_proxies.contains(&peer.ip().to_canonical()))
+}
+
+/// The token and browser-session proofs a request carries, for any home cell.
+fn credential_proofs(
+    headers: &axum::http::HeaderMap,
+) -> [Option<codeyard_db_core::cells::authorization::Proof>; 2] {
+    use codeyard_db_core::cells::authorization::Proof;
+    let token = if headers.contains_key(header::AUTHORIZATION) {
+        match codeyard_cells_router::selection::Credential::from_headers(headers, "session_id") {
+            Ok(Some(hint)) => Some(Proof::Token {
+                home: hint.prefix,
+                hash: codeyard_support::token_hash::token_hash(hint.value()),
+            }),
+            _ => None,
+        }
+    } else {
+        None
+    };
+    let session = crate::session::extract_session(headers)
+        .map(|(home, value)| Proof::Session { home, value });
+    [token, session]
+}
+
+/// Counts an authenticated request a router forwarded, under the router's region, for the
+/// account its credential belongs to. Anonymous requests and rejected credentials are not
+/// counted; a token counts before a browser session, as authentication prefers it.
+pub async fn count_regional_requests(
+    Extension(state): Extension<Arc<AppState>>,
+    request: Request,
+    next: Next,
+) -> Response {
+    let codeyard_db_core::DbPool::Postgres(pool) = &state.pool else {
+        return next.run(request).await;
+    };
+    let region = request
+        .headers()
+        .get(codeyard_model::cells::REGION_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .map(str::to_owned);
+    let (Some(region), true) = (region, pool.directory().is_some()) else {
+        return next.run(request).await;
+    };
+    let proof = credential_proofs(request.headers())
+        .into_iter()
+        .flatten()
+        .next();
+    let response = next.run(request).await;
+    if response.status() == StatusCode::UNAUTHORIZED {
+        return response;
+    }
+    let Some(proof) = proof else {
+        return response;
+    };
+    let Ok(key) = serde_json::to_string(&proof) else {
+        return response;
+    };
+    let key = codeyard_support::token_hash::token_hash(&key);
+    let counts = pool.request_counts();
+    let user = match counts.identity(&key) {
+        Some(user) => user,
+        None => {
+            let user =
+                tokio::time::timeout(Duration::from_secs(2), credential_account(&state, &proof))
+                    .await
+                    .ok()
+                    .and_then(Result::ok)
+                    .flatten();
+            counts.remember(key, user);
+            user
+        }
+    };
+    if let Some(user) = user {
+        counts.add(user, &region, chrono::Utc::now().date_naive());
+    }
+    response
+}
+
+async fn credential_account(
+    state: &AppState,
+    proof: &codeyard_db_core::cells::authorization::Proof,
+) -> anyhow::Result<Option<i64>> {
+    use codeyard_db_core::cells::authorization::{authorize, Home, Proof};
+    let home = match proof {
+        Proof::Token { home, .. } | Proof::Session { home, .. } => *home,
+        Proof::Ssh { .. } => return Ok(None),
+    };
+    let answer = if state.pool.owns_prefix(home) {
+        let local = codeyard_identity::cells::Local {
+            pool: state.pool.clone(),
+        };
+        Home::authorize(&local, proof).await?
+    } else {
+        authorize(&state.pool, proof).await?
+    };
+    Ok(answer.map(|answer| answer.user.id))
 }
 
 /// Prime home answers before any adapter looks up a foreign token or browser session.
@@ -55,24 +172,16 @@ pub async fn foreign_authorization(
         return next.run(request).await;
     }
     use codeyard_db_core::cells::authorization::{authorize, Proof};
-    let token = if request.headers().contains_key(header::AUTHORIZATION) {
-        match codeyard_cells_router::selection::Credential::from_headers(
-            request.headers(),
-            "session_id",
-        ) {
-            Ok(Some(hint)) if !state.pool.owns_prefix(hint.prefix) => Some(Proof::Token {
-                home: hint.prefix,
-                hash: codeyard_support::token_hash::token_hash(hint.value()),
-            }),
-            _ => None,
-        }
-    } else {
-        None
-    };
-    let session = crate::session::extract_session(request.headers())
-        .filter(|(home, _)| !state.pool.owns_prefix(*home))
-        .map(|(home, value)| Proof::Session { home, value });
-    for proof in [token, session].into_iter().flatten() {
+    let foreign = credential_proofs(request.headers())
+        .into_iter()
+        .flatten()
+        .filter(|proof| match proof {
+            Proof::Token { home, .. } | Proof::Session { home, .. } => {
+                !state.pool.owns_prefix(*home)
+            }
+            Proof::Ssh { .. } => false,
+        });
+    for proof in foreign {
         if authorize(&state.pool, &proof).await.is_err() {
             return codeyard_model::github_error::Error::unavailable(()).into_response();
         }

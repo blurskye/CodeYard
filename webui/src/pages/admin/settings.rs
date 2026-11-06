@@ -10,6 +10,9 @@ pub struct AdminSettings {
     pub private: bool,
     #[serde(default)]
     pub scaling: Vec<codeyard_support::cluster::ScalingPolicy>,
+    /// Only a cell enrolled in a directory places organizations in other regions.
+    #[serde(default)]
+    pub presence: Option<codeyard_support::cluster::PresencePolicy>,
     /// `block` or `allow`.
     pub ai_crawlers: String,
     pub osv_base_url: String,
@@ -88,6 +91,24 @@ pub fn admin_settings_page(
                         label { input { r#type: "checkbox", name: "scaling_paused", checked: policy.paused } "Paused" }
                         label { input { r#type: "checkbox", name: "scaling_dry_run", checked: policy.dry_run } "Dry run" }
                         button { r#type: "submit", class: "btn", "Save scaling policy" }
+                    }
+                }
+            }
+            if let Some(policy) = &model.presence {
+                section { class: "identity-admin-panel",
+                    h2 { "Organization regions" }
+                    p { "An organization gains a region when its members' signed-in requests from there reach the share below over the window, on enough days in a row. Reads there use nearby copies; writes still go to this cell. Starts paused and in dry-run mode." }
+                    form { method: "post", action: "/admin/settings",
+                        {csrf(token)}
+                        label { "Window (days)" input { r#type: "number", name: "presence_window", min: "1", max: "30", value: policy.window_days.to_string(), required: true } }
+                        label { "Share to add a region (percent)" input { r#type: "number", name: "presence_share", min: "1", max: "100", value: policy.share_percent.to_string(), required: true } }
+                        label { "Minimum requests in the window" input { r#type: "number", name: "presence_minimum", min: "1", max: "1000000000", value: policy.minimum_requests.to_string(), required: true } }
+                        label { "Days in a row to add" input { r#type: "number", name: "presence_held", min: "1", max: "14", value: policy.held_days.to_string(), required: true } }
+                        label { "Share to remove a region (percent)" input { r#type: "number", name: "presence_remove_share", min: "0", max: "99", value: policy.remove_percent.to_string(), required: true } }
+                        label { "Days below to remove" input { r#type: "number", name: "presence_remove_days", min: "1", max: "30", value: policy.remove_days.to_string(), required: true } }
+                        label { input { r#type: "checkbox", name: "presence_paused", checked: policy.paused } "Paused" }
+                        label { input { r#type: "checkbox", name: "presence_dry_run", checked: policy.dry_run } "Dry run" }
+                        button { r#type: "submit", class: "btn", "Save region policy" }
                     }
                 }
             }

@@ -66,6 +66,11 @@ pub enum Request {
     Presence {
         organization: i64,
     },
+    SetPresence {
+        organization: i64,
+        region: String,
+        present: bool,
+    },
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "result", content = "value", rename_all = "snake_case")]
@@ -80,6 +85,7 @@ pub enum Reply {
     Indexed(search::Indexed),
     Results(search::Results),
     Regions(Vec<String>),
+    Changed(bool),
     Error(Failure),
 }
 #[derive(Debug, Serialize, Deserialize, thiserror::Error)]
@@ -243,6 +249,15 @@ async fn handle(directory: &Directory, peer: &str, request: Request) -> Result<R
         Request::Presence { organization } => {
             Reply::Regions(directory.presence_for(Some(peer), organization).await?)
         }
+        Request::SetPresence {
+            organization,
+            region,
+            present,
+        } => Reply::Changed(
+            directory
+                .set_presence_for(peer, organization, &region, present)
+                .await?,
+        ),
     })
 }
 
@@ -346,6 +361,51 @@ impl codeyard_db_core::cells::directory::Directory for Client {
                 .map_err(publication_error)?
             {
                 Reply::Done => Ok(()),
+                _ => Err(codeyard_db_core::cells::directory::Refusal::Unavailable.into()),
+            }
+        })
+    }
+    fn cell(
+        &self,
+        prefix: Prefix,
+    ) -> futures_util::future::BoxFuture<'_, Result<Option<codeyard_model::cells::Cell>>> {
+        Box::pin(async move {
+            match self
+                .request(&Request::Cell { prefix })
+                .await
+                .map_err(publication_error)?
+            {
+                Reply::Cell(cell) => Ok(cell),
+                _ => Err(codeyard_db_core::cells::directory::Refusal::Unavailable.into()),
+            }
+        })
+    }
+    fn set_presence<'a>(
+        &'a self,
+        organization: i64,
+        region: &'a str,
+        present: bool,
+    ) -> futures_util::future::BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            match self
+                .request(&Request::SetPresence {
+                    organization,
+                    region: region.into(),
+                    present,
+                })
+                .await
+                // A refused organization or region is skipped; only an outage stops the caller.
+                .map_err(|error| {
+                    if matches!(
+                        error.downcast_ref::<Failure>(),
+                        Some(Failure::Invalid | Failure::Denied)
+                    ) {
+                        codeyard_db_core::cells::directory::Refusal::Denied.into()
+                    } else {
+                        publication_error(error)
+                    }
+                })? {
+                Reply::Changed(changed) => Ok(changed),
                 _ => Err(codeyard_db_core::cells::directory::Refusal::Unavailable.into()),
             }
         })

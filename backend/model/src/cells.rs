@@ -175,6 +175,10 @@ impl State {
     }
 }
 
+/// Set by a router on every request it forwards to a cell, after removing any value the
+/// client sent. Cells accept it only from a trusted proxy.
+pub const REGION_HEADER: &str = "x-codeyard-region";
+
 pub fn validate_region(value: &str) -> Result<()> {
     ensure!(
         !value.is_empty()

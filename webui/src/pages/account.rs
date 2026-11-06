@@ -467,6 +467,7 @@ mod tests {
             Page::AdminSettings {
                 model: AdminSettings {
                     scaling: Vec::new(),
+                    presence: None,
                     private: true,
                     ai_crawlers: "block".into(),
                     osv_base_url: "https://osv-vulnerabilities.storage.googleapis.com".into(),
