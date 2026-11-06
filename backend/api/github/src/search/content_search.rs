@@ -63,6 +63,51 @@ async fn content(
                 "Search is busy. Try again shortly.",
             )
         })?;
+    if kind == KindOfSearch::Code {
+        if let Some(found) = crate::search::global::search(
+            &state,
+            authentication.as_ref(),
+            codeyard_db_core::cells::search::Kind::Code,
+            query.search_filter(),
+            q.get("sort").filter(|sort| !sort.is_empty()).cloned(),
+            ascending,
+            (offset, limit.min(1000 - offset)),
+            "contents",
+        )
+        .await?
+        {
+            let mut items = Vec::new();
+            for hit in found.hits {
+                let Some(code) = hit.code else {
+                    continue;
+                };
+                let repository = hit.document;
+                let (Some(owner), Some(name)) = (
+                    repository["owner"]["login"].as_str(),
+                    repository["name"].as_str(),
+                ) else {
+                    continue;
+                };
+                let mut value = code_document(
+                    &query,
+                    owner,
+                    name,
+                    &code.path,
+                    &code.sha,
+                    &code.revision,
+                    code.size,
+                    None,
+                    code.fragments
+                        .iter()
+                        .map(|fragment| (fragment.line, fragment.text.as_str())),
+                );
+                value["repository"] = repository.clone();
+                value["score"] = json!(hit.score);
+                items.push(value);
+            }
+            return Ok((page.headers(&uri,offset+limit<(found.total.max(0) as usize).min(1000))?,Json(json!({"total_count":found.total,"incomplete_results":found.incomplete,"items":items,"search_type":"lexical","indexing":"live"}))).into_response());
+        }
+    }
     let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let mut results = codeyard_repos_pulls::repositories::content_search::search(
         &state.pool,
@@ -120,24 +165,62 @@ async fn content(
             .get(&repo.id)
             .ok_or_else(|| Error::unavailable(()))?
             .clone();
-        let repo_api = codeyard_model::urls::repo_url(owner, &repo.name);
         let mut value = match hit.entry {
             Entry::Commit(commit) => {
                 crate::repos::commits::read_document(&state, repo.id, &commit, owner, &repo.name)
                     .await?
             }
-            Entry::Code(code) => {
-                let path = codeyard_webui::pages::repos::ref_path::encode_path(&code.path);
-                let url = format!("{repo_api}/contents/{path}?ref={}", code.revision);
-                let fragments=code.fragments.iter().map(|fragment|json!({"object_url":url,"object_type":"FileContent","property":"content","fragment":fragment.text,"matches":query.text_matches(&fragment.text)})).collect::<Vec<_>>();
-                json!({"name":code.path.rsplit('/').next().unwrap_or(&code.path),"path":code.path,"sha":code.sha,"url":url,"git_url":format!("{repo_api}/git/blobs/{}",code.sha),"html_url":codeyard_webui::pages::repos::ref_path::file_url(&format!("{}/{}/{}",codeyard_model::http_config::link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(&repo.name)),"blob",&code.revision,&code.path),"file_size":code.size,"language":code.language,"line_numbers":code.fragments.iter().map(|fragment|fragment.line.to_string()).collect::<Vec<_>>(),"text_matches":fragments})
-            }
+            Entry::Code(code) => code_document(
+                &query,
+                owner,
+                &repo.name,
+                &code.path,
+                &code.sha,
+                &code.revision,
+                code.size as i64,
+                code.language.as_deref(),
+                code.fragments
+                    .iter()
+                    .map(|fragment| (fragment.line as i64, fragment.text.as_str())),
+            ),
         };
         value["repository"] = repository;
         value["score"] = json!(hit.score);
         items.push(value);
     }
     Ok((page.headers(&uri,offset+limit<total.min(1000))?,Json(json!({"total_count":total,"incomplete_results":results.incomplete,"items":items,"search_type":"lexical","indexing":"live"}))).into_response())
+}
+/// One code search item, as GitHub shapes it.
+#[allow(clippy::too_many_arguments)]
+fn code_document<'a>(
+    query: &SearchQuery,
+    owner: &str,
+    name: &str,
+    path: &str,
+    sha: &str,
+    revision: &str,
+    size: i64,
+    language: Option<&str>,
+    fragments: impl Iterator<Item = (i64, &'a str)>,
+) -> Value {
+    let repo_api = codeyard_model::urls::repo_url(owner, name);
+    let encoded = codeyard_webui::pages::repos::ref_path::encode_path(path);
+    let url = format!("{repo_api}/contents/{encoded}?ref={revision}");
+    let (lines, matches): (Vec<_>, Vec<_>) = fragments
+        .map(|(line, text)| {
+            (
+                line.to_string(),
+                json!({"object_url":url,"object_type":"FileContent","property":"content","fragment":text,"matches":query.text_matches(text)}),
+            )
+        })
+        .unzip();
+    let html = format!(
+        "{}/{}/{}",
+        codeyard_model::http_config::link_origin(),
+        codeyard_webui::encode_component(owner),
+        codeyard_webui::encode_component(name)
+    );
+    json!({"name":path.rsplit('/').next().unwrap_or(path),"path":path,"sha":sha,"url":url,"git_url":format!("{repo_api}/git/blobs/{sha}"),"html_url":codeyard_webui::pages::repos::ref_path::file_url(&html,"blob",revision,path),"file_size":size,"language":language,"line_numbers":lines,"text_matches":matches})
 }
 pub(crate) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![

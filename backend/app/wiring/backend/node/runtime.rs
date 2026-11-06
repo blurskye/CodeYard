@@ -408,6 +408,11 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
                     pool.cell_id() == codeyard_support::cells::Prefix::ZERO,
                     "A nonzero cell requires directory settings and CELL_RPC_ADDRESS"
                 );
+                anyhow::ensure!(
+                    config.search.is_none(),
+                    "A search index needs a cell with directory settings"
+                );
+                codeyard_db_core::cells::search::enable(&pool, false).await?;
                 (None, None)
             }
             (Some(settings), Some(address)) => {
@@ -432,6 +437,9 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
                 .await?;
                 let capacity_client = directory.client.clone();
                 pool.set_directory(Arc::new(directory.client.clone()))?;
+                let search = config.search.as_ref().unwrap_or(settings);
+                pool.set_search(Arc::new(search.client(&config.state_dir)?))?;
+                codeyard_db_core::cells::search::enable(&pool, true).await?;
                 pool.set_foreign_authorization(Arc::new(
                     codeyard_cells_router::accounts::Remote::new(key, directory.client)?,
                 ));

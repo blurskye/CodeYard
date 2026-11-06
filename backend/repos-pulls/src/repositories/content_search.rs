@@ -125,6 +125,14 @@ impl Query {
         matches.dedup_by_key(|m| m.indices);
         matches
     }
+    /// The query for the cells' shared index, with the text fields it searches.
+    pub fn search_filter(&self) -> codeyard_db_core::cells::search::Filter {
+        let fields = [("file", self.file), ("path", self.path)]
+            .into_iter()
+            .filter(|(_, wanted)| *wanted)
+            .map(|(field, _)| field);
+        codeyard_db_repos::discussion_search::with_fields(&self.expr, fields)
+    }
     pub fn needs_viewer(&self) -> bool {
         self.scope.needs_viewer()
             || codeyard_db_repos::catalog_search::has(&self.expr, "author", Some("@me"))

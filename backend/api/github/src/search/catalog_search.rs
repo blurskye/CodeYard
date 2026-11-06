@@ -87,6 +87,35 @@ async fn catalog(
                 "Search is busy. Try again shortly.",
             )
         })?;
+    if kind == Kind::Repositories {
+        if let Some(found) = crate::search::global::search(
+            &state,
+            authentication.as_ref(),
+            codeyard_db_core::cells::search::Kind::Repositories,
+            search.search_filter(),
+            q.get("sort").filter(|sort| !sort.is_empty()).cloned(),
+            ascending,
+            (offset, limit.min(1000 - offset)),
+            "metadata",
+        )
+        .await?
+        {
+            let items = found
+                .hits
+                .into_iter()
+                .map(|hit| {
+                    let mut value = hit.document;
+                    value["score"] = json!(hit.score);
+                    value
+                })
+                .collect::<Vec<_>>();
+            return Ok((
+                page.headers(&uri, offset + limit < (found.total.max(0) as usize).min(1000))?,
+                Json(json!({"total_count":found.total,"incomplete_results":found.incomplete,"items":items})),
+            )
+                .into_response());
+        }
+    }
     let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let (search, git_incomplete) = if search.needs_git() {
         codeyard_repos_pulls::repositories::catalog_search::prepare(

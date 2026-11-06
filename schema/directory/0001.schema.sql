@@ -72,3 +72,71 @@ BEGIN
 END;
 $$;
 CREATE TRIGGER directory_claim_count AFTER INSERT OR DELETE OR UPDATE OF object_kind,object_id ON directory_claims FOR EACH ROW EXECUTE FUNCTION directory_claim_count();
+
+-- The global search index. Each cell writes its own repositories' documents through its
+-- outbox; a later (event, attempt) replaces an earlier one, and a removed repository keeps
+-- an empty row so a late write cannot bring it back. Private documents are returned only to
+-- the readers their cell names.
+CREATE TABLE search_repositories (
+    id BIGINT PRIMARY KEY CHECK(id BETWEEN 1 AND 9007199254740991),
+    cell_id INTEGER NOT NULL REFERENCES directory_cells(id),
+    event_id BIGINT NOT NULL,
+    attempt BIGINT NOT NULL,
+    document JSONB CHECK(document IS NULL OR (jsonb_typeof(document)='object' AND octet_length(document::text)<=524288)),
+    public BOOLEAN NOT NULL DEFAULT FALSE,
+    classic_allowed BOOLEAN NOT NULL DEFAULT TRUE,
+    code_head TEXT CHECK(code_head IS NULL OR length(code_head) IN (40,64)),
+    full_name TEXT,
+    owner TEXT,
+    name TEXT,
+    description TEXT,
+    language TEXT,
+    fork BOOLEAN NOT NULL DEFAULT FALSE,
+    archived BOOLEAN NOT NULL DEFAULT FALSE,
+    stars BIGINT NOT NULL DEFAULT 0,
+    forks BIGINT NOT NULL DEFAULT 0,
+    topics TEXT[] NOT NULL DEFAULT '{}',
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ,
+    pushed_at TIMESTAMPTZ
+);
+CREATE INDEX search_repositories_full_name ON search_repositories(full_name);
+CREATE INDEX search_repositories_owner ON search_repositories(owner);
+CREATE INDEX search_repositories_stars ON search_repositories(stars DESC,id DESC) WHERE document IS NOT NULL AND public;
+CREATE TABLE search_readers (
+    repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL CHECK(user_id BETWEEN 1 AND 9007199254740991),
+    PRIMARY KEY(repository_id,user_id)
+);
+CREATE INDEX search_readers_user ON search_readers(user_id,repository_id);
+CREATE TABLE search_issues (
+    pull BOOLEAN NOT NULL,
+    id BIGINT NOT NULL CHECK(id BETWEEN 1 AND 9007199254740991),
+    repository_id BIGINT NOT NULL CHECK(repository_id BETWEEN 1 AND 9007199254740991),
+    cell_id INTEGER NOT NULL REFERENCES directory_cells(id),
+    event_id BIGINT NOT NULL,
+    attempt BIGINT NOT NULL,
+    document JSONB CHECK(document IS NULL OR (jsonb_typeof(document)='object' AND octet_length(document::text)<=524288)),
+    state TEXT,
+    merged BOOLEAN NOT NULL DEFAULT FALSE,
+    draft BOOLEAN NOT NULL DEFAULT FALSE,
+    locked BOOLEAN NOT NULL DEFAULT FALSE,
+    author TEXT,
+    labels TEXT[] NOT NULL DEFAULT '{}',
+    assignees TEXT[] NOT NULL DEFAULT '{}',
+    comments BIGINT NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ,
+    updated_at TIMESTAMPTZ,
+    title TEXT,
+    body TEXT,
+    PRIMARY KEY(pull,id)
+);
+CREATE INDEX search_issues_repository ON search_issues(repository_id);
+CREATE TABLE search_code (
+    repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE,
+    path TEXT NOT NULL CHECK(octet_length(path) BETWEEN 1 AND 4096),
+    sha TEXT NOT NULL CHECK(length(sha) IN (40,64)),
+    size BIGINT NOT NULL CHECK(size>=0),
+    content TEXT NOT NULL CHECK(octet_length(content)<=131072),
+    PRIMARY KEY(repository_id,path)
+);

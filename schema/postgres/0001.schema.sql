@@ -57,6 +57,9 @@ CREATE TABLE cell_outbox (
     UNIQUE(source_cell,source_event,topic)
 );
 CREATE INDEX cell_outbox_pending ON cell_outbox(next_attempt_at,id) WHERE delivered_at IS NULL;
+-- One pending search event per document; a change during delivery claims it again.
+CREATE UNIQUE INDEX cell_outbox_search_pending ON cell_outbox(root_id,payload)
+    WHERE topic='search' AND delivered_at IS NULL;
 
 --------------------------------------------------------------------------------
 -- PART 2: USERS
@@ -118,6 +121,8 @@ CREATE TABLE IF NOT EXISTS node_configuration (
     -- cluster mode.
     cluster_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     restore_pending BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Set at startup while the cell writes to a global search index.
+    search_index BOOLEAN NOT NULL DEFAULT FALSE,
     restore_digest TEXT CHECK (restore_digest IS NULL OR length(restore_digest)=64),
     CONSTRAINT node_configuration_singleton CHECK (id = 1),
     CONSTRAINT node_configuration_mode_check CHECK (node_mode IN ('public', 'private'))
@@ -4367,6 +4372,107 @@ CREATE TRIGGER remote_organization_membership AFTER INSERT OR UPDATE OR DELETE O
 
 CREATE TRIGGER remote_star AFTER INSERT OR UPDATE OR DELETE ON stars
     FOR EACH ROW EXECUTE FUNCTION queue_remote_pointer('repository','star');
+
+-- Search documents are read when the event is delivered, so one pending event per document
+-- is enough. Bumping the attempt makes a delivery already in flight record nothing, and the
+-- event is claimed again with the newer state.
+CREATE FUNCTION queue_search(repository BIGINT, item TEXT, item_id BIGINT) RETURNS VOID
+LANGUAGE sql AS $$
+    INSERT INTO cell_outbox(root_kind,root_id,topic,payload)
+    SELECT 'repository',repository,'search',
+        CASE WHEN item_id IS NULL THEN jsonb_build_object('item',item)
+            ELSE jsonb_build_object('item',item,'id',item_id) END::TEXT
+    WHERE repository IS NOT NULL AND repository>0
+    ON CONFLICT(root_id,payload) WHERE topic='search' AND delivered_at IS NULL
+    DO UPDATE SET attempts=cell_outbox.attempts+1,
+        next_attempt_at=LEAST(cell_outbox.next_attempt_at,clock_timestamp());
+$$;
+CREATE FUNCTION queue_search_change() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    row_data JSONB;
+    side INTEGER;
+BEGIN
+    IF NOT COALESCE((SELECT search_index FROM node_configuration WHERE id=1),FALSE) THEN
+        RETURN NULL;
+    END IF;
+    FOR side IN 0..1 LOOP
+        IF (side=0 AND TG_OP='INSERT') OR (side=1 AND TG_OP='DELETE') THEN
+            CONTINUE;
+        END IF;
+        row_data := CASE WHEN side=0 THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+        CASE TG_TABLE_NAME
+        WHEN 'repositories' THEN
+            IF NOT (row_data->>'is_stub')::BOOLEAN AND NOT (row_data->>'is_gist')::BOOLEAN THEN
+                PERFORM queue_search((row_data->>'id')::BIGINT,'repository',NULL);
+            END IF;
+        WHEN 'issues' THEN
+            PERFORM queue_search((row_data->>'repo_id')::BIGINT,'issue',(row_data->>'id')::BIGINT);
+        WHEN 'pull_requests' THEN
+            PERFORM queue_search((row_data->>'repo_id')::BIGINT,'pull',(row_data->>'id')::BIGINT);
+        WHEN 'issue_labels','issue_assignees','issue_comments' THEN
+            PERFORM queue_search(i.repo_id,'issue',i.id) FROM issues i
+                WHERE i.id=(row_data->>'issue_id')::BIGINT;
+        WHEN 'pr_labels','pr_assignees','pr_comments' THEN
+            PERFORM queue_search(p.repo_id,'pull',p.id) FROM pull_requests p
+                WHERE p.id=(row_data->>'pull_request_id')::BIGINT;
+        WHEN 'repo_access','team_repo_access','repository_pushes','repository_topics','repo_languages' THEN
+            PERFORM queue_search((row_data->>'repo_id')::BIGINT,'repository',NULL);
+        WHEN 'users' THEN
+            PERFORM queue_search(r.id,'repository',NULL) FROM repositories r
+                WHERE r.owner_user_id=(row_data->>'id')::BIGINT AND NOT r.is_stub AND NOT r.is_gist;
+        WHEN 'organizations' THEN
+            PERFORM queue_search(r.id,'repository',NULL) FROM repositories r
+                WHERE r.owner_org_id=(row_data->>'id')::BIGINT AND NOT r.is_stub AND NOT r.is_gist;
+        WHEN 'org_memberships' THEN
+            PERFORM queue_search(r.id,'repository',NULL) FROM repositories r
+                WHERE r.owner_org_id=(row_data->>'org_id')::BIGINT AND r.is_private
+                    AND NOT r.is_stub AND NOT r.is_gist;
+        WHEN 'team_memberships' THEN
+            PERFORM queue_search(a.repo_id,'repository',NULL) FROM team_repo_access a
+                WHERE a.team_id=(row_data->>'team_id')::BIGINT;
+        ELSE
+            NULL;
+        END CASE;
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER search_repositories AFTER INSERT OR UPDATE OR DELETE ON repositories
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_issues AFTER INSERT OR UPDATE OR DELETE ON issues
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_pull_requests AFTER INSERT OR UPDATE OR DELETE ON pull_requests
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_issue_labels AFTER INSERT OR DELETE ON issue_labels
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_issue_assignees AFTER INSERT OR DELETE ON issue_assignees
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_issue_comments AFTER INSERT OR DELETE ON issue_comments
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_pr_labels AFTER INSERT OR DELETE ON pr_labels
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_pr_assignees AFTER INSERT OR DELETE ON pr_assignees
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_pr_comments AFTER INSERT OR DELETE ON pr_comments
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_repo_access AFTER INSERT OR UPDATE OR DELETE ON repo_access
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_team_repo_access AFTER INSERT OR UPDATE OR DELETE ON team_repo_access
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_repository_pushes AFTER INSERT ON repository_pushes
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_repository_topics AFTER INSERT OR DELETE ON repository_topics
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_repo_languages AFTER INSERT OR UPDATE OR DELETE ON repo_languages
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_users AFTER UPDATE OF username ON users
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_organizations AFTER UPDATE OF name ON organizations
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_org_memberships AFTER INSERT OR UPDATE OR DELETE ON org_memberships
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_team_memberships AFTER INSERT OR UPDATE OR DELETE ON team_memberships
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
 
 
 -- Consent belongs to the native head repository; no historical token is stored.

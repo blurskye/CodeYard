@@ -7,6 +7,7 @@ use std::{future::Future, time::Duration};
 
 mod claims;
 mod registry;
+mod search;
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {

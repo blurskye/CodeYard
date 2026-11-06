@@ -62,7 +62,7 @@ async fn home(tx: &mut Transaction<'_, Postgres>, object: Object, cell: Prefix) 
     Ok(row)
 }
 
-async fn removal_home(
+pub(super) async fn removal_home(
     tx: &mut Transaction<'_, Postgres>,
     object: Object,
     cell: Prefix,

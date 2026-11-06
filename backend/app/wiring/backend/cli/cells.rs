@@ -37,9 +37,23 @@ pub enum Command {
         #[arg(long)]
         prefix: Prefix,
     },
+    /// Queue a page of this cell's repositories, with their issues and pull requests, for the
+    /// search index; the running servers deliver them. Use after the index was emptied.
+    SearchReindex {
+        #[arg(long, default_value_t = 0)]
+        after: i64,
+        #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(i64).range(1..=1000))]
+        limit: i64,
+    },
 }
 
 pub async fn run(command: &Command, pool: &DbPool, state: &Path) -> Result<()> {
+    if let Command::SearchReindex { after, limit } = command {
+        let (next, count) =
+            codeyard_db_core::cells::search::queue_all(pool, *after, *limit).await?;
+        println!("{}", serde_json::json!({ "after": next, "count": count }));
+        return Ok(());
+    }
     let _state = codeyard_support::fs::lock_state_dir(state)?;
     let maintenance = codeyard_db_cluster::cluster::maintenance_lock(pool).await?;
     let result = match command {
@@ -104,6 +118,7 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path) -> Result<()> {
             .await
         }
         Command::Directory { .. } => anyhow::bail!("Directory commands use their own database"),
+        Command::SearchReindex { .. } => unreachable!("reindexing runs beside the servers"),
     };
     maintenance.release().await;
     result?;
@@ -177,6 +192,8 @@ pub enum DirectoryCommand {
         #[arg(long, default_value_t = 10_000_i64)]
         maximum_write_rate: i64,
     },
+    /// Empty the global search index; every cell then runs `cell search-reindex`.
+    SearchReset,
     /// List one bounded page of cells as JSON.
     List {
         #[arg(long)]
@@ -277,6 +294,10 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
                     })
                     .await?;
                 println!("Cell {prefix} registered.");
+            }
+            DirectoryCommand::SearchReset => {
+                directory.reset_search().await?;
+                println!("Search index emptied.");
             }
             DirectoryCommand::List { after, limit } => {
                 println!(

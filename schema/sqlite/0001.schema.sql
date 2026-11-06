@@ -50,6 +50,8 @@ CREATE TABLE cell_outbox (
     UNIQUE(source_cell,source_event,topic)
 );
 CREATE INDEX cell_outbox_pending ON cell_outbox(next_attempt_at,id) WHERE delivered_at IS NULL;
+CREATE UNIQUE INDEX cell_outbox_search_pending ON cell_outbox(root_id,payload)
+    WHERE topic='search' AND delivered_at IS NULL;
 
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
@@ -102,6 +104,8 @@ CREATE TABLE node_configuration (
     -- cluster mode.
     cluster_enabled INTEGER NOT NULL DEFAULT 0 CHECK (cluster_enabled IN (0,1)),
     restore_pending INTEGER NOT NULL DEFAULT 0 CHECK (restore_pending IN (0,1)),
+    -- A standalone SQLite cell never writes to a global search index.
+    search_index INTEGER NOT NULL DEFAULT 0 CHECK (search_index IN (0,1)),
     restore_digest TEXT CHECK (restore_digest IS NULL OR length(restore_digest)=64),
     CONSTRAINT node_configuration_singleton CHECK (id = 1),
     CONSTRAINT node_configuration_mode_check CHECK (node_mode IN ('public', 'private'))

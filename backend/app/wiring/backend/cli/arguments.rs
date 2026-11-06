@@ -38,6 +38,14 @@ pub(super) enum Commands {
         #[arg(long, env = "DIRECTORY_PUBLIC_KEY")]
         directory_key: Option<String>,
 
+        /// Search index endpoint for a cell, when it runs apart from the directory
+        #[arg(long, env = "SEARCH_ADDRESS")]
+        search_address: Option<SocketAddr>,
+
+        /// Search index public node key (64 hex characters)
+        #[arg(long, env = "SEARCH_PUBLIC_KEY")]
+        search_key: Option<String>,
+
         /// Cell-to-cell authorization listener, authenticated by the node key
         #[arg(long, env = "CELL_RPC_ADDRESS")]
         cell_rpc_address: Option<SocketAddr>,

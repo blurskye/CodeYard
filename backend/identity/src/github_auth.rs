@@ -186,6 +186,22 @@ impl Authentication {
         Ok(())
     }
 
+    /// Whether this credential acts as its whole account, so it reaches what another cell's
+    /// search index names its user a reader of. App, fine-grained, job and foreign
+    /// credentials have bounds that only this cell's grant tables can check.
+    pub async fn acts_as_account(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+    ) -> std::result::Result<bool, ScopeError> {
+        if self.user.is_stub || self.is_job() {
+            return Ok(false);
+        }
+        Ok(crate::github_apps::authority(pool, self.token.id)
+            .await
+            .map_err(|_| ScopeError::Unavailable)?
+            .is_none())
+    }
+
     /// Dispatches may use a live job token, but host execution retains its original actor's authority.
     pub async fn workflow_actor(&self, state: &dyn DatabaseContext, repo: i64) -> Result<i64> {
         if self.user.username != codeyard_db_core::queries::ci_tokens::BOT {

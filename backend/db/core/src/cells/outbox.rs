@@ -16,6 +16,14 @@ pub trait Consumer: Send + Sync {
         &'a self,
         refresh: &'a mut super::pulls::Refresh,
     ) -> futures_util::future::BoxFuture<'a, Result<bool>>;
+    /// Writes one repository's, issue's or pull request's current documents to the index.
+    fn index_search<'a>(
+        &'a self,
+        index: &'a dyn super::search::Index,
+        repository: i64,
+        item: super::search::Item,
+        version: super::search::Version,
+    ) -> futures_util::future::BoxFuture<'a, Result<()>>;
 }
 const MAXIMUM_BYTES: usize = 524288;
 #[derive(Serialize, Deserialize)]
@@ -129,8 +137,8 @@ async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool>
     let whole = deadline + 2 * request + 2;
     let lease = (whole + request) as i64;
     tokio::time::timeout(std::time::Duration::from_secs(whole), async {
-        let row: Option<(i64, String, String, i64, String, i64)> = sqlx::query_as("UPDATE cell_outbox SET attempts=attempts+1,next_attempt_at=clock_timestamp()+$7::bigint*INTERVAL '1 second' WHERE id=(SELECT id FROM cell_outbox WHERE topic IN ($1,$2,$3,$4,$6) AND (topic<>$4 OR $5) AND delivered_at IS NULL AND next_attempt_at<=clock_timestamp() ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id,substr(payload,1,524289),root_kind,root_id,topic,attempts")
-            .bind(TOPIC).bind(POINTER_TOPIC).bind(PUSH_TOPIC).bind(REFRESH_TOPIC).bind(consumer.is_some()).bind(super::notices::TOPIC).bind(lease)
+        let row: Option<(i64, String, String, i64, String, i64)> = sqlx::query_as("UPDATE cell_outbox SET attempts=attempts+1,next_attempt_at=clock_timestamp()+$7::bigint*INTERVAL '1 second' WHERE id=(SELECT id FROM cell_outbox WHERE topic IN ($1,$2,$3,$4,$6,$8) AND (topic NOT IN ($4,$8) OR $5) AND delivered_at IS NULL AND next_attempt_at<=clock_timestamp() ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id,substr(payload,1,524289),root_kind,root_id,topic,attempts")
+            .bind(TOPIC).bind(POINTER_TOPIC).bind(PUSH_TOPIC).bind(REFRESH_TOPIC).bind(consumer.is_some()).bind(super::notices::TOPIC).bind(lease).bind(super::search::TOPIC)
             .fetch_optional(native).await?;
         let Some((id, payload, kind, root, topic, attempt)) = row else { return Ok(false); };
         let mut continuation = None;
@@ -151,6 +159,14 @@ async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool>
                 refresh.validate()?;
                 if !complete { continuation = Some(serde_json::to_string(&refresh)?); }
                 return Ok(());
+            }
+            if topic == super::search::TOPIC {
+                let item: super::search::Item = serde_json::from_str(&payload)?;
+                item.validate()?;
+                ensure!(kind == "repository", Refusal::Denied);
+                let index = native.search().ok_or(Refusal::Unavailable)?;
+                let version = super::search::Version { event: id, attempt };
+                return consumer.ok_or(Refusal::Unavailable)?.index_search(&*index, root, item, version).await;
             }
             if topic == super::notices::TOPIC {
                 let notice: super::notices::Notice = serde_json::from_str(&payload)?;
@@ -178,7 +194,7 @@ async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool>
                 Delivery::Forget { object } => directory::postgres::forget(native, object).await,
             }
         };
-        let limit = if topic == REFRESH_TOPIC { deadline } else { config.request_seconds * 2 + 1 };
+        let limit = if topic == REFRESH_TOPIC || topic == super::search::TOPIC { deadline } else { config.request_seconds * 2 + 1 };
         let result: Result<()> = tokio::time::timeout(std::time::Duration::from_secs(limit), operation)
             .await.unwrap_or_else(|_| Err(Refusal::Unavailable.into()));
         // A claim whose lease ran out and was taken again records nothing.
@@ -198,7 +214,8 @@ async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool>
                     .bind(id).bind(attempt).bind(config.request_seconds as i64).execute(native).await?
             }
         };
-        if recorded.rows_affected() == 0 {
+        // A search document changed again while in flight; its newer claim sends it again.
+        if recorded.rows_affected() == 0 && topic != super::search::TOPIC {
             tracing::warn!(event_id=id, %topic, "Cell event was claimed again before its result was recorded");
         }
         Ok(true)

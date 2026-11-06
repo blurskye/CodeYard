@@ -1,6 +1,7 @@
 //! One bounded directory exchange over the existing pinned node-key TLS transport.
 pub use crate::rpc::Config;
 use anyhow::Result;
+use codeyard_db_core::cells::search;
 use codeyard_db_directory::{Directory, Refusal};
 use codeyard_model::cells::{Cell, Key, Location, Object};
 use codeyard_support::{cells::Prefix, node_identity::NodeKey};
@@ -56,6 +57,12 @@ pub enum Request {
         database_bytes: i64,
         write_rate: i64,
     },
+    Index {
+        batch: search::Batch,
+    },
+    Search {
+        query: search::Query,
+    },
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "result", content = "value", rename_all = "snake_case")]
@@ -67,6 +74,8 @@ pub enum Reply {
     Home(Option<Prefix>),
     Reserved,
     Done,
+    Indexed(search::Indexed),
+    Results(search::Results),
     Error(Failure),
 }
 #[derive(Debug, Serialize, Deserialize, thiserror::Error)]
@@ -225,6 +234,8 @@ async fn handle(directory: &Directory, peer: &str, request: Request) -> Result<R
                 .await?;
             Reply::Done
         }
+        Request::Index { batch } => Reply::Indexed(directory.index(peer, &batch).await?),
+        Request::Search { query } => Reply::Results(directory.search(peer, &query).await?),
     })
 }
 
@@ -329,6 +340,50 @@ impl codeyard_db_core::cells::directory::Directory for Client {
             {
                 Reply::Done => Ok(()),
                 _ => Err(codeyard_db_core::cells::directory::Refusal::Unavailable.into()),
+            }
+        })
+    }
+}
+
+// Search callers tell a refused query from an index that cannot answer.
+fn search_error(error: anyhow::Error) -> anyhow::Error {
+    match error.downcast_ref::<Failure>() {
+        Some(Failure::Invalid) => search::Refusal::Invalid.into(),
+        _ => search::Refusal::Unavailable.into(),
+    }
+}
+impl search::Index for Client {
+    fn index<'a>(
+        &'a self,
+        batch: &'a search::Batch,
+    ) -> futures_util::future::BoxFuture<'a, Result<search::Indexed>> {
+        Box::pin(async move {
+            match self
+                .request(&Request::Index {
+                    batch: batch.clone(),
+                })
+                .await
+                .map_err(search_error)?
+            {
+                Reply::Indexed(indexed) => Ok(indexed),
+                _ => Err(search::Refusal::Unavailable.into()),
+            }
+        })
+    }
+    fn search<'a>(
+        &'a self,
+        query: &'a search::Query,
+    ) -> futures_util::future::BoxFuture<'a, Result<search::Results>> {
+        Box::pin(async move {
+            match self
+                .request(&Request::Search {
+                    query: query.clone(),
+                })
+                .await
+                .map_err(search_error)?
+            {
+                Reply::Results(results) => Ok(results),
+                _ => Err(search::Refusal::Unavailable.into()),
             }
         })
     }

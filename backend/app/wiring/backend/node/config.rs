@@ -4,6 +4,8 @@ use std::path::PathBuf;
 
 pub struct ServeConfig {
     pub directory: Option<super::router::DirectorySettings>,
+    /// The search index, when it is served apart from the directory.
+    pub search: Option<super::router::DirectorySettings>,
     pub cell_rpc_address: Option<SocketAddr>,
     pub roles: NodeRoles,
     pub repos_path: PathBuf,

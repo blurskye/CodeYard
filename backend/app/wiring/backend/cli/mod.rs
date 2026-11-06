@@ -378,6 +378,8 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                 cluster,
                 directory_address,
                 directory_key,
+                search_address,
+                search_key,
                 cell_rpc_address,
                 region: _,
                 ssh_mode,
@@ -400,6 +402,10 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
                         directory: crate::backend::node::router::DirectorySettings::from_options(
                             directory_address,
                             directory_key.as_deref(),
+                        )?,
+                        search: crate::backend::node::router::DirectorySettings::from_options(
+                            search_address,
+                            search_key.as_deref(),
                         )?,
                         cell_rpc_address,
                         roles,

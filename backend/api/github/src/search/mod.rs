@@ -64,6 +64,33 @@ async fn search_issues(
                 "Search is busy. Try again shortly.",
             )
         })?;
+    if let Some(found) = global::search(
+        &state,
+        auth.as_ref(),
+        codeyard_db_core::cells::search::Kind::Issues,
+        query.search_filter(),
+        q.get("sort").filter(|sort| !sort.is_empty()).cloned(),
+        ascending,
+        (offset, limit.min(1000 - offset)),
+        "issues",
+    )
+    .await?
+    {
+        let items = found.hits.into_iter().map(|hit| {
+            let mut value = hit.document;
+            value["score"] = json!(hit.score);
+            value
+        });
+        return issues_page(
+            &page,
+            &uri,
+            (offset, limit),
+            found.total,
+            found.incomplete,
+            items.collect(),
+            search_type,
+        );
+    }
     let results = codeyard_db_repos::discussion_search::search(
         &state.pool,
         viewer,
@@ -139,19 +166,40 @@ async fn search_issues(
         value["score"] = json!(score);
         items.push(value);
     }
-    let has_next = (offset + limit) < (results.total as usize).min(1000);
-    let mut body = json!({"total_count":results.total,"incomplete_results":incomplete,"items":items,"search_type":"lexical"});
+    issues_page(
+        &page,
+        &uri,
+        (offset, limit),
+        results.total,
+        incomplete,
+        items,
+        search_type,
+    )
+}
+fn issues_page(
+    page: &Pagination,
+    uri: &axum::http::Uri,
+    (offset, limit): (usize, usize),
+    total: i64,
+    incomplete: bool,
+    items: Vec<Value>,
+    search_type: &str,
+) -> Result<Response> {
+    let has_next = (offset + limit) < (total.max(0) as usize).min(1000);
+    let mut body = json!({"total_count":total,"incomplete_results":incomplete,"items":items,"search_type":"lexical"});
     if search_type != "lexical" {
         // There is no semantic index on this server. The GitHub contract explicitly permits an
         // advertised lexical fallback; never label lexical matches as semantic results.
         body["lexical_fallback_reason"] = json!(["service_unavailable"]);
     }
-    Ok((page.headers(&uri, has_next)?, Json(body)).into_response())
+    Ok((page.headers(uri, has_next)?, Json(body)).into_response())
 }
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     vec![("search/issues-and-pull-requests", get(search_issues))]
 }
 
 pub mod content_search;
+
+mod global;
 
 pub mod catalog_search;

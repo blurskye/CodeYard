@@ -191,6 +191,21 @@ impl DbPool {
             Self::Sqlite(pool) => pool.directory(),
         }
     }
+    pub fn set_search(&self, provider: crate::cells::search::Provider) -> Result<()> {
+        match self {
+            Self::Postgres(pool) => pool.set_search(provider),
+            Self::Sqlite(_) => {
+                bail!("Copy this SQLite cell to PostgreSQL before enrolling it in the directory")
+            }
+        }
+        Ok(())
+    }
+    pub fn search(&self) -> Option<crate::cells::search::Provider> {
+        match self {
+            Self::Postgres(pool) => pool.search(),
+            Self::Sqlite(pool) => pool.search(),
+        }
+    }
     pub fn set_foreign_authorization(&self, provider: crate::cells::authorization::Provider) {
         match self {
             Self::Postgres(pool) => pool.set_foreign_authorization(provider),

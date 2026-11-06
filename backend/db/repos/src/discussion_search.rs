@@ -404,6 +404,10 @@ impl Search {
         search.statement(false, "TRUE")?;
         Ok(search)
     }
+    /// The query for the cells' shared index, with the text fields it searches.
+    pub fn search_filter(&self) -> codeyard_db_core::cells::search::Filter {
+        with_fields(&self.expr, self.fields.iter().copied())
+    }
     pub fn needs_viewer(&self) -> bool {
         fn needs(expr: &Expr) -> bool {
             match expr {
@@ -467,6 +471,28 @@ impl Search {
         );
         Ok(sql)
     }
+}
+/// The same expression in the cells' shared search index's terms.
+pub fn filter(expr: &Expr) -> codeyard_db_core::cells::search::Filter {
+    use codeyard_db_core::cells::search::Filter;
+    match expr {
+        Expr::Term(key, value) => Filter::Term(key.clone(), value.clone()),
+        Expr::And(items) => Filter::All(items.iter().map(filter).collect()),
+        Expr::Or(items) => Filter::Any(items.iter().map(filter).collect()),
+        Expr::Not(item) => Filter::Not(Box::new(filter(item))),
+    }
+}
+/// `expr`, matching free text in `fields` only.
+pub fn with_fields<'a>(
+    expr: &Expr,
+    fields: impl IntoIterator<Item = &'a str>,
+) -> codeyard_db_core::cells::search::Filter {
+    use codeyard_db_core::cells::search::Filter;
+    let fields = fields.into_iter().collect::<Vec<_>>().join(",");
+    if fields.is_empty() {
+        return filter(expr);
+    }
+    Filter::All(vec![filter(expr), Filter::Term("in".into(), fields)])
 }
 pub fn positive_text<'a>(expr: &'a Expr, negative: bool, values: &mut Vec<&'a str>) {
     match expr {

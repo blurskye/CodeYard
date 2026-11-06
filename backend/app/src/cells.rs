@@ -11,6 +11,8 @@ use codeyard_db_core::{
 };
 use futures_util::future::BoxFuture;
 
+mod search;
+
 pub struct Native {
     pub state: AppState,
 }
@@ -117,6 +119,15 @@ impl codeyard_db_core::cells::outbox::Consumer for Refreshes {
             refresh.after = pull.id;
             Ok(false)
         })
+    }
+    fn index_search<'a>(
+        &'a self,
+        index: &'a dyn codeyard_db_core::cells::search::Index,
+        repository: i64,
+        item: codeyard_db_core::cells::search::Item,
+        version: codeyard_db_core::cells::search::Version,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(search::send(&self.state, index, repository, item, version))
     }
 }
 impl Home for Native {

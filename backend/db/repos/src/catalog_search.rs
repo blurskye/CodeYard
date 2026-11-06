@@ -124,6 +124,10 @@ impl Search {
     pub fn needs_viewer(&self) -> bool {
         has(&self.expr, "user", Some("@me"))
     }
+    /// The query for the cells' shared index, with the text fields it searches.
+    pub fn search_filter(&self) -> codeyard_db_core::cells::search::Filter {
+        crate::discussion_search::with_fields(&self.expr, self.fields.iter().map(String::as_str))
+    }
     pub fn from_expression(kind: Kind, mut expr: Expr) -> Result<Self, &'static str> {
         let mut fields = Vec::new();
         extract_fields(&mut expr, &mut fields)?;

@@ -25,6 +25,7 @@ pub struct Pool<DB: Database> {
     cell_prefixes: Arc<std::sync::RwLock<Vec<codeyard_support::cells::Prefix>>>,
     pub(crate) read_replica: Arc<std::sync::RwLock<Option<PgPool>>>,
     directory: Arc<std::sync::RwLock<Option<crate::cells::directory::Provider>>>,
+    search: Arc<std::sync::RwLock<Option<crate::cells::search::Provider>>>,
     foreign_authorization: Arc<std::sync::RwLock<Option<crate::cells::authorization::Provider>>>,
     log_objects: Arc<std::sync::RwLock<Option<std::sync::Weak<dyn crate::ci_logs::LogObjects>>>>,
 }
@@ -46,6 +47,7 @@ impl<DB: Database> Clone for Pool<DB> {
             log_objects: self.log_objects.clone(),
             foreign_authorization: self.foreign_authorization.clone(),
             directory: self.directory.clone(),
+            search: self.search.clone(),
         }
     }
 }
@@ -62,6 +64,7 @@ impl<DB: Database> From<sqlx::Pool<DB>> for Pool<DB> {
             log_objects: Arc::default(),
             foreign_authorization: Arc::default(),
             directory: Arc::default(),
+            search: Arc::default(),
         }
     }
 }
@@ -119,6 +122,13 @@ impl<DB: Database> Pool<DB> {
     }
     pub fn directory(&self) -> Option<crate::cells::directory::Provider> {
         self.directory
+            .read()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+    /// The global search index; only directory-enrolled PostgreSQL cells set it.
+    pub fn search(&self) -> Option<crate::cells::search::Provider> {
+        self.search
             .read()
             .unwrap_or_else(|error| error.into_inner())
             .clone()
@@ -282,6 +292,12 @@ impl Pool<sqlx::Postgres> {
     pub fn set_directory(&self, provider: crate::cells::directory::Provider) {
         *self
             .directory
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = Some(provider);
+    }
+    pub fn set_search(&self, provider: crate::cells::search::Provider) {
+        *self
+            .search
             .write()
             .unwrap_or_else(|error| error.into_inner()) = Some(provider);
     }

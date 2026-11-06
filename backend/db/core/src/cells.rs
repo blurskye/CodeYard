@@ -11,6 +11,7 @@ pub mod outbox;
 pub mod pointers;
 pub mod pulls;
 pub mod repositories;
+pub mod search;
 pub mod stubs;
 
 /// Used by every native account/repository INSERT, including a cell with a later issuer range.
