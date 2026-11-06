@@ -157,8 +157,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 2 source covers directory claims/TLS/cache, public HTTP/SSH routing, scoped
     credentials and IDs, stable homes, stubs, home authorization, native publication,
     durable cleanup, capacity reporting and bounded home membership discovery.
-    Workspace ce009f6e34784ae8923e4da698a80fc5, Clippy d679a0cd1ff84221a2ec6508c3c185eb
-    and WASM 26c853dae2054bd3829768d604032bea pass. Generated GraphQL is unchanged.
+    Workspace bad033568e234119ad4595d644d37994, Clippy 359ef851d1604bf2b876936c851278c7
+    and WASM a2af9c6ef72249e0ba936570573c2cde pass. Generated GraphQL is unchanged.
     New output assertions use rooted IDs; former input IDs remain accepted as required.
     Earlier runtime eb1c71056db64586b3b41c713e7bf631 passes 334 selected library, 234 cluster,
     42 Git and 166 identity tests and both exhaustive GraphQL contracts. Before that, CI
@@ -187,7 +187,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     tests without skips, including native home/org lists and GraphQL org discovery.
     The cells round reaches real gh login, whose current-user GraphQL query returns 503.
     Dispatch parses backend JSON but preserves the client's compression preference;
-    the next unchecked fix requests identity encoding for its generated backend requests.
+    the fix requests identity encoding for its generated backend requests and passes
+    the source checks above.
     A native HTTP regression proves the cell emits gzip, then exercises token-scheme
     viewer queries in both cells and a compressed-client split query through the router.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves

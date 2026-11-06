@@ -763,7 +763,8 @@ exhaustive GraphQL contracts. Project and review mutations reject forged roots. 
 passes all 234 checks after installing the existing test bundle, including native home/org
 lists and GraphQL org discovery. Both cells start and complete signup/key setup; the
 client round now reaches real gh login and fails its GraphQL current-user call. Dispatch's
-backend JSON compression fix and native gzip regression are written but unchecked.
+backend JSON compression fix and native gzip regression pass workspace, Clippy and WASM;
+runtime is next.
 Public two-cell gh/Git acceptance remains open. Stages 3 to 6 are not built; range renewal
 is a deferred owner follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and
 runtime gaps. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
