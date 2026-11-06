@@ -721,8 +721,12 @@ transaction. Native signup/key publication and remote membership pointers pass s
 two-cell deployment acceptance remains unfinished.
 
 Directory-enrolled cells use PostgreSQL; copy standalone SQLite with `codeyard db copy`
-before enrollment. Nonzero cells require the directory and authorization RPC settings.
-For an existing stopped cell, publish each bounded page with `codeyard cell publish
+before enrollment. A standalone installation needs no router or directory. To enroll an
+existing PostgreSQL installation as cell zero, stop its serving process, run `codeyard cell
+initialize --prefix 0` with its normal database and state directory, then register cell zero
+in the directory. This retains account/repository IDs, sessions and Git data. Nonzero cells
+require the directory and authorization RPC settings.
+Before restarting the enrolled cell and public router, publish each bounded page with `codeyard cell publish
 --directory-address <address> --directory-key <public key> --kind <user|organization|repository>
 --after <id> --limit 250`. Repeat with the returned `after` until `count` is zero, for each
 kind. It publishes native names, primary/secondary emails, personal/deploy fingerprints and
