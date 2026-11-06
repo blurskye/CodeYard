@@ -159,15 +159,8 @@ async fn forks_of_a_private_repository_keep_whole_copies() {
     .unwrap();
     let router = f.router(root.path()).await;
     let alice = Client::login(&router, f.pool(), alice_id).await;
+    // Forking is allowed by default.
     alice.save("main", "README.md", "unborn").await;
-    alice
-        .expect(
-            "PATCH",
-            "/api/v3/repos/alice/proj",
-            json!({"allow_forking":true}),
-            StatusCode::OK,
-        )
-        .await;
     codeyard_db_repos::repositories::access::grant_repo_access(
         f.pool(),
         bob_id,

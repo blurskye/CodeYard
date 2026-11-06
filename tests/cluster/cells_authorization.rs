@@ -74,6 +74,8 @@ fn cell(prefix: Prefix, key: &NodeKey, rpc: Vec<String>) -> Cell {
 #[tokio::test]
 async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_answers() {
     crate::support::fake_webui_bundle::install();
+    let log = crate::support::logs::Log::capture();
+    let _logging = tracing::dispatcher::set_default(&log.dispatch);
     let mut registry = PostgresDatabase::unmigrated().await;
     let directory = Directory::connect(&registry.connection_url(), Default::default())
         .await
@@ -965,7 +967,16 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .unwrap();
     let status = created.status();
     let created: serde_json::Value = created.json().await.unwrap();
-    assert_eq!(status, 202, "{created}");
+    assert_eq!(
+        status,
+        202,
+        "{created}\n{}",
+        log.text()
+            .lines()
+            .filter(|line| line.contains("WARN") || line.contains("ERROR"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
     assert_eq!(created["full_name"], "bob/http-fork");
     assert_eq!(created["parent"]["id"], repository.id);
     assert_eq!(created["source"]["full_name"], "alice/private");

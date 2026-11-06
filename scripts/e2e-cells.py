@@ -381,8 +381,9 @@ def cross_cell_fork(deployment, client, directory):
 
     def checkout(number, name):
         checked = directory / name
-        client.execute(["git", "clone", deployment.base + "/alice/shared.git", str(checked)], git_auth=True)
-        client.gh("pr", "checkout", number, "-R", "alice/shared", "--branch", name, cwd=checked)
+        # gh pr checkout needs an origin on its own host.
+        client.execute(["git", "clone", f"https://{client.env['GH_HOST']}/alice/shared.git", str(checked)], git_auth=True)
+        client.gh("pr", "checkout", number, "-R", "alice/shared", "--branch", name, cwd=checked, git_auth=True)
         return checked
 
     def merged(number, name, text):
