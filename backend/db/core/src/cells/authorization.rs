@@ -293,6 +293,14 @@ pub fn validate_public_user(user: &User) -> Result<()> {
 /// The provider authenticates the answering node and verifies its directory ownership.
 /// It never grants resource membership or repository authority.
 pub trait Home: Send + Sync {
+    fn repository_source<'a>(
+        &'a self,
+        _owner: &'a str,
+        _name: &'a str,
+        _proof: &'a Proof,
+    ) -> BoxFuture<'a, Result<Option<super::repositories::Source>>> {
+        Box::pin(async { anyhow::bail!("Remote fork sources are unavailable") })
+    }
     fn cell(&self) -> Option<Prefix> {
         None
     }

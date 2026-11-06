@@ -8,6 +8,7 @@ pub mod capacity;
 pub mod directory;
 pub mod outbox;
 pub mod pointers;
+pub mod repositories;
 pub mod stubs;
 
 /// Used by every native account/repository INSERT, including a cell with a later issuer range.

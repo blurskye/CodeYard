@@ -333,6 +333,76 @@ class Deployment:
             raise AssertionError(str(error)) from error
 
 
+def cross_cell_fork(deployment, client, directory):
+    """The fork belongs to Bob's cell; the pull and its checked-out head belong to Alice's."""
+    client.api("repos/alice/shared", "--method", "PATCH", "-F", "allow_forking=true")
+    client.gh("repo", "fork", "alice/shared", "--fork-name", "forked",
+              "--clone=false", "--remote=false", who="bob")
+    fork = client.api("repos/bob/forked", who="bob")
+    assert 2**37 <= fork["id"] < 2**53 and fork["fork"], fork
+    assert fork["parent"]["full_name"] == "alice/shared", fork
+    path = directory / "cross-cell-fork"
+    client.execute(["git", "clone", deployment.base + "/bob/forked.git", str(path)],
+                   who="bob", git_auth=True)
+
+    def git(*args, who="bob", ssh=False):
+        return client.execute(["git", "-C", str(path), *args], who=who,
+                              git_auth=not ssh,
+                              env=deployment.ssh_environment(who) if ssh else None).stdout.strip()
+
+    git("config", "user.name", "Cell fork acceptance")
+    git("config", "user.email", "fork@example.test")
+    git("checkout", "-b", "cross-cell-head")
+    (path / "fork.txt").write_text("first foreign fork push\n")
+    git("add", "fork.txt")
+    git("commit", "-m", "Create a cross-cell fork head")
+    git("push", "origin", "cross-cell-head")
+    created = client.gh("pr", "create", "-R", "alice/shared", "--base", "main",
+                        "--head", "bob:cross-cell-head", "--title", "From a fork in cell one",
+                        "--body", "The base must follow each head-cell push", who="bob", cwd=path)
+    number = created.stdout.strip().rstrip("/").rsplit("/", 1)[1]
+    assert number.isdecimal(), created.stdout
+
+    def follows(tip):
+        deadline = time.monotonic() + 60
+        while True:
+            pull = client.api(f"repos/alice/shared/pulls/{number}")
+            assert pull["head"]["repo"]["id"] == fork["id"], pull
+            if pull["head"]["sha"] == tip:
+                break
+            assert time.monotonic() < deadline, "the base cell did not receive its fork head push"
+            threading.Event().wait(0.1)
+        advertised = client.execute(["git", "ls-remote", deployment.base + "/alice/shared.git",
+                                      f"refs/pull/{number}/head"], git_auth=True).stdout.split()
+        assert advertised and advertised[0] == tip, advertised
+
+    follows(git("rev-parse", "HEAD"))
+    (path / "fork.txt").write_text("second foreign fork push\n")
+    git("add", "fork.txt")
+    git("commit", "-m", "Advance the cross-cell fork head")
+    git("push", "origin", "cross-cell-head")
+    follows(git("rev-parse", "HEAD"))
+    checkout = directory / "cross-cell-pull-checkout"
+    client.execute(["git", "clone", deployment.base + "/alice/shared.git", str(checkout)], git_auth=True)
+    client.gh("pr", "checkout", number, "-R", "alice/shared", "--branch", "maintainer-head", cwd=checkout)
+    assert (checkout / "fork.txt").read_text() == "second foreign fork push\n"
+    for key, value in (("user.name", "Upstream maintainer"), ("user.email", "maintainer@example.test")):
+        client.execute(["git", "-C", str(checkout), "config", key, value])
+    (checkout / "maintainer.txt").write_text("upstream maintainer writes the remote fork\n")
+    client.execute(["git", "-C", str(checkout), "add", "maintainer.txt"])
+    client.execute(["git", "-C", str(checkout), "commit", "-m", "Adjust the remote fork as its upstream maintainer"])
+    client.execute(["git", "-C", str(checkout), "push",
+                    f"ssh://git@127.0.0.1:{deployment.ssh}/bob/forked.git", "HEAD:cross-cell-head"],
+                   env=deployment.ssh_environment("alice"))
+    tip = client.execute(["git", "-C", str(checkout), "rev-parse", "HEAD"]).stdout.strip()
+    follows(tip)
+    client.gh("pr", "merge", number, "-R", "alice/shared", "--merge")
+    assert client.data("pr", "view", number, "-R", "alice/shared", "--json", "state")["state"] == "MERGED"
+    git("fetch", deployment.base + "/alice/shared.git", "main", who="alice")
+    assert git("show", "FETCH_HEAD:fork.txt") == "second foreign fork push"
+    assert git("show", "FETCH_HEAD:maintainer.txt") == "upstream maintainer writes the remote fork"
+
+
 def acceptance(deployment):
     github = load("codeyard_cells_github", ROOT / "scripts/e2e-github.py")
     assert json.loads((deployment.root / "alice.json").read_text())["session_id"] == deployment.existing_session
@@ -513,6 +583,8 @@ def acceptance(deployment):
                        who="bob", env=deployment.ssh_environment("bob"))
         assert "foreign SSH push" in (clone / "README.md").read_text()
         client.checked("foreign HTTP and SSH pushes, gh pr create and gh pr merge use live resource grants")
+        with client.check("cross-cell forks follow pushes, allow upstream maintainer pushes, checkout and merge"):
+            cross_cell_fork(deployment, client, directory)
         client.gh("issue", "create", "-R", "alice/shared", "--title", "Router issue", "--body", "cross cell", who="bob")
         assert any(issue["title"] == "Router issue" for issue in client.data("issue", "list", "-R", "alice/shared", "--json", "title"))
         query = '{ zero:repository(owner:"alice",name:"shared"){ id name } one:repository(owner:"bob",name:"other"){ id name } }'

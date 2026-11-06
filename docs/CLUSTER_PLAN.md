@@ -180,7 +180,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     and WASM c6a1a0038b3147bb82688256662a5028. Runtime has not covered the third-page/invalid-owner follow-up yet.
     The next source fixture drives gh repo fork, two head pushes, gh pr checkout,
     an upstream maintainer SSH push and gh pr merge across cells; implementation
-    and runtime are pending.
+    and runtime are pending. Bounded fork-source RPC now verifies the original
+    account proof and resource access, redacts local storage/private owner fields,
+    checks directory homes and retains metadata stubs; real TLS hostile/revocation
+    assertions are written. This source is unchecked; fork publication is not wired.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
     object pools, mentions/home inbox/email, and repository transfers/redirects.
     Stages 4 to 6 remain unwritten; automatic user moves and org regional presence

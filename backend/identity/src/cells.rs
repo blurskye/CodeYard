@@ -10,6 +10,20 @@ pub struct Local {
     pub pool: DbPool,
 }
 impl Home for Local {
+    fn repository_source<'a>(
+        &'a self,
+        owner: &'a str,
+        name: &'a str,
+        proof: &'a Proof,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Option<codeyard_db_core::cells::repositories::Source>>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move { self.source(owner, name, proof).await })
+    }
     fn cell(&self) -> Option<codeyard_support::cells::Prefix> {
         Some(self.pool.cell_id())
     }
@@ -54,6 +68,132 @@ impl Home for Local {
     }
 }
 impl Local {
+    async fn source(
+        &self,
+        owner: &str,
+        name: &str,
+        proof: &Proof,
+    ) -> Result<Option<codeyard_db_core::cells::repositories::Source>> {
+        use codeyard_db_core::cells::repositories::{Owner, Source};
+        use codeyard_db_core::queries::users::accounts::AccountCredential;
+        codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)?;
+        anyhow::ensure!(
+            codeyard_support::repository_names::valid(name),
+            "Invalid fork source name"
+        );
+        proof.validate()?;
+        let local = match proof {
+            Proof::Token { home, .. } | Proof::Session { home, .. } => self.pool.owns_prefix(*home),
+            Proof::Ssh { .. } => anyhow::bail!("Fork metadata requires an account credential"),
+        };
+        let answer = if local {
+            self.answer(proof).await?
+        } else {
+            codeyard_db_core::cells::authorization::authorize(&self.pool, proof).await?
+        };
+        let Some(answer) = answer else {
+            return Ok(None);
+        };
+        let Some(user) =
+            codeyard_db_identity::users::accounts::get_user_by_id(&self.pool, answer.user.id)
+                .await?
+        else {
+            return Ok(None);
+        };
+        let credential = match proof {
+            Proof::Token { hash, .. } => {
+                let Some(id) = answer.credential_id else {
+                    return Ok(None);
+                };
+                if user.is_stub {
+                    AccountCredential::ForeignToken(id, hash)
+                } else {
+                    AccountCredential::Token(id, hash)
+                }
+            }
+            Proof::Session { value, .. } => AccountCredential::Session(value),
+            Proof::Ssh { .. } => unreachable!(),
+        };
+        let actor = codeyard_db_core::queries::credentials::Actor::from((user.id, &credential));
+        let Some(mut repository) =
+            codeyard_db_repos::repositories::records::get_repository(&self.pool, owner, name)
+                .await?
+                .filter(|repo| {
+                    !repo.is_stub
+                        && !repo.is_gist
+                        && repo.home_cell == i32::from(self.pool.cell_id().get())
+                })
+        else {
+            return Ok(None);
+        };
+        if !answer
+            .authority
+            .repository(user.id, &repository, "contents", false)?
+            || !crate::repository_access::can_read(&self.pool, Some(&user), &repository).await?
+        {
+            return Ok(None);
+        }
+        // Classic-token policy is owned by the resource organization, including foreign tokens.
+        if matches!(answer.authority, Authority::Classic) {
+            if let Some(org) = repository.owner_org_id {
+                if !codeyard_db_identity::fine_grained_tokens::policy(&self.pool, org)
+                    .await?
+                    .classic_allowed
+                {
+                    return Ok(None);
+                }
+            }
+        }
+        let allow_forking = codeyard_db_repos::repositories::records::repository_features(
+            &self.pool,
+            repository.id,
+        )
+        .await?
+        .allow_forking;
+        let owner = match repository.owner_kind.as_str() {
+            "user" => {
+                let Some(mut owner) = codeyard_db_identity::users::accounts::get_user_by_id(
+                    &self.pool,
+                    repository.owner_id(),
+                )
+                .await?
+                else {
+                    return Ok(None);
+                };
+                codeyard_db_core::cells::authorization::redact_user(&mut owner);
+                Owner::User(Box::new(owner))
+            }
+            "org" => {
+                let Some(mut owner) =
+                    codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+                        &self.pool,
+                        repository.owner_id(),
+                    )
+                    .await?
+                else {
+                    return Ok(None);
+                };
+                owner.billing_email = None;
+                owner.avatar_file_id = None;
+                Owner::Organization(Box::new(owner))
+            }
+            _ => return Ok(None),
+        };
+        let reader = crate::repository_access::credential_user(&self.pool, &actor, false).await?;
+        if !crate::repository_access::can_read(&self.pool, Some(&reader), &repository).await? {
+            return Ok(None);
+        }
+        repository.disk_path.clear();
+        repository.storage_node_id = None;
+        let source = Source {
+            repository,
+            owner,
+            allow_forking,
+            git_url: None,
+        };
+        source.validate(self.pool.cell_id())?;
+        Ok(Some(source))
+    }
     fn public_user(
         &self,
         user: Option<codeyard_db_core::models::User>,

@@ -274,7 +274,30 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         crate::support::database::router(&one.pool, bob_root.path()).await,
     )
     .await;
-    let mut zero_record = cell(Prefix::ZERO, &zero_key, vec![]);
+    let zero_home = accounts::listen(
+        directory_client(zero_key.clone()),
+        Arc::new(codeyard_identity::cells::Local {
+            pool: zero.pool.clone(),
+        }),
+        &zero_key,
+        "127.0.0.1:0".parse().unwrap(),
+    )
+    .await
+    .unwrap();
+    let alice_object = Object {
+        kind: ObjectKind::User,
+        id: alice.id,
+    };
+    let alice_keys = [Key::new(KeyKind::Name, "alice").unwrap()];
+    directory
+        .reserve(&zero_key.public_hex(), alice_object, &alice_keys, &nonce)
+        .await
+        .unwrap();
+    directory
+        .confirm(&zero_key.public_hex(), alice_object, &alice_keys, &nonce)
+        .await
+        .unwrap();
+    let mut zero_record = cell(Prefix::ZERO, &zero_key, vec![zero_home.address.to_string()]);
     zero_record.web_urls = vec![http.url()];
     directory.register_cell(zero_record).await.unwrap();
     let native_repository = codeyard_repos_core::repositories::lifecycle::provision(
@@ -607,6 +630,58 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
         assert_eq!(rows[0]["id"], expected, "{rows}");
     }
+    let fork_proof = Proof::Token {
+        home: Prefix::new(1),
+        hash: token_hash(&value),
+    };
+    let remote_source = one.pool.foreign_authorization().unwrap();
+    let source = remote_source
+        .repository_source("alice", "private", &fork_proof)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(source.repository.id, repository.id);
+    assert!(source.repository.disk_path.is_empty());
+    assert_eq!(source.repository.storage_node_id, None);
+    assert_eq!(
+        source.git_url.as_deref(),
+        Some(format!("{}/alice/private.git", http.url()).as_str())
+    );
+    let serialized = serde_json::to_value(&source).unwrap();
+    assert!(serialized.get("git_url").is_none());
+    let mut forged_source = source.clone();
+    forged_source.repository.disk_path = "/private/native/storage".into();
+    assert!(forged_source.validate(Prefix::ZERO).is_err());
+    forged_source = source.clone();
+    forged_source.repository.owner_user_id = Some(user.id);
+    assert!(forged_source.validate(Prefix::ZERO).is_err());
+    source.retain(&one.pool).await.unwrap();
+    assert!(
+        codeyard_db_repos::repositories::records::get_repository_by_id(&one.pool, repository.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_stub
+    );
+    assert!(remote_source
+        .repository_source(
+            "alice",
+            "private",
+            &Proof::Token {
+                home: Prefix::new(1),
+                hash: token_hash("revoked-or-forged"),
+            }
+        )
+        .await
+        .unwrap()
+        .is_none());
+    assert!(
+        accounts::Remote::new(router_key.clone(), directory_client(router_key.clone()))
+            .unwrap()
+            .repository_source("alice", "private", &fork_proof)
+            .await
+            .is_err()
+    );
     // Stars commit in the resource cell and discover that cell through a distinct home pointer.
     let response = client
         .put(format!("{}/api/v3/user/starred/alice/private", http.url()))
@@ -950,6 +1025,11 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap();
     assert_eq!(response.status(), 404);
+    assert!(remote_source
+        .repository_source("alice", "private", &fork_proof)
+        .await
+        .unwrap()
+        .is_none());
     // A stale home pointer cannot disclose the revoked resource while cleanup waits.
     let listed: serde_json::Value = client
         .get(format!("{}/api/v3/user/repos", bob_http.url()))
@@ -1074,6 +1154,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .is_err());
     bob_http.stop().await;
+    zero_home.stop().await;
     home.stop().await;
     directory_listener.stop().await;
     directory.close().await;

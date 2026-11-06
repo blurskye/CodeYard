@@ -29,6 +29,11 @@ enum Request {
     Authorize(Proof),
     User(String),
     UserId(i64),
+    RepositorySource {
+        owner: String,
+        name: String,
+        proof: Proof,
+    },
     Pointer(codeyard_db_core::cells::pointers::Event),
 }
 #[derive(Serialize, Deserialize)]
@@ -41,6 +46,7 @@ enum Request {
 enum Reply {
     Account(Option<Box<Answer>>),
     User(Option<Box<User>>),
+    RepositorySource(Option<Box<codeyard_db_core::cells::repositories::Source>>),
     Done,
     Unavailable,
 }
@@ -123,6 +129,77 @@ impl Remote {
     }
 }
 impl Home for Remote {
+    fn repository_source<'a>(
+        &'a self,
+        owner: &'a str,
+        name: &'a str,
+        proof: &'a Proof,
+    ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Source>>> {
+        Box::pin(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(rpc::Config::default().exchange_seconds),
+                async move {
+                    Key::new(KeyKind::Name, owner)?;
+                    ensure!(
+                        codeyard_support::repository_names::valid(name),
+                        "Invalid fork source name"
+                    );
+                    proof.validate()?;
+                    let _slot = self.slots.clone().try_acquire_owned()?;
+                    let Some(cell) = self.routes.by_name(owner).await? else {
+                        return Ok(None);
+                    };
+                    let request = Request::RepositorySource {
+                        owner: owner.to_owned(),
+                        name: name.to_owned(),
+                        proof: proof.clone(),
+                    };
+                    let Reply::RepositorySource(source) = self.exchange(&cell, &request).await?
+                    else {
+                        anyhow::bail!("Invalid fork source answer");
+                    };
+                    let Some(source) = source else {
+                        return Ok(None);
+                    };
+                    let mut source = *source;
+                    source.validate(cell.id)?;
+                    ensure!(
+                        source.owner.name() == owner
+                            && source.repository.name.eq_ignore_ascii_case(name),
+                        "Fork source coordinates changed"
+                    );
+                    for object in [
+                        source.owner.object(),
+                        Object {
+                            kind: ObjectKind::Repository,
+                            id: source.repository.id,
+                        },
+                    ] {
+                        ensure!(
+                            self.routes
+                                .by_object(object)
+                                .await?
+                                .is_some_and(|home| home.id == cell.id),
+                            "Fork source has another home"
+                        );
+                    }
+                    let mut url = url::Url::parse(crate::routes::web_node(&cell, &proof.hash())?)?;
+                    {
+                        let mut segments = url
+                            .path_segments_mut()
+                            .map_err(|_| anyhow::anyhow!("Invalid source address"))?;
+                        segments
+                            .pop_if_empty()
+                            .push(source.owner.name())
+                            .push(&format!("{}.git", source.repository.name));
+                    }
+                    source.git_url = Some(url.into());
+                    Ok(Some(source))
+                },
+            )
+            .await?
+        })
+    }
     fn user_id<'a>(&'a self, id: i64) -> BoxFuture<'a, Result<Option<User>>> {
         Box::pin(async move {
             codeyard_support::cells::Prefix::for_id(id)?;
@@ -498,6 +575,12 @@ impl rpc::Service for Accounts {
             self.admitted(peer).await?;
             let request: Request = serde_json::from_slice(bytes)?;
             let reply = match request {
+                Request::RepositorySource { owner, name, proof } => {
+                    match self.home.repository_source(&owner, &name, &proof).await {
+                        Ok(source) => Reply::RepositorySource(source.map(Box::new)),
+                        Err(_) => Reply::Unavailable,
+                    }
+                }
                 Request::Pointer(event) => {
                     let admission = PointerAdmission {
                         directory: self.directory.clone(),
