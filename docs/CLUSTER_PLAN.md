@@ -178,6 +178,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     discovery and native-only member lists/counts and search. Revocation must return 401
     within a strict 60-second deadline; rate limits and outages cannot satisfy it. Fixture
     runtime remains pending; retry only the failed targets after the current job finishes.
+    Cell-zero preservation now also reuses a pre-enrollment PAT and SSH key through gh
+    login, HTTP push and SSH clone. This fixture extension is syntax-checked; source
+    checks are next.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:

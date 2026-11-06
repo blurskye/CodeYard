@@ -223,7 +223,6 @@ class Deployment:
             self.start("zero", "serve")
             self.wait("zero", web)
             self.account("alice", setup=True, base=web)
-            self.existing_session = json.loads((self.root / "alice.json").read_text())["session_id"]
             self.existing = json.loads(self.web("alice", "req", "POST", "/api/repos", "--accept", "json",
                 "--status", "201", "--json", json.dumps({"name": "existing", "description": "Before cell enrollment"}),
                 "--print", "body", base=web))
@@ -231,6 +230,9 @@ class Deployment:
                 "--accept", "json", "--status", "201", "--json", json.dumps({
                     "content": base64.b64encode(b"Before cell enrollment\n").decode(), "message": "Before cell enrollment",
                     "branch": "main", "expected_revision": "unborn"}), "--print", "json:sha", base=web)
+            self.existing_token = self.token("alice", base=web)
+            self.ssh_key("alice", base=web)
+            self.existing_session = json.loads((self.root / "alice.json").read_text())["session_id"]
         finally:
             try:
                 if "zero" in self.processes:
@@ -238,12 +240,25 @@ class Deployment:
             finally:
                 self.settings["zero"] = original
 
-    def token(self, who):
+    def token(self, who, base=None):
         value = self.web(who, "form", "/settings?tab=tokens", "--action", "/settings/tokens", "--has", "name",
                          "--set", "name=cells acceptance", "--set", "scope=write", "--set", "expiry=never", "--status", "200",
-                         "--print", r"re:(?s)Copy this token now.*?(cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64})")
+                         "--print", r"re:(?s)Copy this token now.*?(cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64})", base=base)
         assert re.fullmatch(r"cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64}", value)
         return value
+
+    def ssh_key(self, who, base=None):
+        key = self.root / (who + "-key")
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)],
+                       check=True, capture_output=True, timeout=20)
+        self.web(who, "form", "/settings?tab=keys", "--action", "/settings/keys", "--has", "public_key",
+                 "--set", "name=cells SSH", "--set", "public_key=" + key.with_suffix(".pub").read_text().strip(),
+                 "--status", "303", base=base)
+
+    def ssh_environment(self, who):
+        return {"GIT_SSH_COMMAND": shlex.join(["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
+            "-o", "IdentityAgent=none", "-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "UserKnownHostsFile=" + str(self.root / "known_hosts"), "-i", str(self.root / (who + "-key"))])}
 
     def browser_navigation(self, who, user_id, repository_id):
         try:
@@ -331,18 +346,13 @@ def acceptance(deployment):
                    "--set", "password=cell-acceptance-password", "--set", "confirm_password=cell-acceptance-password", "--status", "409")
     print("PASS real-client native setup, cell one signup and cross-cell duplicate name refusal", flush=True)
     deployment.register(0)
-    tokens = {who: deployment.token(who) for who in ("alice", "bob")}
+    tokens = {"alice": deployment.existing_token, "bob": deployment.token("bob")}
     assert tokens["bob"].startswith("cy_pat_1_")
     state = deployment.root / "state-files"
     state.mkdir(mode=0o700)
     (state / "write_token").write_text(tokens["alice"])
     (state / "gh_bob_token").write_text(tokens["bob"])
-    for who in ("alice", "bob"):
-        key = deployment.root / (who + "-key")
-        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(key)],
-                       check=True, capture_output=True, timeout=20)
-        deployment.web(who, "form", "/settings?tab=keys", "--action", "/settings/keys", "--has", "public_key",
-                       "--set", "name=cells SSH", "--set", "public_key=" + key.with_suffix(".pub").read_text().strip(), "--status", "303")
+    deployment.ssh_key("bob")
 
     directory = deployment.root / "real-clients"
     directory.mkdir(mode=0o700)
@@ -367,7 +377,11 @@ def acceptance(deployment):
         original_clone = directory / "existing-cell-zero"
         client.execute(["git", "clone", deployment.base + "/alice/existing.git", str(original_clone)])
         assert (original_clone / "README.md").read_text() == "Before cell enrollment\n"
-        client.checked("existing standalone IDs, session and Git data survive cell zero enrollment through gh and clone")
+        original_ssh_clone = directory / "existing-cell-zero-ssh"
+        client.execute(["git", "clone", f"ssh://git@127.0.0.1:{deployment.ssh}/alice/existing.git", str(original_ssh_clone)],
+                       env=deployment.ssh_environment("alice"))
+        assert (original_ssh_clone / "README.md").read_text() == "Before cell enrollment\n"
+        client.checked("existing standalone IDs, session, token, SSH key and Git data survive cell zero enrollment")
         client.gh("repo", "create", "alice/shared", "--private")
         client.gh("repo", "create", "bob/other", "--public", who="bob")
         other = client.api("repos/bob/other", who="bob")
@@ -423,18 +437,14 @@ def acceptance(deployment):
         with client.check("foreign private repository navigation works without JavaScript and through hydrated page models"):
             deployment.browser_navigation("bob", bob["id"], other["id"])
 
-        def ssh_environment(who):
-            return {"GIT_SSH_COMMAND": shlex.join(["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
-                "-o", "IdentityAgent=none", "-o", "ConnectTimeout=15", "-o", "StrictHostKeyChecking=accept-new",
-                "-o", "UserKnownHostsFile=" + str(deployment.root / "known_hosts"), "-i", str(deployment.root / (who + "-key"))])}
         client.git("push", deployment.base + "/bob/other.git", "main", who="bob", git_auth=True)
         client.git("push", f"ssh://git@127.0.0.1:{deployment.ssh}/bob/other.git", "main:ssh-proof",
-                   who="bob", env=ssh_environment("bob"))
+                   who="bob", env=deployment.ssh_environment("bob"))
         for protocol, url in (("http", deployment.base + "/bob/other.git"),
                               ("ssh", f"ssh://git@127.0.0.1:{deployment.ssh}/bob/other.git")):
             own_clone = directory / ("cell-one-" + protocol)
             client.execute(["git", "clone", url, str(own_clone)], who="bob",
-                           git_auth=protocol == "http", env=ssh_environment("bob") if protocol == "ssh" else None)
+                           git_auth=protocol == "http", env=deployment.ssh_environment("bob") if protocol == "ssh" else None)
             assert (own_clone / "README.md").read_text() == "two cells\n"
             assert client.execute(["git", "-C", str(own_clone), "rev-parse", "HEAD"]).stdout.strip() == client.git("rev-parse", "main")
         client.checked("cell one scoped IDs survive gh and native repository pushes and clones over HTTP and SSH")
@@ -442,7 +452,7 @@ def acceptance(deployment):
         (client.clone / "README.md").write_text("two cells\nforeign SSH push\n")
         client.git("add", "README.md")
         client.git("commit", "-m", "Push from the other cell")
-        client.git("push", f"ssh://git@127.0.0.1:{deployment.ssh}/alice/shared.git", "proposed", who="bob", env=ssh_environment("bob"))
+        client.git("push", f"ssh://git@127.0.0.1:{deployment.ssh}/alice/shared.git", "proposed", who="bob", env=deployment.ssh_environment("bob"))
         client.git("push", "origin", "proposed:http-proof", who="bob", git_auth=True)
         pull = client.gh("pr", "create", "-R", "alice/shared", "--base", "main", "--head", "proposed",
                          "--title", "Across cells", "--body", "Created by the collaborator in cell one", who="bob", cwd=client.clone)
@@ -452,7 +462,7 @@ def acceptance(deployment):
         assert client.data("pr", "view", number, "-R", "alice/shared", "--json", "state", who="bob")["state"] == "MERGED"
         clone = directory / "ssh-clone"
         client.execute(["git", "clone", f"ssh://git@127.0.0.1:{deployment.ssh}/alice/shared.git", str(clone)],
-                       who="bob", env=ssh_environment("bob"))
+                       who="bob", env=deployment.ssh_environment("bob"))
         assert "foreign SSH push" in (clone / "README.md").read_text()
         client.checked("foreign HTTP and SSH pushes, gh pr create and gh pr merge use live resource grants")
         client.gh("issue", "create", "-R", "alice/shared", "--title", "Router issue", "--body", "cross cell", who="bob")
