@@ -205,7 +205,7 @@ class Deployment:
         assert re.fullmatch(r"cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64}", value)
         return value
 
-    def browser_navigation(self, who):
+    def browser_navigation(self, who, user_id, repository_id):
         try:
             from playwright.sync_api import Error as BrowserError, expect, sync_playwright
         except ImportError as error:
@@ -240,6 +240,20 @@ class Deployment:
                                 if javascript:
                                     page.locator('[data-hydrated="true"]').wait_for(state="attached", timeout=60000)
 
+                            response = page.goto(self.base + f"/{who}/other")
+                            assert response.status == 200
+                            if javascript:
+                                page.locator('[data-hydrated="true"]').wait_for(state="attached", timeout=60000)
+                                exact = page.locator("#codeyard-bootstrap").evaluate("""script => {
+                                    const initial = JSON.parse(script.textContent).initial;
+                                    if (initial.page.lane !== "Repositories") return false;
+                                    const repo = initial.page.model.Tree.repo;
+                                    return [repo.viewer_id, repo.id].map(id => ({
+                                        safe: Number.isSafeInteger(id), text: String(id)
+                                    }));
+                                }""")
+                                assert exact == [{"safe": True, "text": str(user_id)},
+                                                 {"safe": True, "text": str(repository_id)}], exact
                             response = page.goto(self.base + "/")
                             assert response.status == 200
                             if javascript:
@@ -302,7 +316,8 @@ def acceptance(deployment):
         assert 2**37 <= bob["id"] < 2**53, bob["id"]
         client.gh("repo", "create", "alice/shared", "--private")
         client.gh("repo", "create", "bob/other", "--public", who="bob")
-        assert 2**37 <= client.api("repos/bob/other", who="bob")["id"] < 2**53
+        other = client.api("repos/bob/other", who="bob")
+        assert 2**37 <= other["id"] < 2**53
         client.clone.mkdir()
         client.git("init", "--initial-branch=main")
         client.git("config", "user.name", "Cell acceptance")
@@ -329,7 +344,7 @@ def acceptance(deployment):
         assert dashboard["shared"][0]["repository"]["name"] == "shared", dashboard
         client.checked("the home dashboard shows the foreign private repository in raw HTML and hydration data")
         with client.check("foreign private repository navigation works without JavaScript and through hydrated page models"):
-            deployment.browser_navigation("bob")
+            deployment.browser_navigation("bob", bob["id"], other["id"])
 
         def ssh_environment(who):
             return {"GIT_SSH_COMMAND": shlex.join(["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",

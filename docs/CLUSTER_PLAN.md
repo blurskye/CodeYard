@@ -160,44 +160,23 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Workspace bad033568e234119ad4595d644d37994, Clippy 359ef851d1604bf2b876936c851278c7
     and WASM a2af9c6ef72249e0ba936570573c2cde pass. Generated GraphQL is unchanged.
     New output assertions use rooted IDs; former input IDs remain accepted as required.
-    Earlier runtime eb1c71056db64586b3b41c713e7bf631 passes 334 selected library, 234 cluster,
-    42 Git and 166 identity tests and both exhaustive GraphQL contracts. Before that, CI
-    passes 220 with 19 existing cgroup-dependent ignores and pull requests pass 324 with
-    two existing cgroup-dependent ignores. All 51 targeted stage 1 e2e checks pass.
-    Runtime 3c645a8bdabd457ba45e70efff05b20b passes 300 selected library tests and both-engine
-    membership, foreign browser, gist, reviewer and selected CI contracts without skips.
-    Cluster passes 233 and fails one GraphQL organization discovery check; project tests
-    pass four and fail two forged-root mutations. Their checked fix moves discovery into
-    its actual list resolver and root preflight before every mutation family, removing
-    the unreachable duplicate. New HTTP checks cover sorted/zero-sized org pages and
-    forged roots in both review-request mutations.
-    Runtime 9a78fe99403a4962b155fdec3a848af1 passes all 114 selected library tests,
-    both-engine membership/stub/reviewer contracts, all six project tests, both organization
-    connection tests and both exhaustive GraphQL contracts without skips. The mutation-root
-    fix is proven by project and review-request HTTP checks on both engines.
-    Cluster passes 233 and fails one new raw-HTML assertion because its test never installed
-    the existing fake browser bundle; that fixture call is added before startup. Its earlier
-    page-model checks pass, while later org discovery still awaits this retry.
-    Both native cells now start and complete signup/key setup. The client fixture then fails
-    because a local HTTP helper shadows the imported module; it is renamed and checked.
-    The next cells round also checks both repository node IDs in one query and real foreign
-    private dashboard navigation with and without hydration. Browser failures remain required
-    and are collected with the independent Git/gh checks. The fixture batch passes the
-    source checks above. Retry c9a5b064d462417d86331bb9592ab72f passes all 234 cluster
-    tests without skips, including native home/org lists and GraphQL org discovery.
-    The cells round reaches real gh login, whose current-user GraphQL query returns 503.
-    Dispatch parses backend JSON but preserves the client's compression preference;
-    the fix requests identity encoding for its generated backend requests and passes
-    the source checks above.
-    A native HTTP regression proves the cell emits gzip, then exercises token-scheme
-    viewer queries in both cells and a compressed-client split query through the router.
-    Retry 72a0f3463856498c89dd47fc7baea36f passes all nine router library tests and
-    all 234 cluster tests without skips. Both real gh logins and repository creations
-    pass; the first HTTP Git push receives 404 because the three Git constructors did
-    not declare catalogue routes. Their shared declarations and an AST-based source
-    guard fix pass workspace e61baa09e6034fafa8a91863eaf3311d, Clippy
-    c27f3283f3184921b50ac3b9e0133afe and WASM 82d549a4627049fa85f94f2e34842033.
-    Native-cell Git advertisement and source-guard tests join the runtime retry.
+    Runtime eb1c71056db64586b3b41c713e7bf631 passes 334 selected library tests,
+    42 Git tests, 166 identity tests and both exhaustive GraphQL contracts. CI passes
+    220 with 19 existing cgroup-dependent ignores; pull requests pass 324 with two.
+    Later targeted retries pass both-engine membership, stub, foreign browser, project,
+    reviewer, organization connection and selected gist/CI contracts without skips.
+    Shared mutation preflight rejects forged project and review-request roots. Native
+    private home/org lists, GraphQL discovery and home revocation checks pass.
+    Runtime 72a0f3463856498c89dd47fc7baea36f passes all nine router library tests and
+    all 234 cluster tests without skips, including negotiated backend compression.
+    Real clients complete setup, cell-1 signup, cross-cell duplicate-name refusal,
+    both gh logins and both repository creations. The first HTTP Git push receives
+    404 because three Git constructors bypass the catalogue. Their shared declarations
+    and an AST-based source guard pass workspace e61baa09e6034fafa8a91863eaf3311d,
+    Clippy c27f3283f3184921b50ac3b9e0133afe and WASM 82d549a4627049fa85f94f2e34842033.
+    Runtime c1b52bba8227426b9bd3d054d5c85bb1 covers REST, the route guard, all cluster
+    tests and the real public cells round. The next snapshot adds actual browser
+    JavaScript precision assertions for cell-1 account and repository IDs.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:
