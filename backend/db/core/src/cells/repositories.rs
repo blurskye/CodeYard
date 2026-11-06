@@ -369,19 +369,26 @@ mod snapshot_tests {
 /// A fork POST keeps its original HTTP authentication and CSRF checks at the destination.
 #[derive(Clone)]
 pub struct ForwardFork {
+    pub target_kind: ObjectKind,
     pub path: String,
     pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
 }
 impl ForwardFork {
     pub fn validate(&self) -> Result<()> {
+        ensure!(
+            matches!(
+                self.target_kind,
+                ObjectKind::User | ObjectKind::Organization
+            ),
+            "Invalid fork destination kind"
+        );
         let parts: Vec<_> = self.path.trim_start_matches('/').split('/').collect();
         let allowed = matches!(
             parts.as_slice(),
             ["api", "v3", "repos", _, _, "forks"]
                 | ["api", "repos", _, _, "forks"]
                 | [_, _, "_forms", "fork"]
-                | ["new"]
         );
         ensure!(
             allowed
@@ -441,6 +448,7 @@ mod forward_tests {
     #[test]
     fn fork_forwarding_bounds_posts_and_preserves_only_request_headers() {
         let mut request = ForwardFork {
+            target_kind: ObjectKind::User,
             path: "/api/v3/repos/alice/source/forks".into(),
             headers: vec![("authorization".into(), "Bearer secret".into())],
             body: b"null".to_vec(),

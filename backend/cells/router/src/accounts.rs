@@ -147,10 +147,18 @@ impl Home for Remote {
     ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::ForwardedFork>>> {
         Box::pin(async move {
             request.validate()?;
-            Key::new(KeyKind::Name, owner)?;
-            let Some(cell) = self.routes.by_name(owner).await? else {
+            let key = Key::new(KeyKind::Name, owner)?;
+            let Some(location) = self.routes.location(&key).await? else {
                 return Ok(None);
             };
+            if location.object.kind != request.target_kind {
+                return Ok(None);
+            }
+            let cell = self
+                .routes
+                .cell(location.cell)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("Fork destination is unavailable"))?;
             let mut http = axum::http::Request::builder()
                 .method("POST")
                 .uri(&request.path);

@@ -940,7 +940,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .is_none()
     );
     let parent = client.post(format!("{}/api/graphql", bob_http.url())).bearer_auth(&value)
-        .json(&serde_json::json!({"query":"{repository(owner:\"bob\",name:\"http-fork\"){parent{id nameWithOwner owner{login} defaultBranchRef{name}}}}"}))
+        .json(&serde_json::json!({"query":r#"{repository(owner:"bob",name:"http-fork"){parent{id nameWithOwner owner{login} defaultBranchRef{name}}}}"#}))
         .send().await.unwrap().json::<serde_json::Value>().await.unwrap();
     assert!(parent.get("errors").is_none(), "{parent}");
     assert_eq!(

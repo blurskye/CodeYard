@@ -168,6 +168,11 @@ pub async fn forward_fork(
         cells::{Key, KeyKind},
         github_error::Error,
     };
+    let target_kind = if target.is_some() {
+        codeyard_model::cells::ObjectKind::Organization
+    } else {
+        codeyard_model::cells::ObjectKind::User
+    };
     let target = target.unwrap_or(&user.username);
     Key::new(KeyKind::Name, target).map_err(|_| Error::invalid("Invalid fork destination"))?;
     let local = if target == user.username {
@@ -200,16 +205,20 @@ pub async fn forward_fork(
     let mut forwarded = Vec::new();
     for (name, value) in headers.iter() {
         if codeyard_db_core::cells::repositories::request_header(name.as_str())
-            && name != header::VIA
+            && name.as_str() != "via"
         {
             forwarded.push((
                 name.as_str().to_owned(),
-                value.to_str().map_err(Error::unavailable)?.to_owned(),
+                value
+                    .to_str()
+                    .map_err(|_| Error::invalid("Invalid fork forwarding headers"))?
+                    .to_owned(),
             ));
         }
     }
     forwarded.push(("via".to_owned(), "1.1 codeyard-fork".to_owned()));
     let request = codeyard_db_core::cells::repositories::ForwardFork {
+        target_kind,
         path: path.to_owned(),
         headers: forwarded,
         body,
