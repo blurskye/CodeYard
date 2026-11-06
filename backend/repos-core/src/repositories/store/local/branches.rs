@@ -328,7 +328,7 @@ impl LocalStore {
             pool,
             repo,
             actor,
-            token,
+            token.map(ReceiveCredential::Token),
             vec![(old.clone(), target.clone())],
             Some(prepared.path().to_owned()),
         )
@@ -370,7 +370,7 @@ impl LocalStore {
                     pool,
                     repo,
                     actor,
-                    token,
+                    token.map(ReceiveCredential::Token),
                     vec![(old.clone(), target.clone())],
                     Some(prepared.path().to_owned()),
                 )

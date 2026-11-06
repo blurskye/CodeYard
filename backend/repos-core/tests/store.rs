@@ -149,6 +149,196 @@ async fn authority(fixture: &Fixture) -> Authority {
     }
 }
 
+struct ForeignPublicationHome {
+    answer: codeyard_db_core::cells::authorization::Answer,
+    enabled: std::sync::atomic::AtomicBool,
+}
+impl codeyard_db_core::cells::authorization::Home for ForeignPublicationHome {
+    fn authorize<'a>(
+        &'a self,
+        proof: &'a codeyard_db_core::cells::authorization::Proof,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        anyhow::Result<Option<codeyard_db_core::cells::authorization::Answer>>,
+    > {
+        Box::pin(async move {
+            Ok((self.enabled.load(std::sync::atomic::Ordering::SeqCst)
+                && matches!(proof, codeyard_db_core::cells::authorization::Proof::Token { home, hash }
+                    if *home == self.answer.home && hash == &"a".repeat(64)))
+                .then(|| self.answer.clone()))
+        })
+    }
+    fn user<'a>(
+        &'a self,
+        _name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::models::User>>>
+    {
+        Box::pin(async { Ok(None) })
+    }
+}
+
+#[tokio::test]
+async fn foreign_publication_keeps_token_proof_live_grants_and_workflow_scope() {
+    use codeyard_db_core::models::AccessLevel;
+    use codeyard_db_core::{
+        cells::authorization, queries::credentials::Actor,
+        queries::users::accounts::OwnedAccountCredential,
+    };
+    use codeyard_support::cells::Prefix;
+    let f = fixture().await;
+    let a = authority(&f).await;
+    let home = Prefix::new(1);
+    let mut user = codeyard_db_identity::users::accounts::get_user_by_id(&a.pool, a.actor)
+        .await
+        .unwrap()
+        .unwrap();
+    user.id = *home.ids().start() + 1;
+    user.username = "foreign-writer".into();
+    user.home_cell = 1;
+    let credential_id = *home.ids().start() + 9;
+    let provider = std::sync::Arc::new(ForeignPublicationHome {
+        answer: authorization::Answer {
+            home,
+            user: user.clone(),
+            credential_id: Some(credential_id),
+            write: true,
+            expires_at: None,
+            authority: authorization::Authority::OAuth {
+                client_id: "foreign-client".into(),
+                scopes: "repo".into(),
+            },
+        },
+        enabled: std::sync::atomic::AtomicBool::new(true),
+    });
+    a.pool.set_foreign_authorization(provider.clone()).unwrap();
+    let proof = authorization::Proof::Token {
+        home,
+        hash: "a".repeat(64),
+    };
+    assert!(authorization::authorize(&a.pool, &proof)
+        .await
+        .unwrap()
+        .is_some());
+    let grant = || {
+        codeyard_db_repos::repositories::access::grant_repo_access(
+            &a.pool,
+            user.id,
+            a.repo_id,
+            AccessLevel::Write,
+        )
+    };
+    grant().await.unwrap();
+    let actor = Actor {
+        user_id: user.id,
+        credential: Some(OwnedAccountCredential::ForeignToken(
+            credential_id,
+            "a".repeat(64),
+        )),
+    };
+    let head = commit(
+        &f.repo,
+        "feature",
+        Some(f.second),
+        "foreign.txt",
+        "Foreign merge\n",
+        "Foreign contribution",
+    )
+    .to_string();
+    let base = f.second.to_string();
+    let result = f
+        .store
+        .prepare_merge(&merge_request(
+            &head,
+            &base,
+            "Merge foreign contribution",
+            "Merger",
+            "merger@example.invalid",
+        ))
+        .await
+        .unwrap();
+    let publish = |actor: Actor| {
+        f.store.publish_merge_as(
+            &a.pool,
+            a.repo_id,
+            actor,
+            "feature",
+            "main",
+            &head,
+            &base,
+            &result,
+            MergeMethod::Merge,
+            None,
+        )
+    };
+    let forged = Actor {
+        user_id: user.id,
+        credential: Some(OwnedAccountCredential::ForeignToken(
+            credential_id,
+            "b".repeat(64),
+        )),
+    };
+    assert!(publish(forged).await.is_err());
+    assert_eq!(f.store.refs().await.unwrap()["refs/heads/main"], base);
+    codeyard_db_repos::repositories::access::change_personal_repository_collaborator(
+        &a.pool,
+        a.actor,
+        a.repo_id,
+        &user.username,
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(publish(actor.clone()).await.is_err());
+    assert_eq!(f.store.refs().await.unwrap()["refs/heads/main"], base);
+    grant().await.unwrap();
+    provider
+        .enabled
+        .store(false, std::sync::atomic::Ordering::SeqCst);
+    let codeyard_db_core::DbPool::Sqlite(native) = &a.pool else {
+        unreachable!()
+    };
+    sqlx::query("UPDATE foreign_credentials SET expires_at=validated_at")
+        .execute(native)
+        .await
+        .unwrap();
+    assert!(publish(actor.clone()).await.is_err());
+    assert_eq!(f.store.refs().await.unwrap()["refs/heads/main"], base);
+    provider
+        .enabled
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(authorization::authorize(&a.pool, &proof)
+        .await
+        .unwrap()
+        .is_some());
+    publish(actor.clone()).await.unwrap();
+    assert_eq!(f.store.refs().await.unwrap()["refs/heads/main"], result);
+    let mut prepared = f
+        .store
+        .prepare_file(
+            &FileWrite {
+                branch: "main".into(),
+                path: ".github/workflows/foreign.yml".into(),
+                message: "Must require workflow scope".into(),
+                expected_revision: result.clone(),
+                creating: true,
+                deleting: false,
+            },
+            b"on: push\njobs: {}\n",
+            "Foreign writer",
+            "foreign@example.invalid",
+        )
+        .await
+        .unwrap();
+    prepared.authority = Some(actor);
+    let refused = f
+        .store
+        .publish_file_as(&a.pool, a.repo_id, user.id, &prepared)
+        .await
+        .unwrap_err();
+    assert_eq!(refused.message, codeyard_git::oauth::WORKFLOW_DENIED);
+    assert_eq!(f.store.refs().await.unwrap()["refs/heads/main"], result);
+}
+
 #[tokio::test]
 async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissible() {
     let f = fixture().await;

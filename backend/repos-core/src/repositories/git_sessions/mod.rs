@@ -147,15 +147,38 @@ pub enum CredentialRefusal {
 }
 
 impl ReceiveCredential {
+    fn foreign_token(id: i64, hash: &str) -> Result<Self> {
+        codeyard_support::cells::Prefix::for_id(id)?;
+        anyhow::ensure!(
+            codeyard_support::tokens::is_hex_token(hash, 64),
+            CredentialRefusal::Credential
+        );
+        let hash = hex::decode(hash)?
+            .try_into()
+            .map_err(|_| anyhow::anyhow!(CredentialRefusal::Credential))?;
+        Ok(Self::ForeignToken { id, hash })
+    }
+
+    /// Keep the exact initiating token proof through prepared ref publication.
+    pub fn publication(
+        actor: &codeyard_db_core::queries::credentials::Actor,
+    ) -> Result<Option<Self>> {
+        use codeyard_db_core::queries::users::accounts::OwnedAccountCredential;
+        match &actor.credential {
+            Some(OwnedAccountCredential::Token(id, _)) => Ok(Some(Self::Token(*id))),
+            Some(OwnedAccountCredential::ForeignToken(id, hash)) => {
+                Self::foreign_token(*id, hash).map(Some)
+            }
+            Some(OwnedAccountCredential::Session(_)) | None => Ok(None),
+        }
+    }
+
     pub fn personal(
         token: &codeyard_db_core::models::PersonalAccessToken,
         user: &codeyard_db_core::models::User,
     ) -> Result<Self> {
         if user.is_stub {
-            let hash = hex::decode(&token.token_hash)?
-                .try_into()
-                .map_err(|_| anyhow::anyhow!(CredentialRefusal::Credential))?;
-            Ok(Self::ForeignToken { id: token.id, hash })
+            Self::foreign_token(token.id, &token.token_hash)
         } else {
             Ok(Self::Token(token.id))
         }

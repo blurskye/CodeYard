@@ -179,9 +179,14 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     discovery and native-only member lists/counts and search. Revocation must return 401
     within a strict 60-second deadline; rate limits and outages cannot satisfy it. Fixture
     runtime remains pending; retry only the failed targets after the current job finishes.
-    Cell-zero preservation now also reuses a pre-enrollment PAT and SSH key through gh
-    login, HTTP push and SSH clone. This extension passes the source checks above;
-    runtime is pending.
+    Retry 27755e0a6edc4e3e8a55d5f9b9d5d306 passes standalone account/session/token/SSH-key/
+    repository preservation, home membership discovery, org/team stub lists and counts,
+    raw HTML and hydrated navigation with JavaScript ID precision, and cell-1 HTTP/SSH
+    pushes and clones. Foreign HTTP/SSH pushes and gh pr create pass; gh pr merge fails
+    because publication reduces the retained foreign proof to a native token ID. The
+    unchecked fix reuses typed receive credentials for merge/editor publication and
+    workflow checks. New store tests cover forged proof, revoked grant, expired home
+    answer, a valid foreign merge and workflow-scope denial with unchanged refs.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:

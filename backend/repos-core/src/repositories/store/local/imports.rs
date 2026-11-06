@@ -197,7 +197,14 @@ impl LocalStore {
                 .collect();
             // The imported objects are only in the staging repository until publication.
             staged
-                .check_publication_grant(pool, repo_id, actor, Some(*token), updates, None)
+                .check_publication_grant(
+                    pool,
+                    repo_id,
+                    actor,
+                    Some(ReceiveCredential::Token(*token)),
+                    updates,
+                    None,
+                )
                 .await?;
         }
         let mut refs = self.mirror_refs().await?;
@@ -294,7 +301,7 @@ impl LocalStore {
                             pool,
                             repo_id,
                             actor,
-                            Some(*token),
+                            Some(ReceiveCredential::Token(*token)),
                             import
                                 .refs
                                 .values()

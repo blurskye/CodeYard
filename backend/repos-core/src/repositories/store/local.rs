@@ -1,6 +1,7 @@
 //! The local store: the bare repository is a directory on this machine. Each
 //! method runs the matching Git code, moving blocking libgit2 work off the async
 //! threads and turning failures into [`RepoError`]s.
+use crate::repositories::git_sessions::{CredentialRefusal, ReceiveCredential};
 use crate::repositories::store::local::writes::oid_change;
 use crate::store_types::allowed_merge_methods;
 use crate::store_types::AsyncMergePublication;
@@ -1040,9 +1041,32 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         repo: i64,
         actor: i64,
-        token: Option<i64>,
+        token: Option<ReceiveCredential>,
     ) -> Result<(), RepoError> {
         let Some(token) = token else { return Ok(()) };
+        if matches!(token, ReceiveCredential::ForeignToken { .. }) {
+            let repository = access::current_repository(pool, repo)
+                .await
+                .map_err(|_| RepoError::authority_unavailable())?;
+            let (user, _) = token
+                .authorize(pool, &repository, true)
+                .await
+                .map_err(|error| {
+                    if error.is::<CredentialRefusal>() {
+                        RepoError::write_denied()
+                    } else {
+                        RepoError::authority_unavailable()
+                    }
+                })?;
+            return if user.id == actor {
+                Ok(())
+            } else {
+                Err(RepoError::write_denied())
+            };
+        }
+        let ReceiveCredential::Token(token) = token else {
+            return Err(RepoError::write_denied());
+        };
         if !codeyard_db_identity::users::tokens::repository_write(
             pool, token, actor, repo, "contents",
         )
@@ -1063,14 +1087,15 @@ impl LocalStore {
         pool: &codeyard_db_core::DbPool,
         repo: i64,
         actor: i64,
-        token: Option<i64>,
+        token: Option<ReceiveCredential>,
         updates: Vec<(String, String)>,
         quarantine: Option<PathBuf>,
     ) -> Result<(), RepoError> {
         let Some(token) = token else {
             return Ok(());
         };
-        if !codeyard_identity::oauth_apps::allows_workflows(pool, token)
+        if !token
+            .allows_workflows(pool)
             .await
             .map_err(|_| RepoError::authority_unavailable())?
         {
@@ -1150,7 +1175,7 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        self.check_contents_grant(pool, repo_id, actor, token)
+        self.check_contents_grant(pool, repo_id, actor, token.map(ReceiveCredential::Token))
             .await?;
         let bytes = bytes.to_vec();
         let path = self.path().to_owned();
@@ -1204,7 +1229,13 @@ impl LocalStore {
                                     self.node_id,
                                 )
                                 .await?;
-                                self.check_contents_grant(pool, repo_id, actor, token).await
+                                self.check_contents_grant(
+                                    pool,
+                                    repo_id,
+                                    actor,
+                                    token.map(ReceiveCredential::Token),
+                                )
+                                .await
                             }))
                             .await?
                         {
@@ -1235,7 +1266,13 @@ impl LocalStore {
                             self.node_id,
                         )
                         .await?;
-                        self.check_contents_grant(pool, repo_id, actor, token).await
+                        self.check_contents_grant(
+                            pool,
+                            repo_id,
+                            actor,
+                            token.map(ReceiveCredential::Token),
+                        )
+                        .await
                     }))
                     .await?
                 {
@@ -2967,7 +3004,7 @@ impl LocalStore {
                 pool,
                 repo_id,
                 actor,
-                authority.token_id(),
+                ReceiveCredential::publication(authority)?,
                 vec![(
                     prepared
                         .expected
@@ -3010,7 +3047,7 @@ impl LocalStore {
                         pool,
                         repo_id,
                         actor,
-                        authority.token_id(),
+                        ReceiveCredential::publication(authority)?,
                         vec![(
                             prepared
                                 .expected
@@ -3335,7 +3372,7 @@ impl LocalStore {
             pool,
             repo_id,
             actor,
-            request.token,
+            request.token.map(ReceiveCredential::Token),
             vec![(request.head.clone(), prepared.head().to_owned())],
             Some(prepared.path().to_owned()),
         )
@@ -3370,7 +3407,7 @@ impl LocalStore {
                     pool,
                     repo_id,
                     actor,
-                    request.token,
+                    request.token.map(ReceiveCredential::Token),
                     vec![(request.head.clone(), prepared.head().to_owned())],
                     Some(prepared.path().to_owned()),
                 )
@@ -3572,6 +3609,10 @@ impl LocalStore {
         credential: Option<&codeyard_db_core::queries::credentials::Actor>,
         policy: Option<codeyard_db_repos::pull_requests::merge_policy::Snapshot>,
     ) -> Result<(), RepoError> {
+        let token = match credential {
+            Some(actor) => ReceiveCredential::publication(actor)?,
+            None => token.map(ReceiveCredential::Token),
+        };
         self.admitted_path(false).await?;
         let publication = git::locks::publication(self.path())
             .await

@@ -792,4 +792,7 @@ found three missing route declarations, now fixed through the shared catalogue. 
 source guard and native Git advertisement regressions pass source checks. The real HTTP
 push and foreign invitation acceptance now pass; the fixture's JSON parsing of an empty 204
 reply is fixed. The next checked cells snapshot also verifies standalone cell-zero data,
-JavaScript ID precision and native-only member lists and counts. Runtime remains pending.
+JavaScript ID precision and native-only member lists and counts; those real-client checks
+pass, as do cell-1 HTTP/SSH push/clone and foreign pushes/PR creation. The merge publication
+check still treats a foreign proof as a native token ID. Its typed-proof/workflow fix and
+Git-store regressions await source checks and runtime.
