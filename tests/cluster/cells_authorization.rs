@@ -791,10 +791,10 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .unwrap()
             .is_stub
     );
-    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::Token(
-        token.id,
-        &token.token_hash,
-    );
+    // The created token row carries no hash, so the proof uses the one the token was made with.
+    let bob_hash = token_hash(&value);
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Token(token.id, &bob_hash);
     let authority = codeyard_db_core::queries::credentials::Actor::from((user.id, &credential));
     let admission = codeyard_db_core::cells::repositories::Admission::new(
         source.clone(),
@@ -812,7 +812,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     forged_admission.actor.credential = Some(
         codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
             token.id + 1,
-            token.token_hash.clone(),
+            bob_hash.clone(),
         ),
     );
     forged_admission.source.credential_id = Some(token.id + 1);

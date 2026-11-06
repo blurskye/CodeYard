@@ -774,6 +774,15 @@ Stage 2 runnable acceptance passes. Stage 3 public star/outbox replay passes; fo
 and public fork ingress pass source checks. All 235 cluster tests pass on the export
 snapshot; stage 3 acceptance remains incomplete.
 
+Cross-cell pull requests follow fork pushes: after a branch moves, the head cell queues
+`repository.push`, and the base cell fetches the consented head branch and moves the pull.
+An upstream maintainer may push to a cross-cell pull head branch while the pull allows
+maintainer edits; the base cell answers for the grant at each push. Forks of a public
+repository on standalone storage share `pools/<source id>.git` through Git alternates.
+A mention of an account homed in another cell queues a notice in the repository's cell; the
+home cell stores it once per event and sends one email. Only public repositories send
+notices.
+
 Remote membership grants/deletes now queue home pointers in their own transaction. Pointers
 carry ordered event IDs and never grant resource access. The receiving home rechecks the live
 cell key and both directory homes at commit; duplicate and older deliveries are harmless.

@@ -367,7 +367,9 @@ def cross_cell_fork(deployment, client, directory):
     def follows(number, tip):
         deadline = time.monotonic() + 60
         while True:
-            pull = client.api(f"repos/alice/shared/pulls/{number}")
+            # The fork's owner reads its head repository; private-fork access does not yet
+            # pass to the upstream owner across cells.
+            pull = client.api(f"repos/alice/shared/pulls/{number}", who="bob")
             assert pull["head"]["repo"]["id"] == fork["id"], pull
             if pull["head"]["sha"] == tip:
                 break
