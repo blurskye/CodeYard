@@ -4681,6 +4681,89 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
     copy.index_pack(&pack, true).await.unwrap();
     copy.set_refs(&snapshot.refs).await.unwrap();
     assert!(copy.existing_commits(&[tip]).await.unwrap().len() == 1);
+    // The destination web node forwards publication to real native storage. A source
+    // stream failure must remove the unpublished destination instead of exposing it.
+    use codeyard_db_core::cells::repositories::{Admission, Owner, Source};
+    let mut owner =
+        codeyard_db_identity::users::accounts::get_user_by_id(&database.pool, repo.actor)
+            .await
+            .unwrap()
+            .unwrap();
+    codeyard_db_core::cells::authorization::redact_user(&mut owner);
+    owner.id = *codeyard_support::cells::Prefix::new(1).ids().start();
+    owner.home_cell = 1;
+    owner.username = "foreign-fork-owner".into();
+    let mut foreign = repo.repository.clone();
+    foreign.id = owner.id + 20;
+    foreign.owner_user_id = Some(owner.id);
+    foreign.home_cell = 1;
+    foreign.disk_path.clear();
+    foreign.storage_node_id = None;
+    let source = Source {
+        reader_id: repo.actor,
+        credential_id: None,
+        default_branch_oid: Some(snapshot.refs["refs/heads/main"].clone()),
+        repository: foreign,
+        owner: Owner::User(Box::new(owner)),
+        allow_forking: true,
+        git_url: None,
+    };
+    source.retain(&database.pool).await.unwrap();
+    let gate = Arc::new(ForkPackHome {
+        source: source.clone(),
+        bytes,
+        snapshot: codeyard_db_core::cells::repositories::Snapshot {
+            repository_id: source.repository.id,
+            ..snapshot.clone()
+        },
+        fail: std::sync::atomic::AtomicBool::new(false),
+    });
+    database.pool.set_foreign_authorization(gate.clone());
+    let admission = Admission::new(source.clone(), actor.clone(), session.clone()).unwrap();
+    let notifications =
+        codeyard_notifications::broadcast::NotificationBroadcaster::new(&database.pool);
+    let options = |name| codeyard_repos_core::repositories::lifecycle::ForkOptions {
+        owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
+            repo.actor,
+        ),
+        name: Some(name),
+        default_branch_only: true,
+        properties: &[],
+        authority: Some(&actor),
+        foreign_source: Some(&admission),
+    };
+    let fork = codeyard_repos_core::repositories::lifecycle::fork_into(
+        &database.pool,
+        Some(&web.context),
+        &web.context.repos_path,
+        &notifications,
+        options("foreign-fork"),
+        source.repository.id,
+        source.owner.name(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(fork.storage_node_id, Some(primary.context.node_id));
+    let published = repo_store(&fork, Some(&web.context));
+    assert_eq!(published.refs().await.unwrap(), snapshot.refs);
+    gate.fail.store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(codeyard_repos_core::repositories::lifecycle::fork_into(
+        &database.pool,
+        Some(&web.context),
+        &web.context.repos_path,
+        &notifications,
+        options("interrupted-fork"),
+        source.repository.id,
+        source.owner.name(),
+    )
+    .await
+    .is_err());
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM repositories WHERE name='interrupted-fork'")
+            .fetch_one(&database.raw)
+            .await
+            .unwrap();
+    assert_eq!(remaining, 0);
     sqlx::query("DELETE FROM sessions WHERE id=$1")
         .bind(&session)
         .execute(&database.raw)
@@ -4702,4 +4785,64 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
         .is_err());
     web.shutdown().await;
     primary.shutdown().await;
+}
+
+/// A deterministic foreign source; TLS/key admission is covered by the cell RPC tests.
+struct ForkPackHome {
+    source: codeyard_db_core::cells::repositories::Source,
+    bytes: Vec<u8>,
+    snapshot: codeyard_db_core::cells::repositories::Snapshot,
+    fail: std::sync::atomic::AtomicBool,
+}
+impl codeyard_db_core::cells::authorization::Home for ForkPackHome {
+    fn user<'a>(
+        &'a self,
+        _name: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::models::User>>>
+    {
+        Box::pin(async { Ok(None) })
+    }
+    fn authorize<'a>(
+        &'a self,
+        _proof: &'a codeyard_db_core::cells::authorization::Proof,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        anyhow::Result<Option<codeyard_db_core::cells::authorization::Answer>>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+    fn repository_source<'a>(
+        &'a self,
+        owner: &'a str,
+        name: &'a str,
+        _proof: &'a codeyard_db_core::cells::authorization::Proof,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        anyhow::Result<Option<codeyard_db_core::cells::repositories::Source>>,
+    > {
+        Box::pin(async move {
+            assert_eq!(owner, self.source.owner.name());
+            assert_eq!(name, self.source.repository.name);
+            Ok(Some(self.source.clone()))
+        })
+    }
+    fn snapshot<'a>(
+        &'a self,
+        request: &'a codeyard_db_core::cells::repositories::SnapshotRequest,
+        output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        anyhow::Result<codeyard_db_core::cells::repositories::Snapshot>,
+    > {
+        Box::pin(async move {
+            use tokio::io::AsyncWriteExt;
+            self.snapshot.validate(request)?;
+            output.write_all(&self.bytes).await?;
+            anyhow::ensure!(
+                !self.fail.load(std::sync::atomic::Ordering::SeqCst),
+                "Interrupted source stream"
+            );
+            Ok(self.snapshot.clone())
+        })
+    }
 }

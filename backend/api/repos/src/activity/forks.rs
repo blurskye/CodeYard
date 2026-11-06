@@ -51,7 +51,7 @@ pub async fn fork_repo(
     let session = codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default();
     let authority = codeyard_db_core::queries::credentials::Actor::from((user.id, session.clone()));
     let public_error = |error: codeyard_model::github_error::Error| {
-        (error.0, Json(ApiError::new("fork_failed", error.1)))
+        (error.0, Json(ApiError::new("fork_failed", &error.1)))
     };
     let source = codeyard_app::cells::fork_source(&state, &authority, &session, &owner, &repo)
         .await

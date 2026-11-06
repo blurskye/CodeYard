@@ -191,8 +191,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     cold-loads authorized source metadata for REST/native APIs and forms, and exposes
     bounded foreign parent metadata to authenticated REST/GraphQL readers. Real HTTP/TLS
     fork/form, hostile forwarding, metadata and interruption/retry tests are written.
-    Checks are workspace aebcf5d5a8de4fcba9f58a89d40f8b46, Clippy
-    b69455f2fc014be9a15a0749e447f6f2 and WASM b69c8ff4b7e848ae8c8c26bfda48f7d6. Runtime
+    First checks found two native-API compile errors: an error-message borrow and a
+    form encoder retained across an await. Both are fixed together; WASM
+    b69c8ff4b7e848ae8c8c26bfda48f7d6 passes. The combined recheck is next. Runtime
     67eb28f748434d8d839860a974a0fb07 covers the touched libraries, store/write tests,
     database cell contracts, cluster, CI, storage and the mandatory public cells fixture.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared

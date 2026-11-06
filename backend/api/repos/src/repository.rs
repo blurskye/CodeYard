@@ -1578,25 +1578,21 @@ async fn fork_form(
             "The repository changed. Reload the page and try again.",
         );
     }
-    let mut encoded = url::form_urlencoded::Serializer::new(String::new());
-    encoded.extend_pairs(
-        pairs
-            .iter()
-            .map(|(key, value)| (key.as_str(), value.as_str())),
-    );
+    let body = {
+        let mut encoded = url::form_urlencoded::Serializer::new(String::new());
+        encoded.extend_pairs(
+            pairs
+                .iter()
+                .map(|(key, value)| (key.as_str(), value.as_str())),
+        );
+        encoded.finish().into_bytes()
+    };
     let path = format!(
         "{}/_forms/fork",
         codeyard_webui::repository_path(owner, name)
     );
-    match codeyard_app::cells::forward_fork(
-        &ctx.state,
-        actor,
-        None,
-        &ctx.headers,
-        &path,
-        encoded.finish().into_bytes(),
-    )
-    .await
+    match codeyard_app::cells::forward_fork(&ctx.state, actor, None, &ctx.headers, &path, body)
+        .await
     {
         Ok(Some(response)) => return response,
         Ok(None) => (),
