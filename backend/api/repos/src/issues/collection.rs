@@ -1274,15 +1274,20 @@ pub(crate) async fn native_create(
             .map_err(crate::issues::operation_error);
             created.map(|value| value.number)
         }
-        Kind::Pull => codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
+        Kind::Pull => async {
+            let actor = ctx.require_user()?;
+            let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+            let source = codeyard_app::cells::pull_head_id(&ctx.state, &ctx.database_actor(actor.id), &session, head_repo.id)
+                .await.map_err(|error| (error.0, Json(ApiError::new("invalid_head", &error.1))))?;
+            codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
             &ctx.state.pool,
             &ctx.state.ci_runs,
             &ctx.state.notification_broadcaster,
-            ctx.require_user()?.id,
+            actor.id,
             owner,
             name,
             codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
-                foreign_head: None,
+                foreign_head: source.admission,
                 suppress_ci: false,
                 head_repo_id: Some(head_repo.id),
                 source:
@@ -1298,7 +1303,8 @@ pub(crate) async fn native_create(
         )
         .await
         .map_err(crate::pulls::operation_error)
-        .map(|value| value.number),
+        .map(|value| value.number)
+        }.await,
     };
     match result {
         Ok(number) => Ok(ctx.redirect(&format!("{}/{}", repo.view.family_url(kind), number))),

@@ -1682,9 +1682,9 @@ impl RepoStore {
     // ----- Writes -----
 
     /// Fetches a fork commit and keeps it under `refs/pull/<number>/head`.
-    /// Both repositories must be on the same machine: a fork is stored next to
-    /// its source. Publication compares the pull ref with `expected_head`; a
-    /// missing ref can be repaired.
+    /// Native forks share a storage node. Foreign heads use `fetch_foreign_pull_head`
+    /// and the same publisher. Publication compares the pull ref with `expected_head`;
+    /// a missing ref can be repaired.
     #[expect(
         clippy::too_many_arguments,
         reason = "Pull-head publication carries explicit source, actor, revision and CAS inputs."

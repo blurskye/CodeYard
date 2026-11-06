@@ -4848,8 +4848,13 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
         fork_tip
     );
     codeyard_repos_core::repositories::lifecycle::delete(
-        &database.pool, Some(&web.context), actor.clone(), fork.id,
-    ).await.unwrap();
+        &database.pool,
+        Some(&web.context),
+        actor.clone(),
+        fork.id,
+    )
+    .await
+    .unwrap();
     gate.revoke_peer
         .store(true, std::sync::atomic::Ordering::SeqCst);
     assert!(codeyard_repos_core::repositories::lifecycle::fork_into(
