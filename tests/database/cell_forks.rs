@@ -123,6 +123,11 @@ async fn contract(pg: bool) {
         f.repository(source.repository.id).await.forked_from_id,
         Some(template.id)
     );
+    assert_eq!(
+        f.repository(template.id).await.forks_count,
+        0,
+        "Retaining a foreign fork is metadata only, not a second local fork"
+    );
     let gate = Arc::new(SourceHome {
         source: source.clone(),
         calls: AtomicUsize::new(0),

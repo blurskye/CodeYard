@@ -1020,9 +1020,9 @@ CREATE TRIGGER trigger_update_watchers_count
 -- Update forks count
 CREATE OR REPLACE FUNCTION update_repo_forks_count() RETURNS TRIGGER AS $$
 BEGIN
-    IF TG_OP = 'INSERT' AND NEW.forked_from_id IS NOT NULL THEN
+    IF TG_OP = 'INSERT' AND NOT NEW.is_stub AND NEW.forked_from_id IS NOT NULL THEN
         UPDATE repositories SET forks_count = forks_count + 1 WHERE id = NEW.forked_from_id;
-    ELSIF TG_OP = 'DELETE' AND OLD.forked_from_id IS NOT NULL THEN
+    ELSIF TG_OP = 'DELETE' AND NOT OLD.is_stub AND OLD.forked_from_id IS NOT NULL THEN
         UPDATE repositories SET forks_count = forks_count - 1 WHERE id = OLD.forked_from_id;
     END IF;
     RETURN NULL;

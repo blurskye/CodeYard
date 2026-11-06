@@ -1312,10 +1312,10 @@ CREATE TRIGGER watches_update AFTER UPDATE OF level,repo_id ON watches BEGIN
     UPDATE repositories SET watchers_count=watchers_count-1 WHERE id=OLD.repo_id AND OLD.level IN ('watching','custom');
     UPDATE repositories SET watchers_count=watchers_count+1 WHERE id=NEW.repo_id AND NEW.level IN ('watching','custom');
 END;
-CREATE TRIGGER forks_insert AFTER INSERT ON repositories WHEN NEW.forked_from_id IS NOT NULL BEGIN
+CREATE TRIGGER forks_insert AFTER INSERT ON repositories WHEN NOT NEW.is_stub AND NEW.forked_from_id IS NOT NULL BEGIN
     UPDATE repositories SET forks_count=forks_count+1 WHERE id=NEW.forked_from_id;
 END;
-CREATE TRIGGER forks_delete AFTER DELETE ON repositories WHEN OLD.forked_from_id IS NOT NULL BEGIN
+CREATE TRIGGER forks_delete AFTER DELETE ON repositories WHEN NOT OLD.is_stub AND OLD.forked_from_id IS NOT NULL BEGIN
     UPDATE repositories SET forks_count=forks_count-1 WHERE id=OLD.forked_from_id;
 END;
 
