@@ -157,8 +157,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 2 source covers directory claims/TLS/cache, public HTTP/SSH routing, scoped
     credentials and IDs, stable homes, stubs, home authorization, native publication,
     durable cleanup, capacity reporting and bounded home membership discovery.
-    Latest source checks pass: workspace 6e3ff2fae29948338c4fbcfb98312368,
-    Clippy 426d7872a9a249899d1fb2cffad51248 and WASM 15b9db025ccd4d45b3c2eb363a381de6.
+    Latest source checks pass: workspace 1eea95d5da154951a089895b7e135cbc,
+    Clippy 5bbeecaa23534c9086bf16bc198a3001 and WASM 045f16dfddd44168a4379af54001a42c.
     Generated GraphQL is unchanged. New output IDs are rooted; former input IDs still
     resolve as required. Earlier runtime passes 334 selected library, 42 Git and 166
     identity tests and both exhaustive GraphQL contracts. CI passes 220 with 19 existing
@@ -184,14 +184,14 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     raw HTML and hydrated navigation with JavaScript ID precision, and cell-1 HTTP/SSH
     pushes and clones. Foreign HTTP/SSH pushes and gh pr create pass; gh pr merge fails
     because publication reduces the retained foreign proof to a native token ID. The
-    unchecked fix reuses typed receive credentials for merge/editor publication and
+    fix reuses typed receive credentials for merge/editor publication and
     workflow checks. New store tests cover forged proof, revoked grant, expired home
     answer, a valid foreign merge and workflow-scope denial with unchanged refs.
     Its first native check round reports two test-only API errors (a private error
     constant and a unit-returning setter); both are corrected together. Recheck passes
     workspace 1eea95d5da154951a089895b7e135cbc, Clippy 5bbeecaa23534c9086bf16bc198a3001
-    and WASM 045f16dfddd44168a4379af54001a42c. Core library/store, cluster and the
-    public cells client round are next.
+    and WASM 045f16dfddd44168a4379af54001a42c. Runtime 15c77f36a9794468ac72f976e6c78209
+    covers core library/store, cluster and the real public cells client round; it is running.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:
