@@ -23,7 +23,7 @@ pub async fn run_migrations(pool: &PgPool) -> Result<()> {
 /// Independent stores use the same transactional baseline and history checks.
 pub async fn run_baseline(pool: &PgPool, name: &'static str, sql: &'static str) -> Result<()> {
     let mut connection = pool.acquire().await?;
-    apply(&mut *connection, &[(1, name, sql)]).await
+    apply(&mut connection, &[(1, name, sql)]).await
 }
 
 async fn apply(
