@@ -187,6 +187,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     unchecked fix reuses typed receive credentials for merge/editor publication and
     workflow checks. New store tests cover forged proof, revoked grant, expired home
     answer, a valid foreign merge and workflow-scope denial with unchanged refs.
+    Its first native check round reports two test-only API errors (a private error
+    constant and a unit-returning setter); both are corrected together. WASM passes.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:

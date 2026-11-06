@@ -210,7 +210,7 @@ async fn foreign_publication_keeps_token_proof_live_grants_and_workflow_scope() 
         },
         enabled: std::sync::atomic::AtomicBool::new(true),
     });
-    a.pool.set_foreign_authorization(provider.clone()).unwrap();
+    a.pool.set_foreign_authorization(provider.clone());
     let proof = authorization::Proof::Token {
         home,
         hash: "a".repeat(64),
@@ -335,7 +335,7 @@ async fn foreign_publication_keeps_token_proof_live_grants_and_workflow_scope() 
         .publish_file_as(&a.pool, a.repo_id, user.id, &prepared)
         .await
         .unwrap_err();
-    assert_eq!(refused.message, codeyard_git::oauth::WORKFLOW_DENIED);
+    assert_eq!(refused.message, RepoError::workflow_denied().message);
     assert_eq!(f.store.refs().await.unwrap()["refs/heads/main"], result);
 }
 
