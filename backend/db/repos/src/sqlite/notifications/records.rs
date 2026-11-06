@@ -188,17 +188,26 @@ async fn notification_recipient(
 // Keep SQLite's exact persisted ordering value, not a re-encoded timestamp.
 type NotificationCandidate = (i64, i64, String);
 
+pub async fn received(pool: &SqlitePool, user_id: i64, cell: i32, event: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=?1 AND json_extract(metadata,'$.source_cell')=?2 AND json_extract(metadata,'$.source_event')=?3)")
+        .bind(user_id).bind(cell).bind(event).fetch_one(pool).await?)
+}
+
 /// Whether the recipient can read the repository a notification names, as the list has always
 /// decided it. The owner must exist and be well formed, even for a public repository. Then the
 /// recipient needs Read, or is a site admin over a personal repository. Canonical Read includes
 /// archived and suspended-governance reads, as `USER_REPO_ACCESS_SQL` computes them.
+/// A public stub names another cell's repository, which decided Read before it sent the
+/// notice, so it is readable to any active account here.
 fn scope_readable_condition() -> String {
     format!(
         "((r.owner_kind='user' AND r.owner_user_id IS NOT NULL AND r.owner_org_id IS NULL
             AND EXISTS (SELECT 1 FROM users ow WHERE ow.id=r.owner_user_id))
           OR (r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id IS NOT NULL
             AND EXISTS (SELECT 1 FROM organizations og WHERE og.id=r.owner_org_id)))
-         AND (({USER_REPO_ACCESS_SQL}) >= 1 OR (r.owner_kind='user' AND u.is_admin))"
+         AND (({USER_REPO_ACCESS_SQL}) >= 1 OR (r.owner_kind='user' AND u.is_admin)
+           OR (r.is_stub AND NOT r.is_private AND NOT r.is_internal AND NOT r.is_gist
+             AND NOT u.is_banned AND NOT u.must_change_password))"
     )
 }
 

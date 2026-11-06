@@ -74,7 +74,7 @@ pub async fn notify_mentions(
     if names.is_empty() {
         return Vec::new();
     }
-    let users =
+    let mut users =
         match codeyard_db_identity::users::accounts::get_users_by_usernames(pool, &names).await {
             Ok(users) => users,
             Err(error) => {
@@ -82,6 +82,7 @@ pub async fn notify_mentions(
                 return Vec::new();
             }
         };
+    users.extend(remote_users(pool, source.repository, &names, &users).await);
     let title = match source.comment_id {
         Some(MentionComment::Commit(_)) => format!(
             "{} mentioned you in {}/{}@{}",
@@ -112,6 +113,31 @@ pub async fn notify_mentions(
                 tracing::warn!(%error, "Mention notification skipped: repository access check failed");
                 continue;
             }
+        }
+        if user.is_stub {
+            // An account homed in another cell gets the mention in its home inbox. Commit
+            // mentions have no number there, so they stay local.
+            if matches!(source.comment_id, Some(MentionComment::Commit(_))) {
+                continue;
+            }
+            match codeyard_identity::cells::queue_notice(
+                pool,
+                user.id,
+                source.repository,
+                source.actor,
+                source.number,
+                source.subject,
+                &title,
+                source.text,
+                source.link,
+            )
+            .await
+            {
+                Ok(true) => sent.push(user.id),
+                Ok(false) => {}
+                Err(error) => tracing::warn!(%error, "Cross-cell mention notice was not queued"),
+            }
+            continue;
         }
         let mut metadata = json!({
             "repo_owner": source.owner, "repo_name": source.repo, "number": source.number, "subject": source.subject,
@@ -144,4 +170,102 @@ pub async fn notify_mentions(
         }
     }
     sent
+}
+
+/// Most accounts one event looks up in other cells, and the time all lookups may take.
+const MAX_REMOTE_LOOKUP: usize = MAX_NOTIFIED;
+const REMOTE_LOOKUP_SECONDS: u64 = 10;
+
+/// Accounts this cell does not know yet, looked up in their home cells. Only a public
+/// repository's mention reaches another cell, so no other lookup is made.
+async fn remote_users(
+    pool: &codeyard_db_core::DbPool,
+    repository: &codeyard_db_core::models::Repository,
+    names: &[String],
+    known: &[codeyard_db_core::models::User],
+) -> Vec<codeyard_db_core::models::User> {
+    if pool.foreign_authorization().is_none()
+        || repository.is_private
+        || repository.is_internal
+        || repository.is_gist
+        || repository.is_stub
+    {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    let lookups = async {
+        for name in names
+            .iter()
+            .filter(|name| !known.iter().any(|user| user.username == **name))
+            .take(MAX_REMOTE_LOOKUP)
+        {
+            match codeyard_identity::cells::resolve_user(pool, name).await {
+                Ok(Some(user)) => found.push(user),
+                Ok(None) => {}
+                Err(error) => tracing::warn!(%error, "Mentioned account lookup failed"),
+            }
+        }
+    };
+    if tokio::time::timeout(
+        std::time::Duration::from_secs(REMOTE_LOOKUP_SECONDS),
+        lookups,
+    )
+    .await
+    .is_err()
+    {
+        tracing::warn!("Mentioned account lookups timed out");
+    }
+    found
+}
+
+/// Stores a mention from another cell's public repository in this home inbox, once per event.
+/// A recipient who is gone, blocked the actor or ignores the repository gets nothing, and the
+/// event still counts as delivered.
+pub async fn receive(
+    pool: &codeyard_db_core::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    event: &codeyard_db_core::cells::notices::Event,
+    admission: &dyn codeyard_db_core::cells::notices::Admission,
+) -> anyhow::Result<()> {
+    let source = admission.check(event).await?;
+    event.validate(source)?;
+    let notice = &event.notice;
+    let Some(recipient) =
+        codeyard_db_identity::users::accounts::get_user_by_id(pool, notice.user_id).await?
+    else {
+        return Ok(());
+    };
+    anyhow::ensure!(
+        !recipient.is_stub && recipient.home_cell == i32::from(pool.cell_id().get()),
+        "Notice recipient has another home"
+    );
+    let cell = i32::from(source.get());
+    if codeyard_db_repos::notifications::records::received(pool, recipient.id, cell, event.id)
+        .await?
+    {
+        return Ok(());
+    }
+    let actor = codeyard_db_core::cells::notices::retain(pool, source, notice).await?;
+    anyhow::ensure!(
+        admission.check(event).await? == source,
+        "Notice source changed"
+    );
+    let request = NotificationRequest {
+        user_id: recipient.id,
+        actor_id: actor,
+        repo_id: Some(notice.repository.id),
+        kind: "mention",
+        title: &notice.title,
+        body: Some(&notice.body),
+        link: Some(&notice.link),
+        metadata: json!({
+            "repo_owner": notice.owner.name(), "repo_name": notice.repository.name,
+            "number": notice.number, "subject": notice.subject,
+            "source_cell": cell, "source_event": event.id,
+        }),
+    };
+    match crate::create::store(pool, broadcaster, request).await {
+        Ok(_) | Err(crate::create::CreateError::Suppressed) => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }

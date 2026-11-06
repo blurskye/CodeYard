@@ -1308,6 +1308,168 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         )
         .await
         .is_err());
+    // A mention in a public repository of cell zero reaches Bob's inbox in cell one once,
+    // with one email. A private repository sends nothing to another cell.
+    let mail_admin =
+        codeyard_db_identity::users::accounts::create_user(&one.pool, "mailadmin", None)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE users SET is_admin=TRUE WHERE id=$1")
+        .bind(mail_admin.id)
+        .execute(&one.raw)
+        .await
+        .unwrap();
+    let mail_session = codeyard_identity::sessions::fresh_id(&one.pool).unwrap();
+    codeyard_db_identity::users::sessions::create_session(
+        &one.pool,
+        &mail_session,
+        mail_admin.id,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    assert!(codeyard_db_identity::email::save_email_settings(
+        &one.pool,
+        mail_admin.id,
+        &mail_session,
+        &codeyard_db_identity::email::NewEmailSettings {
+            host: "mail.example.test",
+            port: 2525,
+            security: "none",
+            username: "",
+            password: None,
+            from_name: "Codeyard",
+            from_address: "noreply@example.test",
+            reply_to: "",
+        },
+    )
+    .await
+    .unwrap());
+    sqlx::query("UPDATE users SET email='bob@example.test',email_verified=TRUE WHERE id=$1")
+        .bind(user.id)
+        .execute(&one.raw)
+        .await
+        .unwrap();
+    let open = codeyard_repos_core::repositories::lifecycle::provision(
+        (&zero.pool, None),
+        root.path(),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice.id),
+        "open",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let mention = |repository: &'static str, title: &'static str| {
+        let client = client.clone();
+        let url = format!("{}/api/v3/repos/alice/{repository}/issues", http.url());
+        let token = alice_token.clone();
+        async move {
+            let response = client
+                .post(url)
+                .bearer_auth(token)
+                .json(
+                    &serde_json::json!({"title":title,"body":"Please look, @bob and @nobody-here"}),
+                )
+                .send()
+                .await
+                .unwrap();
+            let status = response.status();
+            let body: serde_json::Value = response.json().await.unwrap();
+            assert_eq!(status, 201, "{body}");
+        }
+    };
+    mention("open", "Cross-cell mention").await;
+    mention("private", "Private mention").await;
+    let notices: Vec<(i64, i64, String)> = sqlx::query_as(
+        "SELECT id,root_id,payload FROM cell_outbox WHERE topic='notice' ORDER BY id",
+    )
+    .fetch_all(&zero.raw)
+    .await
+    .unwrap();
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0].1, open.id);
+    drain(&zero.pool).await;
+    let inbox = || {
+        let client = client.clone();
+        let url = format!("{}/api/v3/notifications", bob_http.url());
+        let token = value.clone();
+        async move {
+            let response = client.get(url).bearer_auth(token).send().await.unwrap();
+            let status = response.status();
+            let body: serde_json::Value = response.json().await.unwrap();
+            assert_eq!(status, 200, "{body}");
+            body.as_array().unwrap().clone()
+        }
+    };
+    let threads = inbox().await;
+    assert_eq!(threads.len(), 1, "{threads:?}");
+    assert_eq!(threads[0]["reason"], "mention");
+    assert_eq!(threads[0]["repository"]["full_name"], "alice/open");
+    assert_eq!(threads[0]["subject"]["title"], "Cross-cell mention");
+    assert_eq!(threads[0]["subject"]["type"], "Issue");
+    let delivered = || {
+        let raw = one.raw.clone();
+        let bob = user.id;
+        async move {
+            let notifications: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND kind='mention'",
+            )
+            .bind(bob)
+            .fetch_one(&raw)
+            .await
+            .unwrap();
+            let emails: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM email_outbox o JOIN notifications n ON n.id=o.notification_id WHERE n.user_id=$1")
+                .bind(bob)
+                .fetch_one(&raw)
+                .await
+                .unwrap();
+            (notifications, emails)
+        }
+    };
+    assert_eq!(delivered().await, (1, 1));
+    // A repeated delivery of the same event stores nothing and sends no second email.
+    let replay = codeyard_db_core::cells::notices::Event {
+        id: notices[0].0,
+        notice: serde_json::from_str(&notices[0].2).unwrap(),
+    };
+    let sender = zero.pool.foreign_authorization().unwrap();
+    sender.send_notice(&replay).await.unwrap();
+    assert_eq!(delivered().await, (1, 1));
+    // The receiving cell checks the repository's and the event's homes with the directory.
+    let mut foreign_repository = replay.clone();
+    foreign_repository.notice.repository.id = native_repository.id;
+    foreign_repository.id += 1;
+    let mut foreign_issuer = replay.clone();
+    foreign_issuer.id = user.id;
+    for hostile in [foreign_repository, foreign_issuer] {
+        assert!(sender.send_notice(&hostile).await.is_err());
+    }
+    assert_eq!(delivered().await, (1, 1));
+    // A repository that turns private before delivery sends nothing.
+    mention("open", "Mention before privacy").await;
+    let response = client
+        .patch(format!("{}/api/v3/repos/alice/open", http.url()))
+        .bearer_auth(&alice_token)
+        .json(&serde_json::json!({"private":true}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    drain(&zero.pool).await;
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM cell_outbox WHERE topic='notice' AND delivered_at IS NULL"
+        )
+        .fetch_one(&zero.raw)
+        .await
+        .unwrap(),
+        0
+    );
+    assert_eq!(delivered().await, (1, 1));
     let source_by_id = zero
         .pool
         .foreign_authorization()

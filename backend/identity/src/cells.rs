@@ -180,7 +180,7 @@ impl Local {
         name: &str,
         proof: &Proof,
     ) -> Result<Option<codeyard_db_core::cells::repositories::Source>> {
-        use codeyard_db_core::cells::repositories::{Owner, Source};
+        use codeyard_db_core::cells::repositories::Source;
         codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)?;
         anyhow::ensure!(
             codeyard_support::repository_names::valid(name),
@@ -210,34 +210,8 @@ impl Local {
             return Ok(None);
         };
         repository = authorized;
-        let owner = match repository.owner_kind.as_str() {
-            "user" => {
-                let Some(mut owner) = codeyard_db_identity::users::accounts::get_user_by_id(
-                    &self.pool,
-                    repository.owner_id(),
-                )
-                .await?
-                else {
-                    return Ok(None);
-                };
-                codeyard_db_core::cells::authorization::redact_user(&mut owner);
-                Owner::User(Box::new(owner))
-            }
-            "org" => {
-                let Some(mut owner) =
-                    codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
-                        &self.pool,
-                        repository.owner_id(),
-                    )
-                    .await?
-                else {
-                    return Ok(None);
-                };
-                owner.billing_email = None;
-                owner.avatar_file_id = None;
-                Owner::Organization(Box::new(owner))
-            }
-            _ => return Ok(None),
+        let Some(owner) = public_owner(&self.pool, &repository).await? else {
+            return Ok(None);
         };
         let Some(current) = codeyard_db_repos::repositories::creation::read_repository_source(
             &self.pool,
@@ -570,4 +544,86 @@ pub async fn resolve_user_id(
         "Invalid foreign account metadata"
     );
     retain_user(pool, user).await
+}
+
+/// The public profile of a native repository's owner, as another cell may store it.
+pub async fn public_owner(
+    pool: &DbPool,
+    repository: &codeyard_db_core::models::Repository,
+) -> Result<Option<codeyard_db_core::cells::repositories::Owner>> {
+    use codeyard_db_core::cells::repositories::Owner;
+    Ok(Some(match repository.owner_kind.as_str() {
+        "user" => {
+            let Some(mut owner) =
+                codeyard_db_identity::users::accounts::get_user_by_id(pool, repository.owner_id())
+                    .await?
+            else {
+                return Ok(None);
+            };
+            codeyard_db_core::cells::authorization::redact_user(&mut owner);
+            Owner::User(Box::new(owner))
+        }
+        "org" => {
+            let Some(mut owner) =
+                codeyard_db_orgs::organizations::profiles::get_public_organization_by_id(
+                    pool,
+                    repository.owner_id(),
+                )
+                .await?
+            else {
+                return Ok(None);
+            };
+            owner.billing_email = None;
+            owner.avatar_file_id = None;
+            Owner::Organization(Box::new(owner))
+        }
+        _ => return Ok(None),
+    }))
+}
+
+/// Queues a mention notice for a recipient homed in another cell, and says whether it did.
+/// Only a public native repository sends one; the outbox checks it again before delivery.
+#[allow(clippy::too_many_arguments)]
+pub async fn queue_notice(
+    pool: &DbPool,
+    recipient: i64,
+    repository: &codeyard_db_core::models::Repository,
+    actor: &codeyard_db_core::models::User,
+    number: i32,
+    subject: &str,
+    title: &str,
+    body: &str,
+    link: &str,
+) -> Result<bool> {
+    if repository.is_private || repository.is_internal || repository.is_gist || repository.is_stub {
+        return Ok(false);
+    }
+    let Some(owner) = public_owner(pool, repository).await? else {
+        return Ok(false);
+    };
+    let mut repository = repository.clone();
+    repository.disk_path.clear();
+    repository.storage_node_id = None;
+    let mut actor = actor.clone();
+    codeyard_db_core::cells::authorization::redact_user(&mut actor);
+    let maximum = codeyard_db_core::cells::notices::MAXIMUM_BODY;
+    let mut end = body.len().min(maximum);
+    while !body.is_char_boundary(end) {
+        end -= 1;
+    }
+    codeyard_db_core::cells::notices::queue(
+        pool,
+        &codeyard_db_core::cells::notices::Notice {
+            user_id: recipient,
+            repository,
+            owner,
+            actor,
+            number,
+            subject: subject.to_owned(),
+            title: title.to_owned(),
+            body: body[..end].to_owned(),
+            link: link.to_owned(),
+        },
+    )
+    .await
 }

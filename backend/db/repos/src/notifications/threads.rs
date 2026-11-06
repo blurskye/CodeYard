@@ -156,6 +156,11 @@ impl ThreadView {
                             .map(|l| format!("{}{l}", codeyard_model::http_config::link_origin()))
                             .unwrap_or_default(),
                     ),
+                    // A mention from another cell names its issue or pull request by number;
+                    // the issues route answers for both.
+                    "Discussion" if repository.is_stub => {
+                        ("Issue", format!("{repo}/issues/{}", thread.subject_key))
+                    }
                     _ => ("Discussion", String::new()),
                 };
                 (kind, title, url, None)

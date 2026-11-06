@@ -186,6 +186,11 @@ pub async fn create_notification(
     Ok(notification)
 }
 
+pub async fn received(pool: &PgPool, user_id: i64, cell: i32, event: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=$1 AND metadata @> jsonb_build_object('source_cell',$2::integer,'source_event',$3::bigint))")
+        .bind(user_id).bind(cell).bind(event).fetch_one(pool).await?)
+}
+
 // Every notification transaction retains the recipient's account before row locks.
 // The recipient row is locked FOR SHARE so account changes wait for this transaction.
 // Never load a payload before its repository scope has passed Read policy.
@@ -209,6 +214,19 @@ async fn lock_notification_scope_readable(
 ) -> Result<bool> {
     if scope_repository_id == 0 {
         return Ok(true);
+    }
+    // A public stub names another cell's repository, which decided Read before it sent the
+    // notice. The caller holds the recipient's account lock.
+    let stub: Option<bool> = sqlx::query_scalar(
+        "SELECT NOT r.is_private AND NOT r.is_internal AND NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password
+         FROM repositories r JOIN users u ON u.id=$2 WHERE r.id=$1 AND r.is_stub FOR SHARE OF r",
+    )
+    .bind(scope_repository_id)
+    .bind(user_id)
+    .fetch_optional(&mut *connection)
+    .await?;
+    if let Some(readable) = stub {
+        return Ok(readable);
     }
     let Some(authority) =
         codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
@@ -636,13 +654,17 @@ pub async fn count_unread_notifications(pool: &PgPool, user_id: i64) -> Result<i
 /// Whether the recipient can read the repository a notification names, as the list decides it:
 /// the owner must exist and be well formed, and then the recipient needs Read or is a site admin
 /// over a personal repository. See the SQLite module for why this is not `readable_condition`.
+/// A public stub names another cell's repository, which decided Read before it sent the
+/// notice, so it is readable to any active account here.
 fn scope_readable_condition() -> String {
     format!(
         "((r.owner_kind='user' AND r.owner_user_id IS NOT NULL AND r.owner_org_id IS NULL
             AND EXISTS (SELECT 1 FROM users ow WHERE ow.id=r.owner_user_id))
           OR (r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id IS NOT NULL
             AND EXISTS (SELECT 1 FROM organizations og WHERE og.id=r.owner_org_id)))
-         AND (({USER_REPO_ACCESS_SQL}) >= 1 OR (r.owner_kind='user' AND u.is_admin))"
+         AND (({USER_REPO_ACCESS_SQL}) >= 1 OR (r.owner_kind='user' AND u.is_admin)
+           OR (r.is_stub AND NOT r.is_private AND NOT r.is_internal AND NOT r.is_gist
+             AND NOT u.is_banned AND NOT u.must_change_password))"
     )
 }
 

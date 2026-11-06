@@ -985,6 +985,8 @@ CREATE INDEX IF NOT EXISTS idx_notifications_user_unread ON notifications(user_i
 CREATE INDEX IF NOT EXISTS idx_notifications_user_saved ON notifications(user_id, saved_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_user_done ON notifications(user_id, done_at, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_notifications_actor_id ON notifications(actor_id);
+-- A notice from another cell is stored once per event.
+CREATE UNIQUE INDEX notifications_cell_event ON notifications((metadata->>'source_cell'),(metadata->>'source_event')) WHERE metadata ? 'source_event';
 
 --------------------------------------------------------------------------------
 -- PART 21: FUNCTIONS & TRIGGERS

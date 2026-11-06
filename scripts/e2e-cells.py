@@ -598,6 +598,19 @@ def acceptance(deployment):
         client.checked("foreign HTTP and SSH pushes, gh pr create and gh pr merge use live resource grants")
         with client.check("cross-cell fork creation"):
             cross_cell_fork(deployment, client, directory)
+        with client.check("a cross-cell mention reaches gh api notifications within a minute"):
+            client.gh("repo", "create", "alice/open", "--public")
+            client.gh("issue", "create", "-R", "alice/open", "--title", "Cross-cell mention",
+                      "--body", "Please look, @bob")
+            deadline = time.monotonic() + 60
+            while True:
+                mentions = [thread for thread in client.api("notifications", who="bob")
+                            if thread["reason"] == "mention" and thread["repository"]["full_name"] == "alice/open"]
+                if mentions:
+                    break
+                assert time.monotonic() < deadline, "the mention did not reach the home inbox within 60 seconds"
+                threading.Event().wait(0.5)
+            assert len(mentions) == 1 and mentions[0]["subject"]["title"] == "Cross-cell mention", mentions
         client.gh("issue", "create", "-R", "alice/shared", "--title", "Router issue", "--body", "cross cell", who="bob")
         assert any(issue["title"] == "Router issue" for issue in client.data("issue", "list", "-R", "alice/shared", "--json", "title"))
         query = '{ zero:repository(owner:"alice",name:"shared"){ id name } one:repository(owner:"bob",name:"other"){ id name } }'

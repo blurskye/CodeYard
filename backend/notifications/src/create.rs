@@ -137,6 +137,16 @@ pub async fn create_and_broadcast_notification(
             Err(_) => return Err(CreateError::Suppressed),
         }
     }
+    store(pool, broadcaster, request).await
+}
+
+/// Stores and delivers a notification without the early Read check. A mention from another
+/// cell names a repository stub, which only the insert's own scope check can decide.
+pub(crate) async fn store(
+    pool: &codeyard_db_core::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    request: NotificationRequest<'_>,
+) -> Result<codeyard_db_core::models::Notification, CreateError> {
     // The insert rechecks Read, the fork's Read and repository ignores in its transaction.
     let notification = codeyard_db_repos::notifications::records::create_notification(
         pool,

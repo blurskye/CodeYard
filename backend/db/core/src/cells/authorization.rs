@@ -381,6 +381,16 @@ pub trait Home: Send + Sync {
         Box::pin(async { anyhow::bail!("Remote resource reads are unavailable") })
     }
 
+    fn send_notice<'a>(&'a self, _event: &'a super::notices::Event) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { anyhow::bail!("Notice delivery is unavailable") })
+    }
+    fn receive_notice<'a>(
+        &'a self,
+        _event: &'a super::notices::Event,
+        _admission: &'a dyn super::notices::Admission,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { anyhow::bail!("Notice admission is unavailable") })
+    }
     fn send_pointer<'a>(&'a self, _event: &'a super::pointers::Event) -> BoxFuture<'a, Result<()>> {
         Box::pin(async { anyhow::bail!("Pointer delivery is unavailable") })
     }

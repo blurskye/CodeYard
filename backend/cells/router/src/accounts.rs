@@ -45,6 +45,7 @@ enum Request {
     },
     Snapshot(codeyard_db_core::cells::repositories::SnapshotRequest),
     Pointer(codeyard_db_core::cells::pointers::Event),
+    Notice(codeyard_db_core::cells::notices::Event),
     Push(codeyard_db_core::cells::pulls::Event),
     Subscribe {
         binding: codeyard_db_core::cells::pulls::Binding,
@@ -834,6 +835,27 @@ impl Home for Remote {
             Ok(())
         })
     }
+    fn send_notice<'a>(
+        &'a self,
+        event: &'a codeyard_db_core::cells::notices::Event,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let _slot = self.slots.clone().try_acquire_owned()?;
+            // A deleted account has no inbox; a directory outage still retries.
+            let Some(cell) = self.routes.by_object(event.notice.recipient()).await? else {
+                return Ok(());
+            };
+            ensure!(
+                matches!(
+                    self.exchange(&cell, &Request::Notice(event.clone()))
+                        .await?,
+                    Reply::Done
+                ),
+                "Notice delivery is unavailable"
+            );
+            Ok(())
+        })
+    }
     fn user<'a>(&'a self, name: &'a str) -> BoxFuture<'a, Result<Option<User>>> {
         Box::pin(async move {
             let key = Key::new(KeyKind::Name, name)?;
@@ -917,6 +939,29 @@ async fn enrolled(
     {
         DirectoryReply::Prefix(cell) => Ok(cell),
         _ => anyhow::bail!("Caller is not an enrolled cell"),
+    }
+}
+struct NoticeAdmission {
+    directory: Directory,
+    peer: PublicKey,
+    recipient: codeyard_support::cells::Prefix,
+}
+impl codeyard_db_core::cells::notices::Admission for NoticeAdmission {
+    fn check<'a>(
+        &'a self,
+        event: &'a codeyard_db_core::cells::notices::Event,
+    ) -> BoxFuture<'a, Result<codeyard_support::cells::Prefix>> {
+        Box::pin(async move {
+            roots(
+                &self.directory,
+                self.peer,
+                self.recipient,
+                event.notice.repository_object(),
+                event.notice.recipient(),
+                Some(event.id),
+            )
+            .await
+        })
     }
 }
 struct PointerAdmission {
@@ -1216,6 +1261,20 @@ impl rpc::Service for Accounts {
                             .ok_or_else(|| anyhow::anyhow!("No native home"))?,
                     };
                     match self.home.receive_pointer(&event, &admission).await {
+                        Ok(()) => Reply::Done,
+                        Err(_) => Reply::Unavailable,
+                    }
+                }
+                Request::Notice(event) => {
+                    let admission = NoticeAdmission {
+                        directory: self.directory.clone(),
+                        peer,
+                        recipient: self
+                            .home
+                            .cell()
+                            .ok_or_else(|| anyhow::anyhow!("No native home"))?,
+                    };
+                    match self.home.receive_notice(&event, &admission).await {
                         Ok(()) => Reply::Done,
                         Err(_) => Reply::Unavailable,
                     }

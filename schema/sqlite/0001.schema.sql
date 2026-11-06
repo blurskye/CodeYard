@@ -815,6 +815,8 @@ CREATE TABLE notifications (
     scope_repository_id INTEGER NOT NULL CHECK (scope_repository_id >= 0),
     thread_id INTEGER REFERENCES notification_threads(id) ON DELETE SET NULL
 );
+-- A notice from another cell is stored once per event.
+CREATE UNIQUE INDEX notifications_cell_event ON notifications(json_extract(metadata,'$.source_cell'),json_extract(metadata,'$.source_event')) WHERE json_extract(metadata,'$.source_event') IS NOT NULL;
 
 CREATE TABLE file_reason_limits (
     reason TEXT NOT NULL PRIMARY KEY CHECK (length(reason)<=50),

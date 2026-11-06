@@ -55,58 +55,11 @@ impl Source {
                 .is_none_or(codeyard_git::is_full_commit_id),
             "Invalid foreign default branch"
         );
-        let repo = &self.repository;
-        Prefix::for_id(repo.id)?;
-        if let Some(parent) = repo.forked_from_id {
-            Prefix::for_id(parent)?;
-            ensure!(parent != repo.id, "Repository cannot fork itself");
-        }
         Prefix::for_id(self.reader_id)?;
         if let Some(id) = self.credential_id {
             Prefix::for_id(id)?;
         }
-        ensure!(
-            repo.home_cell == i32::from(home.get())
-                && !repo.is_stub
-                && !repo.is_gist
-                && repo.disk_path.is_empty()
-                && repo.storage_node_id.is_none(),
-            "Invalid foreign repository source"
-        );
-        ensure!(
-            codeyard_support::repository_names::valid(&repo.name)
-                && codeyard_git::branch_ref(&repo.default_branch).is_some(),
-            "Invalid foreign repository coordinates"
-        );
-        let owner = self.owner.object();
-        owner.validate()?;
-        ensure!(
-            (repo.owner_kind == "user"
-                && repo.owner_user_id == Some(owner.id)
-                && repo.owner_org_id.is_none()
-                && owner.kind == ObjectKind::User)
-                || (repo.owner_kind == "org"
-                    && repo.owner_org_id == Some(owner.id)
-                    && repo.owner_user_id.is_none()
-                    && owner.kind == ObjectKind::Organization),
-            "Foreign repository has another owner"
-        );
-        match &self.owner {
-            Owner::User(user) => {
-                super::authorization::validate_public_user(user)?;
-                ensure!(
-                    !user.is_stub && user.home_cell == i32::from(home.get()),
-                    "Foreign owner has another home"
-                );
-            }
-            Owner::Organization(org) => ensure!(
-                !org.is_stub
-                    && org.home_cell == i32::from(home.get())
-                    && org.billing_email.is_none()
-                    && org.avatar_file_id.is_none(),
-                "Foreign owner includes private metadata"
-            ),
-        }
+        validate_public(&self.repository, &self.owner, home)?;
         ensure!(
             serde_json::to_vec(self)?.len() <= 128 * 1024,
             "Foreign repository source exceeds its limit"
@@ -116,17 +69,80 @@ impl Source {
     pub async fn retain(&self, pool: &crate::DbPool) -> Result<()> {
         let home = Prefix::new(u16::try_from(self.repository.home_cell)?);
         self.validate(home)?;
-        match &self.owner {
-            Owner::User(user) => {
-                super::stubs::user(pool, home, user).await?;
-            }
-            Owner::Organization(org) => {
-                super::stubs::organization(pool, home, org).await?;
-            }
-        }
-        super::stubs::repository(pool, home, &self.repository).await?;
-        Ok(())
+        retain_public(pool, home, &self.repository, &self.owner).await
     }
+}
+
+/// Repository and owner metadata another cell may store as stubs: no storage location, no
+/// owner credentials, and both homed in `home`.
+pub fn validate_public(repo: &Repository, owner: &Owner, home: Prefix) -> Result<()> {
+    Prefix::for_id(repo.id)?;
+    if let Some(parent) = repo.forked_from_id {
+        Prefix::for_id(parent)?;
+        ensure!(parent != repo.id, "Repository cannot fork itself");
+    }
+    ensure!(
+        repo.home_cell == i32::from(home.get())
+            && !repo.is_stub
+            && !repo.is_gist
+            && repo.disk_path.is_empty()
+            && repo.storage_node_id.is_none(),
+        "Invalid foreign repository source"
+    );
+    ensure!(
+        codeyard_support::repository_names::valid(&repo.name)
+            && codeyard_git::branch_ref(&repo.default_branch).is_some(),
+        "Invalid foreign repository coordinates"
+    );
+    let owner_object = owner.object();
+    owner_object.validate()?;
+    ensure!(
+        (repo.owner_kind == "user"
+            && repo.owner_user_id == Some(owner_object.id)
+            && repo.owner_org_id.is_none()
+            && owner_object.kind == ObjectKind::User)
+            || (repo.owner_kind == "org"
+                && repo.owner_org_id == Some(owner_object.id)
+                && repo.owner_user_id.is_none()
+                && owner_object.kind == ObjectKind::Organization),
+        "Foreign repository has another owner"
+    );
+    match owner {
+        Owner::User(user) => {
+            super::authorization::validate_public_user(user)?;
+            ensure!(
+                !user.is_stub && user.home_cell == i32::from(home.get()),
+                "Foreign owner has another home"
+            );
+        }
+        Owner::Organization(org) => ensure!(
+            !org.is_stub
+                && org.home_cell == i32::from(home.get())
+                && org.billing_email.is_none()
+                && org.avatar_file_id.is_none(),
+            "Foreign owner includes private metadata"
+        ),
+    }
+    Ok(())
+}
+/// The caller has validated the metadata against the directory's current home.
+pub async fn retain_public(
+    pool: &crate::DbPool,
+    home: Prefix,
+    repo: &Repository,
+    owner: &Owner,
+) -> Result<()> {
+    validate_public(repo, owner, home)?;
+    match owner {
+        Owner::User(user) => {
+            super::stubs::user(pool, home, user).await?;
+        }
+        Owner::Organization(org) => {
+            super::stubs::organization(pool, home, org).await?;
+        }
+    }
+    super::stubs::repository(pool, home, repo).await?;
+    Ok(())
 }
 
 /// Original authority survives forwarding, storage preparation and the final write transaction.

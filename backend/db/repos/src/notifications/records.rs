@@ -4,6 +4,10 @@ use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
 use serde_json::Value;
 
+native_operation!(crate::postgres::notifications::records::received,
+    crate::sqlite::notifications::records::received,
+    /// Whether a notice event from another cell is already in the recipient's inbox.
+    fn received(pool: &DbPool, user_id: i64, cell: i32, event: i64) -> Result<bool>);
 native_operation!(crate::postgres::notifications::records::create_notification,
     crate::sqlite::notifications::records::create_notification,
     fn create_notification(

@@ -124,8 +124,8 @@ async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool>
     config.validate()?;
     tokio::time::timeout(std::time::Duration::from_secs((config.request_seconds * 30).clamp(1,300)), async {
         let mut tx = native.begin().await?;
-        let row: Option<(i64, String, String, i64, String)> = sqlx::query_as("SELECT id,substr(payload,1,524289),root_kind,root_id,topic FROM cell_outbox WHERE topic IN ($1,$2,$3,$4) AND (topic<>$4 OR $5) AND delivered_at IS NULL AND next_attempt_at<=clock_timestamp() ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED")
-            .bind(TOPIC).bind(POINTER_TOPIC).bind(PUSH_TOPIC).bind(REFRESH_TOPIC).bind(consumer.is_some()).fetch_optional(&mut *tx).await?;
+        let row: Option<(i64, String, String, i64, String)> = sqlx::query_as("SELECT id,substr(payload,1,524289),root_kind,root_id,topic FROM cell_outbox WHERE topic IN ($1,$2,$3,$4,$6) AND (topic<>$4 OR $5) AND delivered_at IS NULL AND next_attempt_at<=clock_timestamp() ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED")
+            .bind(TOPIC).bind(POINTER_TOPIC).bind(PUSH_TOPIC).bind(REFRESH_TOPIC).bind(consumer.is_some()).bind(super::notices::TOPIC).fetch_optional(&mut *tx).await?;
         let Some((id, payload, kind, root, topic)) = row else { return Ok(false); };
         let mut continuation = None;
         let operation = async {
@@ -145,6 +145,17 @@ async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool>
                 refresh.validate()?;
                 if !complete { continuation = Some(serde_json::to_string(&refresh)?); }
                 return Ok(());
+            }
+            if topic == super::notices::TOPIC {
+                let notice: super::notices::Notice = serde_json::from_str(&payload)?;
+                notice.validate(native.cell_id())?;
+                ensure!(kind == "repository" && root == notice.repository.id, Refusal::Denied);
+                // A repository that went private or was deleted since the mention sends nothing.
+                let public: Option<bool> = sqlx::query_scalar("SELECT NOT is_private AND NOT is_internal FROM repositories WHERE id=$1 AND NOT is_stub")
+                    .bind(root).fetch_optional(&mut *tx).await?;
+                if public != Some(true) { return Ok(()); }
+                let home = native.foreign_authorization().ok_or(Refusal::Unavailable)?;
+                return home.send_notice(&super::notices::Event { id, notice }).await;
             }
             if topic == POINTER_TOPIC {
                 let change: super::pointers::Change = serde_json::from_str(&payload)?;
