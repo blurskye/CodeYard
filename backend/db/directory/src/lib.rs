@@ -3,7 +3,7 @@ use anyhow::{ensure, Result};
 use codeyard_db_core::{pool::PgPool, DbPool};
 use codeyard_support::cells::Prefix;
 use sqlx::{Postgres, Transaction};
-use std::{future::Future, time::Duration};
+use std::{collections::BTreeMap, future::Future, time::Duration};
 
 pub use presence::MAXIMUM_PRESENCE_REGIONS;
 
@@ -11,6 +11,9 @@ mod claims;
 mod presence;
 mod registry;
 mod search;
+mod shards;
+
+pub use shards::{Moved, ShardRow};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
@@ -42,9 +45,16 @@ impl Default for Config {
     }
 }
 
+/// The registry database is also the cluster named `main`. Other clusters hold only the
+/// logical shards the registry's map gives them.
+pub const MAIN_CLUSTER: &str = "main";
+/// Shard clusters a directory process can open.
+pub const MAXIMUM_CLUSTERS: usize = 64;
+
 #[derive(Clone)]
 pub struct Directory {
     pool: PgPool,
+    clusters: BTreeMap<String, PgPool>,
     config: Config,
 }
 impl Directory {
@@ -56,37 +66,54 @@ impl Directory {
                 && (5..=300).contains(&config.stale_seconds),
             Refusal::Invalid
         );
-        ensure!(
-            url.starts_with("postgres://") || url.starts_with("postgresql://"),
-            Refusal::Invalid
-        );
-        let pool = tokio::time::timeout(
-            Duration::from_secs(config.request_seconds),
-            codeyard_db_core::init_db(url),
-        )
-        .await
-        .map_err(|_| Refusal::Unavailable)?
-        .map_err(|_| Refusal::Unavailable)?;
-        let DbPool::Postgres(pool) = pool else {
-            anyhow::bail!(Refusal::Invalid);
-        };
-        Ok(Self { pool, config })
+        Ok(Self {
+            pool: open(url, config).await?,
+            clusters: BTreeMap::new(),
+            config,
+        })
     }
 
+    /// Adds a shard cluster by the name the shard map uses. Call `migrate` afterwards.
+    pub async fn add_cluster(&mut self, name: &str, url: &str) -> Result<()> {
+        ensure!(
+            valid_cluster(name)
+                && name != MAIN_CLUSTER
+                && !self.clusters.contains_key(name)
+                && self.clusters.len() < MAXIMUM_CLUSTERS,
+            Refusal::Invalid
+        );
+        let pool = open(url, self.config).await?;
+        self.clusters.insert(name.to_owned(), pool);
+        Ok(())
+    }
+
+    /// Every database gets the same baseline; only the registry fills the shard map.
     pub async fn migrate(&self) -> Result<()> {
-        self.run_for(
-            self.config.migration_seconds,
-            codeyard_db_core::postgres::migrations::run_baseline(
-                &self.pool,
-                "directory",
-                include_str!("../../../../schema/directory/0001.schema.sql"),
-            ),
-        )
+        for pool in std::iter::once(&self.pool).chain(self.clusters.values()) {
+            self.run_for(
+                self.config.migration_seconds,
+                codeyard_db_core::postgres::migrations::run_baseline(
+                    pool,
+                    "directory",
+                    include_str!("../../../../schema/directory/0001.schema.sql"),
+                ),
+            )
+            .await?;
+        }
+        self.run(async {
+            sqlx::query("INSERT INTO directory_shards(shard,cluster) SELECT shard,$1 FROM generate_series(0,255) AS shard ON CONFLICT DO NOTHING")
+                .bind(MAIN_CLUSTER)
+                .execute(&self.pool)
+                .await?;
+            Ok(())
+        })
         .await
     }
 
     pub async fn close(&self) {
-        DbPool::Postgres(self.pool.clone()).close().await;
+        for pool in std::iter::once(&self.pool).chain(self.clusters.values()) {
+            DbPool::Postgres(pool.clone()).close().await;
+        }
     }
 
     async fn run<T>(&self, work: impl Future<Output = Result<T>>) -> Result<T> {
@@ -102,8 +129,12 @@ impl Directory {
         }
     }
 
-    async fn begin(&self) -> Result<Transaction<'_, Postgres>> {
-        let mut tx = self.pool.begin().await?;
+    async fn begin(&self) -> Result<Transaction<'static, Postgres>> {
+        self.begin_on(&self.pool).await
+    }
+
+    async fn begin_on(&self, pool: &PgPool) -> Result<Transaction<'static, Postgres>> {
+        let mut tx = pool.begin().await?;
         let timeout = (self.config.request_seconds * 1000).to_string();
         sqlx::query(
             "SELECT set_config('statement_timeout',$1,true),set_config('lock_timeout',$1,true)",
@@ -113,6 +144,41 @@ impl Directory {
         .await?;
         Ok(tx)
     }
+
+    /// A cluster the map names but this process was not given is unavailable, not invalid.
+    fn cluster(&self, name: &str) -> Result<&PgPool> {
+        if name == MAIN_CLUSTER {
+            return Ok(&self.pool);
+        }
+        Ok(self.clusters.get(name).ok_or(Refusal::Unavailable)?)
+    }
+}
+
+async fn open(url: &str, config: Config) -> Result<PgPool> {
+    ensure!(
+        url.starts_with("postgres://") || url.starts_with("postgresql://"),
+        Refusal::Invalid
+    );
+    let pool = tokio::time::timeout(
+        Duration::from_secs(config.request_seconds),
+        codeyard_db_core::init_db(url),
+    )
+    .await
+    .map_err(|_| Refusal::Unavailable)?
+    .map_err(|_| Refusal::Unavailable)?;
+    let DbPool::Postgres(pool) = pool else {
+        anyhow::bail!(Refusal::Invalid);
+    };
+    Ok(pool)
+}
+
+pub fn valid_cluster(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    (1..=63).contains(&bytes.len())
+        && bytes[0] != b'-'
+        && bytes
+            .iter()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || *byte == b'-')
 }
 
 /// Commits on success and rolls back at once on failure. A dropped transaction only queues

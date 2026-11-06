@@ -2,6 +2,7 @@
 //! Every write still goes to the one home cell.
 use super::{Directory, Refusal};
 use anyhow::{ensure, Result};
+use codeyard_model::cells::{Object, ObjectKind};
 use sqlx::{Postgres, Transaction};
 
 /// An organization is present in at most this many regions besides its home.
@@ -46,13 +47,22 @@ impl Directory {
             codeyard_model::cells::validate_region(region).map_err(|_| Refusal::Invalid)?;
             let mut tx = self.begin().await?;
             let result = async {
-                let home: Option<i32> = sqlx::query_scalar(
-                    "SELECT home_cell FROM directory_objects WHERE kind='organization' AND id=$1 AND active FOR UPDATE",
-                )
-                .bind(organization)
-                .fetch_optional(&mut *tx)
-                .await?;
-                ensure!(home.is_some(), Refusal::Invalid);
+                let home = self
+                    .active_home(&mut tx, organization_object(organization))
+                    .await?;
+                let home = home.ok_or(Refusal::Invalid)?;
+                // Presence changes of one cell's organizations take turns, so two additions
+                // cannot both pass the region limit.
+                sqlx::query("SELECT id FROM directory_cells WHERE id=$1 FOR UPDATE")
+                    .bind(home)
+                    .fetch_optional(&mut *tx)
+                    .await?
+                    .ok_or(Refusal::Invalid)?;
+                // Forgetting the organization holds the same row; read the home again under it.
+                let current = self
+                    .active_home(&mut tx, organization_object(organization))
+                    .await?;
+                ensure!(current == Some(home), Refusal::Invalid);
                 change(&mut tx, organization, region, present, true).await
             }
             .await;
@@ -75,15 +85,17 @@ impl Directory {
             codeyard_model::cells::validate_region(region).map_err(|_| Refusal::Invalid)?;
             let mut tx = self.begin().await?;
             let result = async {
-                let cell = super::owner(&mut tx, peer, false).await?;
-                let home: Option<String> = sqlx::query_scalar(
-                    "SELECT c.region FROM directory_objects o JOIN directory_cells c ON c.id=o.home_cell WHERE o.kind='organization' AND o.id=$1 AND o.active AND o.home_cell=$2 FOR UPDATE OF o",
-                )
-                .bind(organization)
-                .bind(i32::from(cell.get()))
-                .fetch_optional(&mut *tx)
-                .await?;
-                let home = home.ok_or(Refusal::Denied)?;
+                // The exclusive cell lock also makes this cell's presence changes take turns.
+                let cell = super::owner(&mut tx, peer, true).await?;
+                let home = self
+                    .active_home(&mut tx, organization_object(organization))
+                    .await?;
+                ensure!(home == Some(i32::from(cell.get())), Refusal::Denied);
+                let home: String =
+                    sqlx::query_scalar("SELECT region FROM directory_cells WHERE id=$1")
+                        .bind(i32::from(cell.get()))
+                        .fetch_one(&mut *tx)
+                        .await?;
                 if home == region {
                     return Ok(false);
                 }
@@ -96,8 +108,14 @@ impl Directory {
     }
 }
 
-/// The caller holds the organization's directory row, so two additions cannot both pass
-/// the region limit.
+fn organization_object(id: i64) -> Object {
+    Object {
+        kind: ObjectKind::Organization,
+        id,
+    }
+}
+
+/// The caller holds the home cell's row, so two additions cannot both pass the region limit.
 async fn change(
     tx: &mut Transaction<'_, Postgres>,
     organization: i64,

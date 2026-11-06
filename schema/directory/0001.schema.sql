@@ -30,18 +30,38 @@ CREATE INDEX directory_node_keys_cell ON directory_node_keys(cell_id,public_key)
 CREATE TABLE directory_router_keys (
     public_key TEXT PRIMARY KEY CHECK(length(public_key)=64)
 );
--- One home mapping stays stable when a name changes and switches atomically during a move.
+-- Which directory cluster holds each of the 256 logical shards. Only the registry database
+-- reads this table; its rows are written by `Directory::migrate`. A shard being copied to
+-- another cluster is `moving`: lookups still read it, writes wait or are refused. After the
+-- switch the old copy stays as `moved_from` until lookups that read the old map are done.
+CREATE TABLE directory_shards (
+    shard SMALLINT PRIMARY KEY CHECK(shard BETWEEN 0 AND 255),
+    cluster TEXT NOT NULL CHECK(cluster ~ '^[a-z0-9][a-z0-9-]{0,62}$'),
+    state TEXT NOT NULL DEFAULT 'serving' CHECK(state IN ('serving','moving')),
+    target TEXT CHECK(target ~ '^[a-z0-9][a-z0-9-]{0,62}$'),
+    moved_from TEXT CHECK(moved_from ~ '^[a-z0-9][a-z0-9-]{0,62}$'),
+    moved_at TIMESTAMPTZ,
+    CHECK((state='moving')=(target IS NOT NULL) AND target IS DISTINCT FROM cluster),
+    CHECK((moved_from IS NULL)=(moved_at IS NULL))
+);
+-- A logical shard holds its keys and its own copy of every object they belong to, so each
+-- shard moves alone. An object's home row is the copy in its own shard (`Object::shard`).
+-- The home cell is checked against the registry, which may be another database.
 CREATE TABLE directory_objects (
+    shard SMALLINT NOT NULL CHECK(shard BETWEEN 0 AND 255),
     kind TEXT NOT NULL CHECK(kind IN ('user','organization','repository')),
     id BIGINT NOT NULL CHECK(id BETWEEN 1 AND 9007199254740991),
-    home_cell INTEGER NOT NULL REFERENCES directory_cells(id),
+    home_cell INTEGER NOT NULL CHECK(home_cell BETWEEN 0 AND 65535),
     active BOOLEAN NOT NULL DEFAULT FALSE,
     claim_count INTEGER NOT NULL DEFAULT 0 CHECK(claim_count BETWEEN 0 AND 1000),
+    -- On the home row of a pending object: how many keys its reservation holds in all shards.
+    key_count INTEGER NOT NULL DEFAULT 0 CHECK(key_count BETWEEN 0 AND 1000),
     nonce_hash TEXT NOT NULL CHECK(length(nonce_hash)=64),
     expires_at TIMESTAMPTZ,
-    PRIMARY KEY(kind,id),
+    PRIMARY KEY(shard,kind,id),
     CHECK((active AND expires_at IS NULL) OR (NOT active AND expires_at IS NOT NULL))
 );
+CREATE INDEX directory_objects_object ON directory_objects(kind,id);
 CREATE INDEX directory_objects_expiry ON directory_objects(expires_at) WHERE NOT active;
 CREATE TABLE directory_claims (
     shard SMALLINT NOT NULL CHECK(shard BETWEEN 0 AND 255),
@@ -54,25 +74,25 @@ CREATE TABLE directory_claims (
     confirmed BOOLEAN NOT NULL DEFAULT FALSE,
     expires_at TIMESTAMPTZ,
     PRIMARY KEY(shard,kind,key_hash),
-    FOREIGN KEY(object_kind,object_id) REFERENCES directory_objects(kind,id) ON DELETE CASCADE,
+    FOREIGN KEY(shard,object_kind,object_id) REFERENCES directory_objects(shard,kind,id) ON DELETE CASCADE,
     CHECK((confirmed AND expires_at IS NULL) OR (NOT confirmed AND expires_at IS NOT NULL))
 );
-CREATE INDEX directory_claims_object ON directory_claims(object_kind,object_id,nonce_hash);
+CREATE INDEX directory_claims_object ON directory_claims(shard,object_kind,object_id,nonce_hash);
 CREATE INDEX directory_claims_expiry ON directory_claims(expires_at) WHERE NOT confirmed;
 
 -- The parent count bounds every per-object operation, including hostile repeated batches.
 CREATE FUNCTION directory_claim_count() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP IN ('DELETE','UPDATE') THEN
-        UPDATE directory_objects SET claim_count=claim_count-1 WHERE kind=OLD.object_kind AND id=OLD.object_id;
+        UPDATE directory_objects SET claim_count=claim_count-1 WHERE shard=OLD.shard AND kind=OLD.object_kind AND id=OLD.object_id;
     END IF;
     IF TG_OP IN ('INSERT','UPDATE') THEN
-        UPDATE directory_objects SET claim_count=claim_count+1 WHERE kind=NEW.object_kind AND id=NEW.object_id;
+        UPDATE directory_objects SET claim_count=claim_count+1 WHERE shard=NEW.shard AND kind=NEW.object_kind AND id=NEW.object_id;
     END IF;
     RETURN NULL;
 END;
 $$;
-CREATE TRIGGER directory_claim_count AFTER INSERT OR DELETE OR UPDATE OF object_kind,object_id ON directory_claims FOR EACH ROW EXECUTE FUNCTION directory_claim_count();
+CREATE TRIGGER directory_claim_count AFTER INSERT OR DELETE OR UPDATE OF shard,object_kind,object_id ON directory_claims FOR EACH ROW EXECUTE FUNCTION directory_claim_count();
 
 -- The global search index. Each cell writes its own repositories' documents through its
 -- outbox; a later (event, attempt) replaces an earlier one, and a removed repository keeps
@@ -152,13 +172,12 @@ CREATE TABLE search_packages (
 CREATE INDEX search_packages_name ON search_packages(ecosystem,name,provided);
 
 -- Regions where an organization's members read from its home cell's regional web nodes.
--- Writes still go to the one home cell. Rows appear by hand or from counted member requests.
+-- Writes still go to the one home cell. Rows appear by hand or from counted member requests;
+-- forgetting the organization removes them.
 CREATE TABLE directory_presence (
-    kind TEXT NOT NULL DEFAULT 'organization' CHECK(kind='organization'),
-    organization_id BIGINT NOT NULL,
+    organization_id BIGINT NOT NULL CHECK(organization_id BETWEEN 1 AND 9007199254740991),
     region TEXT NOT NULL CHECK(octet_length(region) BETWEEN 1 AND 63),
     manual BOOLEAN NOT NULL,
     added_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
-    PRIMARY KEY(organization_id,region),
-    FOREIGN KEY(kind,organization_id) REFERENCES directory_objects(kind,id) ON DELETE CASCADE
+    PRIMARY KEY(organization_id,region)
 );

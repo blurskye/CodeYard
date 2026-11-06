@@ -220,6 +220,17 @@ pub enum DirectoryCommand {
     },
     /// Empty the global search index; every cell then runs `cell search-reindex`.
     SearchReset,
+    /// List which cluster holds each of the 256 directory shards, as JSON.
+    Shards,
+    /// Move one directory shard to another cluster named in `DIRECTORY_SHARD_DATABASE_URLS`.
+    /// Lookups keep working; writes to the shard are refused while it copies. Run it again
+    /// to resume an interrupted move.
+    MoveShard {
+        #[arg(long, value_parser = clap::value_parser!(i16).range(0..=255))]
+        shard: i16,
+        #[arg(long)]
+        to: String,
+    },
     /// List one bounded page of cells as JSON.
     List {
         #[arg(long)]
@@ -235,9 +246,33 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
     let url = std::env::var("DIRECTORY_DATABASE_URL").map_err(|_| {
         anyhow::anyhow!("DIRECTORY_DATABASE_URL is required and must be valid UTF-8")
     })?;
-    let directory = codeyard_db_directory::Directory::connect(&url, Default::default()).await?;
+    let mut directory = codeyard_db_directory::Directory::connect(&url, Default::default()).await?;
     let result = async {
+        // Further clusters for directory shards, as `name=url` separated by commas. The
+        // directory database itself is the cluster `main`.
+        if let Ok(clusters) = std::env::var("DIRECTORY_SHARD_DATABASE_URLS") {
+            for entry in clusters.split(',').filter(|entry| !entry.trim().is_empty()) {
+                let (name, url) = entry.trim().split_once('=').ok_or_else(|| {
+                    anyhow::anyhow!("DIRECTORY_SHARD_DATABASE_URLS takes name=url entries")
+                })?;
+                directory
+                    .add_cluster(name, url)
+                    .await
+                    .map_err(|_| anyhow::anyhow!("Cannot open the directory cluster {name}"))?;
+            }
+        }
         directory.migrate().await?;
+        if matches!(
+            command,
+            DirectoryCommand::Serve { .. } | DirectoryCommand::MoveShard { .. }
+        ) {
+            let missing = directory.missing_clusters().await?;
+            anyhow::ensure!(
+                missing.is_empty(),
+                "DIRECTORY_SHARD_DATABASE_URLS lacks the clusters {}",
+                missing.join(", ")
+            );
+        }
         match command {
             DirectoryCommand::AllocatePrefix {
                 node_key,
@@ -380,6 +415,15 @@ pub async fn run_directory(command: &DirectoryCommand, state: &Path) -> Result<(
                     std::time::Duration::from_secs(*health_seconds),
                 )
                 .await?
+            }
+            DirectoryCommand::Shards => {
+                println!("{}", serde_json::to_string(&directory.shards().await?)?);
+            }
+            DirectoryCommand::MoveShard { shard, to } => {
+                println!(
+                    "{}",
+                    serde_json::to_string(&directory.move_shard(*shard, to).await?)?
+                );
             }
             DirectoryCommand::SearchReset => {
                 directory.reset_search().await?;

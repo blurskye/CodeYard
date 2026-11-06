@@ -31,12 +31,15 @@ fn cell(prefix: Prefix, key: &NodeKey, server: &Server) -> Cell {
     }
 }
 async fn published_objects(directory: &PostgresDatabase, object: Object) -> i64 {
-    sqlx::query_scalar("SELECT COUNT(*) FROM directory_objects WHERE kind=$1 AND id=$2 AND active")
-        .bind(object.kind.as_str())
-        .bind(object.id)
-        .fetch_one(&directory.raw)
-        .await
-        .unwrap()
+    sqlx::query_scalar(
+        "SELECT COUNT(*) FROM directory_objects WHERE shard=$3 AND kind=$1 AND id=$2 AND active",
+    )
+    .bind(object.kind.as_str())
+    .bind(object.id)
+    .bind(object.shard())
+    .fetch_one(&directory.raw)
+    .await
+    .unwrap()
 }
 
 async fn signup(

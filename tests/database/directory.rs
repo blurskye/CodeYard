@@ -24,13 +24,18 @@ fn cell(prefix: u16, key: char) -> Cell {
 }
 
 async fn cli(root: &Path, url: &str, arguments: &[&str]) -> Output {
+    cli_with(root, url, &[], arguments).await
+}
+
+async fn cli_with(root: &Path, url: &str, env: &[(&str, &str)], arguments: &[&str]) -> Output {
     tokio::time::timeout(
-        Duration::from_secs(30),
+        Duration::from_secs(60),
         tokio::process::Command::new(env!("CARGO_BIN_EXE_codeyard"))
             .args(["cell", "directory"])
             .args(arguments)
             .current_dir(root)
             .env_clear()
+            .envs(env.iter().copied())
             .env("DIRECTORY_DATABASE_URL", url)
             // The directory command must neither open the cell DB nor prepare local state.
             .env("DATABASE_URL", "refused://must-not-open")
@@ -365,4 +370,224 @@ async fn successor_prefixes_are_atomic_owned_and_retry_the_same_reservation() {
     assert_eq!(directory.cell(one).await.unwrap().unwrap().id, first);
     directory.close().await;
     database.finish().await;
+}
+
+fn user(id: i64) -> Object {
+    Object {
+        kind: ObjectKind::User,
+        id,
+    }
+}
+
+fn name_in(shard: i16, after: usize) -> (usize, Key) {
+    (after..)
+        .map(|index| {
+            (
+                index,
+                Key::new(KeyKind::Name, &format!("probe-{index}")).unwrap(),
+            )
+        })
+        .find(|(_, key)| key.shard() == shard)
+        .unwrap()
+}
+
+async fn rows_in(pool: &codeyard_db_core::pool::PgPool, shard: i16) -> (i64, i64) {
+    sqlx::query_as("SELECT (SELECT COUNT(*) FROM directory_objects WHERE shard=$1),(SELECT COUNT(*) FROM directory_claims WHERE shard=$1)")
+        .bind(shard)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn directory_shards_move_between_clusters_with_no_failed_lookup() {
+    let mut registry = PostgresDatabase::unmigrated().await;
+    let mut second = PostgresDatabase::unmigrated().await;
+    let mut directory = Directory::connect(&registry.connection_url(), Config::default())
+        .await
+        .unwrap();
+    assert!(directory
+        .add_cluster("main", &second.connection_url())
+        .await
+        .is_err());
+    assert!(directory
+        .add_cluster("../x", &second.connection_url())
+        .await
+        .is_err());
+    directory
+        .add_cluster("second", &second.connection_url())
+        .await
+        .unwrap();
+    directory.migrate().await.unwrap();
+    directory.register_cell(cell(0, 'a')).await.unwrap();
+    let peer = "a".repeat(64);
+    let nonce = "c".repeat(64);
+    let mut people = Vec::new();
+    for id in 1..=40_i64 {
+        let keys = vec![
+            Key::new(KeyKind::Name, &format!("person-{id}")).unwrap(),
+            Key::new(KeyKind::Email, &format!("person-{id}@example.com")).unwrap(),
+        ];
+        directory
+            .reserve(&peer, user(id), &keys, &nonce)
+            .await
+            .unwrap();
+        directory
+            .confirm(&peer, user(id), &keys, &nonce)
+            .await
+            .unwrap();
+        people.push((user(id), keys));
+    }
+    let moved = people[0].1[0].shard();
+    let home = people[0].0.shard();
+    assert!(rows_in(&registry.raw, moved).await.1 > 0);
+
+    // Lookups run during every step below and must never fail or miss.
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let reader = tokio::spawn({
+        let directory = directory.clone();
+        let people = people.clone();
+        let stop = stop.clone();
+        async move {
+            let mut rounds = 0_u64;
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                for (object, keys) in &people {
+                    for key in keys {
+                        let found = directory.lookup(key).await.unwrap().unwrap();
+                        assert_eq!(found.object, *object);
+                        assert_eq!(found.cell, Prefix::ZERO);
+                    }
+                    assert_eq!(
+                        directory.object_home(*object).await.unwrap(),
+                        Some(Prefix::ZERO)
+                    );
+                }
+                rounds += 1;
+            }
+            rounds
+        }
+    });
+
+    // A shard being copied refuses writes but keeps answering lookups.
+    sqlx::query("UPDATE directory_shards SET state='moving',target='second' WHERE shard=$1")
+        .bind(moved)
+        .execute(&registry.raw)
+        .await
+        .unwrap();
+    let (index, blocked) = name_in(moved, 0);
+    assert!(directory
+        .reserve(&peer, user(100), std::slice::from_ref(&blocked), &nonce)
+        .await
+        .is_err());
+    assert!(directory.forget(&peer, people[0].0).await.is_err());
+    assert!(directory.lookup(&people[0].1[0]).await.unwrap().is_some());
+    assert!(directory.move_shard(moved, "elsewhere").await.is_err());
+    // The command resumes the move it finds, then removes the old copy.
+    let result = directory.move_shard(moved, "second").await.unwrap();
+    assert_eq!(result.from.as_deref(), Some("main"));
+    assert!(result.claims > 0);
+    assert_eq!(rows_in(&registry.raw, moved).await, (0, 0));
+    assert_eq!(
+        rows_in(&second.raw, moved).await,
+        (result.objects, result.claims)
+    );
+    if home != moved {
+        let result = directory.move_shard(home, "second").await.unwrap();
+        assert!(result.objects > 0);
+        assert_eq!(rows_in(&registry.raw, home).await, (0, 0));
+    }
+    // Moving again to the same cluster changes nothing.
+    assert_eq!(
+        directory.move_shard(moved, "second").await.unwrap().objects,
+        0
+    );
+
+    // Writes work on the new cluster, including one that spans both clusters.
+    let keys = vec![
+        blocked.clone(),
+        Key::new(KeyKind::Email, &format!("probe-{index}@example.com")).unwrap(),
+    ];
+    directory
+        .reserve(&peer, user(100), &keys, &nonce)
+        .await
+        .unwrap();
+    assert!(directory.lookup(&blocked).await.unwrap().is_none());
+    assert!(directory
+        .confirm(&peer, user(100), std::slice::from_ref(&blocked), &nonce)
+        .await
+        .is_err());
+    directory
+        .confirm(&peer, user(100), &keys, &nonce)
+        .await
+        .unwrap();
+    for key in &keys {
+        assert_eq!(
+            directory.lookup(key).await.unwrap().unwrap().object,
+            user(100)
+        );
+    }
+    // The same name is refused for another account in the other cell's range too.
+    directory.register_cell(cell(1, 'b')).await.unwrap();
+    assert!(directory
+        .reserve(
+            &"b".repeat(64),
+            user(*Prefix::new(1).ids().start()),
+            std::slice::from_ref(&blocked),
+            &nonce
+        )
+        .await
+        .is_err());
+    directory
+        .release(&peer, user(100), std::slice::from_ref(&keys[1]))
+        .await
+        .unwrap();
+    assert!(directory.lookup(&keys[1]).await.unwrap().is_none());
+    directory.forget(&peer, user(100)).await.unwrap();
+    assert!(directory.lookup(&blocked).await.unwrap().is_none());
+    assert_eq!(
+        directory.object_home(user(100)).await.unwrap(),
+        Some(Prefix::ZERO)
+    );
+
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(reader.await.unwrap() > 0);
+
+    // The operator commands need every cluster the map names.
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join(".env"), "").unwrap();
+    let output = cli(root.path(), &registry.connection_url(), &["shards"]).await;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let listed: Vec<serde_json::Value> = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(listed.len(), 256);
+    assert_eq!(listed[moved as usize]["cluster"], "second");
+    let output = cli(
+        root.path(),
+        &registry.connection_url(),
+        &["move-shard", "--shard", &moved.to_string(), "--to", "main"],
+    )
+    .await;
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("second"));
+    let second_url = format!("second={}", second.connection_url());
+    let output = cli_with(
+        root.path(),
+        &registry.connection_url(),
+        &[("DIRECTORY_SHARD_DATABASE_URLS", &second_url)],
+        &["move-shard", "--shard", &moved.to_string(), "--to", "main"],
+    )
+    .await;
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(rows_in(&second.raw, moved).await, (0, 0));
+    assert!(directory.lookup(&people[0].1[0]).await.unwrap().is_some());
+    directory.close().await;
+    registry.finish().await;
+    second.finish().await;
 }

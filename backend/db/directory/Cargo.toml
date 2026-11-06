@@ -10,6 +10,7 @@ chrono.workspace = true
 codeyard-db-core.workspace = true
 codeyard-model.workspace = true
 codeyard-support.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
 tokio.workspace = true

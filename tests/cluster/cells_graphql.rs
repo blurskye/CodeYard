@@ -236,9 +236,12 @@ async fn two_cells_split_queries_keep_node_positions_and_validate_before_ordered
     );
     // Directory ownership can differ from a row's allocation prefix after a move.
     // No move protocol is exercised here: these are authoritative route fixtures.
-    sqlx::query("INSERT INTO directory_objects(kind,id,home_cell,active,nonce_hash) VALUES('repository',99,1,true,$1),('organization',$2,0,true,$1)")
+    let moved_organization = *Prefix::new(1).ids().start() + 99;
+    sqlx::query("INSERT INTO directory_objects(shard,kind,id,home_cell,active,nonce_hash) VALUES($3,'repository',99,1,true,$1),($4,'organization',$2,0,true,$1)")
         .bind("a".repeat(64))
-        .bind(*Prefix::new(1).ids().start() + 99)
+        .bind(moved_organization)
+        .bind(Object { kind: ObjectKind::Repository, id: 99 }.shard())
+        .bind(Object { kind: ObjectKind::Organization, id: moved_organization }.shard())
         .execute(&database.raw).await.unwrap();
     for kind in [
         "I", "PR", "IC", "PC", "PRR", "PRRC", "D", "DIC", "L", "M", "RR", "RRT", "EN", "G", "DE",

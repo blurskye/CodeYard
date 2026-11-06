@@ -9839,6 +9839,7 @@ dependencies = [
  "codeyard-db-core",
  "codeyard-model",
  "codeyard-support",
+ "serde",
  "serde_json",
  "sqlx",
  "thiserror 2.0.21",

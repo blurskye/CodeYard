@@ -44,6 +44,14 @@ impl Object {
         Prefix::for_id(self.id)?;
         Ok(())
     }
+    /// The directory shard that holds this object's home row.
+    pub fn shard(self) -> i16 {
+        let mut hash = Sha256::new();
+        hash.update(self.kind.as_str());
+        hash.update([0]);
+        hash.update(self.id.to_be_bytes());
+        i16::from(hash.finalize()[0])
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
