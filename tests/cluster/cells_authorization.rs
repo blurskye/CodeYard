@@ -2093,7 +2093,8 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .fetch_one(&zero.raw)
         .await
         .unwrap();
-    assert_eq!(count, 2);
+    // The private mention check above adds one issue; the revoked token adds none.
+    assert_eq!(count, 3);
     drop(client);
     http.stop().await;
     // Cell-key revocation is live at the receiver, even when a route is cached.
