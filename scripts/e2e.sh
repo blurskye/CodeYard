@@ -317,7 +317,7 @@ print(parts._replace(path="/" + os.environ["E2E_PG_DATABASE"], query=u.urlencode
 
 prepare_database() {
     drop_pg || return 1
-    DATABASE_URL=''
+    DATABASE_URL='' DATABASE_DIRECT_URL=''
     case $ROUND in
         sqlite) echo "SQLite database in the state directory (DATABASE_URL unset)" ;;
         postgres | pgbouncer | replica | cluster | quorum)
@@ -447,6 +447,8 @@ PY
     for attempt in $(seq 1 50); do
         kill -0 "$PGBOUNCER_PID" 2>/dev/null || { echo 'PgBouncer exited during startup' >&2; return 1; }
         if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+            # Leases and migrations bypass the pool, as production does.
+            DATABASE_DIRECT_URL=$DATABASE_URL
             DATABASE_URL=$(<"$RUN/pgbouncer/url")
             return 0
         fi
@@ -506,6 +508,7 @@ configure_node() {
     if [[ -n $DATABASE_URL ]] && ! is_runner "$node"; then NODE_ENV+=("DATABASE_URL=$DATABASE_URL"); fi
     if ! is_runner "$node"; then NODE_ENV+=("SECRETS_MASTER_KEY=$(get master_key)"); fi
     if [[ -n ${DATABASE_READ_URL:-} ]] && ! is_runner "$node"; then NODE_ENV+=("DATABASE_READ_URL=$DATABASE_READ_URL"); fi
+    if [[ -n ${DATABASE_DIRECT_URL:-} ]] && ! is_runner "$node"; then NODE_ENV+=("DATABASE_DIRECT_URL=$DATABASE_DIRECT_URL"); fi
     # A single server opens the node connection only for runners on other processes.
     if [[ $node == server && -n ${SERVER_IROH:-} ]]; then
         NODE_ENV+=("NODE_NAME=server" "IROH_BIND=127.0.0.1:$SERVER_IROH" "IROH_ADVERTISE=127.0.0.1:$SERVER_IROH")
@@ -3111,7 +3114,7 @@ run_round() {
     SSH_PORT=''
     BASE=''
     SSH_URL=''
-    DATABASE_URL=''
+    DATABASE_URL='' DATABASE_DIRECT_URL=''
     DATABASE_READ_URL=''
     SERVER_ROLES=''
     SERVER_IROH=''
@@ -3264,7 +3267,7 @@ run_cluster_round() {
     STEP_NO=0
     RUN=$WORK/cluster
     STATE=$RUN/state-files
-    HTTP_PORT='' SSH_PORT='' BASE='' SSH_URL='' DATABASE_URL=''
+    HTTP_PORT='' SSH_PORT='' BASE='' SSH_URL='' DATABASE_URL='' DATABASE_DIRECT_URL=''
     mkdir -p "$RUN/home" "$RUN/keys" "$RUN/work" "$STATE"
     PW_ALICE=Alice-e2e-$(random_hex)
     PW_BOB=Bob-e2e-$(random_hex)
@@ -3345,7 +3348,7 @@ run_quorum_round() {
     STEP_NO=0
     RUN=$WORK/quorum
     STATE=$RUN/state-files
-    HTTP_PORT='' SSH_PORT='' BASE='' SSH_URL='' DATABASE_URL=''
+    HTTP_PORT='' SSH_PORT='' BASE='' SSH_URL='' DATABASE_URL='' DATABASE_DIRECT_URL=''
     CLUSTER_NODES=(web1 store1 store2)
     mkdir -p "$RUN/home" "$RUN/keys" "$RUN/work" "$STATE"
     PW_ALICE=Alice-e2e-$(random_hex)

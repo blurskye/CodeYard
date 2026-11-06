@@ -1322,9 +1322,8 @@ pub async fn registry_source(
 /// A connection that holds the session lock of package collection, or `None` when another node
 /// holds it. The lock is keyed by the schema, so installations sharing a database collect on
 /// their own, and it ends with the connection.
-pub async fn collector_lock(pool: &PgPool) -> Result<Option<sqlx::pool::PoolConnection<Postgres>>> {
-    let mut connection = pool.acquire().await?;
-    connection.close_on_drop();
+pub async fn collector_lock(pool: &PgPool) -> Result<Option<sqlx::PgConnection>> {
+    let mut connection = codeyard_db_core::connection::session_connection(pool).await?;
     let taken: bool = sqlx::query_scalar(
         "SELECT pg_try_advisory_lock(hashtext(COALESCE(current_schema(),'')), 723947123)",
     )

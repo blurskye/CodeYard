@@ -17,6 +17,8 @@ const MAXIMUM_REPLY_BYTES: usize = 3 * 1024 * 1024;
 const MAXIMUM_FRAGMENTS: usize = 3;
 const MAXIMUM_FRAGMENT_CHARS: usize = 200;
 const MAXIMUM_NAMES: usize = 100;
+/// Matches are counted up to the result window a client can page through.
+const MAXIMUM_TOTAL: i64 = 1000;
 
 fn text(document: &Value, field: &str) -> Option<String> {
     document.get(field)?.as_str().map(str::to_owned)
@@ -169,10 +171,7 @@ impl Directory {
                             .await?;
                     }
                     if code_head.is_none() {
-                        sqlx::query("DELETE FROM search_code WHERE repository_id=$1")
-                            .bind(id)
-                            .execute(&mut *tx)
-                            .await?;
+                        delete_code(&mut tx, *id).await?;
                     }
                     if document.is_none() {
                         sqlx::query("DELETE FROM search_issues WHERE repository_id=$1")
@@ -271,24 +270,36 @@ impl Directory {
                         return Ok(Indexed { code_head });
                     }
                     if *first {
-                        sqlx::query("DELETE FROM search_code WHERE repository_id=$1")
-                            .bind(repository_id)
-                            .execute(&mut *tx)
-                            .await?;
+                        delete_code(&mut tx, *repository_id).await?;
                         sqlx::query("UPDATE search_repositories SET code_head=NULL WHERE id=$1")
                             .bind(repository_id)
                             .execute(&mut *tx)
                             .await?;
                     }
-                    sqlx::query("INSERT INTO search_code(repository_id,path,sha,size,content) SELECT $1,f.path,f.sha,f.size,f.content FROM unnest($2::text[],$3::text[],$4::bigint[],$5::text[]) AS f(path,sha,size,content) ON CONFLICT(repository_id,path) DO UPDATE SET sha=excluded.sha,size=excluded.size,content=excluded.content")
-                        .bind(repository_id)
-                        .bind(files.iter().map(|file| file.path.clone()).collect::<Vec<_>>())
-                        .bind(files.iter().map(|file| file.sha.to_ascii_lowercase()).collect::<Vec<_>>())
-                        .bind(files.iter().map(|file| file.size).collect::<Vec<_>>())
-                        .bind(files.iter().map(|file| file.content.clone()).collect::<Vec<_>>())
+                    let paths: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
+                    let replaced: Vec<Vec<u8>> = sqlx::query_scalar(
+                        "SELECT digest FROM search_code WHERE repository_id=$1 AND path=ANY($2)",
+                    )
+                    .bind(repository_id)
+                    .bind(&paths)
+                    .fetch_all(&mut *tx)
+                    .await?;
+                    let contents: Vec<String> =
+                        files.iter().map(|file| file.content.clone()).collect();
+                    sqlx::query("INSERT INTO search_blobs(digest,content) SELECT sha256(convert_to(c,'UTF8')),c FROM unnest($1::text[]) AS f(c) ON CONFLICT DO NOTHING")
+                        .bind(&contents)
                         .execute(&mut *tx)
                         .await?;
-                    let (stored, bytes): (i64, i64) = sqlx::query_as("SELECT COUNT(*),COALESCE(SUM(octet_length(path)+octet_length(content)),0)::BIGINT FROM search_code WHERE repository_id=$1")
+                    sqlx::query("INSERT INTO search_code(repository_id,path,sha,size,digest) SELECT $1,f.path,f.sha,f.size,sha256(convert_to(f.content,'UTF8')) FROM unnest($2::text[],$3::text[],$4::bigint[],$5::text[]) AS f(path,sha,size,content) ON CONFLICT(repository_id,path) DO UPDATE SET sha=excluded.sha,size=excluded.size,digest=excluded.digest")
+                        .bind(repository_id)
+                        .bind(&paths)
+                        .bind(files.iter().map(|file| file.sha.to_ascii_lowercase()).collect::<Vec<_>>())
+                        .bind(files.iter().map(|file| file.size).collect::<Vec<_>>())
+                        .bind(&contents)
+                        .execute(&mut *tx)
+                        .await?;
+                    delete_unused_blobs(&mut tx, &replaced).await?;
+                    let (stored, bytes): (i64, i64) = sqlx::query_as("SELECT COUNT(*),COALESCE(SUM(octet_length(c.path)+octet_length(b.content)),0)::BIGINT FROM search_code c JOIN search_blobs b ON b.digest=c.digest WHERE c.repository_id=$1")
                         .bind(repository_id)
                         .fetch_one(&mut *tx)
                         .await?;
@@ -323,13 +334,16 @@ impl Directory {
             let mut tx = self.begin().await?;
             super::owner(&mut tx, peer, false).await?;
             let fields = text_fields(query.kind, &query.filter)?;
-            let mut counted = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM ");
+            let mut counted = QueryBuilder::<Postgres>::new("SELECT COUNT(*) FROM (SELECT 1 FROM ");
             matching(&mut counted, query, &fields)?;
+            counted.push(" LIMIT ");
+            counted.push_bind(MAXIMUM_TOTAL);
+            counted.push(") AS found");
             let total: i64 = counted.build_query_scalar::<i64>().fetch_one(&mut *tx).await?;
             let mut page = QueryBuilder::<Postgres>::new(match query.kind {
                 Kind::Repositories => "SELECT r.id,FALSE AS pull,r.id AS repository_id,r.cell_id,r.public,r.classic_allowed,r.document,NULL::TEXT AS path,NULL::TEXT AS sha,NULL::BIGINT AS size,NULL::TEXT AS content,r.code_head,",
                 Kind::Issues => "SELECT i.id,i.pull,i.repository_id,r.cell_id,r.public,r.classic_allowed,i.document,NULL::TEXT AS path,NULL::TEXT AS sha,NULL::BIGINT AS size,NULL::TEXT AS content,r.code_head,",
-                Kind::Code => "SELECT r.id,FALSE AS pull,r.id AS repository_id,r.cell_id,r.public,r.classic_allowed,r.document,c.path,c.sha,c.size,c.content,r.code_head,",
+                Kind::Code => "SELECT r.id,FALSE AS pull,r.id AS repository_id,r.cell_id,r.public,r.classic_allowed,r.document,c.path,c.sha,c.size,b.content,r.code_head,",
             });
             score(&mut page, query.kind, &fields, &query.filter);
             page.push(" AS score FROM ");
@@ -389,7 +403,7 @@ impl Directory {
     /// Empties the index; each cell then queues its documents again with `cell search reindex`.
     pub async fn reset_search(&self) -> Result<()> {
         self.run_for(self.config.migration_seconds, async {
-            sqlx::query("TRUNCATE search_code,search_readers,search_packages,search_issues,search_repositories")
+            sqlx::query("TRUNCATE search_code,search_blobs,search_readers,search_packages,search_issues,search_repositories")
                 .execute(&self.pool)
                 .await?;
             Ok(())
@@ -433,7 +447,7 @@ fn text_fields(kind: Kind, filter: &Filter) -> Result<Vec<&'static str>> {
         return Ok(match kind {
             Kind::Repositories => vec!["r.name", "r.description"],
             Kind::Issues => vec!["i.title", "i.body"],
-            Kind::Code => vec!["c.content"],
+            Kind::Code => vec!["b.content"],
         });
     }
     let mut fields = Vec::new();
@@ -446,7 +460,7 @@ fn text_fields(kind: Kind, filter: &Filter) -> Result<Vec<&'static str>> {
             (Kind::Repositories, "readme") | (Kind::Issues, "comments") => None,
             (Kind::Issues, "title") => Some("i.title"),
             (Kind::Issues, "body") => Some("i.body"),
-            (Kind::Code, "file") => Some("c.content"),
+            (Kind::Code, "file") => Some("b.content"),
             (Kind::Code, "path") => Some("c.path"),
             _ => anyhow::bail!(Refusal::Invalid),
         };
@@ -480,9 +494,10 @@ fn push_text(sql: &mut QueryBuilder<'_, Postgres>, fields: &[&'static str], valu
         if index > 0 {
             sql.push(" OR ");
         }
-        sql.push("COALESCE(");
+        // A bare column keeps the trigram index usable. A null column gives NULL rather than
+        // FALSE, which every NOT in `filter` already folds to FALSE.
         sql.push(*field);
-        sql.push(",'') ILIKE ");
+        sql.push(" ILIKE ");
         sql.push_bind(format!("%{}%", like(value)));
         sql.push(" ESCAPE '\\'");
     }
@@ -498,7 +513,7 @@ fn matching(
     sql.push(match query.kind {
         Kind::Repositories => "search_repositories r WHERE r.document IS NOT NULL",
         Kind::Issues => "search_issues i JOIN search_repositories r ON r.id=i.repository_id WHERE i.document IS NOT NULL AND r.document IS NOT NULL",
-        Kind::Code => "search_code c JOIN search_repositories r ON r.id=c.repository_id WHERE r.document IS NOT NULL AND r.code_head IS NOT NULL",
+        Kind::Code => "search_code c JOIN search_blobs b ON b.digest=c.digest JOIN search_repositories r ON r.id=c.repository_id WHERE r.document IS NOT NULL AND r.code_head IS NOT NULL",
     });
     match query.viewer {
         Some(viewer) => {
@@ -694,7 +709,7 @@ fn score(
         return;
     }
     let fields: Vec<&'static str> = if kind == Kind::Code {
-        vec!["c.content"]
+        vec!["b.content"]
     } else {
         fields.to_vec()
     };
@@ -729,6 +744,33 @@ fn order(query: &Query) -> String {
         Kind::Code => "r.id ASC,c.path ASC",
     };
     format!("{column} {direction} NULLS LAST,{tie}")
+}
+
+/// Removes a repository's code and any file text no other repository uses.
+async fn delete_code(tx: &mut sqlx::Transaction<'static, Postgres>, repository: i64) -> Result<()> {
+    let removed: Vec<Vec<u8>> =
+        sqlx::query_scalar("DELETE FROM search_code WHERE repository_id=$1 RETURNING digest")
+            .bind(repository)
+            .fetch_all(&mut **tx)
+            .await?;
+    delete_unused_blobs(tx, &removed).await
+}
+
+/// Deletes the file text among `digests` that no code row uses. A concurrent writer that
+/// starts using one of them makes either this delete or its own insert fail on the foreign
+/// key, and the outbox retries the failed batch.
+async fn delete_unused_blobs(
+    tx: &mut sqlx::Transaction<'static, Postgres>,
+    digests: &[Vec<u8>],
+) -> Result<()> {
+    if digests.is_empty() {
+        return Ok(());
+    }
+    sqlx::query("DELETE FROM search_blobs b WHERE b.digest=ANY($1) AND NOT EXISTS(SELECT 1 FROM search_code c WHERE c.digest=b.digest)")
+        .bind(digests)
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 /// Lines of a file that hold a searched word, or its first line.

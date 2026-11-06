@@ -917,8 +917,8 @@ which makes storage the second largest cost.
   commit-graphs and a pack-objects cache, as on gitlab.com. CDN bundles are left out:
   clients ship with `transfer.bundleURI` off.
 - Objects cross cells only by fetch: a fork, a pull request head, a transfer.
-- `git gc --auto` never prunes (`gc.pruneExpire=never`, as today); object pools repack in
-  the background and keep every object a member uses.
+- Packing is a geometric repack with a multi-pack index and split commit-graph, and never
+  prunes; object pools repack in the background and keep every object a member uses.
 - Limits: 100 MB per file and 2 GB per push, as on GitHub, and a warning at 10 GB per
   repository; large files go to LFS in object storage.
 - Git on object storage, which GitHub is testing in 2026, waits until storage dominates

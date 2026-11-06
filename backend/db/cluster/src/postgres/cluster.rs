@@ -424,8 +424,7 @@ pub async fn set_node_status(
 }
 
 pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::PgConnection> {
-    let mut connection = pool.acquire().await?;
-    connection.close_on_drop();
+    let mut connection = codeyard_db_core::connection::session_connection(pool).await?;
     let allowed: bool = sqlx::query_scalar(
         "SELECT pg_try_advisory_lock_shared(723947122,hashtext(COALESCE(current_schema(),'')))",
     )
@@ -444,7 +443,7 @@ pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::PgConne
         locked,
         "another server is using this installation or node identity"
     );
-    Ok(connection.detach())
+    Ok(connection)
 }
 
 /// Unlocks the lease taken by `serving_lock` and closes its connection. The unlock is bounded,
@@ -1111,8 +1110,7 @@ async fn move_primary(
 
 /// Excludes every serving core in this installation during restore and offline repair.
 pub async fn maintenance_lock(pool: &PgPool) -> Result<PgConnection> {
-    let mut connection = pool.acquire().await?;
-    connection.close_on_drop();
+    let mut connection = codeyard_db_core::connection::session_connection(pool).await?;
     let allowed: bool = sqlx::query_scalar(
         "SELECT pg_try_advisory_lock(723947122,hashtext(COALESCE(current_schema(),'')))",
     )
@@ -1122,5 +1120,5 @@ pub async fn maintenance_lock(pool: &PgPool) -> Result<PgConnection> {
         allowed,
         "stop every core node before offline cluster maintenance"
     );
-    Ok(connection.detach())
+    Ok(connection)
 }

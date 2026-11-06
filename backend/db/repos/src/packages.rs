@@ -348,24 +348,22 @@ native_operation!(crate::postgres::packages::garbage,
 /// Held while this node collects package garbage. Collectors on several nodes would act on the
 /// same selection, and a late one could delete an object that was published again meanwhile.
 /// Dropping it closes the connection that holds the PostgreSQL lock, which releases it.
-pub struct CollectorLock(Option<sqlx::pool::PoolConnection<sqlx::Postgres>>);
-
-impl Drop for CollectorLock {
-    fn drop(&mut self) {
-        if let Some(connection) = self.0.take() {
-            drop(connection.detach());
-        }
-    }
+pub struct CollectorLock {
+    _connection: Option<sqlx::PgConnection>,
 }
 
 /// Takes the collector lock, or returns `None` when another node is collecting. A SQLite
 /// installation has a single server, so its lock is always free.
 pub async fn collector_lock(pool: &DbPool) -> Result<Option<CollectorLock>> {
     match pool {
-        DbPool::Sqlite(_) => Ok(Some(CollectorLock(None))),
-        DbPool::Postgres(pool) => Ok(crate::postgres::packages::collector_lock(pool)
-            .await?
-            .map(|connection| CollectorLock(Some(connection)))),
+        DbPool::Sqlite(_) => Ok(Some(CollectorLock { _connection: None })),
+        DbPool::Postgres(pool) => {
+            Ok(crate::postgres::packages::collector_lock(pool)
+                .await?
+                .map(|connection| CollectorLock {
+                    _connection: Some(connection),
+                }))
+        }
     }
 }
 

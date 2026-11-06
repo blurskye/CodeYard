@@ -118,6 +118,7 @@ Safe online mixed-version upgrades and cluster-wide backup/restore remain incomp
 `scripts/test-helm.sh` checks lint and default/all-feature/NodePort renders against strict
 native schemas, skipping missing CRD schemas. It never contacts a Kubernetes cluster.
 
-Use session pooling when placing PgBouncer in front of a complete cluster. Set
-`config.databasePoolSize` to the per-process budget and allow additional sessions for
-serving locks and notifications. See the [PgBouncer checks](CLUSTER.md#pgbouncer-check).
+Use transaction pooling in front of a complete cluster only with `DATABASE_DIRECT_URL`
+pointing past PgBouncer for the serving leases and migrations; otherwise use session
+pooling. Set `config.databasePoolSize` to the per-process budget and allow additional
+direct sessions for the leases. See the [PgBouncer checks](CLUSTER.md#pgbouncer-check).

@@ -457,6 +457,39 @@ pub async fn init_db(database_url: &str) -> Result<DbPool> {
     bail!("Unsupported application database scheme")
 }
 
+/// One connection for session-level work: advisory leases that last as long as the
+/// connection, and migrations. It comes from `DATABASE_DIRECT_URL` when that is set, so a
+/// transaction-pooling PgBouncer in front of `DATABASE_URL` never hands a lease's server
+/// session to another client; otherwise it is taken out of `pool`. The direct URL must reach
+/// the same database and schema, which is checked, because a lease taken elsewhere would
+/// exclude nothing.
+pub async fn session_connection(pool: &crate::pool::PgPool) -> Result<sqlx::PgConnection> {
+    use sqlx::ConnectOptions;
+    let url = match std::env::var("DATABASE_DIRECT_URL") {
+        Ok(url) if !url.is_empty() => url,
+        Ok(_) | Err(std::env::VarError::NotPresent) => {
+            let mut connection = pool.acquire().await?;
+            connection.close_on_drop();
+            return Ok(connection.detach());
+        }
+        Err(_) => bail!("invalid DATABASE_DIRECT_URL"),
+    };
+    if !(url.starts_with("postgres://") || url.starts_with("postgresql://")) {
+        bail!("DATABASE_DIRECT_URL requires PostgreSQL");
+    }
+    let options = postgres_options(&url)?;
+    let mut direct = tokio::time::timeout(Duration::from_secs(5), options.connect())
+        .await
+        .map_err(|_| anyhow::anyhow!("DATABASE_DIRECT_URL did not answer within 5 seconds"))??;
+    const PLACE: &str = "SELECT current_database()::text,COALESCE(current_schema(),'')::text";
+    let here: (String, String) = sqlx::query_as(PLACE).fetch_one(&mut direct).await?;
+    let there: (String, String) = sqlx::query_as(PLACE).fetch_one(pool).await?;
+    if here != there {
+        bail!("DATABASE_DIRECT_URL reaches another database or schema than DATABASE_URL");
+    }
+    Ok(direct)
+}
+
 /// Opens an existing database for reading. Unlike `init_db`, it never creates a SQLite
 /// file and leaves the file's journal mode and permissions alone.
 pub async fn open_source(database_url: &str) -> Result<DbPool> {

@@ -14,15 +14,22 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[(
 static MIGRATION_TURNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 pub async fn run_migrations(pool: &PgPool) -> Result<()> {
-    apply(pool, MIGRATIONS).await
+    let mut connection = crate::connection::session_connection(pool).await?;
+    let applied = apply(&mut connection, MIGRATIONS).await;
+    let _ = sqlx::Connection::close(connection).await;
+    applied
 }
 
 /// Independent stores use the same transactional baseline and history checks.
 pub async fn run_baseline(pool: &PgPool, name: &'static str, sql: &'static str) -> Result<()> {
-    apply(pool, &[(1, name, sql)]).await
+    let mut connection = pool.acquire().await?;
+    apply(&mut *connection, &[(1, name, sql)]).await
 }
 
-async fn apply(pool: &PgPool, migrations: &[(i64, &str, &str)]) -> Result<()> {
+async fn apply(
+    connection: &mut sqlx::PgConnection,
+    migrations: &[(i64, &str, &str)],
+) -> Result<()> {
     info!("Running database migrations...");
 
     // Runs in this process take turns. Otherwise a queue of them, such as many test
@@ -30,7 +37,7 @@ async fn apply(pool: &PgPool, migrations: &[(i64, &str, &str)]) -> Result<()> {
     let _turn = MIGRATION_TURNS.lock().await;
     // A transaction-scoped advisory lock: concurrent nodes migrate one at a time.
     const MIGRATION_LOCK_KEY: i64 = 37_000_001;
-    let mut tx = pool.begin().await?;
+    let mut tx = sqlx::Connection::begin(connection).await?;
     sqlx::query("SET LOCAL lock_timeout = '15s'")
         .execute(&mut *tx)
         .await?;

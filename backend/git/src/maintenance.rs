@@ -1,9 +1,10 @@
 //! Packing after writes. Git's automatic gc is off for every command this server runs, so
 //! nothing else packs a repository. A repository that keeps receiving small pushes would keep
 //! its loose objects forever, and large pushes and replica transfers would keep adding packs.
-//! After an accepted push the server runs non-pruning `git gc` in the background when loose
-//! objects exceed `gc.auto` or packs exceed `gc.autoPackLimit`. After a replica transfer it
-//! checks only packs.
+//! After an accepted push the server packs in the background when loose objects exceed
+//! `gc.auto` or packs exceed `gc.autoPackLimit`; after a replica transfer it checks only packs.
+//! A run is a geometric repack with a multi-pack index and a split commit-graph, as GitHub and
+//! GitLab do, instead of a full `gc` that rewrites every object each time.
 use super::repository::process;
 use anyhow::{ensure, Context, Result};
 use std::{
@@ -72,7 +73,7 @@ pub async fn after_copy(repo_id: i64, mirror: &Path) {
     }
 }
 
-/// Runs non-pruning `git gc` when loose objects or packs exceed their limits. A push that
+/// Packs when loose objects or packs exceed their limits. A push that
 /// finds a run already queued or running for `path` leaves packing to a later push.
 async fn pack_if_needed(path: &Path, threshold: usize) -> Result<()> {
     let Some(_lock) = RunLock::take(path) else {
@@ -91,10 +92,10 @@ async fn pack_if_needed(path: &Path, threshold: usize) -> Result<()> {
         .acquire_owned()
         .await
         .context("repository packing closed")?;
-    run_gc(path).await
+    pack(path).await
 }
 
-/// Runs non-pruning `git gc` on a replica copy that has more than `PACK_LIMIT` packs. A copy
+/// Packs a replica copy that has more than `PACK_LIMIT` packs. A copy
 /// receives packs rather than loose objects, so only its packs are counted.
 async fn pack_mirror_if_needed(mirror: &Path) -> Result<()> {
     let packs = mirror.join("objects").join("pack");
@@ -108,21 +109,47 @@ async fn pack_mirror_if_needed(mirror: &Path) -> Result<()> {
     let Ok(_slot) = SLOTS.clone().try_acquire_owned() else {
         return Ok(());
     };
-    run_gc(mirror).await
+    pack(mirror).await
 }
 
-/// The caller already counted the threshold crossing. Force packing instead of sampling the
-/// loose-object distribution again. Unreachable objects remain available to pulls and queued runs.
-async fn run_gc(path: &Path) -> Result<()> {
+/// The caller already counted the threshold crossing. `--geometric=2` rolls the loose objects
+/// and the smallest packs into one new pack until each pack is at least twice the size of the
+/// next smaller one, so a run rewrites little and large packs stay untouched. It only combines
+/// packs and never prunes: unreachable objects stay available to pulls and queued runs. The
+/// multi-pack index lets readers search all packs at once and carries the reachability bitmap.
+/// A fork that borrows objects from a pool cannot have a complete bitmap, so it gets none. The
+/// commit-graph adds a layer and merges small ones instead of rewriting the whole graph.
+async fn pack(path: &Path) -> Result<()> {
+    let borrows = tokio::fs::try_exists(path.join("objects/info/alternates")).await?;
+    let mut repack = vec!["repack", "-d", "-q", "--geometric=2", "--write-midx"];
+    if !borrows {
+        repack.push("--write-bitmap-index");
+    }
+    git(path, &repack).await?;
+    git(
+        path,
+        &[
+            "commit-graph",
+            "write",
+            "--reachable",
+            "--split",
+            "--size-multiple=2",
+            "--no-progress",
+        ],
+    )
+    .await?;
+    git(path, &["pack-refs", "--all"]).await
+}
+
+async fn git(path: &Path, args: &[&str]) -> Result<()> {
     let mut command = process::git_command()?;
     command.arg("--git-dir").arg(path);
-    command.arg("-c").arg("gc.pruneExpire=never");
-    command.arg("-c").arg("gc.autoDetach=false");
-    command.args(["gc", "--no-prune", "--quiet"]);
+    command.args(args);
     let output = process::run(command, b"", OUTPUT_LIMIT, RUN_TIMEOUT).await?;
     ensure!(
         output.status.success(),
-        "git gc exited with {}",
+        "git {} exited with {}",
+        args[0],
         output.status
     );
     Ok(())
@@ -229,10 +256,17 @@ mod tests {
         assert!(RunLock::take(&first).is_some());
     }
 
+    fn repo_with_blob(path: &Path, content: &str) -> git2::Oid {
+        git2::Repository::open_bare(path)
+            .unwrap()
+            .blob(content.as_bytes())
+            .unwrap()
+    }
+
     /// A commit that no ref reaches, such as the revision of a closed pull request or the
     /// commit of a queued run, is still readable after a month, when a run has packed.
     #[tokio::test]
-    async fn gc_auto_never_prunes_unreachable_objects() {
+    async fn packing_never_prunes_unreachable_objects() {
         fn blobs_starting_17(count: usize, from: usize) -> Vec<String> {
             (from..)
                 .map(|index| format!("content {index}"))
@@ -306,10 +340,10 @@ mod tests {
         }
     }
 
-    /// Runs the real `git gc --auto` with a threshold of 1. Git packs once `objects/17`
-    /// holds more than one loose object, so the blobs are picked to have IDs starting 17.
+    /// Runs the real packing with a threshold of 1. The blobs are picked to have IDs starting
+    /// 17 so they share one loose-object directory.
     #[tokio::test]
-    async fn gc_auto_packs_loose_objects_and_the_repository_still_reads() {
+    async fn packing_writes_a_multi_pack_index_and_commit_graph_and_the_repository_still_reads() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("repo.git");
         let repo = git2::Repository::init_bare(&path).unwrap();
@@ -350,6 +384,17 @@ mod tests {
             .unwrap()
             .map(|entry| entry.unwrap().file_name());
         assert!(names.any(|name| name.to_string_lossy().ends_with(".pack")));
+        assert!(path.join("objects/pack/multi-pack-index").is_file());
+        assert!(path
+            .join("objects/info/commit-graphs/commit-graph-chain")
+            .is_file());
+        // A second run after more packs arrive adds to the index instead of failing.
+        let more = repo_with_blob(&path, "more content");
+        pack_if_needed(&path, 0).await.unwrap();
+        assert!(git2::Repository::open_bare(&path)
+            .unwrap()
+            .find_blob(more)
+            .is_ok());
         let repo = git2::Repository::open_bare(&path).unwrap();
         let tree = repo.find_commit(commit).unwrap().tree().unwrap();
         for (index, content) in contents.iter().enumerate() {

@@ -76,6 +76,12 @@ fn query(kind: Kind, viewer: Option<i64>, filter: Filter) -> Query {
 fn text(word: &str) -> Filter {
     Filter::Term("text".into(), word.into())
 }
+async fn blobs(pool: &codeyard_db_core::pool::PgPool) -> Vec<String> {
+    sqlx::query_scalar("SELECT content FROM search_blobs ORDER BY content")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}
 async fn names(index: &Client, query: &Query) -> Vec<String> {
     let Results { items, .. } = index.search(query).await.unwrap();
     let mut names: Vec<String> = items
@@ -260,6 +266,42 @@ async fn cells_write_only_their_own_documents_and_private_ones_reach_only_reader
         0
     );
 
+    // File text is stored once per content, and text no file uses any more is removed.
+    let twin = base + 11;
+    one.index(&repository(twin, (1, 1), "twin", true, &[]))
+        .await
+        .unwrap();
+    let twin_code = |content: &str| Batch::Code {
+        repository_id: twin,
+        version: Version {
+            event: 1,
+            attempt: 1,
+        },
+        head: "c".repeat(40),
+        files: vec![file(content)],
+        first: true,
+        last: true,
+    };
+    one.index(&twin_code("fn wick() {}\nfn needle() {}\n"))
+        .await
+        .unwrap();
+    assert_eq!(
+        blobs(&registry.raw).await,
+        ["fn wick() {}\nfn needle() {}\n"]
+    );
+    assert_eq!(
+        one.search(&query(Kind::Code, None, text("needle")))
+            .await
+            .unwrap()
+            .total,
+        2
+    );
+    one.index(&twin_code("fn twin() {}\n")).await.unwrap();
+    assert_eq!(
+        blobs(&registry.raw).await,
+        ["fn twin() {}\n", "fn wick() {}\nfn needle() {}\n"]
+    );
+
     one.index(&Batch::Repository {
         id: other,
         version: Version {
@@ -274,6 +316,7 @@ async fn cells_write_only_their_own_documents_and_private_ones_reach_only_reader
     })
     .await
     .unwrap();
+    assert_eq!(blobs(&registry.raw).await, ["fn twin() {}\n"]);
     one.index(&repository(other, (2, 7), "lantern-far", true, &[]))
         .await
         .unwrap();

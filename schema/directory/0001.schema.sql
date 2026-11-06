@@ -97,7 +97,8 @@ CREATE TRIGGER directory_claim_count AFTER INSERT OR DELETE OR UPDATE OF shard,o
 -- The global search index. Each cell writes its own repositories' documents through its
 -- outbox; a later (event, attempt) replaces an earlier one, and a removed repository keeps
 -- an empty row so a late write cannot bring it back. Private documents are returned only to
--- the readers their cell names.
+-- the readers their cell names. Free text matches substrings through trigram indexes.
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE TABLE search_repositories (
     id BIGINT PRIMARY KEY CHECK(id BETWEEN 1 AND 9007199254740991),
     cell_id INTEGER NOT NULL REFERENCES directory_cells(id),
@@ -121,8 +122,10 @@ CREATE TABLE search_repositories (
     updated_at TIMESTAMPTZ,
     pushed_at TIMESTAMPTZ
 );
-CREATE INDEX search_repositories_full_name ON search_repositories(full_name);
-CREATE INDEX search_repositories_owner ON search_repositories(owner);
+CREATE INDEX search_repositories_full_name ON search_repositories(lower(full_name));
+CREATE INDEX search_repositories_owner ON search_repositories(lower(owner));
+CREATE INDEX search_repositories_name_text ON search_repositories USING gin(name gin_trgm_ops);
+CREATE INDEX search_repositories_description_text ON search_repositories USING gin(description gin_trgm_ops);
 CREATE INDEX search_repositories_stars ON search_repositories(stars DESC,id DESC) WHERE document IS NOT NULL AND public;
 CREATE TABLE search_readers (
     repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE,
@@ -153,14 +156,25 @@ CREATE TABLE search_issues (
     PRIMARY KEY(pull,id)
 );
 CREATE INDEX search_issues_repository ON search_issues(repository_id);
+CREATE INDEX search_issues_title_text ON search_issues USING gin(title gin_trgm_ops);
+CREATE INDEX search_issues_body_text ON search_issues USING gin(body gin_trgm_ops);
+-- File text is stored once per distinct content, keyed by the SHA-256 the directory computes
+-- itself, so a cell cannot attach other text to another repository's file.
+CREATE TABLE search_blobs (
+    digest BYTEA PRIMARY KEY CHECK(octet_length(digest)=32),
+    content TEXT NOT NULL CHECK(octet_length(content)<=131072)
+);
+CREATE INDEX search_blobs_content_text ON search_blobs USING gin(content gin_trgm_ops);
 CREATE TABLE search_code (
     repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE,
     path TEXT NOT NULL CHECK(octet_length(path) BETWEEN 1 AND 4096),
     sha TEXT NOT NULL CHECK(length(sha) IN (40,64)),
     size BIGINT NOT NULL CHECK(size>=0),
-    content TEXT NOT NULL CHECK(octet_length(content)<=131072),
+    digest BYTEA NOT NULL REFERENCES search_blobs(digest),
     PRIMARY KEY(repository_id,path)
 );
+CREATE INDEX search_code_digest ON search_code(digest);
+CREATE INDEX search_code_path_text ON search_code USING gin(path gin_trgm_ops);
 -- Packages a public repository depends on, or provides (its root npm package), for "used by".
 CREATE TABLE search_packages (
     repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE,

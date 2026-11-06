@@ -40,8 +40,10 @@ HTTP and built-in SSH can serve remote repositories. See [Architecture](ARCHITEC
 Git's automatic `gc` is off for the Git commands the server runs, so the server packs
 repositories itself. After accepted pushes and server-side ref publications (including
 editor saves, uploads and merges), it counts the loose objects in the
-repository, stopping at 6,700 (Git's default `gc.auto`). Above that, it starts
-`git gc --auto` for the repository in the background, after the push has been answered.
+repository, stopping at 6,700 (Git's default `gc.auto`). Above that, it packs the
+repository in the background, after the push has been answered: a geometric repack
+(`--geometric=2`, so large packs are left alone), a multi-pack index with a reachability
+bitmap (none for a fork that borrows from a pool) and a new split commit-graph layer.
 A replica copy is checked after each transfer into it, and packed the same way when it
 has more than 50 packs (Git's `gc.autoPackLimit`). That run happens inside the copy's own
 transfer job, so no other transfer writes the copy meanwhile. A run that takes longer than

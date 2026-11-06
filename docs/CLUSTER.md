@@ -580,10 +580,12 @@ two-connection transaction pool and checks login, issues, SSH/HTTP push and clon
 round also runs by default. It stops both processes and drops its database on exit; set
 `E2E_KEEP=1` to retain logs (the private pool configuration contains database credentials).
 
-For a complete cluster, use PgBouncer **session** pooling: serving and maintenance
-leases retain database sessions. Notifications use cursor polling and retain none.
-Budget backend connections for every process's primary pool, optional read pool and
-these dedicated lease sessions. The small transaction-pool round above
+Serving, maintenance and package-collection leases are session advisory locks, and
+migrations run on one session too. Set `DATABASE_DIRECT_URL` to a URL that bypasses
+PgBouncer (the same database and schema, which the server checks) and a complete cluster
+can use **transaction** pooling for `DATABASE_URL`; without it, use session pooling.
+Notifications use cursor polling and retain no session. Budget backend connections for
+every process's primary pool, optional read pool and the direct lease sessions. The small transaction-pool round above
 checks ordinary API/Git traffic only. Run the session setup with
 `E2E_PGBOUNCER_MODE=session E2E_DATABASES=pgbouncer bash scripts/e2e.sh`.
 

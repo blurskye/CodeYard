@@ -442,6 +442,18 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       osv_advisories; osv_packages; package_blobs; signature_verifications; storage_objects;
       topics.
 
+    Stage 6 items 2 to 6 (the move itself, automatic region moves, repository transfer) are
+    not written. A row copy by these rules is the easy part; what blocks a correct move is:
+    (a) the target loads rows in any order only if every foreign key is `DEFERRABLE` (492
+    of 501 are not), since the schema's references form cycles; (b) 70 triggers keep
+    counters, search events, membership notices and credential guards, and each needs a
+    decision for a moved row (skip, replay or rebuild); (c) file, avatar, package and
+    CodeQL bytes live in the source cell's object store and repositories on its storage
+    nodes, and no cell-to-cell copy exists for files, only the fork stream for Git; (d)
+    runners, webhooks deliveries in flight and CI jobs registered with the source cell; (e)
+    a freeze that also stops the source cell's own background writers, not only routers.
+    Each is a design decision for the owner before the move is built.
+
     Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
     scheduled bounded expired directory-claim collection.
