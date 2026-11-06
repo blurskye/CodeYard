@@ -773,8 +773,8 @@ admission, bounded pinned-TLS exports, destination staging/publication and publi
 REST/native/form ingress with authenticated foreign parent metadata pass source checks.
 Renamed foreign-fork discovery, retained parent metadata and storage publication tests
 pass source checks. Initial cross-cell PR creation and retained-head publication are
-written but unchecked. Push following, maintainer pushes,
-notifications, transfers and pools remain open, as do stages 4 to 6. Range renewal is a
+written. Push following, maintainer pushes, object pools and cross-cell mention
+notices are written; cross-cell repository transfers remain open, as do stages 4 to 6. Range renewal is a
 deferred owner follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.

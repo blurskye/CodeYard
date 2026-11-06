@@ -223,8 +223,20 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     subscription/admission transactions and a durable per-pull refresh cursor are written;
     transport, storage delivery and maintainer grants are not wired yet. This batch is
     unchecked and has not run acceptance.
-    Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
-    object pools, mentions/home inbox/email, and repository transfers/redirects.
+    Stage 3 items 1 to 4 are written and pass workspace, Clippy and WASM checks:
+    the head cell queues `repository.push` after a branch moves and the base follows it;
+    maintainer pushes use the base cell's live grant; public forks on standalone storage
+    share `pools/<id>.git`; mentions of foreign accounts reach their home inbox once per
+    event with one email. Item 6, cross-cell repository transfer, is not written: it needs
+    the stage 6 row-ownership copy for one repository.
+    Owner notes: every followed push ships the whole branch pack; a pull that keeps failing
+    holds back later pulls on the same refresh event, with backoff; the outbox holds its row
+    lock across the network call; maintainer pushes get no CI token; a native maintainer
+    credential with a foreign base is refused; the upstream owner does not read a private
+    cross-cell fork (head.repo is null for them); pools are never pruned when forks go and
+    are not used in cluster storage; private-repository mentions stay in their cell; a
+    delivered notice stays visible if its repository later turns private, because the
+    home's stub is not refreshed.
     Stages 4 to 6 remain unwritten; automatic user moves and org regional presence
     are documented owner decisions. Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
