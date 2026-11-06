@@ -160,14 +160,30 @@ class Deployment:
         self.command("directory", *arguments)
 
     def prepare(self):
+        for name in ("zero", "one"):
+            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.root / name / "host_key")],
+                           check=True, capture_output=True, timeout=20)
+        self.seed_existing_zero()
         self.command("directory", "cell", "directory", "initialize")
         for index, name in enumerate(("zero", "one")):
             self.command(name, "cell", "initialize", "--prefix", index)
-            subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(self.root / name / "host_key")],
-                           check=True, capture_output=True, timeout=20)
             self.register(index, opened=index == 0)
         self.command("directory", "cell", "directory", "router-key", "--public-key", self.keys["router"]["NODE_PUBLIC_KEY"])
         self.start("directory", "cell", "directory", "serve", "--address", self.directory_address)
+        deadline = time.monotonic() + 60
+        while True:
+            assert self.processes["directory"].poll() is None, self.diagnostic("directory")
+            try:
+                host, port = self.directory_address.rsplit(":", 1)
+                with socket.create_connection((host, int(port)), timeout=1):
+                    break
+            except OSError:
+                assert time.monotonic() < deadline, self.diagnostic("directory")
+                threading.Event().wait(0.1)
+        for kind in ("user", "organization", "repository"):
+            publication = self.command("zero", "cell", "publish", "--directory-address", self.directory_address,
+                "--directory-key", self.keys["directory"]["NODE_PUBLIC_KEY"], "--kind", kind, "--limit", "250")
+            assert json.loads(publication.stdout)["count"] == (0 if kind == "organization" else 1)
         for index, name in enumerate(("zero", "one")):
             web, ssh, rpc = self.native[index]
             self.settings[name].update(DIRECTORY_ADDRESS=self.directory_address,
@@ -182,21 +198,45 @@ class Deployment:
         self.start("router", "serve")
         self.wait("router", self.base)
 
-    def web(self, who, command, *arguments):
+    def web(self, who, command, *arguments, base=None):
         result = subprocess.run([sys.executable, "-I", str(ROOT / "scripts/e2e-web.py"), command,
-                                 "--base", self.base, "--jar", str(self.root / (who + ".json")), "--who", who, *map(str, arguments)],
+                                 "--base", base or self.base, "--jar", str(self.root / (who + ".json")), "--who", who, *map(str, arguments)],
                                 text=True, capture_output=True, timeout=80, env=self.env)
         assert result.returncode == 0, f"{who} native HTTP failed: {result.stderr[-3000:]}"
         return result.stdout.strip()
 
-    def account(self, who, setup=False, expected="303"):
+    def account(self, who, setup=False, expected="303", base=None):
         route = "/setup" if setup else "/register"
         arguments = [route, "--action", route, "--has", "username", "--set", "username=" + who,
                      "--set", "email=" + who + "@example.test", "--set", "password=cell-acceptance-password",
                      "--set", "confirm_password=cell-acceptance-password", "--status", expected]
         if setup:
             arguments += ["--set", "node_mode=public"]
-        self.web(who, "form", *arguments)
+        self.web(who, "form", *arguments, base=base)
+
+    def seed_existing_zero(self):
+        original = self.settings["zero"].copy()
+        web, ssh, _ = self.native[0]
+        self.settings["zero"].update(HTTP_ADDR=web.removeprefix("http://"), SSH_ADDR=f"127.0.0.1:{ssh}",
+            PUBLIC_URL=web, PUBLIC_HTTP_CLONE_BASE=web, GITSERV_NODE_ROLES="server", IROH_BIND="127.0.0.1:0")
+        try:
+            self.start("zero", "serve")
+            self.wait("zero", web)
+            self.account("alice", setup=True, base=web)
+            self.existing_session = json.loads((self.root / "alice.json").read_text())["session_id"]
+            self.existing = json.loads(self.web("alice", "req", "POST", "/api/repos", "--accept", "json",
+                "--status", "201", "--json", json.dumps({"name": "existing", "description": "Before cell enrollment"}),
+                "--print", "body", base=web))
+            self.existing_sha = self.web("alice", "req", "POST", "/api/repos/alice/existing/contents/README.md",
+                "--accept", "json", "--status", "201", "--json", json.dumps({
+                    "content": base64.b64encode(b"Before cell enrollment\n").decode(), "message": "Before cell enrollment",
+                    "branch": "main", "expected_revision": "unborn"}), "--print", "json:sha", base=web)
+        finally:
+            try:
+                if "zero" in self.processes:
+                    self.stop("zero")
+            finally:
+                self.settings["zero"] = original
 
     def token(self, who):
         value = self.web(who, "form", "/settings?tab=tokens", "--action", "/settings/tokens", "--has", "name",
@@ -275,7 +315,12 @@ class Deployment:
 
 def acceptance(deployment):
     github = load("codeyard_cells_github", ROOT / "scripts/e2e-github.py")
-    deployment.account("alice", setup=True)
+    assert json.loads((deployment.root / "alice.json").read_text())["session_id"] == deployment.existing_session
+    current = json.loads(deployment.web("alice", "req", "GET", "/api/repos/alice/existing",
+        "--accept", "json", "--print", "body"))
+    assert current["id"] == deployment.existing["id"] and current["description"] == "Before cell enrollment", current
+    deployment.web("alice", "req", "GET", "/alice/existing/raw/main/README.md", "--contains", "Before cell enrollment")
+    print("PASS existing standalone account, session, repository ID and commit survive cell zero enrollment", flush=True)
     deployment.register(0, opened=False)
     deployment.register(1)
     deployment.account("bob")
@@ -312,8 +357,17 @@ def acceptance(deployment):
         client.login()
         alice = client.api("user")
         bob = client.api("user", who="bob")
+        assert alice["id"] == deployment.existing["owner_id"], alice
         assert alice["id"] != bob["id"] and bob["id"] > alice["id"]
         assert 2**37 <= bob["id"] < 2**53, bob["id"]
+        existing = client.api("repos/alice/existing")
+        assert existing["id"] == deployment.existing["id"], existing
+        refs = client.execute(["git", "ls-remote", deployment.base + "/alice/existing.git", "refs/heads/main"])
+        assert refs.stdout.split()[0] == deployment.existing_sha, refs.stdout
+        original_clone = directory / "existing-cell-zero"
+        client.execute(["git", "clone", deployment.base + "/alice/existing.git", str(original_clone)])
+        assert (original_clone / "README.md").read_text() == "Before cell enrollment\n"
+        client.checked("existing standalone IDs, session and Git data survive cell zero enrollment through gh and clone")
         client.gh("repo", "create", "alice/shared", "--private")
         client.gh("repo", "create", "bob/other", "--public", who="bob")
         other = client.api("repos/bob/other", who="bob")

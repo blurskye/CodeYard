@@ -179,6 +179,11 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     creation/acceptance pass; the fixture then tries to JSON-decode the successful
     empty 204 response. Its fix asserts the gh HTTP status directly. The next snapshot
     also adds browser JavaScript precision checks for cell-1 account/repository IDs.
+    Those fixture changes pass workspace 245d0c996f6c4bc2a11736e1c149f0f0, Clippy
+    fccc5bc15490436392c6f19bf8c72d25 and WASM eb68fc08c42d4a218b972875f7f457c7.
+    The next source fixture starts an existing standalone account/session/repository,
+    writes a commit, enrolls it as cell zero and checks unchanged IDs/session/Git data
+    through HTTP, gh and clone. Its syntax is checked; source checks and runtime are next.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:
