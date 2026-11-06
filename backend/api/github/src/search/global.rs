@@ -15,7 +15,10 @@ pub(super) struct Found {
 }
 
 /// `None` when this server has no shared index; it then searches its own database.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "Each caller passes its own parsed query, order and page."
+)]
 pub(super) async fn search(
     state: &AppState,
     auth: Option<&Authentication>,

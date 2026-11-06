@@ -178,7 +178,7 @@ async fn content(
                 &code.sha,
                 &code.revision,
                 code.size as i64,
-                code.language.as_deref(),
+                code.language,
                 code.fragments
                     .iter()
                     .map(|fragment| (fragment.line as i64, fragment.text.as_str())),
@@ -191,7 +191,10 @@ async fn content(
     Ok((page.headers(&uri,offset+limit<total.min(1000))?,Json(json!({"total_count":total,"incomplete_results":results.incomplete,"items":items,"search_type":"lexical","indexing":"live"}))).into_response())
 }
 /// One code search item, as GitHub shapes it.
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "A local hit and an index hit fill the same GitHub fields from different sources."
+)]
 fn code_document<'a>(
     query: &SearchQuery,
     owner: &str,

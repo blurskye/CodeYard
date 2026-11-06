@@ -51,8 +51,10 @@ class Deployment:
         self.keys = {}
         self.settings = {}
         self.http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-        values = ports(9)
+        values = ports(10)
         self.directory_address = f"127.0.0.1:{values[0]}"
+        # A second directory listener on the same database serves search, so it can stop alone.
+        self.search_address = f"127.0.0.1:{values[9]}"
         self.base = f"http://127.0.0.1:{values[1]}"
         self.ssh = values[2]
         self.native = [(f"http://127.0.0.1:{values[3]}", values[4], values[5]),
@@ -63,7 +65,7 @@ class Deployment:
                         PUBLIC_HTTP_CLONE_BASE=self.base,
                         PUBLIC_SSH_CLONE_BASE=f"ssh://git@127.0.0.1:{self.ssh}",
                         RUST_LOG="warn", SSH_MODE="builtin", SECRETS_MASTER_KEY=secrets.token_hex(32))
-        for name in ("directory", "zero", "one", "router"):
+        for name in ("directory", "search", "zero", "one", "router"):
             directory = self.root / name
             directory.mkdir(mode=0o700)
             (directory / ".env").write_text("")
@@ -74,7 +76,8 @@ class Deployment:
             self.keys[name] = key
             environment["NODE_KEY"] = key["NODE_KEY"]
             self.settings[name] = environment
-        self.settings["directory"]["DIRECTORY_DATABASE_URL"] = os.environ["E2E_CELLS_DIRECTORY_URL"]
+        for name in ("directory", "search"):
+            self.settings[name]["DIRECTORY_DATABASE_URL"] = os.environ["E2E_CELLS_DIRECTORY_URL"]
         for name, variable in (("zero", "E2E_CELLS_ZERO_URL"), ("one", "E2E_CELLS_ONE_URL")):
             self.settings[name]["DATABASE_URL"] = os.environ[variable]
 
@@ -175,16 +178,8 @@ class Deployment:
             self.register(index, opened=index == 0)
         self.command("directory", "cell", "directory", "router-key", "--public-key", self.keys["router"]["NODE_PUBLIC_KEY"])
         self.start("directory", "cell", "directory", "serve", "--address", self.directory_address)
-        deadline = time.monotonic() + 60
-        while True:
-            assert self.processes["directory"].poll() is None, self.diagnostic("directory")
-            try:
-                host, port = self.directory_address.rsplit(":", 1)
-                with socket.create_connection((host, int(port)), timeout=1):
-                    break
-            except OSError:
-                assert time.monotonic() < deadline, self.diagnostic("directory")
-                threading.Event().wait(0.1)
+        self.listening("directory", self.directory_address)
+        self.start_search()
         for kind in ("user", "organization", "repository"):
             publication = self.command("zero", "cell", "publish", "--directory-address", self.directory_address,
                 "--directory-key", self.keys["directory"]["NODE_PUBLIC_KEY"], "--kind", kind, "--limit", "250")
@@ -193,6 +188,7 @@ class Deployment:
             web, ssh, rpc = self.native[index]
             self.settings[name].update(DIRECTORY_ADDRESS=self.directory_address,
                 DIRECTORY_PUBLIC_KEY=self.keys["directory"]["NODE_PUBLIC_KEY"],
+                SEARCH_ADDRESS=self.search_address, SEARCH_PUBLIC_KEY=self.keys["search"]["NODE_PUBLIC_KEY"],
                 CELL_RPC_ADDRESS=f"127.0.0.1:{rpc}", GITSERV_NODE_ROLES="server", IROH_BIND="127.0.0.1:0",
                 HTTP_ADDR=web.removeprefix("http://"), SSH_ADDR=f"127.0.0.1:{ssh}", HTTP_TRUSTED_PROXY_IPS="127.0.0.1")
             self.start(name, "serve")
@@ -202,6 +198,22 @@ class Deployment:
             GITSERV_NODE_ROLES="router", HTTP_ADDR=self.base.removeprefix("http://"), SSH_ADDR=f"127.0.0.1:{self.ssh}")
         self.start("router", "serve")
         self.wait("router", self.base)
+
+    def listening(self, name, address):
+        deadline = time.monotonic() + 60
+        while True:
+            assert self.processes[name].poll() is None, self.diagnostic(name)
+            try:
+                host, port = address.rsplit(":", 1)
+                with socket.create_connection((host, int(port)), timeout=1):
+                    return
+            except OSError:
+                assert time.monotonic() < deadline, self.diagnostic(name)
+                threading.Event().wait(0.1)
+
+    def start_search(self):
+        self.start("search", "cell", "directory", "serve", "--address", self.search_address)
+        self.listening("search", self.search_address)
 
     def web(self, who, command, *arguments, base=None):
         result = subprocess.run([sys.executable, "-I", str(ROOT / "scripts/e2e-web.py"), command,
@@ -417,6 +429,81 @@ def cross_cell_fork(deployment, client, directory):
                        env=deployment.ssh_environment("alice"))
         follows(number, client.execute(["git", "-C", str(checked), "rev-parse", "HEAD"]).stdout.strip())
         merged(number, "maintainer.txt", "upstream maintainer writes the remote fork")
+
+
+def global_search(deployment, client, tokens, http_get):
+    def put_file(repository, who):
+        client.api(f"repos/{repository}/contents/beacon.txt", "--method", "PUT", "-f", "message=Add the beacon",
+                   "-f", "content=" + base64.b64encode(b"first line\nglowmarker shines here\n").decode(), who=who)
+    client.gh("repo", "create", "alice/beacon-zero", "--public")
+    client.gh("repo", "create", "alice/beacon-secret", "--private")
+    client.gh("repo", "create", "bob/beacon-one", "--public", who="bob")
+    for repository, who in (("alice/beacon-zero", "alice"), ("alice/beacon-secret", "alice"), ("bob/beacon-one", "bob")):
+        put_file(repository, who)
+    client.gh("issue", "create", "-R", "alice/beacon-zero", "--title", "Beacon issue zero", "--body", "cell zero")
+    client.gh("issue", "create", "-R", "bob/beacon-one", "--title", "Beacon issue one", "--body", "cell one", who="bob")
+    client.gh("issue", "create", "-R", "alice/beacon-secret", "--title", "Beacon issue secret", "--body", "private")
+    changed = time.monotonic()
+
+    def searched(who):
+        repos = {item["fullName"] for item in client.data("search", "repos", "beacon", "--json", "fullName", who=who)}
+        issues = {item["title"] for item in client.data("search", "issues", "beacon", "--json", "title", who=who)}
+        pulls = {item["title"] for item in client.data("search", "prs", "collaborator", "--json", "title", who=who)}
+        shared = {item["fullName"] for item in client.data("search", "repos", "shared", "--json", "fullName", who=who)}
+        code = {item["repository"]["nameWithOwner"]
+                for item in client.data("search", "code", "glowmarker", "--json", "path,repository", who=who)}
+        return repos, issues, pulls, shared, code
+    public = {"alice/beacon-zero", "bob/beacon-one"}
+    expected = {
+        "alice": (public | {"alice/beacon-secret"}, {"Beacon issue zero", "Beacon issue one", "Beacon issue secret"},
+                  {"Across cells"}, {"alice/shared"}, public | {"alice/beacon-secret"}),
+        # Bob reads alice/shared as a collaborator, but not alice/beacon-secret.
+        "bob": (public, {"Beacon issue zero", "Beacon issue one"}, {"Across cells"}, {"alice/shared"}, public),
+    }
+
+    def converge(limit):
+        deadline = time.monotonic() + limit
+        while True:
+            seen = {who: searched(who) for who in expected}
+            if seen == expected:
+                return
+            assert time.monotonic() < deadline, f"search did not converge: {seen}"
+            threading.Event().wait(1)
+    converge(60)
+    assert time.monotonic() - changed <= 60
+    status, body = http_get("/api/v3/search/repositories?q=beacon")
+    assert status == 200 and {item["full_name"] for item in json.loads(body)["items"]} == public, body
+    status, body = http_get("/api/v3/search/repositories?q=shared")
+    assert status == 200 and json.loads(body)["items"] == [], body
+    # Code items carry GitHub's shape, with text matches from the indexed file.
+    code = client.api("search/code?q=glowmarker+repo:bob/beacon-one", "-H", "Accept: application/vnd.github.text-match+json")
+    assert code["total_count"] == 1 and code["items"][0]["path"] == "beacon.txt", code
+    assert "glowmarker" in code["items"][0]["text_matches"][0]["fragment"], code
+
+    # An index rebuilt from nothing returns the same results.
+    deployment.command("directory", "cell", "directory", "search-reset")
+    assert searched("alice")[0] == set()
+    for name in ("zero", "one"):
+        scratch = deployment.root / name / "reindex-state"
+        scratch.mkdir(mode=0o700, exist_ok=True)
+        queued = deployment.command(name, "cell", "search-reindex", "--limit", "1000",
+                                    env=dict(deployment.settings[name], GITSERV_STATE_DIR=str(scratch)))
+        assert json.loads(queued.stdout)["count"] >= 1, queued.stdout
+    converge(60)
+
+    # Without the index, pages work and search says it is unavailable; changes made meanwhile
+    # arrive once it is back.
+    deployment.stop("search")
+    status, body = http_get("/api/v3/search/repositories?q=beacon", tokens["alice"])
+    assert status == 503 and "Search is unavailable" in json.loads(body)["message"], body
+    assert client.gh("search", "repos", "beacon", ok=(1,)).returncode == 1
+    assert client.api("repos/bob/beacon-one")["name"] == "beacon-one"
+    deployment.web("alice", "req", "GET", "/bob/beacon-one", "--no-scripts", "--contains", "beacon-one")
+    client.gh("issue", "create", "-R", "bob/beacon-one", "--title", "Beacon issue late", "--body", "while search was down", who="bob")
+    deployment.start_search()
+    for who in expected:
+        expected[who][1].add("Beacon issue late")
+    converge(90)
 
 
 def acceptance(deployment):
@@ -641,6 +728,9 @@ def acceptance(deployment):
                 body = response.read(2 * 1024 * 1024 + 1)
                 assert len(body) <= 2 * 1024 * 1024
                 return response.status, body
+        with client.check("gh search covers both cells within a minute, shows private items only to readers, "
+                          "rebuilds from nothing and fails alone when the index stops"):
+            global_search(deployment, client, tokens, http_get)
         deployment.stop("one")
         assert http_get("/api/v3/repos/bob/other", tokens["alice"])[0] == 503
         unavailable, body = http_get("/bob/other")
