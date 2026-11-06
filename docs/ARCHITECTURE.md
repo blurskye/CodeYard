@@ -771,7 +771,8 @@ Their source checks and the real public two-cell star/SIGKILL replay round pass;
 await retry. Fork-source admission and bounded TLS exports are in source work, with
 directory-verified metadata and original credentials retained through both-engine creation
 transactions and native storage forwarding. Destination copy staging and the shared native/quorum
-publisher are written but unchecked. Public fork ingress is not wired. Cross-cell forks, pull requests, notifications,
+publisher pass source checks. Public REST/native/form fork ingress and foreign parent
+metadata are written but unchecked. Cross-cell forks, pull requests, notifications,
 transfers and pools remain open, as do stages 4 to 6. Range renewal is a deferred owner
 follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain

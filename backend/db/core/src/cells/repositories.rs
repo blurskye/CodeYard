@@ -42,6 +42,7 @@ impl Owner {
 pub struct Source {
     pub reader_id: i64,
     pub credential_id: Option<i64>,
+    pub default_branch_oid: Option<String>,
     pub repository: Repository,
     pub owner: Owner,
     pub allow_forking: bool,
@@ -51,6 +52,12 @@ pub struct Source {
 }
 impl Source {
     pub fn validate(&self, home: Prefix) -> Result<()> {
+        ensure!(
+            self.default_branch_oid
+                .as_deref()
+                .is_none_or(codeyard_git::is_full_commit_id),
+            "Invalid foreign default branch"
+        );
         let repo = &self.repository;
         Prefix::for_id(repo.id)?;
         Prefix::for_id(self.reader_id)?;
@@ -154,34 +161,7 @@ impl Admission {
         Ok(admission)
     }
     fn proof(&self) -> Result<super::authorization::Proof> {
-        use super::authorization::Proof;
-        use crate::queries::users::accounts::AccountCredential;
-        ensure!(
-            self.credential.len() <= 4096 && !self.credential.contains(['\r', '\n', '\0']),
-            "Invalid fork credential"
-        );
-        Ok(match self.actor.credential() {
-            Some(
-                AccountCredential::Token(id, hash) | AccountCredential::ForeignToken(id, hash),
-            ) => {
-                ensure!(
-                    codeyard_support::token_hash::token_hash(&self.credential) == hash,
-                    "Fork credential changed"
-                );
-                Proof::Token {
-                    home: Prefix::for_id(id)?,
-                    hash: hash.to_owned(),
-                }
-            }
-            Some(AccountCredential::Session(session)) => {
-                ensure!(session == self.credential, "Fork credential changed");
-                Proof::Session {
-                    home: codeyard_support::cells::Secret::cookie(session)?.cell,
-                    value: session.to_owned(),
-                }
-            }
-            None => anyhow::bail!("Fork requires its original account credential"),
-        })
+        retained_proof(&self.actor, &self.credential)
     }
     pub fn snapshot_request(
         &self,
@@ -228,6 +208,48 @@ impl Admission {
         );
         Ok(source)
     }
+}
+
+pub fn actor_proof(
+    actor: &crate::queries::credentials::Actor,
+) -> Result<super::authorization::Proof> {
+    use super::authorization::Proof;
+    use crate::queries::users::accounts::AccountCredential;
+    let proof = match actor.credential() {
+        Some(AccountCredential::Token(id, hash) | AccountCredential::ForeignToken(id, hash)) => {
+            Proof::Token {
+                home: Prefix::for_id(id)?,
+                hash: hash.to_owned(),
+            }
+        }
+        Some(AccountCredential::Session(session)) => Proof::Session {
+            home: codeyard_support::cells::Secret::cookie(session)?.cell,
+            value: session.to_owned(),
+        },
+        None => anyhow::bail!("Fork requires its original account credential"),
+    };
+    proof.validate()?;
+    Ok(proof)
+}
+pub fn retained_proof(
+    actor: &crate::queries::credentials::Actor,
+    credential: &str,
+) -> Result<super::authorization::Proof> {
+    ensure!(
+        credential.len() <= 4096 && !credential.contains(['\r', '\n', '\0']),
+        "Invalid fork credential"
+    );
+    let proof = actor_proof(actor)?;
+    ensure!(
+        match &proof {
+            super::authorization::Proof::Token { hash, .. } =>
+                codeyard_support::token_hash::token_hash(credential) == *hash,
+            super::authorization::Proof::Session { value, .. } => value == credential,
+            super::authorization::Proof::Ssh { .. } => false,
+        },
+        "Fork credential changed"
+    );
+    Ok(proof)
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -341,5 +363,107 @@ mod snapshot_tests {
             .refs
             .insert("refs/heads/main".into(), "not-an-object".into());
         assert!(snapshot.validate(&request).is_err());
+    }
+}
+
+/// A fork POST keeps its original HTTP authentication and CSRF checks at the destination.
+#[derive(Clone)]
+pub struct ForwardFork {
+    pub path: String,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+impl ForwardFork {
+    pub fn validate(&self) -> Result<()> {
+        let parts: Vec<_> = self.path.trim_start_matches('/').split('/').collect();
+        let allowed = matches!(
+            parts.as_slice(),
+            ["api", "v3", "repos", _, _, "forks"]
+                | ["api", "repos", _, _, "forks"]
+                | [_, _, "_forms", "fork"]
+                | ["new"]
+        );
+        ensure!(
+            allowed
+                && self.path.starts_with('/')
+                && !self.path.starts_with("//")
+                && self.path.len() <= 16384
+                && !self.path.contains(['?', '#', '\r', '\n', '\0'])
+                && !parts
+                    .iter()
+                    .any(|part| part.is_empty() || *part == "." || *part == "..")
+                && self.body.len() <= 65536
+                && self.headers.len() <= 32,
+            "Invalid fork forwarding request"
+        );
+        let mut bytes = 0_usize;
+        for (name, value) in &self.headers {
+            bytes = bytes
+                .checked_add(name.len() + value.len())
+                .ok_or_else(|| anyhow::anyhow!("Fork headers exceed their limit"))?;
+            ensure!(
+                bytes <= 32768
+                    && request_header(name)
+                    && !value
+                        .bytes()
+                        .any(|byte| byte == 0 || byte == b'\r' || byte == b'\n'),
+                "Invalid fork forwarding headers"
+            );
+        }
+        Ok(())
+    }
+}
+pub fn request_header(name: &str) -> bool {
+    matches!(
+        name,
+        "authorization"
+            | "cookie"
+            | "x-csrf-token"
+            | "origin"
+            | "referer"
+            | "sec-fetch-site"
+            | "host"
+            | "content-type"
+            | "accept"
+            | "via"
+            | "user-agent"
+    )
+}
+pub struct ForwardedFork {
+    pub status: u16,
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+#[cfg(test)]
+mod forward_tests {
+    use super::*;
+    #[test]
+    fn fork_forwarding_bounds_posts_and_preserves_only_request_headers() {
+        let mut request = ForwardFork {
+            path: "/api/v3/repos/alice/source/forks".into(),
+            headers: vec![("authorization".into(), "Bearer secret".into())],
+            body: b"null".to_vec(),
+        };
+        request.validate().unwrap();
+        for path in [
+            "https://outside.test/x",
+            "//outside.test/x",
+            "/admin",
+            "/api/v3/repos/a/b/forks?next=bad",
+            "/a/b/_forms/delete",
+        ] {
+            request.path = path.into();
+            assert!(request.validate().is_err());
+        }
+        request.path = "/alice/source/_forms/fork".into();
+        request.validate().unwrap();
+        request
+            .headers
+            .push(("x-codeyard-user-id".into(), "1".into()));
+        assert!(request.validate().is_err());
+        request.headers.pop();
+        request.body = vec![0; 65537];
+        assert!(request.validate().is_err());
     }
 }

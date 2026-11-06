@@ -914,6 +914,104 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .await
     .unwrap();
     one.pool.set_foreign_authorization(remote_source.clone());
+    let created = client
+        .post(format!("{}/api/v3/repos/alice/private/forks", http.url()))
+        .bearer_auth(&value)
+        .json(&serde_json::json!({"name":"http-fork"}))
+        .send()
+        .await
+        .unwrap();
+    let status = created.status();
+    let created: serde_json::Value = created.json().await.unwrap();
+    assert_eq!(status, 202, "{created}");
+    assert_eq!(created["full_name"], "bob/http-fork");
+    assert_eq!(created["parent"]["id"], repository.id);
+    assert_eq!(created["source"]["full_name"], "alice/private");
+    let fork_id = created["id"].as_i64().unwrap();
+    let stored = codeyard_db_repos::repositories::records::get_repository_by_id(&one.pool, fork_id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stored.is_fork && stored.is_private && !stored.is_stub && stored.home_cell == 1);
+    assert!(
+        codeyard_db_repos::repositories::records::get_repository_by_id(&zero.pool, fork_id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let parent = client.post(format!("{}/api/graphql", bob_http.url())).bearer_auth(&value)
+        .json(&serde_json::json!({"query":"{repository(owner:\"bob\",name:\"http-fork\"){parent{id nameWithOwner owner{login} defaultBranchRef{name}}}}"}))
+        .send().await.unwrap().json::<serde_json::Value>().await.unwrap();
+    assert!(parent.get("errors").is_none(), "{parent}");
+    assert_eq!(
+        parent["data"]["repository"]["parent"]["nameWithOwner"],
+        "alice/private"
+    );
+    assert_eq!(
+        parent["data"]["repository"]["parent"]["owner"]["login"],
+        "alice"
+    );
+    assert_eq!(
+        parent["data"]["repository"]["parent"]["defaultBranchRef"]["name"],
+        "main"
+    );
+    codeyard_repos_core::repositories::lifecycle::delete(
+        &one.pool,
+        None,
+        authority.clone(),
+        fork_id,
+    )
+    .await
+    .unwrap();
+    let form = client
+        .get(format!("{}/alice/private/_forms/fork", http.url()))
+        .header("cookie", format!("session_id={session}"))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+    let csrf = crate::support::http_client::hidden_value(&form, "csrf_token");
+    let body = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("csrf_token", &csrf)
+        .append_pair("repository_id", &repository.id.to_string())
+        .finish();
+    let no_redirect = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .unwrap();
+    let response = no_redirect
+        .post(format!("{}/alice/private/_forms/fork", http.url()))
+        .header("cookie", format!("session_id={session}"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let location = response
+        .headers()
+        .get("location")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let document = response.text().await.unwrap();
+    assert_eq!(status, 303, "{document}");
+    assert_eq!(location, "/bob/private");
+    let native_fork =
+        codeyard_db_repos::repositories::records::get_repository(&one.pool, "bob", "private")
+            .await
+            .unwrap()
+            .unwrap();
+    codeyard_repos_core::repositories::lifecycle::delete(
+        &one.pool,
+        None,
+        authority.clone(),
+        native_fork.id,
+    )
+    .await
+    .unwrap();
     assert!(remote_source
         .repository_source(
             "alice",

@@ -683,6 +683,43 @@ async fn create_selection(
         }
     })?;
     if let Some((source_owner, source_name)) = source {
+        if values.fork_source {
+            let source = codeyard_app::cells::fork_source(
+                &ctx.state,
+                authority,
+                &codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+                source_owner,
+                source_name,
+            )
+            .await
+            .map_err(|error| {
+                codeyard_repos_core::repositories::lifecycle::StorageError {
+                    kind: if error.0 == StatusCode::SERVICE_UNAVAILABLE {
+                        codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Unavailable
+                    } else {
+                        codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Denied
+                    },
+                    message: "Source repository is unavailable.",
+                }
+            })?;
+            return codeyard_repos_core::repositories::lifecycle::fork_into(
+                &ctx.state.pool,
+                ctx.state.cluster.as_ref(),
+                &ctx.state.repos_path,
+                &ctx.state.notification_broadcaster,
+                codeyard_repos_core::repositories::lifecycle::ForkOptions {
+                    owner,
+                    name: Some(&values.name),
+                    default_branch_only: !values.all_branches,
+                    properties,
+                    authority: Some(authority),
+                    foreign_source: source.admission.as_ref(),
+                },
+                source.repository.id,
+                source_owner,
+            )
+            .await;
+        }
         let source = codeyard_db_repos::repositories::records::get_repository(
             &ctx.state.pool,
             source_owner,
@@ -699,41 +736,22 @@ async fn create_selection(
             kind: codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Denied,
             message: "Source repository is unavailable.",
         })?;
-        if values.fork_source {
-            codeyard_repos_core::repositories::lifecycle::fork_into(
-                &ctx.state.pool,
-                ctx.state.cluster.as_ref(),
-                &ctx.state.repos_path,
-                &ctx.state.notification_broadcaster,
-                codeyard_repos_core::repositories::lifecycle::ForkOptions {
-                    foreign_source: None,
-                    owner,
-                    name: Some(&values.name),
-                    default_branch_only: !values.all_branches,
-                    properties,
-                    authority: Some(authority),
-                },
-                source.id,
-                source_owner,
-            )
-            .await
-        } else {
-            codeyard_repos_core::repositories::lifecycle::generate(
-                (&ctx.state.pool, ctx.state.cluster.as_ref()),
-                &ctx.state.repos_path,
-                owner,
-                source.id,
-                codeyard_repos_core::repositories::lifecycle::TemplateOptions {
-                    name: &values.name,
-                    description,
-                    private: values.is_private,
-                    all_branches: values.all_branches,
-                    properties,
-                    authority: Some(authority),
-                },
-            )
-            .await
-        }
+
+        codeyard_repos_core::repositories::lifecycle::generate(
+            (&ctx.state.pool, ctx.state.cluster.as_ref()),
+            &ctx.state.repos_path,
+            owner,
+            source.id,
+            codeyard_repos_core::repositories::lifecycle::TemplateOptions {
+                name: &values.name,
+                description,
+                private: values.is_private,
+                all_branches: values.all_branches,
+                properties,
+                authority: Some(authority),
+            },
+        )
+        .await
     } else {
         codeyard_repos_core::repositories::lifecycle::provision_with_initial_properties(
             (&ctx.state.pool, ctx.state.cluster.as_ref()),

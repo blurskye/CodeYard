@@ -182,12 +182,15 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Hostile roots/readers, revoked access and failed/oversized stream tests are written.
     Recheck passes: workspace 693c4fdac519429e8ea01446c01f4402, Clippy
     35d9047eb87840b096823571b58623a6 and WASM a5bd1ceff3ca4a118123667d3a00f703. The gh/Git cross-cell fork/PR fixture is written; public fork creation
-    is not wired, and its runtime acceptance is pending. The next unchecked source
-    adds destination staging/strict indexing through the shared native/quorum copy
-    publisher, binds token row ids to home proofs and checks native storage membership
-    after export. Real TLS copy interruption/retry, hostile destination and Git clone
-    assertions are written. The rebalance fixture now starts its third node only
-    after verifying its initial copy, preserving every assertion. Runtime
+    runtime is pending. Destination staging/strict indexing through the shared native/quorum
+    publisher, token-id binding and final storage membership checks pass workspace
+    eaa2326fa6a84df2b38414b5cc68bd7f, Clippy cdaa8df107424d6282023027ce9d41fb
+    and WASM cd0f45142a474baf9d0e175b46f61792. The rebalance fixture starts its third
+    node only after verifying its initial copy, preserving every assertion.
+    The next unchecked batch forwards original HTTP authentication/CSRF to the destination,
+    cold-loads authorized source metadata for REST/native APIs and forms, and exposes
+    bounded foreign parent metadata to authenticated REST/GraphQL readers. Real HTTP/TLS
+    fork/form, hostile forwarding, metadata and interruption/retry tests are written. Runtime
     67eb28f748434d8d839860a974a0fb07 covers the touched libraries, store/write tests,
     database cell contracts, cluster, CI, storage and the mandatory public cells fixture.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared

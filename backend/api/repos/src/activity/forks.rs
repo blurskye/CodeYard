@@ -10,6 +10,7 @@ use axum::extract::Query;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
@@ -44,32 +45,56 @@ pub async fn fork_repo(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, repo)): Path<(String, String)>,
-) -> Result<(StatusCode, Json<ForkResponse>), (StatusCode, Json<ApiError>)> {
+) -> Result<Response, (StatusCode, Json<ApiError>)> {
     let pool = state.pool.clone();
     let user = get_current_user(&pool, &headers).await?;
-    let source_repo = readable_repository(&pool, &owner, &repo, &headers).await?;
-    let forked_repo = codeyard_repos_core::repositories::lifecycle::fork(
+    let session = codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default();
+    let authority = codeyard_db_core::queries::credentials::Actor::from((user.id, session.clone()));
+    let public_error = |error: codeyard_model::github_error::Error| {
+        (error.0, Json(ApiError::new("fork_failed", error.1)))
+    };
+    let source = codeyard_app::cells::fork_source(&state, &authority, &session, &owner, &repo)
+        .await
+        .map_err(public_error)?;
+    let path = format!(
+        "/api/repos/{}/{}/forks",
+        codeyard_webui::encode_component(&owner),
+        codeyard_webui::encode_component(&repo)
+    );
+    if let Some(response) =
+        codeyard_app::cells::forward_fork(&state, &user, None, &headers, &path, Vec::new())
+            .await
+            .map_err(public_error)?
+    {
+        return Ok(response);
+    }
+    let source_repo = source.repository;
+    let forked_repo = codeyard_repos_core::repositories::lifecycle::fork_into(
         &pool,
         state.cluster.as_ref(),
         &state.repos_path,
         &state.notification_broadcaster,
-        codeyard_db_core::queries::credentials::Actor::from((
-            user.id,
-            codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default(),
-        )),
+        codeyard_repos_core::repositories::lifecycle::ForkOptions {
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
+                user.id,
+            ),
+            name: None,
+            default_branch_only: false,
+            properties: &[],
+            authority: Some(&authority),
+            foreign_source: source.admission.as_ref(),
+        },
         source_repo.id,
         &owner,
     )
     .await
     .map_err(crate::responses::lifecycle_error)?;
-
-    let forked_from_info = ForkParent {
+    let parent = ForkParent {
         id: source_repo.id,
         owner: owner.clone(),
         name: source_repo.name.clone(),
-        full_name: format!("{}/{}", owner, source_repo.name),
+        full_name: format!("{owner}/{}", source_repo.name),
     };
-
     let topics = repository_topics(&pool, &[forked_repo.id])
         .await?
         .remove(&forked_repo.id)
@@ -81,19 +106,14 @@ pub async fn fork_repo(
     Ok((
         StatusCode::CREATED,
         Json(ForkResponse {
-            repo: RepoResponse::new(
-                &forked_repo,
-                &user.username,
-                topics,
-                Some(forked_from_info),
-                forks,
-            ),
+            repo: RepoResponse::new(&forked_repo, &user.username, topics, Some(parent), forks),
             message: format!(
                 "Successfully forked {}/{} to {}/{}",
                 owner, source_repo.name, user.username, forked_repo.name
             ),
         }),
-    ))
+    )
+        .into_response())
 }
 
 pub async fn check_fork(

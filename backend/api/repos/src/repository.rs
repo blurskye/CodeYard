@@ -1435,6 +1435,9 @@ pub(super) async fn post_form(
     let Some(row) = FORM_ACTIONS.iter().find(|row| row.name == action.as_str()) else {
         return ctx.error(StatusCode::NOT_FOUND, "Repository action not found.");
     };
+    if action == "fork" {
+        return fork_form(&ctx, owner, name, &form, &pairs).await;
+    }
     let database_only = !row.has(GIT) && action != "write-file";
     let loaded = match if database_only {
         codeyard_api_http::shared::repos::chrome::load_database(&ctx, owner, name).await
@@ -1550,6 +1553,83 @@ pub(super) async fn post_form(
     }
 }
 
+async fn fork_form(
+    ctx: &PageContext,
+    owner: &str,
+    name: &str,
+    form: &HashMap<String, String>,
+    pairs: &[(String, String)],
+) -> Response {
+    let actor = match ctx.require_user() {
+        Ok(actor) => actor,
+        Err(response) => return response,
+    };
+    let authority = ctx.database_actor(actor.id);
+    let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let source =
+        match codeyard_app::cells::fork_source(&ctx.state, &authority, &session, owner, name).await
+        {
+            Ok(source) => source,
+            Err(error) => return ctx.error(error.0, &error.1),
+        };
+    if field(form, "repository_id") != source.repository.id.to_string() {
+        return ctx.error(
+            StatusCode::CONFLICT,
+            "The repository changed. Reload the page and try again.",
+        );
+    }
+    let mut encoded = url::form_urlencoded::Serializer::new(String::new());
+    encoded.extend_pairs(
+        pairs
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str())),
+    );
+    let path = format!(
+        "{}/_forms/fork",
+        codeyard_webui::repository_path(owner, name)
+    );
+    match codeyard_app::cells::forward_fork(
+        &ctx.state,
+        actor,
+        None,
+        &ctx.headers,
+        &path,
+        encoded.finish().into_bytes(),
+    )
+    .await
+    {
+        Ok(Some(response)) => return response,
+        Ok(None) => (),
+        Err(error) => return ctx.error(error.0, &error.1),
+    }
+    match codeyard_repos_core::repositories::lifecycle::fork_into(
+        &ctx.state.pool,
+        ctx.state.cluster.as_ref(),
+        &ctx.state.repos_path,
+        &ctx.state.notification_broadcaster,
+        codeyard_repos_core::repositories::lifecycle::ForkOptions {
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
+                actor.id,
+            ),
+            name: None,
+            default_branch_only: false,
+            properties: &[],
+            authority: Some(&authority),
+            foreign_source: source.admission.as_ref(),
+        },
+        source.repository.id,
+        owner,
+    )
+    .await
+    {
+        Ok(fork) => ctx.redirect(&codeyard_webui::repository_path(
+            &actor.username,
+            &fork.name,
+        )),
+        Err(error) => ctx.error(crate::responses::lifecycle_status(&error), error.message),
+    }
+}
+
 /// The name, `#rrggbb` color and description of a label form. Creating and editing a label check
 /// them the same way.
 fn label_fields(form: &HashMap<String, String>) -> ApiResult<(String, String, String)> {
@@ -1641,20 +1721,6 @@ async fn mutate(
             .await
             .map_err(crate::responses::engagement_error)?;
             Ok(base)
-        }
-        "fork" => {
-            let fork = codeyard_repos_core::repositories::lifecycle::fork(
-                pool,
-                cluster,
-                &ctx.state.repos_path,
-                &ctx.state.notification_broadcaster,
-                authority(),
-                repository.id,
-                owner,
-            )
-            .await
-            .map_err(lifecycle_error)?;
-            Ok(codeyard_webui::repository_path(&actor.username, &fork.name))
         }
         "create-branch" => {
             codeyard_ci_engine::refs::create_branch(

@@ -58,6 +58,7 @@ pub struct Remote {
     directory: Directory,
     slots: Arc<Semaphore>,
     http: crate::http::Transport,
+    forks: crate::http::Transport,
 }
 impl Remote {
     pub fn new(key: NodeKey, directory: Directory) -> Result<Self> {
@@ -66,6 +67,14 @@ impl Remote {
             routes: Routes::new(directory.clone(), Default::default())?,
             directory,
             slots: Arc::new(Semaphore::new(64)),
+            forks: crate::http::Transport::new(crate::http::Config {
+                maximum_connections: 8,
+                maximum_request_bytes: 65536,
+                maximum_response_bytes: 8 * 1024 * 1024,
+                exchange_seconds: 600,
+                stall_seconds: 30,
+                minimum_rate: 1024,
+            })?,
             http: crate::http::Transport::new(crate::http::Config {
                 maximum_connections: 64,
                 maximum_request_bytes: 65536,
@@ -131,6 +140,59 @@ impl Remote {
     }
 }
 impl Home for Remote {
+    fn forward_fork<'a>(
+        &'a self,
+        owner: &'a str,
+        request: &'a codeyard_db_core::cells::repositories::ForwardFork,
+    ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::ForwardedFork>>> {
+        Box::pin(async move {
+            request.validate()?;
+            Key::new(KeyKind::Name, owner)?;
+            let Some(cell) = self.routes.by_name(owner).await? else {
+                return Ok(None);
+            };
+            let mut http = axum::http::Request::builder()
+                .method("POST")
+                .uri(&request.path);
+            for (name, value) in &request.headers {
+                http = http.header(name.as_str(), value.as_str());
+            }
+            let mut http = http.body(axum::body::Body::from(request.body.clone()))?;
+            http.headers_mut().insert(
+                axum::http::header::ACCEPT_ENCODING,
+                axum::http::HeaderValue::from_static("identity"),
+            );
+            let credential =
+                crate::selection::Credential::from_headers(http.headers(), "session_id")?
+                    .ok_or_else(|| anyhow::anyhow!("Fork forwarding requires authentication"))?;
+            let response = self.forks.forward(&cell, credential.value(), http).await?;
+            let status = response.status().as_u16();
+            ensure!(
+                response.headers().len() <= 128,
+                "Fork response headers exceed their limit"
+            );
+            let mut header_bytes = 0_usize;
+            let mut headers = Vec::new();
+            for (name, value) in response.headers().iter() {
+                header_bytes = header_bytes
+                    .checked_add(name.as_str().len() + value.as_bytes().len())
+                    .ok_or_else(|| anyhow::anyhow!("Fork response headers exceed their limit"))?;
+                ensure!(
+                    header_bytes <= 32768,
+                    "Fork response headers exceed their limit"
+                );
+                headers.push((name.as_str().to_owned(), value.to_str()?.to_owned()));
+            }
+            let body = axum::body::to_bytes(response.into_body(), 8 * 1024 * 1024)
+                .await?
+                .to_vec();
+            Ok(Some(codeyard_db_core::cells::repositories::ForwardedFork {
+                status,
+                headers,
+                body,
+            }))
+        })
+    }
     fn snapshot<'a>(
         &'a self,
         request: &'a codeyard_db_core::cells::repositories::SnapshotRequest,

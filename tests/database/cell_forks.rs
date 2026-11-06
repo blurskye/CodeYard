@@ -95,6 +95,7 @@ async fn contract(pg: bool) {
     let source = Source {
         reader_id: user,
         credential_id: None,
+        default_branch_oid: None,
         repository,
         owner: Owner::User(Box::new(owner)),
         allow_forking: true,

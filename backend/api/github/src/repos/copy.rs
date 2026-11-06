@@ -5,6 +5,7 @@ use axum::extract::Path;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::routing::MethodRouter;
 use axum::Json;
@@ -58,19 +59,52 @@ async fn fork(
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
     OptionalJson(body): OptionalJson<Value>,
-) -> Result<(StatusCode, Json<Value>)> {
-    let (source, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = actor.ok_or_else(codeyard_identity::github_auth::required)?;
-    let actor = &auth.user;
+) -> Result<Response> {
+    let auth = codeyard_identity::github_auth::identity(&*state, &headers, true)
+        .await?
+        .ok_or_else(codeyard_identity::github_auth::required)?;
+    let authority = auth.database_actor();
+    let source = codeyard_app::cells::fork_source(
+        &state,
+        &authority,
+        codeyard_identity::github_auth::credential(&headers)
+            .ok_or_else(codeyard_identity::github_auth::required)?,
+        &owner,
+        &name,
+    )
+    .await?;
+    let forwarded_body = serde_json::to_vec(&body).map_err(Error::unavailable)?;
     let input = body
         .map(serde_json::from_value::<Option<Fork>>)
         .transpose()
         .map_err(|_| Error::invalid("Invalid fork fields"))?
         .flatten()
         .unwrap_or_default();
+    let mut forwarded_headers = headers.clone();
+    forwarded_headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        axum::http::HeaderValue::from_static("application/json"),
+    );
+    let path = format!(
+        "/api/v3/repos/{}/{}/forks",
+        codeyard_webui::encode_component(&owner),
+        codeyard_webui::encode_component(&name)
+    );
+    if let Some(response) = codeyard_app::cells::forward_fork(
+        &state,
+        &auth.user,
+        input.organization.as_deref(),
+        &forwarded_headers,
+        &path,
+        forwarded_body,
+    )
+    .await?
+    {
+        return Ok(response);
+    }
     let target = match input.organization.as_deref() {
-        Some(slug) => organization_owner(&state, actor.id, slug).await?,
-        None => RepositoryCreationOwner::personal(actor.id),
+        Some(slug) => organization_owner(&state, auth.user.id, slug).await?,
+        None => RepositoryCreationOwner::personal(auth.user.id),
     };
     crate::auth::require_copy_owner(&state, &auth, target.target).await?;
     let repo = codeyard_repos_core::repositories::lifecycle::fork_into(
@@ -79,14 +113,14 @@ async fn fork(
         &state.repos_path,
         &state.notification_broadcaster,
         codeyard_repos_core::repositories::lifecycle::ForkOptions {
-            foreign_source: None,
+            foreign_source: source.admission.as_ref(),
             owner: target,
             name: input.name.as_deref(),
             default_branch_only: input.default_branch_only,
             properties: &[],
-            authority: Some(&auth.database_actor()),
+            authority: Some(&authority),
         },
-        source.id,
+        source.repository.id,
         &owner,
     )
     .await
@@ -94,7 +128,8 @@ async fn fork(
     Ok((
         StatusCode::ACCEPTED,
         Json(document(&state, &repo, Some(&auth)).await?),
-    ))
+    )
+        .into_response())
 }
 
 #[derive(Deserialize)]

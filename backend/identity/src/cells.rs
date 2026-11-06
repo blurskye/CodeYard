@@ -192,11 +192,20 @@ impl Local {
             return Ok(None);
         };
         repository = current;
+        repository.forks_count = codeyard_db_repos::repositories::discovery::public_fork_counts(
+            &self.pool,
+            &[repository.id],
+        )
+        .await?
+        .get(&repository.id)
+        .copied()
+        .unwrap_or_default();
         repository.disk_path.clear();
         repository.storage_node_id = None;
         let source = Source {
             reader_id: actor.user_id,
             credential_id: actor.token_id(),
+            default_branch_oid: None,
             repository,
             owner,
             allow_forking,

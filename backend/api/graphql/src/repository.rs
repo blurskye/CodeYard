@@ -22,6 +22,46 @@ pub(super) fn object(repo: &codeyard_db_core::models::Repository) -> Value {
         "rebaseMergeAllowed":repo.allow_rebase_merge})
 }
 
+async fn foreign_object(
+    source: &codeyard_db_core::cells::repositories::Source,
+    request: &RequestContext,
+) -> Result<Value> {
+    let repo = &source.repository;
+    let owner = source.owner.name();
+    let mut value = object(repo);
+    let full_name = format!("{owner}/{}", repo.name);
+    value["nameWithOwner"] = json!(full_name);
+    value["url"] = json!(url(&codeyard_webui::repository_path(owner, &repo.name)));
+    let ssh = codeyard_model::http_config::ssh_clone_base();
+    value["sshUrl"] = json!(if ssh.trim().is_empty() {
+        String::new()
+    } else {
+        format!("{}/{full_name}.git", ssh.trim_end_matches('/'))
+    });
+    value["forkCount"] = json!(repo.forks_count);
+    value["owner"] = match &source.owner {
+        codeyard_db_core::cells::repositories::Owner::User(user) => {
+            crate::user::object(user, request.auth.user.id)
+        }
+        codeyard_db_core::cells::repositories::Owner::Organization(org) => {
+            crate::user::organization(org)
+        }
+    };
+    value["defaultBranchRef"] = match &source.default_branch_oid {
+        Some(oid) => {
+            crate::git_objects::reference_at(
+                repo,
+                &format!("refs/heads/{}", repo.default_branch),
+                oid,
+                request,
+            )
+            .await?
+        }
+        None => Value::Null,
+    };
+    Ok(value)
+}
+
 pub(super) async fn optional_authority(
     id: i64,
     scope: &str,
@@ -260,6 +300,19 @@ pub(super) async fn resolve(
                 else {
                     return Ok(Value::Null);
                 };
+                if parent.is_stub {
+                    let Some(source) = codeyard_app::cells::foreign_repository(
+                        &request.state,
+                        &request.actor,
+                        &parent,
+                    )
+                    .await
+                    .map_err(unavailable)?
+                    else {
+                        return Ok(Value::Null);
+                    };
+                    return foreign_object(&source, request).await;
+                }
                 if !codeyard_identity::repository_access::can_read(
                     pool,
                     Some(&request.auth.user),

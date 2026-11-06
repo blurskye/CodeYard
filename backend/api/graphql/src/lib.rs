@@ -124,6 +124,22 @@ impl RequestContext {
         if live.is_none_or(|user| user.id != self.auth.user.id) {
             return Err(token_denied());
         }
+        if let Some(stub) =
+            codeyard_db_repos::repositories::records::get_repository_by_id(pool, repo)
+                .await
+                .map_err(unavailable)?
+                .filter(|repo| repo.is_stub)
+        {
+            if write || !matches!(scope, "metadata" | "contents") {
+                return Err(missing());
+            }
+            let source = codeyard_app::cells::foreign_repository(&self.state, &self.actor, &stub)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            self.charge(serde_json::to_vec(&source).map_err(unavailable)?.len())?;
+            return Ok(());
+        }
         if self.auth.user.is_stub {
             self.auth
                 .repository_scope(pool, repo, scope, write)

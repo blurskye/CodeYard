@@ -293,6 +293,13 @@ pub fn validate_public_user(user: &User) -> Result<()> {
 /// The provider authenticates the answering node and verifies its directory ownership.
 /// It never grants resource membership or repository authority.
 pub trait Home: Send + Sync {
+    fn forward_fork<'a>(
+        &'a self,
+        _owner: &'a str,
+        _request: &'a super::repositories::ForwardFork,
+    ) -> BoxFuture<'a, Result<Option<super::repositories::ForwardedFork>>> {
+        Box::pin(async { anyhow::bail!("Foreign fork forwarding is unavailable") })
+    }
     fn snapshot<'a>(
         &'a self,
         _request: &'a super::repositories::SnapshotRequest,

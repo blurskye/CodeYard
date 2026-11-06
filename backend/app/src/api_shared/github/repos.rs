@@ -140,27 +140,43 @@ async fn document_with(
                     .await
                     .map_err(Error::unavailable)?
                     .ok_or_else(Error::missing)?;
-            if !codeyard_identity::github_auth::readable_repositories(
-                state,
-                viewer,
-                &[id],
-                "metadata",
-            )
-            .await?
-            .contains(&id)
-            {
-                break;
-            }
-            let owner =
-                codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, id)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .ok_or_else(Error::missing)?;
+            let (ancestor, owner, forks) = if ancestor.is_stub {
+                let Some(viewer) = viewer else {
+                    break;
+                };
+                let Some(source) =
+                    crate::cells::foreign_repository(state, &viewer.database_actor(), &ancestor)
+                        .await
+                        .map_err(Error::unavailable)?
+                else {
+                    break;
+                };
+                let owner = source.owner.name().to_owned();
+                let forks = source.repository.forks_count;
+                (source.repository, owner, forks)
+            } else {
+                if !codeyard_identity::github_auth::readable_repositories(
+                    state,
+                    viewer,
+                    &[id],
+                    "metadata",
+                )
+                .await?
+                .contains(&id)
+                {
+                    break;
+                }
+                let owner = codeyard_db_repos::repositories::records::repository_owner_name(
+                    &state.pool,
+                    id,
+                )
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+                (ancestor, owner, public_fork_count(state, id).await?)
+            };
             let mut document = codeyard_webhooks::payloads::repository(&ancestor, &owner);
-            codeyard_webhooks::payloads::set_fork_counts(
-                &mut document,
-                public_fork_count(state, id).await?,
-            );
+            codeyard_webhooks::payloads::set_fork_counts(&mut document, forks);
             if repo.forked_from_id == Some(id) {
                 value["parent"] = document.clone();
             }
