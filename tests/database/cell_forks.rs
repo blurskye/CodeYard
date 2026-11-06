@@ -202,9 +202,74 @@ async fn contract(pg: bool) {
     );
     f.execute("DELETE FROM repositories WHERE id=$1", &[fork.id])
         .await;
+    let mut no_fork = source.clone();
+    no_fork.allow_forking = false;
+    let read_gate = Arc::new(SourceHome {
+        source: no_fork,
+        calls: AtomicUsize::new(0),
+        revoke_at: AtomicUsize::new(2),
+    });
+    f.pool().set_foreign_authorization(read_gate.clone());
+    let pull = || codeyard_db_repos::pull_requests::records::NewPullRequest {
+        repo_id: template.id,
+        head_repo_id: Some(source.repository.id),
+        author_id: user,
+        issue: None,
+        title: "Foreign head",
+        body: "",
+        head_branch: "topic",
+        head_sha: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        base_branch: "main",
+        base_sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        is_draft: false,
+        maintainer_can_modify: false,
+    };
+    assert!(
+        codeyard_db_repos::pull_requests::records::create_pull_request(f.pool(), pull())
+            .await
+            .is_err()
+    );
+    assert!(
+        codeyard_db_repos::pull_requests::records::create_pull_request_with_head(
+            f.pool(),
+            pull(),
+            Some(&admission)
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        f.scalar("SELECT COUNT(*) FROM pull_requests", &[]).await,
+        0,
+        "Revocation at the final head read rolls back the entire pull creation"
+    );
+    read_gate.revoke_at.store(usize::MAX, Ordering::SeqCst);
+    let admitted = codeyard_db_repos::pull_requests::records::create_pull_request_with_head(
+        f.pool(),
+        pull(),
+        Some(&admission),
+    )
+    .await
+    .unwrap();
+    assert_eq!(admitted.head_repo_id, Some(source.repository.id));
+    assert_eq!(admitted.repo_id, template.id);
+    f.pool().set_foreign_authorization(gate.clone());
     codeyard_db_identity::users::sessions::delete_session(f.pool(), &session)
         .await
         .unwrap();
+    assert!(
+        codeyard_db_repos::pull_requests::records::create_pull_request_with_head(
+            f.pool(),
+            codeyard_db_repos::pull_requests::records::NewPullRequest {
+                head_branch: "revoked-session",
+                ..pull()
+            },
+            Some(&admission),
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(f.scalar("SELECT COUNT(*) FROM pull_requests", &[]).await, 1);
     assert!(creation::insert_repository_with_admission(
         f.pool(),
         insert("revoked-credential"),

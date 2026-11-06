@@ -10,6 +10,43 @@ pub struct Local {
     pub pool: DbPool,
 }
 impl Home for Local {
+    fn repository_id<'a>(
+        &'a self,
+        id: i64,
+        proof: &'a Proof,
+    ) -> Pin<
+        Box<
+            dyn Future<Output = Result<Option<codeyard_db_core::cells::repositories::Source>>>
+                + Send
+                + 'a,
+        >,
+    > {
+        Box::pin(async move {
+            codeyard_support::cells::Prefix::for_id(id)?;
+            proof.validate()?;
+            let Some(repo) =
+                codeyard_db_repos::repositories::records::get_repository_by_id(&self.pool, id)
+                    .await?
+                    .filter(|repo| {
+                        !repo.is_stub
+                            && !repo.is_gist
+                            && repo.home_cell == i32::from(self.pool.cell_id().get())
+                    })
+            else {
+                return Ok(None);
+            };
+            let Some(owner) =
+                codeyard_db_repos::repositories::records::repository_owner_name(&self.pool, id)
+                    .await?
+            else {
+                return Ok(None);
+            };
+            Ok(self
+                .source(&owner, &repo.name, proof)
+                .await?
+                .filter(|source| source.repository.id == id))
+        })
+    }
     fn repository_fork<'a>(
         &'a self,
         owner: &'a str,

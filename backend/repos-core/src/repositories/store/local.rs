@@ -163,6 +163,99 @@ fn repository_matches_path(
     }
 }
 
+async fn foreign_ingress(
+    pool: &codeyard_db_core::DbPool,
+    admission: &codeyard_db_core::cells::repositories::Admission,
+) -> Result<(), RepoError> {
+    if let Some(peer) = admission.native_peer() {
+        let permitted = codeyard_db_cluster::cluster::get_node_by_public_key(pool, peer)
+            .await
+            .map_err(RepoError::from)?
+            .is_some_and(|node| {
+                node.status == "active"
+                    && node.roles.iter().any(|role| role == "web" || role == "ssh")
+            });
+        if !permitted {
+            return Err(RepoError::write_denied());
+        }
+    }
+    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum PullHeadSource<'a> {
+    Native(&'a LocalStore),
+    Foreign {
+        admission: &'a codeyard_db_core::cells::repositories::Admission,
+        branch: &'a str,
+        number: i32,
+    },
+}
+impl PullHeadSource<'_> {
+    async fn admitted(&self) -> Result<(), RepoError> {
+        if let Self::Native(store) = self {
+            store.admitted_path(true).await?;
+        }
+        Ok(())
+    }
+    async fn check(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        base: i64,
+        source: i64,
+        actor: crate::store_types::PullHeadActor,
+    ) -> Result<(), RepoError> {
+        match self {
+            Self::Native(store) => {
+                store.admitted_path(true).await?;
+                live_pull_read(pool, source, actor, store.path(), store.node_id).await
+            }
+            Self::Foreign {
+                admission,
+                branch,
+                number,
+            } => {
+                if admission.actor.user_id != actor.user
+                    || admission.actor.token_id() != actor.token
+                {
+                    return Err(RepoError::write_denied());
+                }
+                let current = admission.read(pool).await.map_err(RepoError::from)?;
+                let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
+                    pool, base, *number,
+                )
+                .await
+                .map_err(RepoError::from)?
+                .ok_or_else(RepoError::write_denied)?;
+                if current.repository.id != source
+                    || current.repository.forked_from_id != Some(base)
+                    || pull.state != "open"
+                    || pull.head_repo_id != Some(source)
+                    || pull.head_branch != *branch
+                {
+                    return Err(RepoError::write_denied());
+                }
+                foreign_ingress(pool, admission).await
+            }
+        }
+    }
+    async fn check_base(
+        &self,
+        store: &LocalStore,
+        pool: &codeyard_db_core::DbPool,
+        base: i64,
+        actor: crate::store_types::PullHeadActor,
+    ) -> Result<(), RepoError> {
+        match self {
+            Self::Native(_) => live_pull_read(pool, base, actor, store.path(), store.node_id).await,
+            Self::Foreign { admission, .. } => store
+                .foreign_pull_base(pool, base, admission)
+                .await
+                .map(|_| ()),
+        }
+    }
+}
+
 async fn live_pull_read(
     pool: &codeyard_db_core::DbPool,
     repo_id: i64,
@@ -800,6 +893,7 @@ impl CopySource<'_> {
                 crate::repositories::access::check_publication_actor(pool, authority, &destination)
                     .await
                     .map_err(RepoError::from)?;
+                foreign_ingress(pool, admission).await?;
             }
             Self::Native { id, store } => {
                 live_read(pool, id, authority.user_id, store.path(), store.node_id).await?;
@@ -2294,9 +2388,38 @@ impl LocalStore {
         expected_head: Option<&str>,
         prepared: git::repository::PreparedPullHead,
     ) -> Result<(), RepoError> {
-        let actor = actor.into();
+        self.publish_prepared_pull_head(
+            pool,
+            repo_id,
+            source_repo_id,
+            actor.into(),
+            PullHeadSource::Native(source),
+            number,
+            head,
+            expected_head,
+            prepared,
+        )
+        .await
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Publication retains its source, authority, pull identity and exact CAS inputs."
+    )]
+    async fn publish_prepared_pull_head(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        repo_id: i64,
+        source_repo_id: i64,
+        actor: crate::store_types::PullHeadActor,
+        source: PullHeadSource<'_>,
+        number: i32,
+        head: &str,
+        expected_head: Option<&str>,
+        prepared: git::repository::PreparedPullHead,
+    ) -> Result<(), RepoError> {
         self.admitted_path(false).await?;
-        source.admitted_path(true).await?;
+        source.admitted().await?;
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -2320,8 +2443,8 @@ impl LocalStore {
         // The fetch happened only in temporary storage. Recheck live authority
         // after waiting for the destination lock and immediately before
         // receive-pack can migrate objects and publish the exact CAS ref.
-        live_pull_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
-        live_pull_read(pool, repo_id, actor, self.path(), self.node_id).await?;
+        source.check(pool, repo_id, source_repo_id, actor).await?;
+        source.check_base(self, pool, repo_id, actor).await?;
         // An export locks the repository under this same lock before it copies the Git data, so
         // a head published into a locked repository would be missing from the archive.
         if codeyard_db_repos::repository_exports::locked(pool, repo_id)
@@ -2340,8 +2463,8 @@ impl LocalStore {
         )];
         if !publication
             .scope(self.publish_quorum_refs(pool, repo_id, &changes, async {
-                live_pull_read(pool, source_repo_id, actor, source.path(), source.node_id).await?;
-                live_pull_read(pool, repo_id, actor, self.path(), self.node_id).await?;
+                source.check(pool, repo_id, source_repo_id, actor).await?;
+                source.check_base(self, pool, repo_id, actor).await?;
                 if codeyard_db_repos::repository_exports::locked(pool, repo_id)
                     .await
                     .map_err(|_| RepoError::authority_unavailable())?

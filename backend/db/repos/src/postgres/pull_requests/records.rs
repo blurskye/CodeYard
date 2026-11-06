@@ -302,7 +302,53 @@ pub async fn set_pull_request_draft(
     Ok(ReadyOutcome::Ready(Box::new(pr)))
 }
 
+async fn admit_creation_head(
+    pool: &PgPool,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    input: &NewPullRequest<'_>,
+    head: &codeyard_db_core::models::Repository,
+    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+) -> Result<()> {
+    crate::pull_requests::records::check_foreign_head(
+        &codeyard_db_core::DbPool::Postgres(pool.clone()),
+        input,
+        head,
+        foreign,
+    )
+    .await?;
+    if let Some(foreign) = foreign {
+        anyhow::ensure!(
+            codeyard_db_core::queries::postgres::credentials::repository(
+                tx,
+                &foreign.actor,
+                input.repo_id,
+                "pull-requests",
+                true,
+            )
+            .await?
+                && codeyard_db_core::queries::postgres::credentials::repository(
+                    tx,
+                    &foreign.actor,
+                    input.repo_id,
+                    "contents",
+                    false,
+                )
+                .await?,
+            crate::postgres::discussions::AUTHORITY_DENIED
+        );
+    }
+    Ok(())
+}
+
 pub async fn create_pull_request(pool: &PgPool, input: NewPullRequest<'_>) -> Result<PullRequest> {
+    create_pull_request_with_head(pool, input, None).await
+}
+
+pub async fn create_pull_request_with_head(
+    pool: &PgPool,
+    input: NewPullRequest<'_>,
+    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+) -> Result<PullRequest> {
     let mut tx = pool.begin().await?;
     // Conversion retains the issue author; serialize that author's quota before repository locks.
     let cap_author = if let Some(number) = input.issue {
@@ -363,10 +409,14 @@ pub async fn create_pull_request(pool: &PgPool, input: NewPullRequest<'_>) -> Re
         .fetch_one(&mut *tx)
         .await?;
     if !(head.id == input.repo_id || head.forked_from_id == Some(input.repo_id))
-        || (head.is_private && !access.can_read() && !(head.owner_kind == "user" && personal_admin))
+        || (!head.is_stub
+            && head.is_private
+            && !access.can_read()
+            && !(head.owner_kind == "user" && personal_admin))
     {
         return Err(crate::postgres::discussions::AUTHORITY_DENIED.into());
     }
+    admit_creation_head(pool, &mut tx, &input, &head, foreign).await?;
     anyhow::ensure!(
         !input.maintainer_can_modify
             || can_grant_maintainer_edit(input.author_id, input.repo_id, &head),
@@ -437,6 +487,7 @@ pub async fn create_pull_request(pool: &PgPool, input: NewPullRequest<'_>) -> Re
         )
         .await?;
     }
+    admit_creation_head(pool, &mut tx, &input, &head, foreign).await?;
     tx.commit().await?;
     Ok(pr)
 }

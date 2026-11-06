@@ -21,9 +21,20 @@ pub async fn create_pull_request(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, repo)): Path<(String, String)>,
-    Json(req): Json<CreatePullRequestRequest>,
+    Json(mut req): Json<CreatePullRequestRequest>,
 ) -> Result<(StatusCode, Json<PullRequestDetailResponse>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
+    if let Some(id) = req.head_repo_id {
+        let session = codeyard_api_http::session::extract_session_id(&headers).unwrap_or_default();
+        let actor = codeyard_db_core::queries::credentials::Actor::from((
+            current_actor.id,
+            session.clone(),
+        ));
+        req.foreign_head = codeyard_app::cells::pull_head_id(&state, &actor, &session, id)
+            .await
+            .map_err(|error| (error.0, Json(ApiError::new("invalid_head", &error.1))))?
+            .admission;
+    }
     let pull_request =
         codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
             &state.pool,

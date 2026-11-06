@@ -398,31 +398,24 @@ pub(super) async fn resolve(
                     Some((owner, branch)) => (Some(owner), branch),
                     None => (None, head_ref),
                 };
-                let head_repo_id = if !input["headRepositoryId"].is_null() {
-                    let id = target(&input, "headRepositoryId", "R")?;
-                    request.authorize(id, "metadata", false).await?;
-                    Some(id)
+                let credential = codeyard_identity::github_auth::credential(&request.headers).ok_or_else(crate::token_denied)?;
+                let source = if !input["headRepositoryId"].is_null() {
+                    codeyard_app::cells::pull_head_id(&request.state, &request.actor, credential, target(&input, "headRepositoryId", "R")?)
+                        .await.map_err(|error| error.graphql())?
                 } else if let Some(owner) = head_owner {
-                    let head = codeyard_ci_engine::pull_requests::branches::owner_head_repository(pool, &repo, owner)
-                        .await
-                        .map_err(unavailable)?
-                        .ok_or_else(missing)?;
-                    if !codeyard_identity::repository_access::can_read(
-                        pool,
-                        Some(&request.auth.user),
-                        &head,
-                    )
-                    .await
-                    .map_err(unavailable)?
-                    {
-                        return Err(missing());
-                    }
-                    Some(head.id)
+                    codeyard_app::cells::pull_head_source(&request.state, &request.actor, credential, &repo, owner, None)
+                        .await.map_err(|error| error.graphql())?
                 } else {
-                    None
+                    codeyard_app::cells::pull_head_id(&request.state, &request.actor, credential, repo.id)
+                        .await.map_err(|error| error.graphql())?
                 };
-                let head = crate::repository::by_id(head_repo_id.unwrap_or(repo.id), request).await?;
-                request.authorize(head.id, "contents", false).await?;
+                let head = source.repository;
+                let head_repo_id = Some(head.id);
+                if let Some(foreign) = source.admission.as_ref() {
+                    request.charge(serde_json::to_vec(&foreign.source).map_err(unavailable)?.len())?;
+                } else {
+                    request.authorize(head.id, "contents", false).await?;
+                }
                 let saved = codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
                     pool,
                     &request.state.ci_runs,
@@ -434,6 +427,7 @@ pub(super) async fn resolve(
                     crate::repository::owner(&repo, request).await?,
                     repo.name,
                     codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
+                        foreign_head: source.admission,
                         suppress_ci: false,
                         head_repo_id,
                         source: codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::New {

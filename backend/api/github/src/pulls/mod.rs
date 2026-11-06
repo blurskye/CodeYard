@@ -151,7 +151,11 @@ pub(super) async fn document(
         let mut head_value = codeyard_webhooks::payloads::repository(&head, &head_owner);
         codeyard_webhooks::payloads::set_fork_counts(
             &mut head_value,
-            codeyard_app::api_shared::github::repos::public_fork_count(state, head.id).await?,
+            if head.is_stub {
+                head.forks_count
+            } else {
+                codeyard_app::api_shared::github::repos::public_fork_count(state, head.id).await?
+            },
         );
         json!({"label": format!("{head_owner}:{}", pull.head_branch), "ref": pull.head_branch, "sha": pull.head_sha, "user": head_value["owner"], "repo": head_value})
     } else {

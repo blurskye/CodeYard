@@ -2,6 +2,7 @@ use crate::discussions::ListFilter;
 use crate::discussions::StateCounts;
 use anyhow::Result;
 use codeyard_db_core::models::PullRequest;
+use codeyard_db_core::models::Repository;
 use codeyard_db_core::native_operation;
 use codeyard_db_core::DbPool;
 
@@ -694,4 +695,38 @@ pub struct PullRequestHeadDisplay {
     pub id: i64,
     pub name: String,
     pub owner_name: Option<String>,
+}
+
+native_operation!(crate::postgres::pull_requests::records::create_pull_request_with_head,
+    crate::sqlite::pull_requests::records::create_pull_request_with_head,
+    fn create_pull_request_with_head(pool: &DbPool, input: NewPullRequest<'_>, foreign: Option<&codeyard_db_core::cells::repositories::Admission>) -> Result<PullRequest>);
+
+pub(crate) async fn check_foreign_head(
+    pool: &DbPool,
+    input: &NewPullRequest<'_>,
+    head: &Repository,
+    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+) -> Result<()> {
+    let Some(foreign) = foreign else {
+        anyhow::ensure!(
+            !head.is_stub,
+            codeyard_support::credentials::AccountRestricted
+        );
+        return Ok(());
+    };
+    anyhow::ensure!(
+        head.is_stub
+            && foreign.actor.user_id == input.author_id
+            && foreign.source.repository.id == head.id,
+        codeyard_support::credentials::AccountRestricted
+    );
+    let current = foreign.read(pool).await?;
+    anyhow::ensure!(
+        current.repository.id == head.id
+            && current.repository.home_cell == head.home_cell
+            && current.repository.owner_id() == head.owner_id()
+            && current.repository.forked_from_id == Some(input.repo_id),
+        codeyard_support::credentials::AccountRestricted
+    );
+    Ok(())
 }

@@ -1282,6 +1282,7 @@ pub(crate) async fn native_create(
             owner,
             name,
             codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
+                foreign_head: None,
                 suppress_ci: false,
                 head_repo_id: Some(head_repo.id),
                 source:

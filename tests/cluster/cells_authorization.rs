@@ -174,10 +174,22 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         )
         .unwrap()
     };
+    let bob_root = tempfile::tempdir().unwrap();
     let home = accounts::listen(
         directory_client(one_key.clone()),
-        Arc::new(codeyard_identity::cells::Local {
-            pool: one.pool.clone(),
+        Arc::new(codeyard_app::cells::Native {
+            state: codeyard_app::app::AppState::new(
+                one.pool.clone(),
+                bob_root.path().to_owned(),
+                Arc::new(
+                    codeyard_storage::ObjectStore::open(bob_root.path(), None)
+                        .await
+                        .unwrap(),
+                ),
+                None,
+                codeyard_ci::config::CiConfig::default(),
+                None,
+            ),
         }),
         &one_key,
         "127.0.0.1:0".parse().unwrap(),
@@ -314,7 +326,6 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     zero.pool
         .set_directory(Arc::new(directory_client(zero_key.clone())))
         .unwrap();
-    let bob_root = tempfile::tempdir().unwrap();
     codeyard_db_cluster::node_config::upsert_node_configuration(&one.pool, "public", true)
         .await
         .unwrap();
@@ -791,6 +802,12 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         value.clone(),
     )
     .unwrap();
+    let mut peer_bound = admission.clone();
+    peer_bound.bind_native_peer(&zero_key.public_hex()).unwrap();
+    assert!(serde_json::to_value(&peer_bound)
+        .unwrap()
+        .get("native_peer")
+        .is_none());
     let mut forged_admission = admission.clone();
     forged_admission.actor.credential = Some(
         codeyard_db_core::queries::users::accounts::OwnedAccountCredential::Token(
@@ -801,6 +818,34 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     forged_admission.source.credential_id = Some(token.id + 1);
     assert!(forged_admission.check(&one.pool).await.is_err());
     assert_eq!(source.credential_id, Some(token.id));
+    let operations = [
+        codeyard_repos_core::wire::Operation::CompareForeignPullHead {
+            admission: Box::new(admission.clone()),
+            base: "a".repeat(40),
+            branch: "topic".into(),
+        },
+        codeyard_repos_core::wire::Operation::FetchForeignPullHead {
+            admission: Box::new(admission.clone()),
+            number: 1,
+            branch: "topic".into(),
+            head: "a".repeat(40),
+            expected_head: None,
+        },
+    ];
+    for operation in &operations {
+        for (role, allowed) in [
+            ("web", true),
+            ("ssh", true),
+            ("storage", false),
+            ("runner", false),
+        ] {
+            assert_eq!(
+                codeyard_repos_rpc::repository::authorize_operation(&[role.to_owned()], operation)
+                    .is_ok(),
+                allowed
+            );
+        }
+    }
     let operation = codeyard_repos_core::wire::Operation::InitializeForeignCopy {
         admission: Box::new(admission.clone()),
         default_branch: "main".into(),
@@ -965,6 +1010,95 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap()
         .is_none());
+    let branch = client.post(format!("{}/api/v3/repos/bob/http-fork/git/refs", bob_http.url()))
+        .bearer_auth(&value).json(&serde_json::json!({"ref":"refs/heads/foreign-topic", "sha":snapshot.refs["refs/heads/main"]}))
+        .send().await.unwrap();
+    let status = branch.status();
+    let body = branch.text().await.unwrap();
+    assert_eq!(status, 201, "{body}");
+    let pushed = client.put(format!("{}/api/v3/repos/bob/http-fork/contents/foreign.txt", bob_http.url()))
+        .bearer_auth(&value).json(&serde_json::json!({"branch":"foreign-topic", "message":"Foreign head", "content":"Zm9yZWlnbiBwdWxsCg=="}))
+        .send().await.unwrap();
+    let status = pushed.status();
+    let pushed: serde_json::Value = pushed.json().await.unwrap();
+    assert_eq!(status, 201, "{pushed}");
+    let foreign_tip = pushed["commit"]["sha"].as_str().unwrap();
+    let created_pull = client.post(format!("{}/api/v3/repos/alice/private/pulls", http.url()))
+        .bearer_auth(&value).json(&serde_json::json!({"title":"Foreign fork pull", "head":"bob:foreign-topic", "base":"main", "maintainer_can_modify":true}))
+        .send().await.unwrap();
+    let status = created_pull.status();
+    let created_pull: serde_json::Value = created_pull.json().await.unwrap();
+    assert_eq!(status, 201, "{created_pull}");
+    assert_eq!(created_pull["head"]["repo"]["id"], fork_id);
+    assert_eq!(created_pull["head"]["sha"], foreign_tip);
+    let number = created_pull["number"].as_i64().unwrap() as i32;
+    assert_eq!(
+        codeyard_repos_core::repositories::store::repo_store(&repository, None)
+            .commit(&format!("refs/pull/{number}/head"))
+            .await
+            .unwrap()
+            .sha,
+        foreign_tip
+    );
+    let head_view = client.post(format!("{}/api/graphql", http.url())).bearer_auth(&value)
+        .json(&serde_json::json!({"query":format!(r#"{{repository(owner:"alice",name:"private"){{pullRequest(number:{number}){{headRepository{{id nameWithOwner}} headRepositoryOwner{{login}} headRefOid}}}}}}"#) }))
+        .send().await.unwrap().json::<serde_json::Value>().await.unwrap();
+    assert!(head_view.get("errors").is_none(), "{head_view}");
+    assert_eq!(
+        head_view["data"]["repository"]["pullRequest"]["headRepository"]["nameWithOwner"],
+        "bob/http-fork"
+    );
+    assert_eq!(
+        head_view["data"]["repository"]["pullRequest"]["headRefOid"],
+        foreign_tip
+    );
+    let gql_branch = client
+        .post(format!(
+            "{}/api/v3/repos/bob/http-fork/git/refs",
+            bob_http.url()
+        ))
+        .bearer_auth(&value)
+        .json(&serde_json::json!({"ref":"refs/heads/graphql-topic", "sha":foreign_tip}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(gql_branch.status(), 201);
+    let graphql_pull = client.post(format!("{}/api/graphql", http.url())).bearer_auth(&value)
+        .json(&serde_json::json!({
+            "query":r#"mutation($base:ID!,$head:ID!){createPullRequest(input:{repositoryId:$base,headRepositoryId:$head,headRefName:"graphql-topic",baseRefName:"main",title:"Foreign GraphQL pull"}){pullRequest{number headRefOid}}}"#,
+            "variables":{"base":codeyard_model::node_id::encode("R",repository.id),"head":codeyard_model::node_id::encode("R",fork_id)}
+        })).send().await.unwrap().json::<serde_json::Value>().await.unwrap();
+    assert!(graphql_pull.get("errors").is_none(), "{graphql_pull}");
+    assert_eq!(
+        graphql_pull["data"]["createPullRequest"]["pullRequest"]["headRefOid"],
+        foreign_tip
+    );
+    assert!(
+        codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
+            &one.pool,
+            created_pull["id"].as_i64().unwrap()
+        )
+        .await
+        .unwrap()
+        .is_none()
+    );
+    let source_by_id = zero
+        .pool
+        .foreign_authorization()
+        .unwrap()
+        .repository_id(fork_id, &fork_proof)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(source_by_id.repository.id, fork_id);
+    assert!(zero
+        .pool
+        .foreign_authorization()
+        .unwrap()
+        .repository_id(repository.id, &fork_proof)
+        .await
+        .unwrap()
+        .is_some());
     let parent = client.post(format!("{}/api/graphql", bob_http.url())).bearer_auth(&value)
         .json(&serde_json::json!({"query":r#"{repository(owner:"bob",name:"http-fork"){parent{id nameWithOwner owner{login} defaultBranchRef{name}}}}"#}))
         .send().await.unwrap().json::<serde_json::Value>().await.unwrap();

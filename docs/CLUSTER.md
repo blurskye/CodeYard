@@ -807,4 +807,7 @@ default, at most 64 GiB); the request also has a byte limit and a 300-second cei
 Destination copy staging and publication share the native/quorum copy path and pass
 source checks. Public REST/native/form forwarding and authenticated foreign parent metadata
 also pass source checks. Renamed-fork discovery, retained parent metadata and storage-node
-publication tests are the next unchecked batch. Cross-cell pull-request publication is not wired.
+publication tests pass source checks. Public clients now fork, clone and push across cells;
+their first upstream PR awaits the new resolver. Initial PR admission and retained-head
+publication are written but unchecked, including native storage and failure tests.
+Push following and maintainer grants are not wired.

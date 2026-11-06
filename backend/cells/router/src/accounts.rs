@@ -34,6 +34,10 @@ enum Request {
         name: String,
         proof: Proof,
     },
+    RepositoryId {
+        id: i64,
+        proof: Proof,
+    },
     RepositoryFork {
         owner: String,
         base: i64,
@@ -94,31 +98,46 @@ impl Remote {
 impl Remote {
     async fn source(
         &self,
-        owner: &str,
         proof: &Proof,
         request: Request,
     ) -> Result<Option<codeyard_db_core::cells::repositories::Source>> {
         tokio::time::timeout(
             std::time::Duration::from_secs(rpc::Config::default().exchange_seconds),
             async move {
-                Key::new(KeyKind::Name, owner)?;
-                let (name, base) = match &request {
-                    Request::RepositorySource { name, .. } => {
+                let (owner, name, base, id) = match &request {
+                    Request::RepositorySource { owner, name, .. } => {
                         ensure!(
                             codeyard_support::repository_names::valid(name),
                             "Invalid fork source name"
                         );
-                        (Some(name.as_str()), None)
+                        (Some(owner.as_str()), Some(name.as_str()), None, None)
                     }
-                    Request::RepositoryFork { base, .. } => {
+                    Request::RepositoryFork { owner, base, .. } => {
                         codeyard_support::cells::Prefix::for_id(*base)?;
-                        (None, Some(*base))
+                        (Some(owner.as_str()), None, Some(*base), None)
+                    }
+                    Request::RepositoryId { id, .. } => {
+                        codeyard_support::cells::Prefix::for_id(*id)?;
+                        (None, None, None, Some(*id))
                     }
                     _ => anyhow::bail!("Invalid repository metadata request"),
                 };
                 proof.validate()?;
                 let _slot = self.slots.clone().try_acquire_owned()?;
-                let Some(cell) = self.routes.by_name(owner).await? else {
+                let cell = if let Some(owner) = owner {
+                    Key::new(KeyKind::Name, owner)?;
+                    self.routes.by_name(owner).await?
+                } else if let Some(id) = id {
+                    self.routes
+                        .by_object(Object {
+                            kind: ObjectKind::Repository,
+                            id,
+                        })
+                        .await?
+                } else {
+                    None
+                };
+                let Some(cell) = cell else {
                     return Ok(None);
                 };
                 let Reply::RepositorySource(source) = self.exchange(&cell, &request).await? else {
@@ -130,7 +149,8 @@ impl Remote {
                 let source = *source;
                 source.validate(cell.id)?;
                 ensure!(
-                    source.owner.name() == owner
+                    owner.is_none_or(|owner| source.owner.name() == owner)
+                        && id.is_none_or(|id| source.repository.id == id)
                         && name
                             .is_none_or(|name| source.repository.name.eq_ignore_ascii_case(name))
                         && base.is_none_or(|base| source.repository.forked_from_id == Some(base)),
@@ -365,11 +385,26 @@ impl Home for Remote {
     ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Source>>> {
         Box::pin(async move {
             self.source(
-                owner,
                 proof,
                 Request::RepositorySource {
                     owner: owner.to_owned(),
                     name: name.to_owned(),
+                    proof: proof.clone(),
+                },
+            )
+            .await
+        })
+    }
+    fn repository_id<'a>(
+        &'a self,
+        id: i64,
+        proof: &'a Proof,
+    ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Source>>> {
+        Box::pin(async move {
+            self.source(
+                proof,
+                Request::RepositoryId {
+                    id,
                     proof: proof.clone(),
                 },
             )
@@ -384,7 +419,6 @@ impl Home for Remote {
     ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Source>>> {
         Box::pin(async move {
             self.source(
-                owner,
                 proof,
                 Request::RepositoryFork {
                     owner: owner.to_owned(),
@@ -832,6 +866,12 @@ impl rpc::Service for Accounts {
                 Request::Snapshot(_) => anyhow::bail!("Snapshot requires streaming"),
                 Request::RepositorySource { owner, name, proof } => {
                     match self.home.repository_source(&owner, &name, &proof).await {
+                        Ok(source) => Reply::RepositorySource(source.map(Box::new)),
+                        Err(_) => Reply::Unavailable,
+                    }
+                }
+                Request::RepositoryId { id, proof } => {
+                    match self.home.repository_id(id, &proof).await {
                         Ok(source) => Reply::RepositorySource(source.map(Box::new)),
                         Err(_) => Reply::Unavailable,
                     }

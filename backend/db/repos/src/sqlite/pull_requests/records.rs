@@ -349,9 +349,55 @@ pub async fn set_pull_request_draft(
     Ok(ReadyOutcome::Ready(Box::new(pr)))
 }
 
+async fn admit_creation_head(
+    pool: &SqlitePool,
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    input: &NewPullRequest<'_>,
+    head: &codeyard_db_core::models::Repository,
+    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+) -> Result<()> {
+    crate::pull_requests::records::check_foreign_head(
+        &codeyard_db_core::DbPool::Sqlite(pool.clone()),
+        input,
+        head,
+        foreign,
+    )
+    .await?;
+    if let Some(foreign) = foreign {
+        anyhow::ensure!(
+            codeyard_db_core::queries::sqlite::credentials::repository(
+                tx,
+                &foreign.actor,
+                input.repo_id,
+                "pull-requests",
+                true,
+            )
+            .await?
+                && codeyard_db_core::queries::sqlite::credentials::repository(
+                    tx,
+                    &foreign.actor,
+                    input.repo_id,
+                    "contents",
+                    false,
+                )
+                .await?,
+            crate::sqlite::discussions::AUTHORITY_DENIED
+        );
+    }
+    Ok(())
+}
+
 pub async fn create_pull_request(
     pool: &SqlitePool,
     input: NewPullRequest<'_>,
+) -> Result<PullRequest> {
+    create_pull_request_with_head(pool, input, None).await
+}
+
+pub async fn create_pull_request_with_head(
+    pool: &SqlitePool,
+    input: NewPullRequest<'_>,
+    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
 ) -> Result<PullRequest> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     crate::sqlite::discussions::require_contribution_authority(
@@ -392,10 +438,14 @@ pub async fn create_pull_request(
         .fetch_one(&mut *tx)
         .await?;
     if !(head.id == input.repo_id || head.forked_from_id == Some(input.repo_id))
-        || (head.is_private && !access.can_read() && !(head.owner_kind == "user" && personal_admin))
+        || (!head.is_stub
+            && head.is_private
+            && !access.can_read()
+            && !(head.owner_kind == "user" && personal_admin))
     {
         return Err(crate::sqlite::discussions::AUTHORITY_DENIED.into());
     }
+    admit_creation_head(pool, &mut tx, &input, &head, foreign).await?;
     anyhow::ensure!(
         !input.maintainer_can_modify
             || can_grant_maintainer_edit(input.author_id, input.repo_id, &head),
@@ -458,6 +508,7 @@ pub async fn create_pull_request(
         crate::sqlite::pull_requests::conversion::move_source(&mut tx, issue, &pr, input.author_id)
             .await?;
     }
+    admit_creation_head(pool, &mut tx, &input, &head, foreign).await?;
     tx.commit().await?;
     Ok(pr)
 }

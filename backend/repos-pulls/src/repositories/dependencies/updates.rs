@@ -83,6 +83,7 @@ async fn open(
             owner,
             pinned.repository.name.clone(),
             CreatePullRequestRequest {
+                foreign_head: None,
                 suppress_ci: true,
                 head_repo_id: Some(pinned.repository.id),
                 source: crate::repositories::pull_requests::mutations::PullRequestSource::New {
@@ -130,6 +131,7 @@ async fn open(
             actor.into(),
             &pull,
             true,
+            None,
         )
         .await?;
     }

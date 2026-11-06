@@ -772,7 +772,8 @@ its CI, storage and public cells steps are still running. Original-proof fork-so
 admission, bounded pinned-TLS exports, destination staging/publication and public
 REST/native/form ingress with authenticated foreign parent metadata pass source checks.
 Renamed foreign-fork discovery, retained parent metadata and storage publication tests
-are the next unchecked batch. Cross-cell pull-request publication, maintainer pushes,
+pass source checks. Initial cross-cell PR creation and retained-head publication are
+written but unchecked. Push following, maintainer pushes,
 notifications, transfers and pools remain open, as do stages 4 to 6. Range renewal is a
 deferred owner follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain

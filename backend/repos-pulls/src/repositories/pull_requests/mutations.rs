@@ -47,6 +47,8 @@ impl TryFrom<PullRequestSourceInput> for PullRequestSource {
 
 #[derive(Deserialize)]
 pub struct CreatePullRequestRequest {
+    #[serde(skip)]
+    pub foreign_head: Option<codeyard_db_core::cells::repositories::Admission>,
     /// Only server-owned proposals may suppress automatic execution; clients cannot set this.
     #[serde(skip)]
     pub suppress_ci: bool,
@@ -107,7 +109,49 @@ fn head_publish_error(number: i32, error: RepoError) -> OperationError {
     OperationError::Opened { number }
 }
 
+async fn publish_created_head(
+    pool: &codeyard_db_core::DbPool,
+    ci: &CiRuns,
+    base: &codeyard_db_core::models::Repository,
+    head: &codeyard_db_core::models::Repository,
+    actor: codeyard_repos_core::store_types::PullHeadActor,
+    pull: &codeyard_db_core::models::PullRequest,
+    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+) -> Result<(), RepoError> {
+    let store = repo_store(base, ci.cluster.as_ref());
+    if let Some(foreign) = foreign {
+        store
+            .fetch_foreign_pull_head(
+                pool,
+                base.id,
+                foreign,
+                pull.number,
+                &pull.head_branch,
+                &pull.head_sha,
+                None,
+            )
+            .await
+    } else {
+        store
+            .fetch_pull_head(
+                pool,
+                base.id,
+                head.id,
+                actor,
+                &repo_store(head, ci.cluster.as_ref()),
+                pull.number,
+                &pull.head_sha,
+                None,
+            )
+            .await
+    }
+}
+
 /// Repair a committed creation without borrowing its historical author's credentials.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Repair retains the original cross-cell head admission."
+)]
 pub(crate) async fn repair_open_pull(
     pool: &codeyard_db_core::DbPool,
     ci: &CiRuns,
@@ -116,33 +160,34 @@ pub(crate) async fn repair_open_pull(
     credential: codeyard_repos_core::store_types::PullHeadActor,
     existing: &codeyard_db_core::models::PullRequest,
     suppress_ci: bool,
+    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
 ) -> Result<(), OperationError> {
     let actor_id = credential.user;
     let number = existing.number;
     // Exact CAS repairs an absent initial ref, never a later publication.
-    repo_store(repository, ci.cluster.as_ref())
-        .fetch_pull_head(
-            pool,
-            repository.id,
-            head_repository.id,
-            credential,
-            &repo_store(head_repository, ci.cluster.as_ref()),
-            number,
-            &existing.head_sha,
-            None,
-        )
-        .await
-        .map_err(|error| head_publish_error(number, error))?;
-    codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
+    publish_created_head(
         pool,
-        repository,
         ci,
-        actor_id,
-        existing.id,
-        (!suppress_ci).then_some(codeyard_db_core::models::AccessLevel::Owner),
+        repository,
+        head_repository,
+        credential,
+        existing,
+        foreign,
     )
     .await
-    .map_err(|_| OperationError::Opened { number })?;
+    .map_err(|error| head_publish_error(number, error))?;
+    if foreign.is_none() {
+        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
+            pool,
+            repository,
+            ci,
+            actor_id,
+            existing.id,
+            (!suppress_ci).then_some(codeyard_db_core::models::AccessLevel::Owner),
+        )
+        .await
+        .map_err(|_| OperationError::Opened { number })?;
+    }
     let current =
         codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, existing.id)
             .await
@@ -258,8 +303,35 @@ pub async fn create_pull_request(
             }
         }
     })?;
-    codeyard_repos_core::repositories::pull_requests::require_read(pool, &user, &head_repository)
+    if let Some(foreign) = req.foreign_head.as_ref() {
+        if !head_repository.is_stub
+            || foreign.source.repository.id != head_repository.id
+            || foreign.actor.user_id != actor_id
+            || foreign.actor.token_id() != credential.token
+        {
+            return Err(OperationError::Denied {
+                code: "read_denied",
+                message: "Head authority changed".into(),
+            });
+        }
+        let source = foreign
+            .read(pool)
+            .await
+            .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?;
+        if source.repository.forked_from_id != Some(repository.id) {
+            return Err(OperationError::Denied {
+                code: "read_denied",
+                message: "Head authority changed".into(),
+            });
+        }
+    } else {
+        codeyard_repos_core::repositories::pull_requests::require_read(
+            pool,
+            &user,
+            &head_repository,
+        )
         .await?;
+    }
     validate_maintainer_edit(
         user.id,
         repository.id,
@@ -280,8 +352,47 @@ pub async fn create_pull_request(
             code: "git_unavailable",
             message: "Repository storage is unavailable".into(),
         })?;
+    let base_ref = format!("refs/heads/{}", req.base_branch);
+    let base_sha = refs
+        .get(&base_ref)
+        .cloned()
+        .ok_or_else(|| OperationError::Invalid {
+            code: "git_error",
+            message: format!("Base branch not found: {}", req.base_branch),
+        })?;
+    let base_store = repo_store(&repository, ci.cluster.as_ref());
+    let prepared_foreign = if let Some(foreign) = req.foreign_head.as_ref() {
+        Some(
+            base_store
+                .compare_foreign_pull_head(
+                    pool,
+                    repository.id,
+                    foreign,
+                    &base_sha,
+                    &req.head_branch,
+                )
+                .await
+                .map_err(|error| {
+                    if error.kind == ErrorKind::NotFound {
+                        OperationError::Invalid {
+                            code: "invalid_head",
+                            message: "Head branch or common history not found".into(),
+                        }
+                    } else {
+                        OperationError::Unavailable {
+                            code: "git_unavailable",
+                            message: "Head repository storage is unavailable".into(),
+                        }
+                    }
+                })?,
+        )
+    } else {
+        None
+    };
     let head_ref = format!("refs/heads/{}", req.head_branch);
-    let head_refs = if head_repository.id == repository.id {
+    let head_refs = if req.foreign_head.is_some() {
+        HashMap::new()
+    } else if head_repository.id == repository.id {
         refs.clone()
     } else {
         repo_store(&head_repository, ci.cluster.as_ref())
@@ -292,20 +403,14 @@ pub async fn create_pull_request(
                 message: "Head repository storage is unavailable".into(),
             })?
     };
-    let head_sha = head_refs
-        .get(&head_ref)
+    let head_sha = prepared_foreign
+        .as_ref()
+        .map(|(head, _)| head)
+        .or_else(|| head_refs.get(&head_ref))
         .cloned()
         .ok_or_else(|| OperationError::Invalid {
             code: "git_error",
             message: format!("Head branch not found: {}", req.head_branch),
-        })?;
-    let base_ref = format!("refs/heads/{}", req.base_branch);
-    let base_sha = refs
-        .get(&base_ref)
-        .cloned()
-        .ok_or_else(|| OperationError::Invalid {
-            code: "git_error",
-            message: format!("Base branch not found: {}", req.base_branch),
         })?;
 
     if let Some(existing) = converted_retry {
@@ -329,6 +434,7 @@ pub async fn create_pull_request(
             credential,
             &existing,
             req.suppress_ci,
+            req.foreign_head.as_ref(),
         )
         .await?;
         return Err(OperationError::Conflict {
@@ -343,15 +449,19 @@ pub async fn create_pull_request(
     // A head with nothing outside the base, or with no history in common with it, cannot carry
     // a pull request. Checked before the insert, so a converted issue stays open. The head is
     // only counted, without listing its commits.
-    let base_store = repo_store(&repository, ci.cluster.as_ref());
-    let head_store = if head_repository.id == repository.id {
-        base_store.clone()
+    let comparison = if let Some((_, comparison)) = prepared_foreign {
+        Ok(comparison)
     } else {
-        repo_store(&head_repository, ci.cluster.as_ref())
+        let head_store = if head_repository.id == repository.id {
+            base_store.clone()
+        } else {
+            repo_store(&head_repository, ci.cluster.as_ref())
+        };
+        base_store
+            .comparison_from(&head_store, &base_sha, &head_sha, 0, 0)
+            .await
     };
-    let merged = base_store
-        .comparison_from(&head_store, &base_sha, &head_sha, 0, 0)
-        .await
+    let merged = comparison
         .map(|comparison| comparison.ahead_by == 0)
         .map_err(|error| {
             if error.kind == ErrorKind::NotFound {
@@ -378,7 +488,7 @@ pub async fn create_pull_request(
             ),
         });
     }
-    let created = codeyard_db_repos::pull_requests::records::create_pull_request(
+    let created = codeyard_db_repos::pull_requests::records::create_pull_request_with_head(
         pool,
         codeyard_db_repos::pull_requests::records::NewPullRequest {
             repo_id: repository.id,
@@ -394,6 +504,7 @@ pub async fn create_pull_request(
             is_draft: req.is_draft,
             maintainer_can_modify: req.maintainer_can_modify.unwrap_or(false),
         },
+        req.foreign_head.as_ref(),
     )
     .await;
     let pull_request = match created {
@@ -438,6 +549,7 @@ pub async fn create_pull_request(
                 credential,
                 &existing,
                 req.suppress_ci,
+                req.foreign_head.as_ref(),
             )
             .await?;
             return Err(OperationError::Conflict {
@@ -449,34 +561,32 @@ pub async fn create_pull_request(
         }
     };
 
-    {
-        repo_store(&repository, ci.cluster.as_ref())
-            .fetch_pull_head(
-                pool,
-                repository.id,
-                head_repository.id,
-                credential,
-                &repo_store(&head_repository, ci.cluster.as_ref()),
-                pull_request.number,
-                &pull_request.head_sha,
-                None,
-            )
-            .await
-            .map_err(|error| head_publish_error(pull_request.number, error))?;
-    }
-
-    codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
+    publish_created_head(
         pool,
-        &repository,
         ci,
-        user.id,
-        pull_request.id,
-        (!req.suppress_ci).then_some(codeyard_db_core::models::AccessLevel::Owner),
+        &repository,
+        &head_repository,
+        credential,
+        &pull_request,
+        req.foreign_head.as_ref(),
     )
     .await
-    .map_err(|_| OperationError::Opened {
-        number: pull_request.number,
-    })?;
+    .map_err(|error| head_publish_error(pull_request.number, error))?;
+
+    if req.foreign_head.is_none() {
+        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
+            pool,
+            &repository,
+            ci,
+            user.id,
+            pull_request.id,
+            (!req.suppress_ci).then_some(codeyard_db_core::models::AccessLevel::Owner),
+        )
+        .await
+        .map_err(|_| OperationError::Opened {
+            number: pull_request.number,
+        })?;
+    }
     let pull_request =
         codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
             .await

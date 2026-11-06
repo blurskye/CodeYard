@@ -199,7 +199,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     The next source follow-up adds exact-branch snapshots for pull heads and shares
     their private staging with fork copies; hostile selector/storage tests are written.
     Both baselines exclude metadata-only stub insert/delete from native fork counters.
-    This follow-up is checking in workspace 36669df79199436886e88c7961c5d8fd,
+    This follow-up passes workspace 36669df79199436886e88c7961c5d8fd,
     Clippy 73d4ef6b6117411493559eed584420ce and WASM 37c0dde00fa04564b6cf2a44c565de95.
     Runtime 67eb28f748434d8d839860a974a0fb07 passes all 235 cluster tests without skips
     on its earlier export snapshot. CI passes 220 with 19 existing environment-dependent
@@ -207,6 +207,15 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     workflow passes its existing clients but fails before its new fork request because
     gh rejects --remote=false with a repository argument. The invalid flag is removed;
     the fork/push/PR/maintainer/checkout/merge assertions are unchanged.
+    Combined runtime 921a8af65cf34bde866370a8f67bfc22 runs public cells first, then
+    changed libraries, store/write tests and database, cluster, repository, CI and storage
+    targets on the current source. Its public client now forks across cells, clones and
+    pushes a new fork branch, then fails at gh pr create on the pre-PR snapshot.
+    The next unchecked PR batch resolves cold heads by name/ID, privately stages branch
+    comparisons, retains original proofs through both-engine insertion and publishes
+    retained pull refs through native/quorum storage. HTTP/GraphQL, native storage,
+    revoked-peer and final-head-revocation tests are written. Push following and
+    maintainer grants are not wired yet.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
     object pools, mentions/home inbox/email, and repository transfers/redirects.
     Stages 4 to 6 remain unwritten; automatic user moves and org regional presence

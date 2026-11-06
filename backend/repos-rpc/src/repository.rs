@@ -56,6 +56,8 @@ pub fn authorize_operation(
         Operation::GistHistory { .. } => ("GistHistory", false),
         Operation::GistWrite { .. } => ("GistWrite", false),
         Operation::FetchPullHead { .. } => ("FetchPullHead", false),
+        Operation::CompareForeignPullHead { .. } => ("CompareForeignPullHead", false),
+        Operation::FetchForeignPullHead { .. } => ("FetchForeignPullHead", false),
         Operation::Exists => ("Exists", false),
         Operation::SizeBytes => ("SizeBytes", false),
         Operation::RefreshStorageSize => ("RefreshStorageSize", false),
@@ -192,6 +194,8 @@ fn requires_actor(operation: &Operation) -> bool {
             | Operation::InitializeForeignCopy { .. }
             | Operation::ForkPack { .. }
             | Operation::FetchPullHead { .. }
+            | Operation::CompareForeignPullHead { .. }
+            | Operation::FetchForeignPullHead { .. }
             | Operation::RenameBranch { .. }
             | Operation::MergeUpstream { .. }
             | Operation::CreateBranch { .. }
@@ -881,13 +885,16 @@ impl RpcHandler {
                 None => json!(store.initialize(None, &default_branch)),
             },
             Operation::InitializeForeignCopy {
-                admission,
+                mut admission,
                 default_branch,
                 default_branch_only,
             } => {
                 if actor != Some(admission.actor.user_id) {
                     return Err(invalid("Fork actor mismatch").into());
                 }
+                admission
+                    .bind_native_peer(&caller.to_string())
+                    .map_err(RepoError::from)?;
                 json!(store.initialize_foreign_copy(
                     pool,
                     repo_id.ok_or_else(unavailable)?,
@@ -947,6 +954,48 @@ impl RpcHandler {
                     actor.ok_or_else(|| invalid("repository mutation requires an actor"))?,
                     credential,
                     input
+                ))
+            }
+            Operation::CompareForeignPullHead {
+                mut admission,
+                base,
+                branch,
+            } => {
+                if actor != Some(admission.actor.user_id) {
+                    return Err(invalid("Pull actor mismatch").into());
+                }
+                admission
+                    .bind_native_peer(&caller.to_string())
+                    .map_err(RepoError::from)?;
+                json!(store.compare_foreign_pull_head(
+                    pool,
+                    repo_id.ok_or_else(unavailable)?,
+                    &admission,
+                    &base,
+                    &branch
+                ))
+            }
+            Operation::FetchForeignPullHead {
+                mut admission,
+                number,
+                branch,
+                head,
+                expected_head,
+            } => {
+                if actor != Some(admission.actor.user_id) {
+                    return Err(invalid("Pull actor mismatch").into());
+                }
+                admission
+                    .bind_native_peer(&caller.to_string())
+                    .map_err(RepoError::from)?;
+                json!(store.fetch_foreign_pull_head(
+                    pool,
+                    repo_id.ok_or_else(unavailable)?,
+                    &admission,
+                    number,
+                    &branch,
+                    &head,
+                    expected_head.as_deref()
                 ))
             }
             Operation::FetchPullHead {

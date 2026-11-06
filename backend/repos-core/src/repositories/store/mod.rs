@@ -1735,6 +1735,92 @@ impl RepoStore {
         }
     }
 
+    /// Compare a private staged foreign head without putting its objects in the base.
+    pub async fn compare_foreign_pull_head(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        repository: i64,
+        admission: &codeyard_db_core::cells::repositories::Admission,
+        base: &str,
+        branch: &str,
+    ) -> Result<(String, CommitComparison), RepoError> {
+        if !git::is_full_commit_id(base) || git::branch_ref(branch).is_none() {
+            return Err(crate::wire::invalid("Invalid foreign pull head"));
+        }
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .compare_foreign_pull_head(pool, repository, admission, base, branch)
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        admission.actor.user_id,
+                        Operation::CompareForeignPullHead {
+                            admission: Box::new(admission.clone()),
+                            base: base.into(),
+                            branch: branch.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Foreign head publication retains its original proof and exact pull/CAS identity."
+    )]
+    pub async fn fetch_foreign_pull_head(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        repository: i64,
+        admission: &codeyard_db_core::cells::repositories::Admission,
+        number: i32,
+        branch: &str,
+        head: &str,
+        expected_head: Option<&str>,
+    ) -> Result<(), RepoError> {
+        if number <= 0
+            || git::branch_ref(branch).is_none()
+            || !git::is_full_commit_id(head)
+            || expected_head.is_some_and(|head| !git::is_full_commit_id(head))
+        {
+            return Err(crate::wire::invalid("Invalid foreign pull head"));
+        }
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .fetch_foreign_pull_head(
+                        pool,
+                        repository,
+                        admission,
+                        number,
+                        branch,
+                        head,
+                        expected_head,
+                    )
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        admission.actor.user_id,
+                        Operation::FetchForeignPullHead {
+                            admission: Box::new(admission.clone()),
+                            number,
+                            branch: branch.into(),
+                            head: head.into(),
+                            expected_head: expected_head.map(str::to_owned),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
     /// Renames a branch and follows it in protection and default-branch metadata.
     pub async fn rename_branch_as(
         &self,

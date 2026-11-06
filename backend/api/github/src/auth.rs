@@ -100,6 +100,21 @@ pub(super) async fn referenced_repository(
     else {
         return Ok(None);
     };
+    if repo.is_stub {
+        let Some(auth) = auth else {
+            return Ok(None);
+        };
+        return Ok(
+            codeyard_app::cells::foreign_repository(state, &auth.database_actor(), &repo)
+                .await
+                .map_err(Error::unavailable)?
+                .map(|source| {
+                    let mut metadata = source.repository;
+                    metadata.is_stub = true;
+                    metadata
+                }),
+        );
+    }
     if repo.is_private {
         if let Some(auth) = auth {
             match auth

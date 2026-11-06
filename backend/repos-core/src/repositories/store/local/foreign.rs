@@ -5,6 +5,141 @@ use codeyard_db_core::cells::repositories::Admission;
 use tokio::io::AsyncWriteExt;
 
 impl LocalStore {
+    pub(super) async fn foreign_pull_base(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        repository: i64,
+        admission: &Admission,
+    ) -> Result<codeyard_db_core::models::Repository, RepoError> {
+        let source = admission.read(pool).await.map_err(RepoError::from)?;
+        if source.repository.forked_from_id != Some(repository)
+            || source.repository.id == repository
+        {
+            return Err(RepoError::write_denied());
+        }
+        self.admitted_path(true).await?;
+        let base = codeyard_db_repos::repositories::creation::read_repository_source(
+            pool,
+            &admission.actor,
+            repository,
+        )
+        .await
+        .map_err(RepoError::from)?
+        .ok_or_else(RepoError::write_denied)?;
+        if !repository_matches_path(&base, self.path(), self.node_id) {
+            return Err(RepoError::write_denied());
+        }
+        foreign_ingress(pool, admission).await?;
+        Ok(base)
+    }
+    pub(in crate::repositories::store) async fn compare_foreign_pull_head(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        repository: i64,
+        admission: &Admission,
+        base: &str,
+        branch: &str,
+    ) -> Result<(String, codeyard_git::CommitComparison), RepoError> {
+        tokio::time::timeout(crate::wire::TIMEOUT, async {
+            self.foreign_pull_base(pool, repository, admission).await?;
+            let parent = self
+                .path()
+                .parent()
+                .ok_or_else(|| unavailable("Invalid repository path"))?;
+            let (temporary, snapshot) = stage(parent, pool, admission, false, Some(branch)).await?;
+            let head = snapshot
+                .refs
+                .get(&format!("refs/heads/{branch}"))
+                .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Head branch not found"))?
+                .clone();
+            let staged = RepoStore::from_disk_path(
+                temporary
+                    .path()
+                    .to_str()
+                    .ok_or_else(|| unavailable("Invalid copy path"))?,
+            );
+            let comparison = self
+                .comparison_from(staged.local()?, base, &head, 0, 0)
+                .await?;
+            self.foreign_pull_base(pool, repository, admission).await?;
+            Ok((head, comparison))
+        })
+        .await
+        .map_err(|_| RepoError::storage_node_unavailable())?
+    }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Foreign head publication carries the retained proof, branch, pull and CAS revision."
+    )]
+    pub(in crate::repositories::store) async fn fetch_foreign_pull_head(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        repository: i64,
+        admission: &Admission,
+        number: i32,
+        branch: &str,
+        head: &str,
+        expected_head: Option<&str>,
+    ) -> Result<(), RepoError> {
+        tokio::time::timeout(crate::wire::TIMEOUT, async {
+            self.foreign_pull_base(pool, repository, admission).await?;
+            let source = PullHeadSource::Foreign {
+                admission,
+                branch,
+                number,
+            };
+            let actor = crate::store_types::PullHeadActor {
+                user: admission.actor.user_id,
+                token: admission.actor.token_id(),
+            };
+            source
+                .check(pool, repository, admission.source.repository.id, actor)
+                .await?;
+            let current = git::repository::current_pull_head(self.path(), number)
+                .await
+                .map_err(RepoError::from)?;
+            if current.as_deref() == Some(head) {
+                return Ok(());
+            }
+            if current.as_deref() != expected_head {
+                return Err(RepoError::from(anyhow::Error::new(
+                    git::repository::PullHeadConflict,
+                )));
+            }
+            let parent = self
+                .path()
+                .parent()
+                .ok_or_else(|| unavailable("Invalid repository path"))?;
+            let (temporary, snapshot) = stage(parent, pool, admission, false, Some(branch)).await?;
+            if snapshot
+                .refs
+                .get(&format!("refs/heads/{branch}"))
+                .map(String::as_str)
+                != Some(head)
+            {
+                return Err(RepoError::from(anyhow::Error::new(
+                    git::repository::PullHeadConflict,
+                )));
+            }
+            let prepared = git::repository::prepare_pull_head(self.path(), temporary.path(), head)
+                .await
+                .map_err(RepoError::from)?;
+            self.publish_prepared_pull_head(
+                pool,
+                repository,
+                admission.source.repository.id,
+                actor,
+                source,
+                number,
+                head,
+                expected_head,
+                prepared,
+            )
+            .await
+        })
+        .await
+        .map_err(|_| RepoError::storage_node_unavailable())?
+    }
     pub(in crate::repositories::store) async fn initialize_foreign_copy(
         &self,
         pool: &codeyard_db_core::DbPool,

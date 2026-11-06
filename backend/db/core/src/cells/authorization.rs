@@ -307,6 +307,13 @@ pub trait Home: Send + Sync {
     ) -> BoxFuture<'a, Result<super::repositories::Snapshot>> {
         Box::pin(async { anyhow::bail!("Fork snapshot exports are unavailable") })
     }
+    fn repository_id<'a>(
+        &'a self,
+        _id: i64,
+        _proof: &'a Proof,
+    ) -> BoxFuture<'a, Result<Option<super::repositories::Source>>> {
+        Box::pin(async { anyhow::bail!("Remote repository metadata is unavailable") })
+    }
     fn repository_fork<'a>(
         &'a self,
         _owner: &'a str,

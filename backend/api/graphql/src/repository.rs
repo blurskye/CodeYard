@@ -22,7 +22,7 @@ pub(super) fn object(repo: &codeyard_db_core::models::Repository) -> Value {
         "rebaseMergeAllowed":repo.allow_rebase_merge})
 }
 
-async fn foreign_object(
+pub(super) async fn foreign_object(
     source: &codeyard_db_core::cells::repositories::Source,
     request: &RequestContext,
 ) -> Result<Value> {

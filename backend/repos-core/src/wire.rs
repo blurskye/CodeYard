@@ -175,6 +175,18 @@ pub enum Operation {
         head: String,
         expected_head: Option<String>,
     },
+    CompareForeignPullHead {
+        admission: Box<codeyard_db_core::cells::repositories::Admission>,
+        base: String,
+        branch: String,
+    },
+    FetchForeignPullHead {
+        admission: Box<codeyard_db_core::cells::repositories::Admission>,
+        number: i32,
+        branch: String,
+        head: String,
+        expected_head: Option<String>,
+    },
     Exists,
     SizeBytes,
     RefreshStorageSize,
@@ -679,6 +691,8 @@ impl Operation {
             | Self::Remove
             | Self::Retire
             | Self::FetchPullHead { .. }
+            | Self::CompareForeignPullHead { .. }
+            | Self::FetchForeignPullHead { .. }
             | Self::PrepareFile { .. }
             | Self::WriteGitObject { .. }
             | Self::GistWrite { .. }

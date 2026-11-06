@@ -136,6 +136,8 @@ pub struct Admission {
     pub source: Source,
     pub actor: crate::queries::credentials::Actor,
     credential: String,
+    #[serde(skip)]
+    native_peer: Option<String>,
 }
 impl std::fmt::Debug for Admission {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -152,6 +154,7 @@ impl Admission {
             source,
             actor,
             credential,
+            native_peer: None,
         };
         admission.proof()?;
         ensure!(
@@ -160,6 +163,15 @@ impl Admission {
             "Fork reader changed"
         );
         Ok(admission)
+    }
+    /// Filled by the native RPC listener, never accepted from its JSON body.
+    pub fn bind_native_peer(&mut self, peer: &str) -> Result<()> {
+        codeyard_support::node_identity::parse_public_key(peer)?;
+        self.native_peer = Some(peer.to_owned());
+        Ok(())
+    }
+    pub fn native_peer(&self) -> Option<&str> {
+        self.native_peer.as_deref()
     }
     fn proof(&self) -> Result<super::authorization::Proof> {
         retained_proof(&self.actor, &self.credential)

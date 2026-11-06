@@ -135,6 +135,7 @@ pub async fn revert_pull_request(
     })?;
     crate::repositories::pull_requests::mutations::create_pull_request(pool, ci, broadcaster, actor, owner, name,
         crate::repositories::pull_requests::mutations::CreatePullRequestRequest {
+            foreign_head: None,
             suppress_ci: false,
             head_repo_id: None,
             source: crate::repositories::pull_requests::mutations::PullRequestSource::New { title, body: Some(body) },

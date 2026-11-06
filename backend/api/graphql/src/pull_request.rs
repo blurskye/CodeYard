@@ -291,6 +291,12 @@ pub(super) async fn resolve(
             else {
                 return Ok(Value::Null);
             };
+            if head.is_stub {
+                let Some(source) = codeyard_app::cells::foreign_repository(&request.state, &request.actor, &head)
+                    .await.map_err(unavailable)? else { return Ok(Value::Null); };
+                let value = crate::repository::foreign_object(&source, request).await?;
+                return Ok(if field == "headRepository" { value } else { value["owner"].clone() });
+            }
             if !codeyard_identity::repository_access::can_read(&request.state.pool, Some(&request.auth.user), &head)
                 .await
                 .map_err(unavailable)?

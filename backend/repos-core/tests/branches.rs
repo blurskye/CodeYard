@@ -131,6 +131,7 @@ async fn row(forks: &Forks, id: i64) -> PullRequest {
 /// Opens a pull request from `head_branch` on the fork into `main` of the base.
 async fn open(forks: &Forks, head_branch: &str) -> PullRequest {
     let request = codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
+        foreign_head: None,
         suppress_ci: false,
         head_repo_id: Some(forks.fork.id),
         source: codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::New {
@@ -360,6 +361,7 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
         "alice".into(),
         "proj".into(),
         codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
+            foreign_head: None,
             suppress_ci: false,
             head_repo_id: Some(forks.base.id),
             source: codeyard_repos_pulls::repositories::pull_requests::mutations::PullRequestSource::New {

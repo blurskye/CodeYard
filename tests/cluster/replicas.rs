@@ -4642,6 +4642,9 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
         .save("main", "copy.txt", "unborn", b"remote fork bytes\n")
         .await;
     repo.branch("fork-topic", &tip).await;
+    let fork_tip = repo
+        .save("fork-topic", "pull.txt", &tip, b"foreign pull bytes\n")
+        .await;
     let session = codeyard_identity::sessions::fresh_id(&database.pool).unwrap();
     codeyard_db_identity::users::sessions::create_session(
         &database.pool,
@@ -4675,6 +4678,7 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
         .unwrap();
     assert_eq!(snapshot.refs.len(), 1);
     assert_eq!(snapshot.refs["refs/heads/main"], tip);
+    let mut branch_bytes = Vec::new();
     let selected = remote
         .fork_snapshot(
             &database.pool,
@@ -4684,7 +4688,7 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
             Some("fork-topic"),
             GitStreams {
                 input: &mut tokio::io::empty(),
-                output: &mut tokio::io::sink(),
+                output: &mut branch_bytes,
                 errors: &mut tokio::io::sink(),
             },
         )
@@ -4692,7 +4696,7 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
         .unwrap();
     assert_eq!(
         selected.refs,
-        HashMap::from([("refs/heads/fork-topic".into(), tip.clone())])
+        HashMap::from([("refs/heads/fork-topic".into(), fork_tip.clone())])
     );
     assert!(remote
         .fork_snapshot(
@@ -4735,6 +4739,8 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
     foreign.home_cell = 1;
     foreign.disk_path.clear();
     foreign.storage_node_id = None;
+    foreign.is_fork = true;
+    foreign.forked_from_id = Some(repo.id());
     let source = Source {
         reader_id: repo.actor,
         credential_id: None,
@@ -4751,6 +4757,14 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
             repository_id: source.repository.id,
             ..snapshot.clone()
         },
+        branch_bytes,
+        branch_snapshot: codeyard_db_core::cells::repositories::Snapshot {
+            repository_id: source.repository.id,
+            ..selected
+        },
+        database: sqlx::PgPool::clone(&database.raw),
+        peer: web.context.node_id,
+        revoke_peer: std::sync::atomic::AtomicBool::new(false),
         fail: std::sync::atomic::AtomicBool::new(false),
     });
     database.pool.set_foreign_authorization(gate.clone());
@@ -4781,6 +4795,88 @@ async fn fork_packs_use_original_credentials_on_remote_storage() {
     assert_eq!(fork.storage_node_id, Some(primary.context.node_id));
     let published = repo_store(&fork, Some(&web.context));
     assert_eq!(published.refs().await.unwrap(), snapshot.refs);
+    let (compared, comparison) = remote
+        .compare_foreign_pull_head(
+            &database.pool,
+            repo.id(),
+            &admission,
+            &snapshot.refs["refs/heads/main"],
+            "fork-topic",
+        )
+        .await
+        .unwrap();
+    assert_eq!(compared, fork_tip);
+    assert_eq!(comparison.ahead_by, 1);
+    let pull = codeyard_db_repos::pull_requests::records::create_pull_request_with_head(
+        &database.pool,
+        codeyard_db_repos::pull_requests::records::NewPullRequest {
+            repo_id: repo.id(),
+            head_repo_id: Some(source.repository.id),
+            author_id: repo.actor,
+            issue: None,
+            title: "Remote foreign head",
+            body: "",
+            head_branch: "fork-topic",
+            head_sha: &fork_tip,
+            base_branch: "main",
+            base_sha: &snapshot.refs["refs/heads/main"],
+            is_draft: false,
+            maintainer_can_modify: false,
+        },
+        Some(&admission),
+    )
+    .await
+    .unwrap();
+    remote
+        .fetch_foreign_pull_head(
+            &database.pool,
+            repo.id(),
+            &admission,
+            pull.number,
+            "fork-topic",
+            &fork_tip,
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        remote
+            .commit_from_primary(&format!("refs/pull/{}/head", pull.number))
+            .await
+            .unwrap()
+            .sha,
+        fork_tip
+    );
+    codeyard_repos_core::repositories::lifecycle::delete(
+        &database.pool, Some(&web.context), actor.clone(), fork.id,
+    ).await.unwrap();
+    gate.revoke_peer
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    assert!(codeyard_repos_core::repositories::lifecycle::fork_into(
+        &database.pool,
+        Some(&web.context),
+        &web.context.repos_path,
+        &notifications,
+        options("revoked-peer-fork"),
+        source.repository.id,
+        source.owner.name(),
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM repositories WHERE name='revoked-peer-fork'"
+        )
+        .fetch_one(&database.raw)
+        .await
+        .unwrap(),
+        0
+    );
+    sqlx::query("UPDATE nodes SET status='active' WHERE id=$1")
+        .bind(web.context.node_id)
+        .execute(&database.raw)
+        .await
+        .unwrap();
     gate.fail.store(true, std::sync::atomic::Ordering::SeqCst);
     assert!(codeyard_repos_core::repositories::lifecycle::fork_into(
         &database.pool,
@@ -4829,6 +4925,11 @@ struct ForkPackHome {
     bytes: Vec<u8>,
     snapshot: codeyard_db_core::cells::repositories::Snapshot,
     fail: std::sync::atomic::AtomicBool,
+    branch_bytes: Vec<u8>,
+    branch_snapshot: codeyard_db_core::cells::repositories::Snapshot,
+    database: sqlx::PgPool,
+    peer: i64,
+    revoke_peer: std::sync::atomic::AtomicBool,
 }
 impl codeyard_db_core::cells::authorization::Home for ForkPackHome {
     fn user<'a>(
@@ -4872,13 +4973,27 @@ impl codeyard_db_core::cells::authorization::Home for ForkPackHome {
     > {
         Box::pin(async move {
             use tokio::io::AsyncWriteExt;
-            self.snapshot.validate(request)?;
-            output.write_all(&self.bytes).await?;
+            let (snapshot, bytes) = if request.branch.is_some() {
+                (&self.branch_snapshot, &self.branch_bytes)
+            } else {
+                (&self.snapshot, &self.bytes)
+            };
+            snapshot.validate(request)?;
+            output.write_all(bytes).await?;
+            if self
+                .revoke_peer
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                sqlx::query("UPDATE nodes SET status='revoked' WHERE id=$1")
+                    .bind(self.peer)
+                    .execute(&self.database)
+                    .await?;
+            }
             anyhow::ensure!(
                 !self.fail.load(std::sync::atomic::Ordering::SeqCst),
                 "Interrupted source stream"
             );
-            Ok(self.snapshot.clone())
+            Ok(snapshot.clone())
         })
     }
 }

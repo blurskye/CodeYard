@@ -94,31 +94,23 @@ async fn create_value(
         Some(nwo) => nwo.split_once('/').unwrap_or((head_owner, nwo)),
         None => (head_owner, name.as_str()),
     };
-    let head = if input.head_repo.is_some() {
-        codeyard_db_repos::repositories::records::get_repository(&state.pool, head_owner, head_name)
+    let head_source = codeyard_app::cells::pull_head_source(
+        &state,
+        &viewer.database_actor(),
+        codeyard_identity::github_auth::credential(&headers)
+            .ok_or_else(codeyard_identity::github_auth::required)?,
+        &repo,
+        head_owner,
+        input.head_repo.as_ref().map(|_| head_name),
+    )
+    .await?;
+    let head = head_source.repository;
+    if head_source.admission.is_none() {
+        viewer
+            .repository_scope(&state.pool, head.id, "contents", false)
             .await
-    } else {
-        codeyard_ci_engine::pull_requests::branches::owner_head_repository(
-            &state.pool,
-            &repo,
-            head_owner,
-        )
-        .await
+            .map_err(crate::auth::scope_error)?;
     }
-    .map_err(Error::unavailable)?
-    .ok_or_else(|| Error::invalid("Invalid head repository"))?;
-    if !codeyard_identity::repository_access::can_read(&state.pool, Some(&actor), &head)
-        .await
-        .map_err(Error::unavailable)?
-    {
-        return Err(Error::missing());
-    }
-    // The head's commits become readable through this repository, so a credential bounded
-    // to some repositories must reach the head repository as well.
-    viewer
-        .repository_scope(&state.pool, head.id, "contents", false)
-        .await
-        .map_err(crate::auth::scope_error)?;
     let pull = codeyard_repos_pulls::repositories::pull_requests::mutations::create_pull_request(
         &state.pool,
         &state.ci_runs,
@@ -130,6 +122,7 @@ async fn create_value(
         owner.clone(),
         name,
         codeyard_repos_pulls::repositories::pull_requests::mutations::CreatePullRequestRequest {
+            foreign_head: head_source.admission,
             suppress_ci: false,
             head_repo_id: Some(head.id),
             source,

@@ -40,6 +40,21 @@ impl Home for Native {
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move { self.identity().receive_pointer(event, admission).await })
     }
+    fn repository_id<'a>(
+        &'a self,
+        id: i64,
+        proof: &'a Proof,
+    ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Source>>> {
+        Box::pin(async move {
+            let Some(source) = self.identity().repository_id(id, proof).await? else {
+                return Ok(None);
+            };
+            Ok(self
+                .repository_source(source.owner.name(), &source.repository.name, proof)
+                .await?
+                .filter(|source| source.repository.id == id))
+        })
+    }
     fn repository_fork<'a>(
         &'a self,
         owner: &'a str,
@@ -319,21 +334,115 @@ pub async fn fork_source(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    source
-        .retain(&state.pool)
-        .await
-        .map_err(Error::unavailable)?;
-    let repository = source.repository.clone();
+    retained_source(state, actor, credential, source).await
+}
+
+async fn retained_source(
+    state: &AppState,
+    actor: &codeyard_db_core::queries::credentials::Actor,
+    credential: &str,
+    source: codeyard_db_core::cells::repositories::Source,
+) -> codeyard_model::github_error::Result<ForkSource> {
+    use codeyard_model::github_error::Error;
     let admission = codeyard_db_core::cells::repositories::Admission::new(
         source,
         actor.clone(),
         credential.to_owned(),
     )
-    .map_err(|_| Error::new(axum::http::StatusCode::FORBIDDEN, "Fork credential changed"))?;
+    .map_err(|_| {
+        Error::new(
+            axum::http::StatusCode::FORBIDDEN,
+            "Repository credential changed",
+        )
+    })?;
+    admission
+        .source
+        .retain(&state.pool)
+        .await
+        .map_err(Error::unavailable)?;
     Ok(ForkSource {
-        repository,
+        repository: admission.source.repository.clone(),
         admission: Some(admission),
     })
+}
+
+/// Resolve a renamed foreign fork while keeping the base as the mutation's owner.
+pub async fn pull_head_source(
+    state: &AppState,
+    actor: &codeyard_db_core::queries::credentials::Actor,
+    credential: &str,
+    base: &codeyard_db_core::models::Repository,
+    owner: &str,
+    name: Option<&str>,
+) -> codeyard_model::github_error::Result<ForkSource> {
+    use codeyard_model::github_error::Error;
+    codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)
+        .map_err(|_| Error::invalid("Invalid head owner"))?;
+    if let Some(name) = name {
+        return fork_source(state, actor, credential, owner, name).await;
+    }
+    if let Some(repo) =
+        codeyard_db_repos::repositories::records::get_repository(&state.pool, owner, &base.name)
+            .await
+            .map_err(Error::unavailable)?
+            .filter(|repo| {
+                !repo.is_stub && (repo.id == base.id || repo.forked_from_id == Some(base.id))
+            })
+    {
+        return fork_source(state, actor, credential, owner, &repo.name).await;
+    }
+    if let Some(repo) =
+        codeyard_db_repos::repositories::discovery::named_owner_fork(&state.pool, owner, base.id)
+            .await
+            .map_err(Error::unavailable)?
+    {
+        return fork_source(state, actor, credential, owner, &repo.name).await;
+    }
+    let proof = codeyard_db_core::cells::repositories::retained_proof(actor, credential)
+        .map_err(Error::unavailable)?;
+    let source = state
+        .pool
+        .foreign_authorization()
+        .ok_or_else(Error::missing)?
+        .repository_fork(owner, base.id, &proof)
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
+    retained_source(state, actor, credential, source).await
+}
+
+pub async fn pull_head_id(
+    state: &AppState,
+    actor: &codeyard_db_core::queries::credentials::Actor,
+    credential: &str,
+    id: i64,
+) -> codeyard_model::github_error::Result<ForkSource> {
+    use codeyard_model::github_error::Error;
+    codeyard_support::cells::Prefix::for_id(id).map_err(|_| Error::missing())?;
+    if let Some(repo) =
+        codeyard_db_repos::repositories::records::get_repository_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?
+            .filter(|repo| !repo.is_stub)
+    {
+        let owner =
+            codeyard_db_repos::repositories::records::repository_owner_name(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+        return fork_source(state, actor, credential, &owner, &repo.name).await;
+    }
+    let proof = codeyard_db_core::cells::repositories::retained_proof(actor, credential)
+        .map_err(Error::unavailable)?;
+    let source = state
+        .pool
+        .foreign_authorization()
+        .ok_or_else(Error::missing)?
+        .repository_id(id, &proof)
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
+    retained_source(state, actor, credential, source).await
 }
 
 /// A stub's metadata comes from its live resource home, under the original reader.
