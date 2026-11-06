@@ -8,6 +8,7 @@ pub mod capacity;
 pub mod directory;
 pub mod notices;
 pub mod outbox;
+pub mod ownership;
 pub mod pointers;
 pub mod pulls;
 pub mod regions;

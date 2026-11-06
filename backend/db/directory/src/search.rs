@@ -78,7 +78,7 @@ impl Directory {
                     *repository_id
                 }
             };
-            super::claims::removal_home(&mut tx, repository(root), cell).await?;
+            self.require_home(&mut tx, repository(root), cell).await?;
             let indexed = match batch {
                 Batch::Repository {
                     id,
@@ -200,7 +200,7 @@ impl Directory {
                         // An item that moved between repositories is rewritten only by the
                         // home of the repository that held it.
                         if previous != *repository_id {
-                            super::claims::removal_home(&mut tx, repository(previous), cell)
+                            self.require_home(&mut tx, repository(previous), cell)
                                 .await?;
                         }
                         if owner == cell_id && (Version { event, attempt }) >= *version {

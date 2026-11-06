@@ -840,6 +840,16 @@ answer `/health`. The first failure stops it and leaves later cells unchanged. A
 change goes out as expand first and contract in a later release, so the old and new
 binaries both work during the rollout.
 
+The directory's names, emails and SSH keys sit in 256 logical shards. The directory
+database is the cluster `main` and holds all of them at first; it also keeps the map of
+which cluster holds each shard (`cell directory shards`). To add a cluster, give every
+`cell directory` command, including `serve`, `DIRECTORY_SHARD_DATABASE_URLS=name=url,...`
+and run `cell directory move-shard --shard <n> --to <name>`. The move refuses new writes
+to that shard (signups and key changes on it fail and are retried), copies and checks it,
+switches the map, and removes the old copy after twice the request timeout, so lookups
+never fail. Running it again resumes an interrupted move. A cluster that is down fails
+only the writes of its shards; lookups of other shards keep working.
+
 Remote membership grants/deletes now queue home pointers in their own transaction. Pointers
 carry ordered event IDs and never grant resource access. The receiving home rechecks the live
 cell key and both directory homes at commit; duplicate and older deliveries are harmless.

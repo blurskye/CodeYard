@@ -943,6 +943,11 @@ Cost: one more global system, on the path of every signup and key change.
 - With a shard down, existing users keep working from caches and replicas, while signups,
   renames and new emails or keys on that shard fail. The cells hold the same rows, so the
   directory can be rebuilt from them.
+- Each shard holds its keys and its own copy of the objects they belong to; the copy in the
+  object's own shard is its home row. So a shard moves alone: writes to it are refused while
+  it is copied, lookups keep reading the old cluster until the map switches, and the old
+  copy goes once those lookups are done. A claim across clusters commits one cluster after
+  another; a failure between them leaves pending keys that expire, as a failed signup does.
 
 ### The router
 

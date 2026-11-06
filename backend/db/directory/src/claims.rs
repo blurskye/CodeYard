@@ -464,6 +464,35 @@ impl Directory {
         })
     }
 
+    /// The object's recorded home, or for an object the directory never recorded the owner
+    /// of its id's prefix, must be `cell`. Search writes use it.
+    pub(super) async fn require_home(
+        &self,
+        registry: &mut Tx,
+        object: Object,
+        cell: Prefix,
+    ) -> Result<()> {
+        let shard = object.shard();
+        let cluster = shards::cluster_of(registry, shard).await?;
+        let query = sqlx::query_scalar(
+            "SELECT home_cell FROM directory_objects WHERE shard=$1 AND kind=$2 AND id=$3",
+        )
+        .bind(shard)
+        .bind(object.kind.as_str())
+        .bind(object.id);
+        let home: Option<i32> = if cluster == MAIN_CLUSTER {
+            query.fetch_optional(&mut **registry).await?
+        } else {
+            query.fetch_optional(self.cluster(&cluster)?).await?
+        };
+        let owner = match home {
+            Some(home) => Some(home),
+            None => prefix_owner(registry, object).await?,
+        };
+        ensure!(owner == Some(i32::from(cell.get())), Refusal::Denied);
+        Ok(())
+    }
+
     /// Cleanup is bounded and pending objects cascade to their unpublished key reservations.
     /// It holds the shard map rows of the shards it cleans, so a move never copies a shard
     /// while rows of it are being removed.

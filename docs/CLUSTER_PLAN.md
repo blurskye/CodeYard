@@ -277,9 +277,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     needs a second region with a PostgreSQL standby and Git copies. (3) `cell directory
     rollout` updates cells in waves and stops at a failing canary (e2e); old routers read
     new cell records. Running the previous release beside this one is runtime pending,
-    needs the previous release binary. (4) Moving a directory shard to another cluster is
-    not written: claims and their object rows commit in one transaction, so it needs that
-    split and a move protocol first. (5) Presence is set by hand (`cell directory
+    needs the previous release binary. (4) Directory shards move between clusters
+    (`cell directory move-shard`): each shard keeps its own object copies, writes hold the
+    map row until they commit, and the database test moves shards while lookups run without
+    a miss. Runtime STAGE5_SHARDS. (5) Presence is set by hand (`cell directory
     presence`), and routers in a present region send reads to the home cell's regional web
     nodes, falling back home; writes go home (`cells_regions`). Automatic presence: routers
     stamp their region on forwarded requests, a cell counts its authenticated requests per
