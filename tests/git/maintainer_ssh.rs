@@ -3,7 +3,7 @@
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 
 use crate::support::fake_webui_bundle as bundle;
-use crate::support::git_remote::{git, success, tool, Server};
+use crate::support::git_remote::{git, tool, Server};
 use crate::support::native_database as native;
 use chrono::{Duration as ChronoDuration, Utc};
 use reqwest::{Client, StatusCode};
@@ -88,6 +88,18 @@ async fn call(
     serde_json::from_str(&text).unwrap()
 }
 
+/// Runs Git and, when it fails, shows the server log next to Git's error.
+async fn run(server: &Server, directory: &Path, args: &[&str], key: &Path) -> String {
+    let output = git(directory, args, None, key).await;
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}\n{}",
+        String::from_utf8_lossy(&output.stderr),
+        std::fs::read_to_string(&server.log).unwrap_or_default()
+    );
+    String::from_utf8(output.stdout).unwrap().trim().to_owned()
+}
+
 #[tokio::test]
 async fn base_maintainers_push_a_fork_pull_head_over_ssh() {
     bundle::install();
@@ -128,20 +140,18 @@ async fn base_maintainers_push_a_fork_pull_head_over_ssh() {
     let url = |owner: &str| format!("ssh://git@127.0.0.1:{}/{owner}/project.git", web.ssh_port);
     let work = root.path().join("client");
     std::fs::create_dir(&work).unwrap();
-    success(
-        git(
-            &work,
-            &["init", "-q", "-b", "main", "base"],
-            None,
-            &alice_key,
-        )
-        .await,
-    );
+    run(
+        &web,
+        &work,
+        &["init", "-q", "-b", "main", "base"],
+        &alice_key,
+    )
+    .await;
     let base = work.join("base");
     std::fs::write(base.join("README"), "base\n").unwrap();
-    success(git(&base, &["add", "README"], None, &alice_key).await);
-    success(git(&base, &["commit", "-q", "-m", "base"], None, &alice_key).await);
-    success(git(&base, &["push", &url("upstream"), "main"], None, &alice_key).await);
+    run(&web, &base, &["add", "README"], &alice_key).await;
+    run(&web, &base, &["commit", "-q", "-m", "base"], &alice_key).await;
+    run(&web, &base, &["push", &url("upstream"), "main"], &alice_key).await;
     call(
         &client,
         &web,
@@ -151,11 +161,11 @@ async fn base_maintainers_push_a_fork_pull_head_over_ssh() {
         StatusCode::ACCEPTED,
     )
     .await;
-    success(git(&base, &["checkout", "-q", "-b", "topic"], None, &bob_key).await);
+    run(&web, &base, &["checkout", "-q", "-b", "topic"], &bob_key).await;
     std::fs::write(base.join("topic.txt"), "fork\n").unwrap();
-    success(git(&base, &["add", "topic.txt"], None, &bob_key).await);
-    success(git(&base, &["commit", "-q", "-m", "topic"], None, &bob_key).await);
-    success(git(&base, &["push", &url("forker"), "topic"], None, &bob_key).await);
+    run(&web, &base, &["add", "topic.txt"], &bob_key).await;
+    run(&web, &base, &["commit", "-q", "-m", "topic"], &bob_key).await;
+    run(&web, &base, &["push", &url("forker"), "topic"], &bob_key).await;
     call(
         &client,
         &web,
@@ -166,16 +176,14 @@ async fn base_maintainers_push_a_fork_pull_head_over_ssh() {
     )
     .await;
     std::fs::write(base.join("topic.txt"), "maintainer\n").unwrap();
-    success(
-        git(
-            &base,
-            &["commit", "-q", "-am", "maintainer"],
-            None,
-            &alice_key,
-        )
-        .await,
-    );
-    success(git(&base, &["push", &url("forker"), "topic"], None, &alice_key).await);
+    run(
+        &web,
+        &base,
+        &["commit", "-q", "-am", "maintainer"],
+        &alice_key,
+    )
+    .await;
+    run(&web, &base, &["push", &url("forker"), "topic"], &alice_key).await;
     // The grant covers the pull head only.
     let refused = git(
         &base,
@@ -185,8 +193,8 @@ async fn base_maintainers_push_a_fork_pull_head_over_ssh() {
     )
     .await;
     assert!(!refused.status.success());
-    let listed = success(git(&base, &["ls-remote", &url("forker")], None, &alice_key).await);
-    let tip = success(git(&base, &["rev-parse", "HEAD"], None, &alice_key).await);
+    let listed = run(&web, &base, &["ls-remote", &url("forker")], &alice_key).await;
+    let tip = run(&web, &base, &["rev-parse", "HEAD"], &alice_key).await;
     assert!(
         listed.contains(&format!("{tip}\trefs/heads/topic")),
         "{listed}"

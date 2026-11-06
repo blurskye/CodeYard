@@ -1137,6 +1137,10 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             panic!("cell outbox did not drain");
         }
     };
+    // Cell one delivers its own outbox once it has a directory.
+    one.pool
+        .set_directory(Arc::new(directory_client(one_key.clone())))
+        .unwrap();
     drain(&one.pool).await;
     drain(&zero.pool).await;
     let pending = "SELECT topic||' '||root_id FROM cell_outbox WHERE delivered_at IS NULL AND topic IN ('repository.push','pull.refresh')";
