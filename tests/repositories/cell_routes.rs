@@ -25,8 +25,21 @@ fn unchecked_route(source: &str) -> syn::Result<Option<&'static str>> {
                 };
             }
             let attributes: &[syn::Attribute] = attributes!(
-                Const, Enum, ExternCrate, Fn, ForeignMod, Impl, Macro, Mod, Static,
-                Struct, Trait, TraitAlias, Type, Union, Use
+                Const,
+                Enum,
+                ExternCrate,
+                Fn,
+                ForeignMod,
+                Impl,
+                Macro,
+                Mod,
+                Static,
+                Struct,
+                Trait,
+                TraitAlias,
+                Type,
+                Union,
+                Use
             );
             if !test_only(attributes) {
                 syn::visit::visit_item(self, item);
@@ -34,17 +47,23 @@ fn unchecked_route(source: &str) -> syn::Result<Option<&'static str>> {
         }
 
         fn visit_expr_method_call(&mut self, method: &'ast syn::ExprMethodCall) {
-            self.found = self.found.or_else(|| {
-                METHODS.into_iter().find(|name| method.method == *name)
-            });
+            self.found = self
+                .found
+                .or_else(|| METHODS.into_iter().find(|name| method.method == *name));
             syn::visit::visit_expr_method_call(self, method);
         }
 
         fn visit_macro(&mut self, invocation: &'ast syn::Macro) {
-            let tokens: String = invocation.tokens.to_string().chars()
-                .filter(|character| !character.is_whitespace()).collect();
+            let tokens: String = invocation
+                .tokens
+                .to_string()
+                .chars()
+                .filter(|character| !character.is_whitespace())
+                .collect();
             self.found = self.found.or_else(|| {
-                METHODS.into_iter().find(|name| tokens.contains(&format!(".{name}(")))
+                METHODS
+                    .into_iter()
+                    .find(|name| tokens.contains(&format!(".{name}(")))
             });
         }
     }
@@ -55,12 +74,18 @@ fn unchecked_route(source: &str) -> syn::Result<Option<&'static str>> {
 
 #[test]
 fn test_modules_do_not_hide_later_product_routes() {
-    for declaration in ["#[cfg(test)] mod tests;", "#[cfg(test)] mod tests { fn helper() { app.route(\"/fixture\", handler); } }"] {
+    for declaration in [
+        "#[cfg(test)] mod tests;",
+        "#[cfg(test)] mod tests { fn helper() { app.route(\"/fixture\", handler); } }",
+    ] {
         assert_eq!(unchecked_route(declaration).unwrap(), None);
         for method in ["route", "nest"] {
-            let source = format!("{declaration}\nfn product() {{ app.{method}(\"/product\", handler); }}");
+            let source =
+                format!("{declaration}\nfn product() {{ app.{method}(\"/product\", handler); }}");
             assert_eq!(unchecked_route(&source).unwrap(), Some(method));
-            let source = format!("{declaration}\nfn product() {{ register!(app.{method}(\"/product\", handler)); }}");
+            let source = format!(
+                "{declaration}\nfn product() {{ register!(app.{method}(\"/product\", handler)); }}"
+            );
             assert_eq!(unchecked_route(&source).unwrap(), Some(method));
         }
     }
@@ -108,7 +133,8 @@ fn every_product_route_declares_a_cell_policy() {
             assert!(
                 unchecked.is_none(),
                 "{} bypasses cell declarations with .{}()",
-                path.display(), unchecked.unwrap_or("")
+                path.display(),
+                unchecked.unwrap_or("")
             );
         }
     }
