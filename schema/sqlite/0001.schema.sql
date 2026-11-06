@@ -42,7 +42,11 @@ CREATE TABLE cell_outbox (
     payload TEXT NOT NULL CHECK(length(CAST(payload AS BLOB))<=524288),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     next_attempt_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
-    delivered_at TEXT
+    delivered_at TEXT,
+    source_cell INTEGER CHECK(source_cell IS NULL OR (typeof(source_cell)='integer' AND source_cell BETWEEN 0 AND 65535)),
+    source_event INTEGER CHECK(source_event IS NULL OR (typeof(source_event)='integer' AND source_event>0)),
+    CHECK((source_cell IS NULL)=(source_event IS NULL)),
+    UNIQUE(source_cell,source_event,topic)
 );
 CREATE INDEX cell_outbox_pending ON cell_outbox(next_attempt_at,id) WHERE delivered_at IS NULL;
 
@@ -4294,4 +4298,27 @@ BEGIN
             'active',json(CASE WHEN 0 THEN 'true' ELSE 'false' END))
         WHERE EXISTS(SELECT 1 FROM users u WHERE u.id=OLD.user_id AND u.is_stub
             AND u.home_cell<>COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0));
+END;
+
+
+-- Consent belongs to the native head repository; no historical token is stored.
+CREATE TABLE remote_pull_requests (
+    base_repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK(typeof(base_repo_id)='integer' AND base_repo_id>0),
+    number INTEGER NOT NULL CHECK(typeof(number)='integer' AND number BETWEEN 1 AND 2147483647),
+    head_repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK(typeof(head_repo_id)='integer' AND head_repo_id>0),
+    head_branch VARCHAR(255) NOT NULL CHECK(length(head_branch) BETWEEN 1 AND 255),
+    publisher_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK(typeof(publisher_id)='integer' AND publisher_id>0),
+    PRIMARY KEY(base_repo_id,number),
+    CHECK(base_repo_id<>head_repo_id)
+);
+CREATE INDEX remote_pull_requests_head ON remote_pull_requests(head_repo_id,head_branch,base_repo_id,number);
+CREATE INDEX remote_pull_requests_publisher ON remote_pull_requests(publisher_id);
+
+CREATE TRIGGER foreign_repository_push AFTER UPDATE OF write_version ON repositories
+WHEN NOT NEW.is_stub AND NOT NEW.is_gist AND NEW.write_version>OLD.write_version
+    AND NEW.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0)
+    AND EXISTS(SELECT 1 FROM repositories p WHERE p.id=NEW.forked_from_id AND p.is_stub AND p.home_cell<>NEW.home_cell)
+BEGIN
+    INSERT INTO cell_outbox(root_kind,root_id,topic,payload) VALUES('repository',NEW.id,'repository.push',
+        json_object('base_repo_id',NEW.forked_from_id,'head_repo_id',NEW.id,'version',NEW.write_version));
 END;

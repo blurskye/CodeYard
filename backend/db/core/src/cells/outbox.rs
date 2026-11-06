@@ -7,6 +7,16 @@ use serde::{Deserialize, Serialize};
 
 const TOPIC: &str = "directory.cleanup";
 const POINTER_TOPIC: &str = "pointer";
+const PUSH_TOPIC: &str = "repository.push";
+const REFRESH_TOPIC: &str = "pull.refresh";
+
+pub trait Consumer: Send + Sync {
+    /// One pull per delivery keeps the cursor durable and the queue fair.
+    fn refresh_pull_head<'a>(
+        &'a self,
+        refresh: &'a mut super::pulls::Refresh,
+    ) -> futures_util::future::BoxFuture<'a, Result<bool>>;
+}
 const MAXIMUM_BYTES: usize = 524288;
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
@@ -98,6 +108,12 @@ engine!(sqlite, crate::pool::SqlitePool, sqlx::SqliteConnection);
 /// A row lock owns one event through its bounded delivery and acknowledgement.
 /// A crash after the remote effect rolls it back to pending; repeating that effect is safe.
 pub async fn deliver_one(pool: &DbPool) -> Result<bool> {
+    deliver(pool, None).await
+}
+pub async fn deliver_with(pool: &DbPool, consumer: &dyn Consumer) -> Result<bool> {
+    deliver(pool, Some(consumer)).await
+}
+async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool> {
     let DbPool::Postgres(native) = pool else {
         return Ok(false);
     };
@@ -106,13 +122,30 @@ pub async fn deliver_one(pool: &DbPool) -> Result<bool> {
     };
     let config = provider.config();
     config.validate()?;
-    tokio::time::timeout(std::time::Duration::from_secs(config.request_seconds * 2 + 1), async {
+    tokio::time::timeout(std::time::Duration::from_secs((config.request_seconds * 30).clamp(1,300)), async {
         let mut tx = native.begin().await?;
-        let row: Option<(i64, String, String, i64, String)> = sqlx::query_as("SELECT id,substr(payload,1,524289),root_kind,root_id,topic FROM cell_outbox WHERE topic IN ($1,$2) AND delivered_at IS NULL AND next_attempt_at<=clock_timestamp() ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED")
-            .bind(TOPIC).bind(POINTER_TOPIC).fetch_optional(&mut *tx).await?;
+        let row: Option<(i64, String, String, i64, String)> = sqlx::query_as("SELECT id,substr(payload,1,524289),root_kind,root_id,topic FROM cell_outbox WHERE topic IN ($1,$2,$3,$4) AND (topic<>$4 OR $5) AND delivered_at IS NULL AND next_attempt_at<=clock_timestamp() ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED")
+            .bind(TOPIC).bind(POINTER_TOPIC).bind(PUSH_TOPIC).bind(REFRESH_TOPIC).bind(consumer.is_some()).fetch_optional(&mut *tx).await?;
         let Some((id, payload, kind, root, topic)) = row else { return Ok(false); };
-        let result: Result<()> = async {
+        let mut continuation = None;
+        let operation = async {
             ensure!(payload.len() <= MAXIMUM_BYTES, Refusal::Unavailable);
+            if topic == PUSH_TOPIC {
+                let change: super::pulls::Push = serde_json::from_str(&payload)?;
+                change.validate()?;
+                ensure!(kind == "repository" && root == change.head_repo_id, Refusal::Denied);
+                let provider = native.foreign_authorization().ok_or(Refusal::Unavailable)?;
+                return provider.send_push(&super::pulls::Event { id, change }).await;
+            }
+            if topic == REFRESH_TOPIC {
+                let mut refresh: super::pulls::Refresh = serde_json::from_str(&payload)?;
+                refresh.validate()?;
+                ensure!(kind == "repository" && root == refresh.push.base_repo_id, Refusal::Denied);
+                let complete = consumer.ok_or(Refusal::Unavailable)?.refresh_pull_head(&mut refresh).await?;
+                refresh.validate()?;
+                if !complete { continuation = Some(serde_json::to_string(&refresh)?); }
+                return Ok(());
+            }
             if topic == POINTER_TOPIC {
                 let change: super::pointers::Change = serde_json::from_str(&payload)?;
                 change.validate()?;
@@ -127,10 +160,21 @@ pub async fn deliver_one(pool: &DbPool) -> Result<bool> {
                 Delivery::Release { object, keys } => directory::postgres::release(native, object, &keys).await,
                 Delivery::Forget { object } => directory::postgres::forget(native, object).await,
             }
-        }.await;
+        };
+        let result: Result<()> = if topic == REFRESH_TOPIC {
+            operation.await
+        } else {
+            tokio::time::timeout(std::time::Duration::from_secs(config.request_seconds*2+1), operation)
+                .await.unwrap_or_else(|_| Err(Refusal::Unavailable.into()))
+        };
         match result {
             Ok(()) => {
-                sqlx::query("UPDATE cell_outbox SET delivered_at=clock_timestamp() WHERE id=$1").bind(id).execute(&mut *tx).await?;
+                if let Some(payload) = continuation {
+                    ensure!(payload.len() <= MAXIMUM_BYTES, Refusal::Unavailable);
+                    sqlx::query("UPDATE cell_outbox SET payload=$2,next_attempt_at=clock_timestamp() WHERE id=$1").bind(id).bind(payload).execute(&mut *tx).await?;
+                } else {
+                    sqlx::query("UPDATE cell_outbox SET delivered_at=clock_timestamp() WHERE id=$1").bind(id).execute(&mut *tx).await?;
+                }
             }
             Err(_) => {
                 sqlx::query("UPDATE cell_outbox SET next_attempt_at=clock_timestamp()+$2::bigint*INTERVAL '1 second' WHERE id=$1")
@@ -143,7 +187,11 @@ pub async fn deliver_one(pool: &DbPool) -> Result<bool> {
     }).await.map_err(|_| Refusal::Unavailable)?
 }
 
-pub async fn run(pool: DbPool, mut stop: tokio::sync::watch::Receiver<bool>) {
+pub async fn run(
+    pool: DbPool,
+    consumer: std::sync::Arc<dyn Consumer>,
+    mut stop: tokio::sync::watch::Receiver<bool>,
+) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -158,7 +206,7 @@ pub async fn run(pool: DbPool, mut stop: tokio::sync::watch::Receiver<bool>) {
         for _ in 0..64 {
             let result = tokio::select! { biased;
                 _ = stop.changed() => return,
-                result = deliver_one(&pool) => result,
+                result = deliver_with(&pool, &*consumer) => result,
             };
             match result {
                 Ok(true) => {}

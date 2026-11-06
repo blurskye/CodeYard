@@ -293,6 +293,45 @@ pub fn validate_public_user(user: &User) -> Result<()> {
 /// The provider authenticates the answering node and verifies its directory ownership.
 /// It never grants resource membership or repository authority.
 pub trait Home: Send + Sync {
+    fn send_push<'a>(&'a self, _event: &'a super::pulls::Event) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { anyhow::bail!("Foreign push delivery is unavailable") })
+    }
+    fn receive_push<'a>(
+        &'a self,
+        _event: &'a super::pulls::Event,
+        _admission: &'a dyn super::pulls::Admission,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { anyhow::bail!("Foreign push admission is unavailable") })
+    }
+    fn send_pull<'a>(
+        &'a self,
+        _binding: &'a super::pulls::Binding,
+        _proof: &'a Proof,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { anyhow::bail!("Foreign pull subscription is unavailable") })
+    }
+    fn receive_pull<'a>(
+        &'a self,
+        _binding: &'a super::pulls::Binding,
+        _proof: &'a Proof,
+        _admission: &'a dyn super::pulls::Admission,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async { anyhow::bail!("Foreign pull subscription is unavailable") })
+    }
+    fn pull_grant<'a>(
+        &'a self,
+        _binding: &'a super::pulls::Binding,
+        _proof: Option<&'a Proof>,
+    ) -> BoxFuture<'a, Result<Option<super::pulls::Grant>>> {
+        Box::pin(async { anyhow::bail!("Foreign pull authority is unavailable") })
+    }
+    fn pull_snapshot<'a>(
+        &'a self,
+        _request: &'a super::pulls::HeadRequest,
+        _output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+    ) -> BoxFuture<'a, Result<Option<super::repositories::Snapshot>>> {
+        Box::pin(async { anyhow::bail!("Foreign pull snapshots are unavailable") })
+    }
     fn forward_fork<'a>(
         &'a self,
         _owner: &'a str,

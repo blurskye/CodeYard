@@ -214,8 +214,15 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     The next unchecked PR batch resolves cold heads by name/ID, privately stages branch
     comparisons, retains original proofs through both-engine insertion and publishes
     retained pull refs through native/quorum storage. HTTP/GraphQL, native storage,
-    revoked-peer and final-head-revocation tests are written. Push following and
-    maintainer grants are not wired yet.
+    revoked-peer and final-head-revocation tests are written. The first check round is
+    workspace 173c17ae2add42ab8cd8ac5c2cb7e4b8, Clippy e6cb8889113d4af6b19a4fcd8dfe28be
+    and WASM af93df6a493d47ac93b3da5a8bc34e1f. Workspace/Clippy found one native-form
+    error-conversion issue; its actor check now runs before the form's API-result block.
+    WASM passes. Push-following source adds bounded message types, source-owned consent
+    rows and a transactional write-version event trigger in both baselines. Both-engine
+    subscription/admission transactions and a durable per-pull refresh cursor are written;
+    transport, storage delivery and maintainer grants are not wired yet. This batch is
+    unchecked and has not run acceptance.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
     object pools, mentions/home inbox/email, and repository transfers/redirects.
     Stages 4 to 6 remain unwritten; automatic user moves and org regional presence

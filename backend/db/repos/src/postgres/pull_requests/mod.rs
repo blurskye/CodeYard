@@ -1,5 +1,6 @@
 pub mod async_merge;
 pub mod auto_merge;
+pub mod cells;
 mod conversion;
 pub mod merge_policy;
 pub mod records;

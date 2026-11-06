@@ -509,6 +509,11 @@ pub async fn create_pull_request_with_head(
             .await?;
     }
     admit_creation_head(pool, &mut tx, &input, &head, foreign).await?;
+    if foreign.is_some() {
+        let payload = crate::pull_requests::cells::initial(input.repo_id, head.id)?;
+        sqlx::query("INSERT INTO cell_outbox(root_kind,root_id,topic,payload) VALUES('repository',$1,'pull.refresh',$2)")
+            .bind(input.repo_id).bind(payload).execute(&mut *tx).await?;
+    }
     tx.commit().await?;
     Ok(pr)
 }

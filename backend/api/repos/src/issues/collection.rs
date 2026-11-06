@@ -1213,9 +1213,9 @@ pub(crate) async fn native_create(
             false,
         ));
     }
+    let actor = ctx.require_user()?;
     let result: Result<i32, ApiFailure> = match kind {
         Kind::Issue => {
-            let actor = ctx.require_user()?;
             let mut names = draft.assignees.clone();
             names.sort_unstable();
             names.dedup();
@@ -1275,7 +1275,6 @@ pub(crate) async fn native_create(
             created.map(|value| value.number)
         }
         Kind::Pull => async {
-            let actor = ctx.require_user()?;
             let session = codeyard_api_http::session::extract_session_id(&ctx.headers).unwrap_or_default();
             let source = codeyard_app::cells::pull_head_id(&ctx.state, &ctx.database_actor(actor.id), &session, head_repo.id)
                 .await.map_err(|error| (error.0, Json(ApiError::new("invalid_head", &error.1))))?;

@@ -8,6 +8,7 @@ pub mod capacity;
 pub mod directory;
 pub mod outbox;
 pub mod pointers;
+pub mod pulls;
 pub mod repositories;
 pub mod stubs;
 

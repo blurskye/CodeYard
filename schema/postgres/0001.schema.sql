@@ -48,7 +48,11 @@ CREATE TABLE cell_outbox (
     payload TEXT NOT NULL CHECK(octet_length(payload)<=524288),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    delivered_at TIMESTAMPTZ
+    delivered_at TIMESTAMPTZ,
+    source_cell INTEGER CHECK(source_cell BETWEEN 0 AND 65535),
+    source_event BIGINT CHECK(source_event>0),
+    CHECK((source_cell IS NULL)=(source_event IS NULL)),
+    UNIQUE(source_cell,source_event,topic)
 );
 CREATE INDEX cell_outbox_pending ON cell_outbox(next_attempt_at,id) WHERE delivered_at IS NULL;
 
@@ -4359,3 +4363,32 @@ CREATE TRIGGER remote_organization_membership AFTER INSERT OR UPDATE OR DELETE O
 
 CREATE TRIGGER remote_star AFTER INSERT OR UPDATE OR DELETE ON stars
     FOR EACH ROW EXECUTE FUNCTION queue_remote_pointer('repository','star');
+
+
+-- Consent belongs to the native head repository; no historical token is stored.
+CREATE TABLE remote_pull_requests (
+    base_repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK(base_repo_id>0),
+    number INTEGER NOT NULL CHECK(number BETWEEN 1 AND 2147483647),
+    head_repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK(head_repo_id>0),
+    head_branch VARCHAR(255) NOT NULL CHECK(length(head_branch) BETWEEN 1 AND 255),
+    publisher_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK(publisher_id>0),
+    PRIMARY KEY(base_repo_id,number),
+    CHECK(base_repo_id<>head_repo_id)
+);
+CREATE INDEX remote_pull_requests_head ON remote_pull_requests(head_repo_id,head_branch,base_repo_id,number);
+CREATE INDEX remote_pull_requests_publisher ON remote_pull_requests(publisher_id);
+
+CREATE FUNCTION queue_foreign_repository_push() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NOT NEW.is_stub AND NOT NEW.is_gist AND NEW.write_version>OLD.write_version
+        AND NEW.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0)
+        AND EXISTS(SELECT 1 FROM repositories p WHERE p.id=NEW.forked_from_id
+            AND p.is_stub AND p.home_cell<>NEW.home_cell) THEN
+        INSERT INTO cell_outbox(root_kind,root_id,topic,payload) VALUES('repository',NEW.id,'repository.push',
+            jsonb_build_object('base_repo_id',NEW.forked_from_id,'head_repo_id',NEW.id,'version',NEW.write_version)::TEXT);
+    END IF;
+    RETURN NULL;
+END;
+$$;
+CREATE TRIGGER foreign_repository_push AFTER UPDATE OF write_version ON repositories
+    FOR EACH ROW EXECUTE FUNCTION queue_foreign_repository_push();
