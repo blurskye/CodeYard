@@ -216,3 +216,117 @@ impl Admission {
         Ok(source)
     }
 }
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SnapshotRequest {
+    pub repository_id: i64,
+    pub reader_id: i64,
+    pub owner: String,
+    pub name: String,
+    pub proof: super::authorization::Proof,
+    pub default_branch_only: bool,
+    pub maximum_bytes: u64,
+    pub timeout_seconds: u64,
+}
+impl SnapshotRequest {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            (1..=64 * 1024 * 1024 * 1024).contains(&self.maximum_bytes)
+                && (1..=300).contains(&self.timeout_seconds),
+            "Invalid fork snapshot limits"
+        );
+        Prefix::for_id(self.repository_id)?;
+        Prefix::for_id(self.reader_id)?;
+        codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, &self.owner)?;
+        ensure!(
+            codeyard_support::repository_names::valid(&self.name),
+            "Invalid fork source name"
+        );
+        self.proof.validate()
+    }
+}
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Snapshot {
+    pub repository_id: i64,
+    pub reader_id: i64,
+    pub default_branch: String,
+    pub refs: std::collections::HashMap<String, String>,
+}
+impl Snapshot {
+    pub fn validate(&self, request: &SnapshotRequest) -> Result<()> {
+        ensure!(
+            self.repository_id == request.repository_id && self.reader_id == request.reader_id,
+            "Fork snapshot has another source or reader"
+        );
+        ensure!(
+            codeyard_git::branch_ref(&self.default_branch).is_some()
+                && self.refs.len() <= codeyard_git::MAX_REPOSITORY_REFS,
+            "Invalid fork snapshot references"
+        );
+        let mut bytes = 0_usize;
+        for (name, target) in &self.refs {
+            bytes = bytes
+                .checked_add(name.len())
+                .ok_or_else(|| anyhow::anyhow!("Fork snapshot references exceed their limit"))?;
+            ensure!(
+                bytes <= codeyard_git::MAX_REPOSITORY_REF_BYTES
+                    && (name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+                    && codeyard_git::is_canonical_ref(name)
+                    && codeyard_git::is_full_commit_id(target),
+                "Invalid fork snapshot reference"
+            );
+            ensure!(
+                !request.default_branch_only
+                    || name == &format!("refs/heads/{}", self.default_branch),
+                "Fork snapshot includes unrequested references"
+            );
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod snapshot_tests {
+    use super::*;
+    #[test]
+    fn snapshots_bind_the_reader_root_and_requested_refs() {
+        let request = SnapshotRequest {
+            repository_id: 1,
+            reader_id: 2,
+            owner: "owner".into(),
+            name: "source".into(),
+            proof: super::super::authorization::Proof::Token {
+                home: Prefix::ZERO,
+                hash: "a".repeat(64),
+            },
+            default_branch_only: true,
+            maximum_bytes: 1024,
+            timeout_seconds: 10,
+        };
+        request.validate().unwrap();
+        let mut snapshot = Snapshot {
+            repository_id: 1,
+            reader_id: 2,
+            default_branch: "main".into(),
+            refs: std::collections::HashMap::from([("refs/heads/main".into(), "a".repeat(40))]),
+        };
+        snapshot.validate(&request).unwrap();
+        snapshot.reader_id = 3;
+        assert!(snapshot.validate(&request).is_err());
+        snapshot.reader_id = 2;
+        snapshot.repository_id = 3;
+        assert!(snapshot.validate(&request).is_err());
+        snapshot.repository_id = 1;
+        snapshot
+            .refs
+            .insert("refs/tags/extra".into(), "a".repeat(40));
+        assert!(snapshot.validate(&request).is_err());
+        snapshot.refs.remove("refs/tags/extra");
+        snapshot
+            .refs
+            .insert("refs/heads/main".into(), "not-an-object".into());
+        assert!(snapshot.validate(&request).is_err());
+    }
+}

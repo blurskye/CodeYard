@@ -1,3 +1,5 @@
+pub mod cells;
+
 pub mod api_shared;
 
 pub mod app;

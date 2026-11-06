@@ -68,19 +68,11 @@ impl Home for Local {
     }
 }
 impl Local {
-    async fn source(
+    pub async fn fork_actor(
         &self,
-        owner: &str,
-        name: &str,
         proof: &Proof,
-    ) -> Result<Option<codeyard_db_core::cells::repositories::Source>> {
-        use codeyard_db_core::cells::repositories::{Owner, Source};
+    ) -> Result<Option<codeyard_db_core::queries::credentials::Actor>> {
         use codeyard_db_core::queries::users::accounts::AccountCredential;
-        codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)?;
-        anyhow::ensure!(
-            codeyard_support::repository_names::valid(name),
-            "Invalid fork source name"
-        );
         proof.validate()?;
         let local = match proof {
             Proof::Token { home, .. } | Proof::Session { home, .. } => self.pool.owns_prefix(*home),
@@ -114,7 +106,26 @@ impl Local {
             Proof::Session { value, .. } => AccountCredential::Session(value),
             Proof::Ssh { .. } => unreachable!(),
         };
-        let actor = codeyard_db_core::queries::credentials::Actor::from((user.id, &credential));
+        Ok(Some(codeyard_db_core::queries::credentials::Actor::from((
+            user.id,
+            &credential,
+        ))))
+    }
+    async fn source(
+        &self,
+        owner: &str,
+        name: &str,
+        proof: &Proof,
+    ) -> Result<Option<codeyard_db_core::cells::repositories::Source>> {
+        use codeyard_db_core::cells::repositories::{Owner, Source};
+        codeyard_model::cells::Key::new(codeyard_model::cells::KeyKind::Name, owner)?;
+        anyhow::ensure!(
+            codeyard_support::repository_names::valid(name),
+            "Invalid fork source name"
+        );
+        let Some(actor) = self.fork_actor(proof).await? else {
+            return Ok(None);
+        };
         let Some(mut repository) =
             codeyard_db_repos::repositories::records::get_repository(&self.pool, owner, name)
                 .await?

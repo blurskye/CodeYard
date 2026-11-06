@@ -423,7 +423,9 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
                 let key = codeyard_support::node_identity::load_or_create(&config.state_dir)?;
                 let listener = codeyard_cells_router::accounts::listen(
                     directory.client.clone(),
-                    Arc::new(codeyard_identity::cells::Local { pool: pool.clone() }),
+                    Arc::new(codeyard_app::cells::Native {
+                        state: state.clone(),
+                    }),
                     &key,
                     address,
                 )

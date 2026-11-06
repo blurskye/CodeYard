@@ -198,8 +198,14 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Checks are workspace e401f6085a944da88801854b240a525d, Clippy
     25ac9880ad294027a1ac8a783e8f92a4 and WASM 7078759ffd0242dcb456214cdb71a296;
     All three pass. Native repository framing now has one shared transport owner
-    in cluster-core for the next fork-copy stream; its caller-only move is unchecked.
-    Fork publication is not wired.
+    in cluster-core for the next fork-copy stream. Workspace 11231ca76cc54d888ae59a27418e098e
+    and Clippy cf96651d85f24e5aa454febcda6f5345 found two imports, now fixed;
+    WASM 852b0ae8aa2f4351a77286f7840b1706 passes. Bounded pinned-TLS fork export,
+    native storage forwarding and hostile/revoked snapshot tests are written but unchecked.
+    Runtime 5993a963beb74088a032f3f29c97fbdc passes five public cells checks,
+    144 selected library tests and both membership contracts without skips. Cluster
+    passes 232/234; duplicate-begin recovery on SQLite and replica rebalancing fail
+    and await retry. Fork publication is not wired.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
     object pools, mentions/home inbox/email, and repository transfers/redirects.
     Stages 4 to 6 remain unwritten; automatic user moves and org regional presence

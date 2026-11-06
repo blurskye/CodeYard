@@ -34,6 +34,7 @@ enum Request {
         name: String,
         proof: Proof,
     },
+    Snapshot(codeyard_db_core::cells::repositories::SnapshotRequest),
     Pointer(codeyard_db_core::cells::pointers::Event),
 }
 #[derive(Serialize, Deserialize)]
@@ -47,6 +48,7 @@ enum Reply {
     Account(Option<Box<Answer>>),
     User(Option<Box<User>>),
     RepositorySource(Option<Box<codeyard_db_core::cells::repositories::Source>>),
+    Snapshot(codeyard_db_core::cells::repositories::Snapshot),
     Done,
     Unavailable,
 }
@@ -129,6 +131,93 @@ impl Remote {
     }
 }
 impl Home for Remote {
+    fn snapshot<'a>(
+        &'a self,
+        request: &'a codeyard_db_core::cells::repositories::SnapshotRequest,
+        output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+    ) -> BoxFuture<'a, Result<codeyard_db_core::cells::repositories::Snapshot>> {
+        Box::pin(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(request.timeout_seconds),
+                async move {
+                    request.validate()?;
+                    let _slot = self.slots.clone().try_acquire_owned()?;
+                    let cell = self
+                        .routes
+                        .by_name(&request.owner)
+                        .await?
+                        .ok_or_else(|| anyhow::anyhow!("Fork source is unavailable"))?;
+                    ensure!(
+                        self.routes
+                            .by_object(Object {
+                                kind: ObjectKind::Repository,
+                                id: request.repository_id
+                            })
+                            .await?
+                            .is_some_and(|home| home.id == cell.id),
+                        "Fork source has another home"
+                    );
+                    let address = cell
+                        .rpc_addresses
+                        .first()
+                        .ok_or_else(|| anyhow::anyhow!("Fork source has no RPC listener"))?
+                        .parse()?;
+                    let mut client = None;
+                    for public in &cell.node_keys {
+                        if let Ok(public) =
+                            codeyard_support::node_identity::parse_public_key(public)
+                        {
+                            let candidate = rpc::Client::new(
+                                self.key.clone(),
+                                address,
+                                public,
+                                ALPN,
+                                rpc::Config {
+                                    maximum_bytes: 128 * 1024,
+                                    ..Default::default()
+                                },
+                            )?;
+                            // Select a live pinned key before writing anything into the owned pack.
+                            if candidate
+                                .request::<_, Reply>(&Request::User(request.owner.clone()))
+                                .await
+                                .is_ok()
+                            {
+                                client = Some(candidate);
+                                break;
+                            }
+                        }
+                    }
+                    let client =
+                        client.ok_or_else(|| anyhow::anyhow!("Fork source is unavailable"))?;
+                    let Reply::Snapshot(snapshot) = client
+                        .response_stream(
+                            &Request::Snapshot(request.clone()),
+                            output,
+                            request.maximum_bytes,
+                            request.timeout_seconds,
+                        )
+                        .await?
+                    else {
+                        anyhow::bail!("Invalid fork snapshot answer");
+                    };
+                    snapshot.validate(request)?;
+                    ensure!(
+                        self.routes
+                            .by_object(Object {
+                                kind: ObjectKind::Repository,
+                                id: request.repository_id
+                            })
+                            .await?
+                            .is_some_and(|home| home.id == cell.id),
+                        "Fork source home changed"
+                    );
+                    Ok(snapshot)
+                },
+            )
+            .await?
+        })
+    }
     fn repository_source<'a>(
         &'a self,
         owner: &'a str,
@@ -567,6 +656,66 @@ impl Accounts {
     }
 }
 impl rpc::Service for Accounts {
+    fn streams_reply(&self, bytes: &[u8]) -> bool {
+        matches!(
+            serde_json::from_slice::<Request>(bytes),
+            Ok(Request::Snapshot(_))
+        )
+    }
+    fn stream_reply<'a>(
+        &'a self,
+        peer: PublicKey,
+        bytes: &'a [u8],
+        output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            use codeyard_cluster_core::link::write_frame;
+            use tokio::io::AsyncReadExt;
+            self.admitted(peer).await?;
+            let Request::Snapshot(request) = serde_json::from_slice(bytes)? else {
+                anyhow::bail!("Invalid snapshot request");
+            };
+            request.validate()?;
+            let (mut writer, mut reader) = tokio::io::duplex(32768);
+            let generate = async { self.home.snapshot(&request, &mut writer).await };
+            let send = async {
+                let mut received = 0_u64;
+                let mut chunk = vec![0; 32768];
+                loop {
+                    let count = reader.read(&mut chunk).await?;
+                    if count == 0 {
+                        break;
+                    }
+                    received = received
+                        .checked_add(count as u64)
+                        .ok_or_else(|| anyhow::anyhow!("Fork snapshot exceeds its limit"))?;
+                    ensure!(
+                        received <= request.maximum_bytes,
+                        "Fork snapshot exceeds its limit"
+                    );
+                    write_frame(output, &chunk[..count], 32768).await?;
+                }
+                anyhow::Ok(())
+            };
+            // Returning from generation closes the pipe even on an authorization failure.
+            let generate = async {
+                let result = generate.await;
+                drop(writer);
+                result
+            };
+            let (snapshot, ()) = tokio::try_join!(generate, send)?;
+            snapshot.validate(&request)?;
+            self.admitted(peer).await?;
+            write_frame(output, b"", 32768).await?;
+            write_frame(
+                output,
+                &serde_json::to_vec(&Reply::Snapshot(snapshot))?,
+                128 * 1024,
+            )
+            .await?;
+            Ok(())
+        })
+    }
     fn admit<'a>(&'a self, peer: PublicKey) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move { self.admitted(peer).await })
     }
@@ -575,6 +724,7 @@ impl rpc::Service for Accounts {
             self.admitted(peer).await?;
             let request: Request = serde_json::from_slice(bytes)?;
             let reply = match request {
+                Request::Snapshot(_) => anyhow::bail!("Snapshot requires streaming"),
                 Request::RepositorySource { owner, name, proof } => {
                     match self.home.repository_source(&owner, &name, &proof).await {
                         Ok(source) => Reply::RepositorySource(source.map(Box::new)),

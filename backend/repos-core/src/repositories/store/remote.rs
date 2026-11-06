@@ -318,6 +318,38 @@ impl RemoteStore {
         }
     }
 
+    pub(super) async fn fork_snapshot(
+        &self,
+        actor: &codeyard_db_core::queries::credentials::Actor,
+        repository: i64,
+        default_branch_only: bool,
+        streams: crate::store_types::GitStreams<'_>,
+    ) -> anyhow::Result<codeyard_db_core::cells::repositories::Snapshot> {
+        let context = self.context.as_ref().ok_or_else(crate::wire::unavailable)?;
+        let (metadata, status) = context
+            .git_session(
+                self.node_id,
+                Request {
+                    repository: crate::wire::repository_uuid(&self.disk_path)?,
+                    operation: Operation::ForkPack {
+                        authority: actor.clone(),
+                        default_branch_only,
+                    },
+                    actor: Some(actor.user_id),
+                    ci_run: None,
+                },
+                streams,
+            )
+            .await?;
+        anyhow::ensure!(status.success(), "Fork snapshot export failed");
+        let snapshot: codeyard_db_core::cells::repositories::Snapshot =
+            serde_json::from_value(metadata)?;
+        anyhow::ensure!(
+            snapshot.repository_id == repository && snapshot.reader_id == actor.user_id,
+            "Fork snapshot source changed"
+        );
+        Ok(snapshot)
+    }
     pub(super) async fn initialize(
         &self,
         source: Option<&RepoStore>,

@@ -770,7 +770,8 @@ pending OAuth/device codes usable. Automatic renewal is deferred.
 [Cluster readiness](CLUSTER_PLAN.md) records exact source checks, the combined runtime job
 and acceptance gaps. Runtime 15c77f36a9794468ac72f976e6c78209 passes all five public
 two-cell gh/Git checks, 68 core library, 61 store and all 234 cluster tests without skips.
-Stage 2 runnable acceptance passes. Stage 3 star/outbox source work is unchecked.
+Stage 2 runnable acceptance passes. Stage 3 public star/outbox replay passes; fork export
+is in source work. Two cluster regressions await retry; stage 3 acceptance is incomplete.
 
 Remote membership grants/deletes now queue home pointers in their own transaction. Pointers
 carry ordered event IDs and never grant resource access. The receiving home rechecks the live
@@ -798,3 +799,8 @@ JavaScript ID precision and native-only member lists and counts; those real-clie
 pass, as do cell-1 HTTP/SSH push/clone and foreign pushes/PR creation. The merge publication
 check still treats a foreign proof as a native token ID. Its typed-proof/workflow fix and
 Git-store regressions pass workspace, Clippy and WASM; runtime is next.
+
+Fork exports use pinned cell TLS and retain the initiating token or session through
+the source permission checks. `FORK_MAX_PACK_BYTES` bounds each export (128 MiB by
+default, at most 64 GiB); the request also has a byte limit and a 300-second ceiling.
+Fork creation and cross-cell pull-request publication are not wired yet.

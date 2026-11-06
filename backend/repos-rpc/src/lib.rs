@@ -162,7 +162,10 @@ impl RpcHandler {
         };
         if matches!(
             request.operation,
-            Operation::GitSession(_) | Operation::ReplicaPack { .. } | Operation::WritePack { .. }
+            Operation::GitSession(_)
+                | Operation::ForkPack { .. }
+                | Operation::ReplicaPack { .. }
+                | Operation::WritePack { .. }
         ) {
             let session_header = self.session_headers.clone().try_acquire_owned()?;
             drop(slot);

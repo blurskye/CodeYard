@@ -61,6 +61,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
+mod fork_snapshot;
 pub mod local;
 mod remote;
 

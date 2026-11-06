@@ -4627,3 +4627,79 @@ async fn operator_snapshot_uses_the_copy_transport_without_enrolling_a_backup_as
     copy.shutdown().await;
     primary.shutdown().await;
 }
+
+#[tokio::test]
+async fn fork_packs_use_original_credentials_on_remote_storage() {
+    let database = native::PostgresDatabase::new().await;
+    crate::support::native_database::enable_cluster(&database.pool)
+        .await
+        .unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let primary = start_storage(&database.pool, root.path(), "fork-store").await;
+    let web = web_node(&database.pool, root.path()).await;
+    let repo = create_repository(&database.pool, &primary, "fork-pack").await;
+    let tip = repo
+        .save("main", "copy.txt", "unborn", b"remote fork bytes\n")
+        .await;
+    let session = codeyard_identity::sessions::fresh_id(&database.pool).unwrap();
+    codeyard_db_identity::users::sessions::create_session(
+        &database.pool,
+        &session,
+        repo.actor,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let credential =
+        codeyard_db_core::queries::users::accounts::AccountCredential::Session(&session);
+    let actor = codeyard_db_core::queries::credentials::Actor::from((repo.actor, &credential));
+    let remote = repo_store(&repo.repository, Some(&web.context));
+    let mut bytes = Vec::new();
+    let snapshot = remote
+        .fork_snapshot(
+            &database.pool,
+            &actor,
+            repo.id(),
+            true,
+            GitStreams {
+                input: &mut tokio::io::empty(),
+                output: &mut bytes,
+                errors: &mut tokio::io::sink(),
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(snapshot.refs.len(), 1);
+    assert_eq!(snapshot.refs["refs/heads/main"], tip);
+    let pack = root.path().join("fork.pack");
+    tokio::fs::write(&pack, &bytes).await.unwrap();
+    let target = root.path().join("fork.git");
+    let copy = RepoStore::from_disk_path(target.to_str().unwrap());
+    copy.initialize(None, "main").await.unwrap();
+    copy.index_pack(&pack, true).await.unwrap();
+    copy.set_refs(&snapshot.refs).await.unwrap();
+    assert!(copy.existing_commits(&[tip]).await.unwrap().len() == 1);
+    sqlx::query("DELETE FROM sessions WHERE id=$1")
+        .bind(&session)
+        .execute(&database.raw)
+        .await
+        .unwrap();
+    assert!(remote
+        .fork_snapshot(
+            &database.pool,
+            &actor,
+            repo.id(),
+            false,
+            GitStreams {
+                input: &mut tokio::io::empty(),
+                output: &mut tokio::io::sink(),
+                errors: &mut tokio::io::sink()
+            }
+        )
+        .await
+        .is_err());
+    web.shutdown().await;
+    primary.shutdown().await;
+}

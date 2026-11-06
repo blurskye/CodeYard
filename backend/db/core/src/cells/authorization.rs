@@ -293,6 +293,13 @@ pub fn validate_public_user(user: &User) -> Result<()> {
 /// The provider authenticates the answering node and verifies its directory ownership.
 /// It never grants resource membership or repository authority.
 pub trait Home: Send + Sync {
+    fn snapshot<'a>(
+        &'a self,
+        _request: &'a super::repositories::SnapshotRequest,
+        _output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+    ) -> BoxFuture<'a, Result<super::repositories::Snapshot>> {
+        Box::pin(async { anyhow::bail!("Fork snapshot exports are unavailable") })
+    }
     fn repository_source<'a>(
         &'a self,
         _owner: &'a str,

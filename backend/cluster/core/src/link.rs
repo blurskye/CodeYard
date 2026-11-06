@@ -120,7 +120,7 @@ pub async fn read_to_end_within(
 
 /// Check the length before allocating, including zero-length binary bodies.
 pub async fn read_frame(
-    reader: &mut (impl AsyncRead + Unpin),
+    reader: &mut (impl AsyncRead + Unpin + ?Sized),
     limit: usize,
 ) -> anyhow::Result<Vec<u8>> {
     let length = reader.read_u32().await? as usize;
@@ -131,7 +131,7 @@ pub async fn read_frame(
 }
 
 pub async fn write_frame(
-    writer: &mut (impl AsyncWrite + Unpin),
+    writer: &mut (impl AsyncWrite + Unpin + ?Sized),
     bytes: &[u8],
     limit: usize,
 ) -> anyhow::Result<()> {

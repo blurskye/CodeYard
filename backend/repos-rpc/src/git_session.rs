@@ -190,6 +190,12 @@ impl RpcHandler {
                     let write = codeyard_db_cluster::cluster::writes::load_write(self.context.database()?, id).await.map_err(RepoError::from)?.ok_or_else(unavailable)?;
                     (Value::Null, write_targets(&write).map_err(RepoError::from)?)
                 }
+                Operation::ForkPack { authority, default_branch_only } => {
+                    let snapshot = store.fork_listing(self.context.database()?, authority,
+                        repo_id.ok_or_else(unavailable)?, *default_branch_only).await.map_err(RepoError::from)?;
+                    let targets = snapshot.refs.values().cloned().collect();
+                    (serde_json::to_value(snapshot).map_err(RepoError::from)?, targets)
+                }
                 Operation::ReplicaPack { want,.. } => {
                     if want.len()>codeyard_git::repository::MAX_MIRROR_REFS || want.iter().any(|id|!codeyard_git::is_full_commit_id(id)) {
                         return Err(codeyard_repos_core::wire::invalid("invalid snapshot revisions"));
@@ -250,6 +256,11 @@ impl RpcHandler {
         let (mut output, mut reader) = tokio::io::duplex(git_process::CHUNK);
         let receiving = receive.is_some();
         let input = &mut link.reader;
+        let fork_database = self.context.database()?.clone();
+        let fork_authority = match &request.operation {
+            Operation::ForkPack { authority, .. } => Some(authority.clone()),
+            _ => None,
+        };
         let run = async move {
             let mut errors = git_process::StderrTail::default();
             let streams = GitStreams {
@@ -262,6 +273,7 @@ impl RpcHandler {
                     session.allow_unreachable = checkout;
                     store.git_session(session, receive, streams).await
                 }
+                Operation::ForkPack { .. } => store.replica_pack(&targets, &[], streams).await,
                 Operation::ReplicaPack { have, .. } => {
                     store.replica_pack(&targets, &have, streams).await
                 }
@@ -286,6 +298,20 @@ impl RpcHandler {
                     .await
                 }
                 _ => unreachable!("only streamed operations are served here"),
+            };
+            let status = if let Some(authority) = fork_authority {
+                match codeyard_db_repos::repositories::creation::read_fork_source(
+                    &fork_database,
+                    &authority,
+                    repo_id.unwrap_or_default(),
+                )
+                .await
+                {
+                    Ok(Some(_)) => status,
+                    _ => Err(anyhow::anyhow!("Fork source access was revoked")),
+                }
+            } else {
+                status
             };
             let result = status
                 .map(|status| status.code().unwrap_or(1))

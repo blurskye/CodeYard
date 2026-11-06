@@ -6,7 +6,6 @@ use crate::store_types::MergeMethod;
 use crate::store_types::MergeRequest;
 use crate::store_types::PullBranchUpdate;
 use crate::store_types::RestackMove;
-use anyhow::ensure;
 use anyhow::Result;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
@@ -572,9 +571,13 @@ pub enum Operation {
         service: GitService,
     },
     GitSession(GitSession),
+    /// A fork exports only visible branches and tags under its initiating credential.
+    ForkPack {
+        authority: codeyard_db_core::queries::credentials::Actor,
+        default_branch_only: bool,
+    },
     /// A replica copy asks its primary for the objects it lacks. `have` lists the tips the
-    /// copy already holds. Streamed like a Git session: the reply lists the primary's HEAD
-    /// and refs, then a pack of the objects those refs need follows.
+    /// copy already holds. The reply lists HEAD and refs before the object stream.
     ReplicaPack {
         have: Vec<String>,
         /// Commits named by an operator's database snapshot, even if their refs moved.
@@ -645,7 +648,8 @@ impl Operation {
             | Self::CodeFrequency { .. }
             | Self::BranchStatuses { .. }
             | Self::GistSnapshot { .. }
-            | Self::GistHistory { .. } => true,
+            | Self::GistHistory { .. }
+            | Self::ForkPack { .. } => true,
             Self::AdvertiseRefs { service } => *service == GitService::UploadPack,
             Self::GitSession(session) => session.service == GitService::UploadPack,
             Self::ObjectPut { .. } | Self::ObjectGet { .. } | Self::ObjectDelete { .. } => false,
@@ -794,7 +798,7 @@ mod tests {
     use super::*;
     use codeyard_cluster_core::link::{read_frame, write_frame};
     use codeyard_db_core::limits::MAX_JSON;
-    use tokio::io::AsyncWriteExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     #[test]
     fn unavailable_keeps_its_typed_reason_on_the_wire() {

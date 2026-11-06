@@ -143,6 +143,7 @@ pub fn authorize_operation(
         | Operation::ObjectDelete { .. } => {
             return Err(invalid("object RPC requires object admission"))
         }
+        Operation::ForkPack { .. } => ("ForkPack", false),
         Operation::ReplicaPack { .. } => ("ReplicaPack", false),
         Operation::PrepareWrite { .. } => ("PrepareWrite", false),
         Operation::ApplyWrite { .. } => ("ApplyWrite", false),
@@ -187,6 +188,7 @@ fn requires_actor(operation: &Operation) -> bool {
             source: Some(_),
             ..
         } | Operation::InitializeCopy { .. }
+            | Operation::ForkPack { .. }
             | Operation::FetchPullHead { .. }
             | Operation::RenameBranch { .. }
             | Operation::MergeUpstream { .. }
@@ -606,6 +608,19 @@ impl RpcHandler {
                 tracing::warn!(operation, caller = %node.name, "repository RPC refused: no running CI claim");
                 return Err(invalid("repository RPC requires a running CI claim for this repository and worker node"));
             }
+        }
+        if let Operation::ForkPack { authority, .. } = &request.operation {
+            if request.actor != Some(authority.user_id) || authority.credential.is_none() {
+                return Err(invalid("Fork credential actor mismatch"));
+            }
+            codeyard_db_repos::repositories::creation::read_fork_source(
+                pool,
+                authority,
+                repo_id.ok_or_else(unavailable)?,
+            )
+            .await
+            .map_err(RepoError::from)?
+            .ok_or_else(unavailable)?;
         }
         if let Operation::GitSession(session) = &request.operation {
             let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
@@ -1690,7 +1705,9 @@ impl RpcHandler {
             | Operation::ObjectDelete { .. } => {
                 return Err(invalid("object RPC requires object admission").into())
             }
-            Operation::ReplicaPack { .. } | Operation::WritePack { .. } => {
+            Operation::ForkPack { .. }
+            | Operation::ReplicaPack { .. }
+            | Operation::WritePack { .. } => {
                 return Err(invalid("replica pack requires streaming").into())
             }
         };

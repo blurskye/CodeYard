@@ -276,8 +276,19 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .await;
     let zero_home = accounts::listen(
         directory_client(zero_key.clone()),
-        Arc::new(codeyard_identity::cells::Local {
-            pool: zero.pool.clone(),
+        Arc::new(codeyard_app::cells::Native {
+            state: codeyard_app::app::AppState::new(
+                zero.pool.clone(),
+                root.path().to_owned(),
+                Arc::new(
+                    codeyard_storage::ObjectStore::open(root.path(), None)
+                        .await
+                        .unwrap(),
+                ),
+                None,
+                codeyard_ci::config::CiConfig::default(),
+                None,
+            ),
         }),
         &zero_key,
         "127.0.0.1:0".parse().unwrap(),
@@ -647,6 +658,67 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         source.git_url.as_deref(),
         Some(format!("{}/alice/private.git", http.url()).as_str())
     );
+    let response = client
+        .put(format!(
+            "{}/api/v3/repos/alice/private/contents/copy.txt",
+            http.url()
+        ))
+        .bearer_auth(&alice_token)
+        .json(&serde_json::json!({"message":"copy source", "content":"Y29weSBieXRlcwo="}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let document: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, 201, "{document}");
+    let snapshot_request = codeyard_db_core::cells::repositories::SnapshotRequest {
+        repository_id: repository.id,
+        reader_id: user.id,
+        owner: "alice".into(),
+        name: "private".into(),
+        proof: fork_proof.clone(),
+        default_branch_only: false,
+        maximum_bytes: 1024 * 1024,
+        timeout_seconds: 30,
+    };
+    let mut bytes = Vec::new();
+    let snapshot = remote_source
+        .snapshot(&snapshot_request, &mut bytes)
+        .await
+        .unwrap();
+    snapshot.validate(&snapshot_request).unwrap();
+    let pack = root.path().join("test-fork.pack");
+    tokio::fs::write(&pack, &bytes).await.unwrap();
+    let copy_path = root.path().join("test-fork.git");
+    let copy = codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
+        copy_path.to_str().unwrap(),
+    );
+    copy.initialize(None, &snapshot.default_branch)
+        .await
+        .unwrap();
+    copy.index_pack(&pack, true).await.unwrap();
+    copy.set_refs(&snapshot.refs).await.unwrap();
+    let copied = tokio::process::Command::new("git")
+        .arg("--git-dir")
+        .arg(&copy_path)
+        .args(["show", "refs/heads/main:copy.txt"])
+        .output()
+        .await
+        .unwrap();
+    assert!(copied.status.success());
+    assert_eq!(copied.stdout, b"copy bytes\n");
+    let mut forged = snapshot_request.clone();
+    forged.repository_id = native_repository.id;
+    assert!(remote_source
+        .snapshot(&forged, &mut Vec::new())
+        .await
+        .is_err());
+    forged = snapshot_request.clone();
+    forged.reader_id = alice.id;
+    assert!(remote_source
+        .snapshot(&forged, &mut Vec::new())
+        .await
+        .is_err());
     let serialized = serde_json::to_value(&source).unwrap();
     assert!(serialized.get("git_url").is_none());
     let mut forged_source = source.clone();
@@ -1030,6 +1102,10 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap()
         .is_none());
+    assert!(remote_source
+        .snapshot(&snapshot_request, &mut Vec::new())
+        .await
+        .is_err());
     // A stale home pointer cannot disclose the revoked resource while cleanup waits.
     let listed: serde_json::Value = client
         .get(format!("{}/api/v3/user/repos", bob_http.url()))
