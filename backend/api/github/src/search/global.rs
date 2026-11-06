@@ -8,7 +8,7 @@ use codeyard_identity::github_auth::Authentication;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 
-pub(super) struct Found {
+pub struct Found {
     pub total: i64,
     pub hits: Vec<Hit>,
     pub incomplete: bool,
@@ -19,7 +19,7 @@ pub(super) struct Found {
     clippy::too_many_arguments,
     reason = "Each caller passes its own parsed query, order and page."
 )]
-pub(super) async fn search(
+pub async fn search(
     state: &AppState,
     auth: Option<&Authentication>,
     kind: Kind,
@@ -94,6 +94,27 @@ pub(super) async fn search(
         hits,
         incomplete,
     }))
+}
+
+/// Public repositories across every cell, for pages that list them to anyone: Explore,
+/// Trending and "used by". Hits in this cell are checked against live anonymous access.
+pub async fn public_repositories(
+    state: &AppState,
+    filter: Filter,
+    sort: &str,
+    window: (usize, usize),
+) -> Result<Option<Found>> {
+    search(
+        state,
+        None,
+        Kind::Repositories,
+        filter,
+        Some(sort.to_owned()),
+        false,
+        window,
+        "metadata",
+    )
+    .await
 }
 
 /// The index knows logins, not sessions, so `@me` becomes the viewer's login.

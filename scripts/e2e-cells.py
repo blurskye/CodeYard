@@ -431,6 +431,53 @@ def cross_cell_fork(deployment, client, directory):
         merged(number, "maintainer.txt", "upstream maintainer writes the remote fork")
 
 
+def eventually(check, limit=60):
+    deadline = time.monotonic() + limit
+    while True:
+        try:
+            return check()
+        except AssertionError:
+            if time.monotonic() >= deadline:
+                raise
+            threading.Event().wait(2)
+
+
+def discovery_across_cells(deployment, client):
+    """Explore, Trending and "used by" list public repositories of both cells, never private ones."""
+    def page(who, path, *checks):
+        return lambda: deployment.web(who, "req", "GET", path, "--no-scripts", *checks)
+    eventually(page("visitor", "/explore?q=beacon&sort=stars", "--contains", "/alice/beacon-zero",
+                    "--contains", "/bob/beacon-one", "--lacks", "beacon-secret"))
+    # Trending leaves out the viewer's own repositories and covers the other cell.
+    eventually(page("alice", "/?q=beacon", "--contains", "/bob/beacon-one"))
+    eventually(page("bob", "/?q=beacon", "--contains", "/alice/beacon-zero", "--lacks", "beacon-secret"))
+    for name, body in (("package.json", {"name": "beacon-lib", "version": "1.0.0"}),
+                       ("package-lock.json", {"name": "beacon-lib", "version": "1.0.0", "lockfileVersion": 3,
+                                              "requires": True, "packages": {"": {"name": "beacon-lib", "version": "1.0.0"}}})):
+        client.api(f"repos/alice/beacon-zero/contents/{name}", "--method", "PUT", "-f", "message=Provide beacon-lib",
+                   "-f", "content=" + base64.b64encode(json.dumps(body).encode()).decode())
+
+    def depend(repository, who):
+        head = client.api(f"repos/{repository}/commits/main", who=who)["sha"]
+        snapshot = {"version": 0, "sha": head, "ref": "refs/heads/main",
+                    "job": {"id": "1", "correlator": "cells-acceptance"},
+                    "detector": {"name": "cells-acceptance", "version": "1.0.0", "url": "https://example.test/detector"},
+                    "scanned": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                    "manifests": {"package-lock.json": {"name": "package-lock.json",
+                                  "file": {"source_location": "package-lock.json"},
+                                  "resolved": {"beacon-lib": {"package_url": "pkg:npm/beacon-lib@1.0.0",
+                                                              "relationship": "direct", "scope": "runtime"}}}}}
+        client.api(f"repos/{repository}/dependency-graph/snapshots", "--method", "POST", "--input", "-",
+                   input=json.dumps(snapshot), who=who)
+    depend("bob/beacon-one", "bob")
+    # A private dependent is never listed, not even to its owner.
+    depend("alice/beacon-secret", "alice")
+    for who in ("visitor", "alice"):
+        eventually(page(who, "/alice/beacon-zero/dependency-graph", "--contains", "Used by 1",
+                        "--contains", "/bob/beacon-one", "--lacks", "beacon-secret"))
+    client.checked("Explore, Trending and used by list public repositories of both cells and never private ones")
+
+
 def global_search(deployment, client, tokens, http_get):
     def put_file(repository, who):
         client.api(f"repos/{repository}/contents/beacon.txt", "--method", "PUT", "-f", "message=Add the beacon",
@@ -487,6 +534,8 @@ def global_search(deployment, client, tokens, http_get):
     code = client.api("search/code?q=glowmarker+repo:bob/beacon-one", "-H", "Accept: application/vnd.github.text-match+json")
     assert code["total_count"] == 1 and code["items"][0]["path"] == "beacon.txt", code
     assert "glowmarker" in code["items"][0]["text_matches"][0]["fragment"], code
+
+    discovery_across_cells(deployment, client)
 
     # An index rebuilt from nothing returns the same results.
     deployment.command("directory", "cell", "directory", "search-reset")

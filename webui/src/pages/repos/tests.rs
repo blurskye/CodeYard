@@ -450,6 +450,10 @@ fn fixtures() -> Vec<Page> {
             sha: "a".repeat(40),
             previous: None,
             next: None,
+            used_by: Some(super::dependency_graph::UsedBy {
+                count: 1,
+                repositories: vec!["<b>/dependent".into()],
+            }),
             packages: vec![super::dependency_graph::Dependency {
                 name: "<script>".into(),
                 version: "1.0.0".into(),

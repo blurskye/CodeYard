@@ -8,6 +8,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use codeyard_api_http::context::PageContext;
 use codeyard_app::app::AppState;
+use codeyard_db_core::cells::search::Filter;
 use codeyard_db_repos::repositories::records::RepositoryFilter;
 use codeyard_db_repos::repositories::records::RepositoryKind;
 use codeyard_db_repos::repositories::records::RepositorySort;
@@ -100,6 +101,30 @@ pub(super) async fn explore_page(
     };
     // One row past the page shows whether an older page exists.
     let offset = (filters.page as i64 - 1) * EXPLORE_PAGE_SIZE as i64;
+    let languages =
+        codeyard_db_repos::repositories::records::public_languages(&ctx.state.pool, 100)
+            .await
+            .unwrap_or_default();
+    // With cells, Explore lists every cell's public repositories from the shared index. When
+    // the index cannot answer, this cell's own repositories are listed instead.
+    if let Some(mut cards) = indexed(&ctx, &filters, offset as usize).await {
+        let has_older = cards.len() > EXPLORE_PAGE_SIZE;
+        cards.truncate(EXPLORE_PAGE_SIZE);
+        return ctx.page_model(
+            "Explore repositories",
+            AppPage::Discovery(view::Page::Explore(ExploreModel {
+                sort: filters.sort,
+                query: filters.query,
+                language: filters.language,
+                topic: filters.topic,
+                kind: filters.kind,
+                languages,
+                page: filters.page,
+                has_older,
+                repositories: cards,
+            })),
+        );
+    }
     let mut repos = match codeyard_db_repos::repositories::records::search_public_repositories(
         &ctx.state.pool,
         &filters.query,
@@ -124,10 +149,6 @@ pub(super) async fn explore_page(
             Ok(cards) => cards,
             Err(_) => return unavailable(&ctx, "explore_owners"),
         };
-    let languages =
-        codeyard_db_repos::repositories::records::public_languages(&ctx.state.pool, 100)
-            .await
-            .unwrap_or_default();
     ctx.page_model(
         "Explore repositories",
         AppPage::Discovery(view::Page::Explore(ExploreModel {
@@ -142,6 +163,62 @@ pub(super) async fn explore_page(
             repositories,
         })),
     )
+}
+
+/// The index filter for Explore's fields, as the local query reads them.
+fn index_filter(filters: &ExploreFilters) -> Filter {
+    let mut terms = Vec::new();
+    let mut term = |key: &str, value: &str| {
+        if !value.is_empty() {
+            terms.push(Filter::Term(key.into(), value.into()));
+        }
+    };
+    term("text", &filters.query);
+    term("language", &filters.language);
+    term("topic", &filters.topic);
+    match filters.kind.as_str() {
+        "sources" => term("fork", "false"),
+        "forks" => term("fork", "only"),
+        "archived" => term("archived", "true"),
+        _ => {}
+    }
+    Filter::All(terms)
+}
+
+/// One page and one card more from the shared index, or `None` without one or when it fails.
+async fn indexed(
+    ctx: &PageContext,
+    filters: &ExploreFilters,
+    offset: usize,
+) -> Option<Vec<codeyard_webui::pages::discovery::RepositoryCard>> {
+    let sort = match filters.sort.as_str() {
+        "recent" => "created",
+        other => other,
+    };
+    // The index answers the first 1000 results, as search does; later pages list this cell.
+    if offset >= codeyard_db_core::cells::search::MAXIMUM_OFFSET as usize {
+        return None;
+    }
+    match codeyard_api_github::search::global::public_repositories(
+        &ctx.state,
+        index_filter(filters),
+        sort,
+        (offset, EXPLORE_PAGE_SIZE + 1),
+    )
+    .await
+    {
+        Ok(found) => Some(
+            found?
+                .hits
+                .iter()
+                .filter_map(|hit| crate::discovery::index_card(&hit.document))
+                .collect(),
+        ),
+        Err(_) => {
+            tracing::warn!("Explore lists this cell only while the search index is unavailable");
+            None
+        }
+    }
 }
 
 #[cfg(test)]

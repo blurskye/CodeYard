@@ -4415,7 +4415,7 @@ BEGIN
         WHEN 'pr_labels','pr_assignees','pr_comments' THEN
             PERFORM queue_search(p.repo_id,'pull',p.id) FROM pull_requests p
                 WHERE p.id=(row_data->>'pull_request_id')::BIGINT;
-        WHEN 'repo_access','team_repo_access','repository_pushes','repository_topics','repo_languages' THEN
+        WHEN 'repo_access','team_repo_access','repository_pushes','repository_topics','repo_languages','dependency_snapshots' THEN
             PERFORM queue_search((row_data->>'repo_id')::BIGINT,'repository',NULL);
         WHEN 'users' THEN
             PERFORM queue_search(r.id,'repository',NULL) FROM repositories r
@@ -4464,6 +4464,8 @@ CREATE TRIGGER search_repository_pushes AFTER INSERT ON repository_pushes
 CREATE TRIGGER search_repository_topics AFTER INSERT OR DELETE ON repository_topics
     FOR EACH ROW EXECUTE FUNCTION queue_search_change();
 CREATE TRIGGER search_repo_languages AFTER INSERT OR UPDATE OR DELETE ON repo_languages
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+CREATE TRIGGER search_dependency_snapshots AFTER INSERT OR DELETE ON dependency_snapshots
     FOR EACH ROW EXECUTE FUNCTION queue_search_change();
 CREATE TRIGGER search_users AFTER UPDATE OF username ON users
     FOR EACH ROW EXECUTE FUNCTION queue_search_change();

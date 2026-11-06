@@ -3,7 +3,7 @@
 use crate::support::native_database::PostgresDatabase;
 use codeyard_cells_router::directory::{Client, Listener};
 use codeyard_db_core::cells::search::{
-    Batch, File, Filter, Index, Kind, Query, Refusal, Results, Version,
+    Batch, File, Filter, Index, Kind, Package, Query, Refusal, Results, Version,
 };
 use codeyard_db_directory::Directory;
 use codeyard_model::cells::{Cell, State};
@@ -45,7 +45,21 @@ fn repository(id: i64, version: (i64, i64), name: &str, public: bool, readers: &
         public,
         classic_allowed: true,
         readers: readers.to_vec(),
+        packages: Vec::new(),
     }
+}
+fn with_packages(mut batch: Batch, list: &[(&str, bool)]) -> Batch {
+    if let Batch::Repository { packages, .. } = &mut batch {
+        *packages = list
+            .iter()
+            .map(|(name, provided)| Package {
+                ecosystem: "npm".into(),
+                name: (*name).into(),
+                provided: *provided,
+            })
+            .collect();
+    }
+    batch
 }
 fn query(kind: Kind, viewer: Option<i64>, filter: Filter) -> Query {
     Query {
@@ -255,6 +269,7 @@ async fn cells_write_only_their_own_documents_and_private_ones_reach_only_reader
         public: false,
         classic_allowed: true,
         readers: vec![],
+        packages: vec![],
     })
     .await
     .unwrap();
@@ -263,6 +278,79 @@ async fn cells_write_only_their_own_documents_and_private_ones_reach_only_reader
         .unwrap();
     assert_eq!(names(&zero, &all(None)).await, ["lantern-new"]);
     assert_eq!(names(&zero, &issues).await, Vec::<String>::new());
+
+    // "Used by" lists public dependents in any cell of the package a repository provides.
+    let dependent = base + 30;
+    zero.index(&with_packages(
+        repository(open, (7, 1), "lantern-new", true, &[]),
+        &[("lantern-lib", true)],
+    ))
+    .await
+    .unwrap();
+    one.index(&with_packages(
+        repository(dependent, (1, 1), "wick", true, &[]),
+        &[("lantern-lib", false), ("left-pad", false)],
+    ))
+    .await
+    .unwrap();
+    // A private dependent is never listed, not even to its reader, and keeps no packages.
+    zero.index(&with_packages(
+        repository(secret, (8, 1), "lantern-vault", false, &[reader]),
+        &[("lantern-lib", false)],
+    ))
+    .await
+    .unwrap();
+    let uses = |viewer| {
+        query(
+            Kind::Repositories,
+            viewer,
+            Filter::Term("uses".into(), open.to_string()),
+        )
+    };
+    assert_eq!(names(&zero, &uses(None)).await, ["wick"]);
+    assert_eq!(names(&one, &uses(Some(reader))).await, ["wick"]);
+    let rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM search_packages WHERE repository_id=$1")
+            .bind(secret)
+            .fetch_one(&registry.raw)
+            .await
+            .unwrap();
+    assert_eq!(rows, 0);
+    // A dependent that turns private, or a provider that stops providing, drops out.
+    one.index(&with_packages(
+        repository(dependent, (2, 1), "wick", false, &[]),
+        &[("lantern-lib", false)],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(names(&zero, &uses(None)).await, Vec::<String>::new());
+    one.index(&with_packages(
+        repository(dependent, (3, 1), "wick", true, &[]),
+        &[("lantern-lib", false)],
+    ))
+    .await
+    .unwrap();
+    assert_eq!(names(&zero, &uses(None)).await, ["wick"]);
+    zero.index(&repository(open, (8, 1), "lantern-new", true, &[]))
+        .await
+        .unwrap();
+    assert_eq!(names(&zero, &uses(None)).await, Vec::<String>::new());
+    // A hostile package name is refused before it reaches the index.
+    assert!(zero
+        .index(&with_packages(
+            repository(open, (9, 1), "lantern-new", true, &[]),
+            &[("Upper\0", true)],
+        ))
+        .await
+        .is_err());
+    assert!(zero
+        .search(&query(
+            Kind::Repositories,
+            None,
+            Filter::Term("uses".into(), "-1".into()),
+        ))
+        .await
+        .is_err());
 
     // Unsupported qualifiers are refused by the index as well as by the cell.
     let error = zero

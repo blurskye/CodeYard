@@ -17,6 +17,9 @@ pub const MAXIMUM_CHUNK_BYTES: usize = 2 * 1024 * 1024;
 pub const MAXIMUM_CODE_BYTES: usize = 16 * 1024 * 1024;
 pub const MAXIMUM_PAGE: u32 = 100;
 pub const MAXIMUM_OFFSET: u32 = 1000;
+/// Packages a public repository depends on or provides, for "used by".
+pub const MAXIMUM_PACKAGES: usize = 2_000;
+const MAXIMUM_PACKAGE_NAME_BYTES: usize = 256;
 const MAXIMUM_TERMS: usize = 32;
 const MAXIMUM_DEPTH: usize = 8;
 const MAXIMUM_VALUE_BYTES: usize = 256;
@@ -56,10 +59,35 @@ pub struct File {
     pub content: String,
 }
 
+/// A package a repository depends on, or one it provides when `provided` is set.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Package {
+    pub ecosystem: String,
+    pub name: String,
+    pub provided: bool,
+}
+impl Package {
+    pub fn validate(&self) -> Result<()> {
+        ensure!(
+            (1..=32).contains(&self.ecosystem.len())
+                && self
+                    .ecosystem
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b".+-".contains(&b))
+                && (1..=MAXIMUM_PACKAGE_NAME_BYTES).contains(&self.name.len())
+                && !self.name.contains('\0')
+                && self.name == self.name.to_lowercase(),
+            "Invalid search package"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Batch {
-    /// `document` is `None` once the repository is gone.
+    /// `document` is `None` once the repository is gone. `packages` is empty for a private one.
     Repository {
         id: i64,
         version: Version,
@@ -67,6 +95,8 @@ pub enum Batch {
         public: bool,
         classic_allowed: bool,
         readers: Vec<i64>,
+        #[serde(default)]
+        packages: Vec<Package>,
     },
     Issue {
         id: i64,
@@ -109,6 +139,7 @@ impl Batch {
                 version,
                 document,
                 readers,
+                packages,
                 ..
             } => {
                 valid_id(*id)?;
@@ -117,6 +148,13 @@ impl Batch {
                 ensure!(readers.len() <= MAXIMUM_READERS, "Too many search readers");
                 for reader in readers {
                     valid_id(*reader)?;
+                }
+                ensure!(
+                    packages.len() <= MAXIMUM_PACKAGES,
+                    "Too many search packages"
+                );
+                for package in packages {
+                    package.validate()?;
                 }
             }
             Self::Issue {
@@ -264,6 +302,9 @@ fn term_allowed(kind: Kind, key: &str, value: &str) -> Result<(), &'static str> 
         (Kind::Repositories, "fork") => boolean || value == "only",
         (Kind::Repositories, "archived") => boolean,
         (Kind::Repositories, "is") => matches!(value, "public" | "private" | "fork" | "archived"),
+        // Public repositories that depend on a package the named repository provides. The
+        // GitHub query parsers never produce it; "used by" pages do.
+        (Kind::Repositories, "uses") => value.parse::<i64>().is_ok_and(|id| valid_id(id).is_ok()),
         (Kind::Issues, "author" | "assignee" | "label") => true,
         (Kind::Issues, "is") => matches!(
             value,
@@ -315,7 +356,7 @@ impl Query {
             return Err("Only the first 1000 search results are available");
         }
         let sorts: &[&str] = match self.kind {
-            Kind::Repositories => &["stars", "forks", "updated", "help-wanted-issues"],
+            Kind::Repositories => &["stars", "forks", "updated", "created", "help-wanted-issues"],
             Kind::Issues => &["created", "updated", "comments"],
             Kind::Code => &["indexed"],
         };

@@ -140,3 +140,12 @@ CREATE TABLE search_code (
     content TEXT NOT NULL CHECK(octet_length(content)<=131072),
     PRIMARY KEY(repository_id,path)
 );
+-- Packages a public repository depends on, or provides (its root npm package), for "used by".
+CREATE TABLE search_packages (
+    repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE,
+    ecosystem TEXT NOT NULL CHECK(octet_length(ecosystem) BETWEEN 1 AND 32),
+    name TEXT NOT NULL CHECK(octet_length(name) BETWEEN 1 AND 256),
+    provided BOOLEAN NOT NULL,
+    PRIMARY KEY(repository_id,provided,ecosystem,name)
+);
+CREATE INDEX search_packages_name ON search_packages(ecosystem,name,provided);

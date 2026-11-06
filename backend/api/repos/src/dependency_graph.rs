@@ -16,6 +16,7 @@ use codeyard_git::error::RepoError;
 use codeyard_webui::app::Page;
 use codeyard_webui::pages::repos::dependency_graph::Dependency;
 use codeyard_webui::pages::repos::dependency_graph::Page as GraphPage;
+use codeyard_webui::pages::repos::dependency_graph::UsedBy;
 use codeyard_webui::pages::repos::page::Page as RepoPage;
 use std::sync::Arc;
 
@@ -132,6 +133,7 @@ async fn respond(
             scope: package.scope,
         })
         .collect();
+    let used_by = used_by(&ctx, &loaded.repository).await;
     ctx.page_model(
         "Dependency graph",
         Page::Repositories(RepoPage::DependencyGraph {
@@ -141,9 +143,50 @@ async fn respond(
                 packages,
                 previous,
                 next,
+                used_by,
             },
         }),
     )
+}
+
+/// Public repositories in every cell that depend on the npm package this public repository
+/// provides, from the shared index. Without one, or while it fails, the section is hidden.
+async fn used_by(
+    ctx: &PageContext,
+    repository: &codeyard_db_core::models::Repository,
+) -> Option<UsedBy> {
+    if repository.is_private {
+        return None;
+    }
+    let filter =
+        codeyard_db_core::cells::search::Filter::Term("uses".into(), repository.id.to_string());
+    match codeyard_api_github::search::global::public_repositories(
+        &ctx.state,
+        filter,
+        "stars",
+        (0, 30),
+    )
+    .await
+    {
+        Ok(found) => {
+            let found = found?;
+            Some(UsedBy {
+                count: found.total,
+                repositories: found
+                    .hits
+                    .iter()
+                    .filter_map(|hit| hit.document.get("full_name")?.as_str().map(str::to_owned))
+                    .collect(),
+            })
+        }
+        Err(_) => {
+            tracing::warn!(
+                repository = repository.id,
+                "Used by is hidden while the search index is unavailable"
+            );
+            None
+        }
+    }
 }
 
 async fn page(

@@ -153,24 +153,29 @@ pub(super) async fn home(
     }
     // Trending is for other people's repositories, so the viewer's own are left out. The filter
     // narrows every repository list on the dashboard, Trending included.
-    let public = match codeyard_db_repos::repositories::records::list_trending_repositories(
-        &ctx.state.pool,
-        user.id,
-        &find,
-        5,
-    )
-    .await
-    {
-        Ok(repos) => repos,
-        Err(_) => return unavailable(&ctx, "home_trending"),
-    };
     let repositories = match dashboard_cards(&ctx.state, own).await {
         Ok(cards) => cards,
         Err(_) => return unavailable(&ctx, "home_repository_owners"),
     };
-    let trending = match dashboard_cards(&ctx.state, public).await {
-        Ok(cards) => cards,
-        Err(_) => return unavailable(&ctx, "home_trending_owners"),
+    let trending = match indexed_trending(&ctx, &username, &find).await {
+        Some(cards) => cards,
+        None => {
+            let public = match codeyard_db_repos::repositories::records::list_trending_repositories(
+                &ctx.state.pool,
+                user.id,
+                &find,
+                5,
+            )
+            .await
+            {
+                Ok(repos) => repos,
+                Err(_) => return unavailable(&ctx, "home_trending"),
+            };
+            match dashboard_cards(&ctx.state, public).await {
+                Ok(cards) => cards,
+                Err(_) => return unavailable(&ctx, "home_trending_owners"),
+            }
+        }
     };
     ctx.page_model(
         "Dashboard",
@@ -186,6 +191,43 @@ pub(super) async fn home(
             has_older: offset.saturating_add(page_size) < repository_count.max(shared_count),
         })),
     )
+}
+
+/// With cells, Trending ranks every cell's public repositories in the shared index; `None`
+/// without an index, or when it fails, so this cell's own list is shown.
+async fn indexed_trending(
+    ctx: &PageContext,
+    username: &str,
+    find: &str,
+) -> Option<Vec<codeyard_webui::pages::discovery::RepositoryCard>> {
+    use codeyard_db_core::cells::search::Filter;
+    let mut terms = vec![Filter::Not(Box::new(Filter::Term(
+        "owner".into(),
+        username.into(),
+    )))];
+    if !find.is_empty() {
+        terms.push(Filter::Term("text".into(), find.into()));
+    }
+    match codeyard_api_github::search::global::public_repositories(
+        &ctx.state,
+        Filter::All(terms),
+        "stars",
+        (0, 5),
+    )
+    .await
+    {
+        Ok(found) => Some(
+            found?
+                .hits
+                .iter()
+                .filter_map(|hit| crate::discovery::index_card(&hit.document))
+                .collect(),
+        ),
+        Err(_) => {
+            tracing::warn!("Trending lists this cell only while the search index is unavailable");
+            None
+        }
+    }
 }
 
 // Each database page and owner lookup stays at most 100 rows, even when the global

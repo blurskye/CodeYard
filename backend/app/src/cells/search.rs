@@ -4,8 +4,8 @@ use crate::app::AppState;
 use anyhow::{Context, Result};
 use codeyard_db_core::{
     cells::search::{
-        self, Batch, File, Index, Item, Version, MAXIMUM_CHUNK_BYTES, MAXIMUM_CODE_BYTES,
-        MAXIMUM_DOCUMENT_BYTES, MAXIMUM_FILES, MAXIMUM_FILE_BYTES,
+        self, Batch, File, Index, Item, Package, Version, MAXIMUM_CHUNK_BYTES, MAXIMUM_CODE_BYTES,
+        MAXIMUM_DOCUMENT_BYTES, MAXIMUM_FILES, MAXIMUM_FILE_BYTES, MAXIMUM_PACKAGES,
     },
     models::Repository,
     DbPool,
@@ -15,6 +15,7 @@ use serde_json::{json, Value};
 
 const MAXIMUM_BODY_CHARS: usize = 16_384;
 const SYMLINK_MODE: u32 = 0o120000;
+const MAXIMUM_MANIFEST_BYTES: u64 = 1024 * 1024;
 
 pub(super) async fn send(
     state: &AppState,
@@ -117,6 +118,7 @@ async fn repository(
                     public: false,
                     classic_allowed: true,
                     readers: Vec::new(),
+                    packages: Vec::new(),
                 })
                 .await?;
         }
@@ -144,6 +146,13 @@ async fn repository(
     document["forks"] = json!(forks);
     document["forks_count"] = json!(forks);
     let access = search::access(native, id).await?;
+    let store = codeyard_repos_core::repositories::store::repo_store(&repo, state.cluster.as_ref());
+    let (refs, default) = store.refs_and_default().await?;
+    let head = refs.get(&format!("refs/heads/{default}")).cloned();
+    let packages = match (&head, public) {
+        (Some(head), true) => packages(state, &store, &repo, &default, head).await?,
+        _ => Vec::new(),
+    };
     let indexed = index
         .index(&Batch::Repository {
             id,
@@ -152,11 +161,10 @@ async fn repository(
             public,
             classic_allowed: access.classic_allowed,
             readers: access.readers,
+            packages,
         })
         .await?;
-    let store = codeyard_repos_core::repositories::store::repo_store(&repo, state.cluster.as_ref());
-    let (refs, default) = store.refs_and_default().await?;
-    let Some(head) = refs.get(&format!("refs/heads/{default}")).cloned() else {
+    let Some(head) = head else {
         return Ok(());
     };
     if indexed.code_head.as_deref() == Some(head.as_str()) {
@@ -224,6 +232,77 @@ async fn repository(
         chunk.push(file);
     }
     send_code(index, id, version, &head, chunk, first, true).await
+}
+
+/// What a public repository depends on, as its dependency graph page lists it, and the npm
+/// package its root `package.json` names. A storage failure is retried; a repository whose
+/// files cannot be scanned simply depends on nothing.
+async fn packages(
+    state: &AppState,
+    store: &codeyard_repos_core::repositories::store::RepoStore,
+    repo: &Repository,
+    default: &str,
+    head: &str,
+) -> Result<Vec<Package>> {
+    use codeyard_git::error::ErrorKind;
+    let transient = |kind| matches!(kind, ErrorKind::Unavailable | ErrorKind::Conflict);
+    let reader = codeyard_db_security::dependency_graph::Reader::Viewer(None);
+    let mut found = std::collections::BTreeSet::new();
+    match codeyard_repos_pulls::repositories::dependency_graph::inventory(
+        state,
+        &reader,
+        repo,
+        &format!("refs/heads/{default}"),
+    )
+    .await
+    {
+        Ok((_, inventory)) => {
+            for package in inventory {
+                found.insert(Package {
+                    ecosystem: package.ecosystem.to_lowercase(),
+                    name: package.name.to_lowercase(),
+                    provided: false,
+                });
+            }
+        }
+        Err(error) if transient(error.kind) => return Err(error.into()),
+        Err(error) => {
+            tracing::debug!(repository = repo.id, error = %error, "Repository dependencies are left out of the index")
+        }
+    }
+    match store
+        .blob_range(
+            head,
+            "package.json",
+            codeyard_storage::range::ByteRange::Window {
+                offset: 0,
+                length: MAXIMUM_MANIFEST_BYTES + 1,
+            },
+        )
+        .await
+    {
+        Ok(blob) if !blob.is_binary && blob.size <= MAXIMUM_MANIFEST_BYTES => {
+            let name = serde_json::from_slice::<Value>(&blob.bytes)
+                .ok()
+                .and_then(|manifest| manifest.get("name")?.as_str().map(str::to_lowercase));
+            if let Some(name) = name {
+                found.insert(Package {
+                    ecosystem: "npm".into(),
+                    name,
+                    provided: true,
+                });
+            }
+        }
+        Ok(_) => {}
+        Err(error) if transient(error.kind) => return Err(error.into()),
+        Err(_) => {}
+    }
+    // Names the index refuses are dropped one by one, so one odd entry cannot hide the rest.
+    Ok(found
+        .into_iter()
+        .filter(|package| package.validate().is_ok())
+        .take(MAXIMUM_PACKAGES)
+        .collect())
 }
 
 async fn send_code(

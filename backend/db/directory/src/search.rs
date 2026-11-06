@@ -87,6 +87,7 @@ impl Directory {
                     public,
                     classic_allowed,
                     readers,
+                    packages,
                 } => {
                     if let Some(document) = document {
                         ensure!(
@@ -150,6 +151,20 @@ impl Directory {
                         sqlx::query("INSERT INTO search_readers(repository_id,user_id) SELECT $1,u FROM unnest($2::bigint[]) AS r(u) ON CONFLICT DO NOTHING")
                             .bind(id)
                             .bind(readers)
+                            .execute(&mut *tx)
+                            .await?;
+                    }
+                    // "Used by" covers public repositories only, so a private one keeps none.
+                    sqlx::query("DELETE FROM search_packages WHERE repository_id=$1")
+                        .bind(id)
+                        .execute(&mut *tx)
+                        .await?;
+                    if document.is_some() && *public && !packages.is_empty() {
+                        sqlx::query("INSERT INTO search_packages(repository_id,ecosystem,name,provided) SELECT $1,p.ecosystem,p.name,p.provided FROM unnest($2::text[],$3::text[],$4::boolean[]) AS p(ecosystem,name,provided) ON CONFLICT DO NOTHING")
+                            .bind(id)
+                            .bind(packages.iter().map(|p| p.ecosystem.clone()).collect::<Vec<_>>())
+                            .bind(packages.iter().map(|p| p.name.clone()).collect::<Vec<_>>())
+                            .bind(packages.iter().map(|p| p.provided).collect::<Vec<_>>())
                             .execute(&mut *tx)
                             .await?;
                     }
@@ -374,7 +389,7 @@ impl Directory {
     /// Empties the index; each cell then queues its documents again with `cell search reindex`.
     pub async fn reset_search(&self) -> Result<()> {
         self.run_for(self.config.migration_seconds, async {
-            sqlx::query("TRUNCATE search_code,search_readers,search_issues,search_repositories")
+            sqlx::query("TRUNCATE search_code,search_readers,search_packages,search_issues,search_repositories")
                 .execute(&self.pool)
                 .await?;
             Ok(())
@@ -584,6 +599,15 @@ fn term(
             contains(sql, "r.topics", value);
             return Ok(());
         }
+        (Kind::Repositories, "uses") => {
+            let provider: i64 = value.parse().map_err(|_| Refusal::Invalid)?;
+            sql.push("(r.public AND r.id<>");
+            sql.push_bind(provider);
+            sql.push(" AND EXISTS(SELECT 1 FROM search_packages d JOIN search_packages p ON p.ecosystem=d.ecosystem AND p.name=d.name AND p.provided WHERE d.repository_id=r.id AND NOT d.provided AND p.repository_id=");
+            sql.push_bind(provider);
+            sql.push("))");
+            return Ok(());
+        }
         (Kind::Repositories, "fork") => match value {
             "true" => "TRUE".to_owned(),
             "false" => "NOT r.fork".to_owned(),
@@ -692,6 +716,7 @@ fn order(query: &Query) -> String {
         (Kind::Repositories, Some("stars")) => "r.stars",
         (Kind::Repositories, Some("forks")) => "r.forks",
         (Kind::Repositories, Some("updated")) => "r.updated_at",
+        (Kind::Repositories, Some("created")) => "r.created_at",
         (Kind::Issues, Some("created")) => "i.created_at",
         (Kind::Issues, Some("updated")) => "i.updated_at",
         (Kind::Issues, Some("comments")) => "i.comments",

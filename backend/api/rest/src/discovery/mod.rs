@@ -105,6 +105,58 @@ fn repository_card(
     }
 }
 
+/// A card from a repository document in the shared index, for lists that span cells. The
+/// index holds the primary language's name only, so its card shows no colour.
+pub(crate) fn index_card(document: &serde_json::Value) -> Option<RepositoryCard> {
+    use serde_json::Value;
+    let text = |field: &str| {
+        document
+            .get(field)
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    };
+    let count = |field: &str| {
+        document
+            .get(field)
+            .and_then(Value::as_i64)
+            .unwrap_or(0)
+            .clamp(0, i64::from(i32::MAX)) as i32
+    };
+    Some(RepositoryCard {
+        id: document.get("id")?.as_i64()?,
+        owner: document.get("owner")?.get("login")?.as_str()?.to_owned(),
+        name: text("name")?,
+        description: text("description"),
+        topics: document
+            .get("topics")
+            .and_then(Value::as_array)
+            .map(|topics| {
+                topics
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .take(CARD_TOPICS)
+                    .map(str::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default(),
+        is_private: document
+            .get("private")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        stars: count("stargazers_count"),
+        forks: count("forks_count"),
+        default_branch: text("default_branch").unwrap_or_default(),
+        primary_language: text("language").map(|name| LanguageShare {
+            name,
+            percentage: 100.0,
+            color: String::new(),
+        }),
+        updated_at: text("updated_at")
+            .map(|time| time.chars().take(10).collect())
+            .unwrap_or_default(),
+    })
+}
+
 /// The cards of a list, with the owner, topics and primary language of each repository. The
 /// metadata is read after the list, so the repositories are checked against what `viewer` can
 /// read once it is loaded, and one that is no longer readable is left out with its metadata.

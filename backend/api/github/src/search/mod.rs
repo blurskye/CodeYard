@@ -200,6 +200,6 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 
 pub mod content_search;
 
-mod global;
+pub mod global;
 
 pub mod catalog_search;
