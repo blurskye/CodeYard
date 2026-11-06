@@ -151,65 +151,42 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     organizations, an audit log for organization and site actions, and the abuse controls
     in [ABUSE_PREVENTION.md](ABUSE_PREVENTION.md), all checked in the cluster round.
 13. **Cells.** The owner lifted A16 on 2026-11-05. Stage 0 reuses items 3 and 11;
-    automated durability acceptance passes. Hard reset is runtime pending, needs a disposable
-    VM. Stage 1's 51 PgBouncer/replica/quorum e2e checks pass without skips; finished-CI
-    shutdown and capacity measurements need a writable delegated cgroup.
-    Stage 2 source covers directory claims/TLS/cache, public HTTP/SSH routing, scoped
-    credentials and IDs, stable homes, stubs, home authorization, native publication,
-    durable cleanup, capacity reporting and bounded home membership discovery.
-    Latest source checks pass: workspace 1eea95d5da154951a089895b7e135cbc,
-    Clippy 5bbeecaa23534c9086bf16bc198a3001 and WASM 045f16dfddd44168a4379af54001a42c.
-    Generated GraphQL is unchanged. New output IDs are rooted; former input IDs still
-    resolve as required. Earlier runtime passes 334 selected library, 42 Git and 166
-    identity tests and both exhaustive GraphQL contracts. CI passes 220 with 19 existing
-    cgroup-dependent ignores; pull requests pass 324 with two. Later targeted retries pass
-    both-engine membership, stub, foreign browser, project, reviewer and organization
-    connection contracts without skips, including forged mutation roots.
-    Runtime 72a0f3463856498c89dd47fc7baea36f passes all nine router library and 234 cluster
-    tests without skips, including native private home/org lists, GraphQL discovery,
-    home revocation and negotiated compression. Real clients pass cell-1 signup,
-    duplicate-name refusal, both gh logins and both repository creations.
-    Runtime c1b52bba8227426b9bd3d054d5c85bb1 confirms the fixed HTTP Git catalogue through
-    an actual push and foreign invitation creation/acceptance. Its client fixture then
-    JSON-decodes a correct empty 204 response; the checked fix asserts the gh HTTP status.
-    All 67 REST tests, both repository catalogue guard tests and all 234 cluster tests
-    pass without skips, including the new two-cell native Git advertisements.
-    The next checked cells snapshot also covers standalone-to-cell-zero account/session/
-    repository/commit preservation, JavaScript ID precision, gh org/team grants, home org
-    discovery and native-only member lists/counts and search. Revocation must return 401
-    within a strict 60-second deadline; rate limits and outages cannot satisfy it. Fixture
-    runtime remains pending; retry only the failed targets after the current job finishes.
-    Retry 27755e0a6edc4e3e8a55d5f9b9d5d306 passes standalone account/session/token/SSH-key/
-    repository preservation, home membership discovery, org/team stub lists and counts,
-    raw HTML and hydrated navigation with JavaScript ID precision, and cell-1 HTTP/SSH
-    pushes and clones. Foreign HTTP/SSH pushes and gh pr create pass; gh pr merge fails
-    because publication reduces the retained foreign proof to a native token ID. The
-    fix reuses typed receive credentials for merge/editor publication and
-    workflow checks. New store tests cover forged proof, revoked grant, expired home
-    answer, a valid foreign merge and workflow-scope denial with unchanged refs.
-    Its first native check round reports two test-only API errors (a private error
-    constant and a unit-returning setter); both are corrected together. Recheck passes
-    workspace 1eea95d5da154951a089895b7e135cbc, Clippy 5bbeecaa23534c9086bf16bc198a3001
-    and WASM 045f16dfddd44168a4379af54001a42c. Runtime 15c77f36a9794468ac72f976e6c78209
-    passes all five real public cells checks, 68 core library tests and 61 store tests,
-    and all 234 cluster tests, without skips. Stage 2 runnable acceptance passes.
-    Stage 3 items 5/7 are in source work: shared membership/star pointer delivery,
-    bounded home REST/browser star lists and SIGKILL replay acceptance. This batch
-    passes workspace 21e6c57489b04937a62801e83dc6c96d and WASM
-    95844ccaeecb4f5fae389147be54758a; Clippy 642e4e90dd194f728eed9b3b0fbaf20d
-    passes. Review follow-ups retain foreign proofs in shared list filtering and
-    project larger browser lists in bounded card batches. Runtime 5993a963beb74088a032f3f29c97fbdc covers the public cells round,
-    changed library crates, both-engine pointer contracts and the full cluster target.
+    automated durability acceptance passes. Hard reset is runtime pending, needs a
+    disposable VM. Stage 1's 51 PgBouncer/replica/quorum e2e checks pass without skips;
+    finished-CI shutdown and capacity measurements need a writable delegated cgroup.
+    Stage 2 runnable acceptance passes in runtime 15c77f36a9794468ac72f976e6c78209:
+    five real public two-cell checks, 68 repos-core library tests, 61 store tests and
+    all 234 cluster tests, without skips. Real clients cover standalone cell-zero
+    IDs/data/session/PAT/SSH-key preservation; cell-1 signup and duplicate-name refusal;
+    gh login, repository creation, HTTP/SSH pushes and clones; foreign collaborator
+    and org/team grants; home membership lists; native-only member lists/counts and
+    search; raw/hydrated navigation and JavaScript ID precision; rooted node lookup
+    and split GraphQL; gh pr create/merge; strict 60-second authentication revocation;
+    and clear stopped-cell errors. Both-engine database and exhaustive GraphQL
+    contracts pass. Generated GraphQL remains unchanged. Stage 2's last source checks
+    pass workspace 1eea95d5da154951a089895b7e135cbc, Clippy
+    5bbeecaa23534c9086bf16bc198a3001 and WASM 045f16dfddd44168a4379af54001a42c.
+    Stage 3 items 5/7 have resource-owned stars, distinct home discovery pointers,
+    bounded authorized REST/browser lists and a SIGKILL outbox replay fixture.
+    Initial source checks pass workspace 21e6c57489b04937a62801e83dc6c96d,
+    Clippy 642e4e90dd194f728eed9b3b0fbaf20d and WASM
+    95844ccaeecb4f5fae389147be54758a. Runtime
+    5993a963beb74088a032f3f29c97fbdc covers the public cells round, changed library
+    crates, both-engine pointer contracts and the full cluster target; it is running.
     The star-list follow-up retains native/foreign credential proofs, bounds card
     projection batches and tests malformed resource pages and a merged third browser
-    page. Its source checks are workspace 1e483729c5ba4ee3b5ca63ab06bc8212,
-    Clippy 4b28e2a861b34559a3a9e540f49b5eb3 and WASM
-    c6a1a0038b3147bb82688256662a5028, pending.
-    The remaining stage 3 items and stages 4 to 6 remain unwritten.
-    Automatic user moves and org regional presence remain documented owner decisions.
-    Committed range renewal is a deferred owner follow-up. Other owner follow-ups:
-    foreign-cache expiry after PostgreSQL row-lock waits; schedule bounded expired
-    directory-claim collection.
+    page. Its checks pass: workspace
+    1e483729c5ba4ee3b5ca63ab06bc8212, Clippy 4b28e2a861b34559a3a9e540f49b5eb3
+    and WASM c6a1a0038b3147bb82688256662a5028. Runtime has not covered the third-page/invalid-owner follow-up yet.
+    The next source fixture drives gh repo fork, two head pushes, gh pr checkout,
+    an upstream maintainer SSH push and gh pr merge across cells; implementation
+    and runtime are pending.
+    Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
+    object pools, mentions/home inbox/email, and repository transfers/redirects.
+    Stages 4 to 6 remain unwritten; automatic user moves and org regional presence
+    are documented owner decisions. Owner follow-ups, outside this acceptance work:
+    committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
+    scheduled bounded expired directory-claim collection.
 
 ## Decisions that settle the open questions
 
