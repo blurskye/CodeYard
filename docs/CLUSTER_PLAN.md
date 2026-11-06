@@ -250,7 +250,27 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     does not see a head branch deleted in the fork; an SSH maintainer of a cross-cell fork
     must have the key in the base's cell; a cell keeps another cell's directory record,
     including its web addresses, for the route cache lifetime.
-    Stages 4 to 6 remain unwritten; automatic user moves and org regional presence
+    The outbox now leases each claimed event instead of holding its row lock across the
+    network call; only the latest claim records a result. A key release still holds its
+    key lock across the directory call, so a key added again meanwhile is never released.
+    Stage 4 items 1, 2 and 4 are written: PostgreSQL tables in the directory database hold
+    repository, issue, pull and code documents. Each cell writes them through `cell_outbox`
+    (one pending event per document) and rechecks its own hits against live access.
+    Runtime 1caddf64d9b84499abfaa02634be7ba5 passes the public cells workflow (gh search
+    repos/issues/prs/code across both cells within a minute, private items only to readers,
+    rebuild from nothing, 503 with pages working while search is stopped) and the seven
+    cluster `cells_` tests, including `cells_search` and the lease test. Job
+    685e69df09084b428803679f3f1b6e09 passes cluster search 5, collaboration search 15,
+    database 185, object pools 2 and the changed libraries (150). Item 3
+    (explore, trending, "used by" and advisory alerts across cells) is not written.
+    Stage 4 notes: users, labels, topics, commits and GraphQL search stay local; star counts
+    in the index wait for the repository's next change; an issue document keeps its old
+    `repository_url` after a rename until it changes; READMEs, comments and licenses are not
+    indexed; matching is ILIKE with no trigram index; internal repositories follow
+    `is_private`; App, fine-grained, job and foreign-session credentials see no private hits
+    from other cells; an org that refuses classic tokens hides its other-cell hits from every
+    whole-account credential, including ones that policy would exempt.
+    Stages 5 and 6 remain unwritten; automatic user moves and org regional presence
     are documented owner decisions. Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
     scheduled bounded expired directory-claim collection.
