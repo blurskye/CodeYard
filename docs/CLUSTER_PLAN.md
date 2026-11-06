@@ -183,7 +183,13 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     and runtime are pending. Bounded fork-source RPC now verifies the original
     account proof and resource access, redacts local storage/private owner fields,
     checks directory homes and retains metadata stubs; real TLS hostile/revocation
-    assertions are written. This source is unchecked; fork publication is not wired.
+    assertions are written. Source checks are pending: workspace
+    97e6c8e1da0e4e37850ac770f26f729c, Clippy 34dace7c07d4483bb4e04162e5d55875
+    and WASM 087dc848a5d4488cad45ad719cfecb9e. WASM passes; both native jobs
+    report the same missing identity-to-db-orgs dependency, now declared.
+    Recheck jobs are workspace 75d97024b4f44666a9f90ca4d05ee9b9, Clippy
+    d8b75871128d4b1f94b7dcf4c1296ca6 and WASM 4159cd3c47b1446bb08fbb06763f85df.
+    Fork publication is not wired.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
     object pools, mentions/home inbox/email, and repository transfers/redirects.
     Stages 4 to 6 remain unwritten; automatic user moves and org regional presence

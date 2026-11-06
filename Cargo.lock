@@ -9956,6 +9956,7 @@ dependencies = [
  "codeyard-db-cluster",
  "codeyard-db-core",
  "codeyard-db-identity",
+ "codeyard-db-orgs",
  "codeyard-db-repos",
  "codeyard-model",
  "codeyard-support",
