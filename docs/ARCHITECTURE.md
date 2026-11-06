@@ -1032,8 +1032,9 @@ outbox by cursor. No message bus until the consumers need one.
 | Feature | Where it lives | Fed by | Lag |
 |---|---|---|---|
 | Notifications, email | inbox in the home cell; the resource's cell finds recipients and sends one batch per home cell | outbox delivery | seconds |
-| Issue, PR, repository, user search | OpenSearch; documents carry repository and visibility, results filtered to what the reader can see | outbox cursor | under a minute |
-| Code search | Zoekt, indexed on push, replacing `git grep` over at most 250 repositories | push events | minutes |
+| Issue, PR, repository search | PostgreSQL tables in the directory database, served by a separate `cell directory serve`; documents carry their repository, its public flag and readers, and each cell rechecks its own hits against live access | outbox delivery | under a minute |
+| Code search | the same index, holding default-branch text files (up to 2,000 files and 16 MiB per repository), rewritten after a push | outbox delivery | under a minute |
+| User, label, topic, commit search | the local cell | none | none |
 | Activity feed | read from the event index when viewed, no copy per follower | outbox cursor | seconds |
 | Explore, trending | hourly batch into a table copied to every region | outbox cursor | an hour |
 | Dependency graph, "used by" | each cell parses manifests; a global index answers dependents | outbox cursor | minutes |

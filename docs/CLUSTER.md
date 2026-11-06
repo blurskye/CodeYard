@@ -783,6 +783,16 @@ A mention of an account homed in another cell queues a notice in the repository'
 home cell stores it once per event and sends one email. Only public repositories send
 notices.
 
+Enrolled cells share one search index for `search/repositories`, `issues` and `code`. It
+lives in the directory database, and each cell writes only the repositories homed in it.
+Run a second `cell directory serve --address <search address>` on the same directory
+database and give cells `SEARCH_ADDRESS` and `SEARCH_PUBLIC_KEY`. These default to the
+directory settings. Changes reach the index through `cell_outbox` within a minute. When
+the index is down, pages keep working and search answers 503. To rebuild it, run
+`cell directory search-reset`, then on each cell repeat `codeyard cell search-reindex
+--after <id> --limit 100` with the returned `after` until `count` is zero. Search for users,
+labels, topics and commits, and GraphQL search, still read only the local cell.
+
 Remote membership grants/deletes now queue home pointers in their own transaction. Pointers
 carry ordered event IDs and never grant resource access. The receiving home rechecks the live
 cell key and both directory homes at commit; duplicate and older deliveries are harmless.
