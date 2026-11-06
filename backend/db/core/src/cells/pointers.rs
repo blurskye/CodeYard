@@ -13,7 +13,10 @@ pub enum Kind {
 }
 impl Kind {
     pub fn as_str(self) -> &'static str {
-        match self { Self::Membership => "membership", Self::Star => "star" }
+        match self {
+            Self::Membership => "membership",
+            Self::Star => "star",
+        }
     }
 }
 
@@ -29,13 +32,16 @@ impl Change {
     pub fn validate(&self) -> Result<()> {
         Prefix::for_id(self.user_id)?;
         self.object.validate()?;
-        ensure!(self.kind != Kind::Star || self.object.kind == ObjectKind::Repository, "Invalid starred resource");
+        ensure!(
+            self.kind != Kind::Star || self.object.kind == ObjectKind::Repository,
+            "Invalid starred resource"
+        );
         ensure!(
             matches!(
                 self.object.kind,
                 ObjectKind::Organization | ObjectKind::Repository
             ),
-            "Invalid resource resource"
+            "Invalid pointer resource"
         );
         Ok(())
     }
@@ -217,9 +223,14 @@ pub enum List {
 }
 impl List {
     pub fn browser(self) -> bool {
-        matches!(self, Self::BrowserRepositories | Self::BrowserOrganizations | Self::BrowserStars)
+        matches!(
+            self,
+            Self::BrowserRepositories | Self::BrowserOrganizations | Self::BrowserStars
+        )
     }
-    pub fn stars(self) -> bool { matches!(self, Self::StarredRepositories | Self::BrowserStars) }
+    pub fn stars(self) -> bool {
+        matches!(self, Self::StarredRepositories | Self::BrowserStars)
+    }
     pub fn page_size(self, config: Config) -> usize {
         if matches!(self, Self::BrowserRepositories) {
             config.browser_repository_page_size
@@ -249,7 +260,14 @@ impl Page {
             "Invalid resource page"
         );
         if self.list.stars() {
-            ensure!(self.query.iter().filter(|(key, _)| key == "username").count() == 1, "Invalid star owner");
+            ensure!(
+                self.query
+                    .iter()
+                    .filter(|(key, _)| key == "username")
+                    .count()
+                    == 1,
+                "Invalid star owner"
+            );
         }
         let mut keys = std::collections::HashSet::new();
         for (key, value) in &self.query {
@@ -269,8 +287,10 @@ impl Page {
                                     ..=codeyard_support::cells::MAX_ID)
                                     .contains(&id)),
                         List::StarredRepositories | List::BrowserStars => match key.as_str() {
-                            "username" => codeyard_model::account_input::validate_namespace(value, 1).is_ok(),
-                            "sort" => matches!(value.as_str(), "created" | "updated" | "stars" | "name"),
+                            "username" =>
+                                codeyard_model::account_input::validate_namespace(value, 1).is_ok(),
+                            "sort" =>
+                                matches!(value.as_str(), "created" | "updated" | "stars" | "name"),
                             "direction" => matches!(value.as_str(), "asc" | "desc"),
                             "q" => value.len() <= 256,
                             _ => false,
@@ -327,21 +347,46 @@ read_engine!(
     retain_sqlite
 );
 
-pub async fn homes(pool: &crate::DbPool, actor: &crate::queries::credentials::Actor, config: Config) -> Result<Vec<Prefix>> {
+pub async fn homes(
+    pool: &crate::DbPool,
+    actor: &crate::queries::credentials::Actor,
+    config: Config,
+) -> Result<Vec<Prefix>> {
     read_homes(pool, actor.user_id, Some(actor), Kind::Membership, config).await
 }
-pub async fn star_homes(pool: &crate::DbPool, owner: i64, viewer: Option<&crate::queries::credentials::Actor>, config: Config) -> Result<Vec<Prefix>> {
+pub async fn star_homes(
+    pool: &crate::DbPool,
+    owner: i64,
+    viewer: Option<&crate::queries::credentials::Actor>,
+    config: Config,
+) -> Result<Vec<Prefix>> {
     read_homes(pool, owner, viewer, Kind::Star, config).await
 }
-async fn read_homes(pool: &crate::DbPool, owner: i64, actor: Option<&crate::queries::credentials::Actor>, kind: Kind, config: Config) -> Result<Vec<Prefix>> {
+async fn read_homes(
+    pool: &crate::DbPool,
+    owner: i64,
+    actor: Option<&crate::queries::credentials::Actor>,
+    kind: Kind,
+    config: Config,
+) -> Result<Vec<Prefix>> {
     config.validate()?;
-    if pool.foreign_authorization().is_none() { return Ok(Vec::new()); }
-    tokio::time::timeout(std::time::Duration::from_secs(config.request_seconds), async {
-        match pool {
-            crate::DbPool::Postgres(pool) => postgres::Reader::homes(pool, owner, actor, kind, config).await,
-            crate::DbPool::Sqlite(pool) => sqlite::Reader::homes(pool, owner, actor, kind, config).await,
-        }
-    }).await?
+    if pool.foreign_authorization().is_none() {
+        return Ok(Vec::new());
+    }
+    tokio::time::timeout(
+        std::time::Duration::from_secs(config.request_seconds),
+        async {
+            match pool {
+                crate::DbPool::Postgres(pool) => {
+                    postgres::Reader::homes(pool, owner, actor, kind, config).await
+                }
+                crate::DbPool::Sqlite(pool) => {
+                    sqlite::Reader::homes(pool, owner, actor, kind, config).await
+                }
+            }
+        },
+    )
+    .await?
 }
 
 #[cfg(test)]
@@ -363,6 +408,30 @@ mod tests {
         other.add(&true).unwrap();
         assert!(budget.merge(&other).is_err());
         assert_eq!(budget.count, 2);
+    }
+    #[test]
+    fn star_pages_require_one_valid_owner_and_bound_their_filters() {
+        let valid = || Page {
+            list: List::StarredRepositories,
+            number: 1,
+            size: 100,
+            query: vec![("username".into(), "alice".into())],
+        };
+        assert!(valid().validate().is_ok());
+        for (key, value) in [
+            ("username", "../alice".into()),
+            ("username", "bob".into()),
+            ("page", "1".into()),
+            ("q", "x".repeat(257)),
+            ("sort", "anything".into()),
+        ] {
+            let mut page = valid();
+            page.query.push((key.into(), value));
+            assert!(page.validate().is_err());
+        }
+        let mut page = valid();
+        page.query.clear();
+        assert!(page.validate().is_err());
     }
     #[test]
     fn browser_resource_pages_reject_hostile_and_unrelated_queries() {

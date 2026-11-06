@@ -294,17 +294,25 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     one.pool.set_foreign_authorization(Arc::new(
         accounts::Remote::new(one_key.clone(), directory_client(one_key.clone())).unwrap(),
     ));
-    let pointer_event: i64 = sqlx::query_scalar(
-        "SELECT id FROM cell_outbox WHERE topic='pointer' ORDER BY id LIMIT 1",
-    )
-    .fetch_one(&zero.raw)
-    .await
-    .unwrap();
+    let pointer_event: i64 =
+        sqlx::query_scalar("SELECT id FROM cell_outbox WHERE topic='pointer' ORDER BY id LIMIT 1")
+            .fetch_one(&zero.raw)
+            .await
+            .unwrap();
     assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
         .await
         .unwrap());
-    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND resource_id=$2 AND active")
-        .bind(user.id).bind(repository.id).fetch_one(&one.raw).await.unwrap(),1);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND resource_id=$2 AND active"
+        )
+        .bind(user.id)
+        .bind(repository.id)
+        .fetch_one(&one.raw)
+        .await
+        .unwrap(),
+        1
+    );
     let response = client
         .get(format!("{}/api/v3/user/repos", bob_http.url()))
         .bearer_auth(&value)
@@ -600,36 +608,120 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         assert_eq!(rows[0]["id"], expected, "{rows}");
     }
     // Stars commit in the resource cell and discover that cell through a distinct home pointer.
-    let response = client.put(format!("{}/api/v3/user/starred/alice/private",http.url()))
-        .bearer_auth(&value).send().await.unwrap();
-    assert_eq!(response.status(),204);
+    let response = client
+        .put(format!("{}/api/v3/user/starred/alice/private", http.url()))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
     let star_event: i64 = sqlx::query_scalar("SELECT id FROM cell_outbox WHERE topic='pointer' AND payload::jsonb->>'kind'='star' ORDER BY id DESC LIMIT 1")
         .fetch_one(&zero.raw).await.unwrap();
-    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool).await.unwrap());
+    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+        .await
+        .unwrap());
     let star_replay = codeyard_db_core::cells::pointers::Event {
-        id:star_event, change:codeyard_db_core::cells::pointers::Change {
-            kind:codeyard_db_core::cells::pointers::Kind::Star,user_id:user.id,
-            object:Object {kind:ObjectKind::Repository,id:repository.id},active:true,
+        id: star_event,
+        change: codeyard_db_core::cells::pointers::Change {
+            kind: codeyard_db_core::cells::pointers::Kind::Star,
+            user_id: user.id,
+            object: Object {
+                kind: ObjectKind::Repository,
+                id: repository.id,
+            },
+            active: true,
         },
     };
-    let sender = accounts::Remote::new(zero_key.clone(),directory_client(zero_key.clone())).unwrap();
+    let sender =
+        accounts::Remote::new(zero_key.clone(), directory_client(zero_key.clone())).unwrap();
     sender.send_pointer(&star_replay).await.unwrap();
     sender.send_pointer(&star_replay).await.unwrap();
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND resource_id=$2 AND kind='star' AND active")
         .bind(user.id).bind(repository.id).fetch_one(&one.raw).await.unwrap(),1);
-    for path in ["/api/v3/user/starred","/api/v3/users/bob/starred"] {
-        let response=client.get(format!("{}{path}",bob_http.url())).bearer_auth(&value).send().await.unwrap();
-        let status=response.status();let rows:serde_json::Value=response.json().await.unwrap();
-        assert_eq!(status,200,"{rows}");assert_eq!(rows.as_array().unwrap().len(),1,"{rows}");assert_eq!(rows[0]["id"],repository.id,"{rows}");
+    for path in ["/api/v3/user/starred", "/api/v3/users/bob/starred"] {
+        let response = client
+            .get(format!("{}{path}", bob_http.url()))
+            .bearer_auth(&value)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let rows: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(status, 200, "{rows}");
+        assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
+        assert_eq!(rows[0]["id"], repository.id, "{rows}");
     }
-    let anonymous:serde_json::Value=client.get(format!("{}/api/v3/users/bob/starred",bob_http.url())).send().await.unwrap().json().await.unwrap();
-    assert_eq!(anonymous,serde_json::json!([]));
-    let response=client.get(format!("{}/stars",bob_http.url())).header("cookie",format!("session_id={session}")).header("accept","application/vnd.codeyard.page+json").send().await.unwrap();
-    let status=response.status();let browser:serde_json::Value=response.json().await.unwrap();
-    assert_eq!(status,200,"{browser}");assert_eq!(browser["page"]["model"]["Stars"]["repositories"][0]["id"],repository.id,"{browser}");
-    let response=client.delete(format!("{}/api/v3/user/starred/alice/private",http.url())).bearer_auth(&value).send().await.unwrap();
-    assert_eq!(response.status(),204);
-    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool).await.unwrap());
+    let anonymous: serde_json::Value = client
+        .get(format!("{}/api/v3/users/bob/starred", bob_http.url()))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(anonymous, serde_json::json!([]));
+    let response = client
+        .get(format!("{}/stars", bob_http.url()))
+        .header("cookie", format!("session_id={session}"))
+        .header("accept", "application/vnd.codeyard.page+json")
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let browser: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(status, 200, "{browser}");
+    assert_eq!(
+        browser["page"]["model"]["Stars"]["repositories"][0]["id"], repository.id,
+        "{browser}"
+    );
+    let response = client
+        .put(format!("{}/api/v3/user/starred/bob/native", bob_http.url()))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    let mut ids = std::collections::HashSet::new();
+    for page in 1..=2 {
+        let response = client
+            .get(format!(
+                "{}/api/v3/user/starred?per_page=1&page={page}",
+                bob_http.url()
+            ))
+            .bearer_auth(&value)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let rows: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(status, 200, "{rows}");
+        assert_eq!(rows.as_array().unwrap().len(), 1, "{rows}");
+        assert!(
+            ids.insert(rows[0]["id"].as_i64().unwrap()),
+            "duplicate star across pages: {rows}"
+        );
+    }
+    assert_eq!(
+        ids,
+        std::collections::HashSet::from([repository.id, native_repository.id])
+    );
+    let response = client
+        .delete(format!("{}/api/v3/user/starred/bob/native", bob_http.url()))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    let response = client
+        .delete(format!("{}/api/v3/user/starred/alice/private", http.url()))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    assert!(codeyard_db_core::cells::outbox::deliver_one(&zero.pool)
+        .await
+        .unwrap());
     sender.send_pointer(&star_replay).await.unwrap();
     assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND resource_id=$2 AND kind='star' AND active")
         .bind(user.id).bind(repository.id).fetch_one(&one.raw).await.unwrap(),0);
@@ -821,8 +913,17 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .send_pointer(&replay)
         .await
         .unwrap();
-    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND resource_id=$2 AND active")
-        .bind(user.id).bind(repository.id).fetch_one(&one.raw).await.unwrap(),0);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND resource_id=$2 AND active"
+        )
+        .bind(user.id)
+        .bind(repository.id)
+        .fetch_one(&one.raw)
+        .await
+        .unwrap(),
+        0
+    );
     codeyard_db_repos::repositories::access::grant_repo_access(
         &zero.pool,
         user.id,

@@ -29,7 +29,9 @@ async fn profile_stars(
             "Unable to load this user's stars.",
         )
     };
-    let count = crate::discovery::stars::starred_count(ctx,target).await.map_err(|_| unavailable())?;
+    let count = crate::discovery::stars::starred_count(ctx, target)
+        .await
+        .map_err(|_| unavailable())?;
     if ctx.query.get("tab").map(String::as_str) != Some("stars") {
         return Ok(users::ProfileStars {
             count,

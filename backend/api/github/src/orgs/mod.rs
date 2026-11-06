@@ -343,9 +343,8 @@ async fn own_orgs(
         .await
         .map_err(Error::unavailable)?;
         remote.extend(native.iter().map(codeyard_webhooks::payloads::organization));
-        let (values, next) = codeyard_app::api_shared::github::pointers::page(
-            remote, "id", false, offset, limit,
-        )?;
+        let (values, next) =
+            codeyard_app::api_shared::github::pointers::page(remote, "id", false, offset, limit)?;
         codeyard_app::api_shared::github::pointers::recheck(&state.pool, &actor).await?;
         return page.response(&uri, values, next);
     }

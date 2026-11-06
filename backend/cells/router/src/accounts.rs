@@ -149,24 +149,38 @@ impl Home for Remote {
         Box::pin(async move {
             use codeyard_db_core::cells::pointers::List;
             page.validate()?;
-            ensure!(credential.is_none_or(|value| value.len() <= 4096) && (page.list.stars() || credential.is_some()), "Invalid resource credential");
+            ensure!(
+                credential.is_none_or(|value| value.len() <= 4096)
+                    && (page.list.stars() || credential.is_some()),
+                "Invalid resource credential"
+            );
             let cell = self
                 .routes
                 .cell(cell)
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("The resource cell is unavailable"))?;
-            let username = page.query.iter().find(|(key, _)| key == "username").map(|(_, value)| value.as_str()).unwrap_or("");
-            let encoded: String = url::form_urlencoded::byte_serialize(username.as_bytes()).collect();
+            let username = page
+                .query
+                .iter()
+                .find(|(key, _)| key == "username")
+                .map(|(_, value)| value.as_str())
+                .unwrap_or("");
+            let encoded: String =
+                url::form_urlencoded::byte_serialize(username.as_bytes()).collect();
             let star_path = if matches!(page.list, List::BrowserStars) {
                 format!("/api/users/{encoded}/starred")
-            } else { format!("/api/v3/users/{encoded}/starred") };
+            } else {
+                format!("/api/v3/users/{encoded}/starred")
+            };
             let (path, kind) = match page.list {
                 List::Organizations => ("/api/v3/user/orgs", ObjectKind::Organization),
                 List::GraphqlOrganizations => ("/api/graphql", ObjectKind::Organization),
                 List::Repositories => ("/api/v3/user/repos", ObjectKind::Repository),
                 List::BrowserRepositories => ("/", ObjectKind::Repository),
                 List::BrowserOrganizations => ("/settings/organizations", ObjectKind::Organization),
-                List::StarredRepositories | List::BrowserStars => (star_path.as_str(), ObjectKind::Repository),
+                List::StarredRepositories | List::BrowserStars => {
+                    (star_path.as_str(), ObjectKind::Repository)
+                }
             };
             let request = {
                 let mut query = url::form_urlencoded::Serializer::new(String::new());
@@ -204,18 +218,39 @@ impl Home for Remote {
                 if let Some(credential) = credential {
                     if browser {
                         codeyard_support::cells::Secret::cookie(credential)?;
-                        request = request.header(axum::http::header::COOKIE, format!("session_id={credential}"));
+                        request = request.header(
+                            axum::http::header::COOKIE,
+                            format!("session_id={credential}"),
+                        );
                     } else {
-                        request = request.header(axum::http::header::AUTHORIZATION, format!("Bearer {credential}"));
+                        request = request.header(
+                            axum::http::header::AUTHORIZATION,
+                            format!("Bearer {credential}"),
+                        );
                     }
                 }
-                request = request.header(axum::http::header::ACCEPT, if browser {
-                    "application/vnd.codeyard.page+json"
-                } else if page.list.stars() { "application/vnd.github.star+json" } else { "application/json" });
+                request = request.header(
+                    axum::http::header::ACCEPT,
+                    if browser {
+                        "application/vnd.codeyard.page+json"
+                    } else if page.list.stars() {
+                        "application/vnd.github.star+json"
+                    } else {
+                        "application/json"
+                    },
+                );
                 request.body(body)?
             };
-            ensure!(crate::selection::Credential::from_headers(request.headers(), "session_id")?.is_some() == credential.is_some(), "Invalid resource credential");
-            let response = self.http.forward(&cell, credential.unwrap_or(""), request).await?;
+            ensure!(
+                crate::selection::Credential::from_headers(request.headers(), "session_id")?
+                    .is_some()
+                    == credential.is_some(),
+                "Invalid resource credential"
+            );
+            let response = self
+                .http
+                .forward(&cell, credential.unwrap_or(""), request)
+                .await?;
             ensure!(
                 response.status().is_success(),
                 "Remote resource read is unavailable"
@@ -235,7 +270,10 @@ impl Home for Remote {
                 )
             } else if matches!(page.list, List::BrowserStars) {
                 let count = document["total"].as_i64();
-                ensure!(page.number != 1 || count.is_some_and(|count| count >= 0), "Invalid star count");
+                ensure!(
+                    page.number != 1 || count.is_some_and(|count| count >= 0),
+                    "Invalid star count"
+                );
                 count
             } else {
                 None

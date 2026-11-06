@@ -6,8 +6,8 @@ use sqlx::PgConnection;
 pub mod authorization;
 pub mod capacity;
 pub mod directory;
-pub mod pointers;
 pub mod outbox;
+pub mod pointers;
 pub mod stubs;
 
 /// Used by every native account/repository INSERT, including a cell with a later issuer range.

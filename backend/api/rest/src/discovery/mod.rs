@@ -24,7 +24,10 @@ pub fn router() -> Router<Arc<AppState>> {
         .cell_route("/explore", get(crate::discovery::explore::explore_page))
         .cell_route("/search", get(crate::discovery::search::search_page))
         .cell_route("/stars", get(crate::discovery::stars::stars_page))
-        .cell_route("/api/users/:username/starred", get(crate::discovery::stars::star_rows))
+        .cell_route(
+            "/api/users/:username/starred",
+            get(crate::discovery::stars::star_rows),
+        )
         .layer(DefaultBodyLimit::max(16 * 1024))
 }
 

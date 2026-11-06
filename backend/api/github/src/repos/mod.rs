@@ -738,8 +738,7 @@ async fn list(
             break;
         }
         if remote.is_some()
-            && scanned
-                >= codeyard_db_core::cells::pointers::Config::default().maximum_scan as i64
+            && scanned >= codeyard_db_core::cells::pointers::Config::default().maximum_scan as i64
         {
             return Err(Error::unavailable(anyhow::anyhow!(
                 "Membership scan exceeds its limit"

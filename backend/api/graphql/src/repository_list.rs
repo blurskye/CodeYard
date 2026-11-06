@@ -21,8 +21,7 @@ pub(super) async fn organizations(
     crate::connection::validate(ctx)?;
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
     let config = codeyard_db_core::cells::pointers::Config::default();
-    let mut budget =
-        codeyard_db_core::cells::pointers::Budget::new(config).map_err(unavailable)?;
+    let mut budget = codeyard_db_core::cells::pointers::Budget::new(config).map_err(unavailable)?;
     let mut nodes = Vec::new();
     let mut after = 0;
     loop {
@@ -71,12 +70,9 @@ pub(super) async fn organizations(
                 request.charge(serde_json::to_vec(&node).map_err(unavailable)?.len())?;
                 nodes.push(node);
             }
-            codeyard_app::api_shared::github::pointers::recheck(
-                &request.state.pool,
-                &request.auth,
-            )
-            .await
-            .map_err(unavailable)?;
+            codeyard_app::api_shared::github::pointers::recheck(&request.state.pool, &request.auth)
+                .await
+                .map_err(unavailable)?;
         }
     }
     nodes.sort_by_key(|node| node["databaseId"].as_i64());

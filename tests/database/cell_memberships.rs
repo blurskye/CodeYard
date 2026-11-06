@@ -80,9 +80,7 @@ async fn contract(pg: bool) {
         checks: AtomicUsize::new(0),
         fail: 3,
     };
-    assert!(pointers::apply(f.pool(), &event, &revoked)
-        .await
-        .is_err());
+    assert!(pointers::apply(f.pool(), &event, &revoked).await.is_err());
     assert_eq!(
         f.scalar(
             "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1",
@@ -123,10 +121,24 @@ async fn contract(pg: bool) {
     let read = async {
         match f.pool() {
             codeyard_db_core::DbPool::Postgres(pool) => {
-                pointers::postgres::Reader::homes(pool, user, Some(&actor), pointers::Kind::Membership, Default::default()).await
+                pointers::postgres::Reader::homes(
+                    pool,
+                    user,
+                    Some(&actor),
+                    pointers::Kind::Membership,
+                    Default::default(),
+                )
+                .await
             }
             codeyard_db_core::DbPool::Sqlite(pool) => {
-                pointers::sqlite::Reader::homes(pool, user, Some(&actor), pointers::Kind::Membership, Default::default()).await
+                pointers::sqlite::Reader::homes(
+                    pool,
+                    user,
+                    Some(&actor),
+                    pointers::Kind::Membership,
+                    Default::default(),
+                )
+                .await
             }
         }
     };
@@ -191,9 +203,7 @@ async fn contract(pg: bool) {
     );
     let mut conflict = removal.clone();
     conflict.change.active = true;
-    assert!(pointers::apply(f.pool(), &conflict, &gate)
-        .await
-        .is_err());
+    assert!(pointers::apply(f.pool(), &conflict, &gate).await.is_err());
     assert_eq!(
         f.scalar(
             "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active",
@@ -207,17 +217,41 @@ async fn contract(pg: bool) {
     star.change.kind = pointers::Kind::Star;
     pointers::apply(f.pool(), &star, &gate).await.unwrap();
     pointers::apply(f.pool(), &star, &gate).await.unwrap();
-    assert_eq!(f.scalar("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active AND kind='star'", &[user]).await, 1);
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active AND kind='star'",
+            &[user]
+        )
+        .await,
+        1
+    );
     assert_eq!(f.scalar("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active AND kind='membership'", &[user]).await, 0);
     let mut unstar = star.clone();
     unstar.id += 2;
     unstar.change.active = false;
-    let revoked = Gate { checks: AtomicUsize::new(0), fail: 3 };
+    let revoked = Gate {
+        checks: AtomicUsize::new(0),
+        fail: 3,
+    };
     assert!(pointers::apply(f.pool(), &unstar, &revoked).await.is_err());
-    assert_eq!(f.scalar("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active AND kind='star'", &[user]).await, 1);
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active AND kind='star'",
+            &[user]
+        )
+        .await,
+        1
+    );
     pointers::apply(f.pool(), &unstar, &gate).await.unwrap();
     pointers::apply(f.pool(), &star, &gate).await.unwrap();
-    assert_eq!(f.scalar("SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active AND kind='star'", &[user]).await, 0);
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM remote_pointers WHERE user_id=$1 AND active AND kind='star'",
+            &[user]
+        )
+        .await,
+        0
+    );
     star.change.object.kind = ObjectKind::Organization;
     assert!(pointers::apply(f.pool(), &star, &gate).await.is_err());
     let mut remote = codeyard_db_identity::users::accounts::get_user_by_id(f.pool(), user)
@@ -233,6 +267,116 @@ async fn contract(pg: bool) {
     codeyard_db_core::cells::stubs::user(f.pool(), Prefix::new(1), &remote)
         .await
         .unwrap();
+    let repository = codeyard_db_repos::repositories::records::create_repository(
+        f.pool(),
+        user,
+        "star-pointer-target",
+        None,
+        true,
+        &uuid::Uuid::new_v4().to_string(),
+    )
+    .await
+    .unwrap();
+    // Both baselines queue the resource effect and its pointer in the same transaction.
+    f.execute(
+        "INSERT INTO stars(user_id,repo_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+        &[remote.id, repository.id],
+    )
+    .await;
+    f.execute(
+        "INSERT INTO stars(user_id,repo_id) VALUES($1,$2) ON CONFLICT DO NOTHING",
+        &[remote.id, repository.id],
+    )
+    .await;
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM cell_outbox WHERE topic='pointer' AND root_id=$1",
+            &[repository.id]
+        )
+        .await,
+        1
+    );
+    assert_eq!(f.repository(repository.id).await.stars_count, 1);
+    let read_payload = async {
+        let sql =
+            "SELECT payload FROM cell_outbox WHERE topic='pointer' AND root_id=$1 ORDER BY id";
+        match f.pool() {
+            codeyard_db_core::DbPool::Postgres(pool) => sqlx::query_scalar::<_, String>(sql)
+                .bind(repository.id)
+                .fetch_all(pool)
+                .await
+                .unwrap(),
+            codeyard_db_core::DbPool::Sqlite(pool) => sqlx::query_scalar::<_, String>(sql)
+                .bind(repository.id)
+                .fetch_all(pool)
+                .await
+                .unwrap(),
+        }
+    }
+    .await;
+    let change: Change = serde_json::from_str(&read_payload[0]).unwrap();
+    assert_eq!(change.kind, pointers::Kind::Star);
+    assert!(change.active);
+    assert_eq!(change.object.id, repository.id);
+    assert_eq!(change.user_id, remote.id);
+    match f.pool() {
+        codeyard_db_core::DbPool::Postgres(pool) => {
+            let mut tx = pool.begin().await.unwrap();
+            sqlx::query("DELETE FROM stars WHERE user_id=$1 AND repo_id=$2")
+                .bind(remote.id)
+                .bind(repository.id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            tx.rollback().await.unwrap();
+        }
+        codeyard_db_core::DbPool::Sqlite(pool) => {
+            let mut tx = pool.begin().await.unwrap();
+            sqlx::query("DELETE FROM stars WHERE user_id=$1 AND repo_id=$2")
+                .bind(remote.id)
+                .bind(repository.id)
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            tx.rollback().await.unwrap();
+        }
+    }
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM cell_outbox WHERE topic='pointer' AND root_id=$1",
+            &[repository.id]
+        )
+        .await,
+        1
+    );
+    assert_eq!(f.repository(repository.id).await.stars_count, 1);
+    f.execute(
+        "DELETE FROM stars WHERE user_id=$1 AND repo_id=$2",
+        &[remote.id, repository.id],
+    )
+    .await;
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM cell_outbox WHERE topic='pointer' AND root_id=$1",
+            &[repository.id]
+        )
+        .await,
+        2
+    );
+    assert_eq!(f.repository(repository.id).await.stars_count, 0);
+    f.execute(
+        "INSERT INTO stars(user_id,repo_id) VALUES($1,$2)",
+        &[user, repository.id],
+    )
+    .await;
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM cell_outbox WHERE topic='pointer' AND root_id=$1",
+            &[repository.id]
+        )
+        .await,
+        2
+    );
     let mut hostile = event.clone();
     hostile.change.user_id = remote.id;
     assert!(pointers::apply(f.pool(), &hostile, &gate).await.is_err());

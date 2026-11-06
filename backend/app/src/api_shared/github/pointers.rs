@@ -32,9 +32,8 @@ pub async fn remote(
     }
     Ok(read(
         pool,
-        auth.user.id,
+        (auth.user.id, auth.user.is_stub),
         Some(&auth.database_actor()),
-        auth.user.is_stub,
         Some(credential),
         list,
         query,
@@ -59,7 +58,16 @@ pub async fn browser(
         return Err(github_auth::required());
     }
     codeyard_support::cells::Secret::cookie(session).map_err(|_| github_auth::required())?;
-    read(pool, actor.user_id, Some(actor), stub, Some(session), list, query, wanted).await
+    read(
+        pool,
+        (actor.user_id, stub),
+        Some(actor),
+        Some(session),
+        list,
+        query,
+        wanted,
+    )
+    .await
 }
 
 /// A star pointer selects candidates only; the original viewer authorizes every resource read.
@@ -79,12 +87,38 @@ pub async fn stars(
         use codeyard_db_core::queries::users::accounts::AccountCredential;
         let valid = match actor.credential() {
             Some(AccountCredential::Session(session)) => session == value,
-            Some(AccountCredential::Token(_, hash) | AccountCredential::ForeignToken(_, hash)) => codeyard_support::token_hash::token_hash(value) == hash,
+            Some(AccountCredential::Token(_, hash) | AccountCredential::ForeignToken(_, hash)) => {
+                codeyard_support::token_hash::token_hash(value) == hash
+            }
             _ => false,
         };
-        if !valid { return Err(github_auth::required()); }
+        if !valid {
+            return Err(github_auth::required());
+        }
     }
-    read(pool, owner.id, actor, owner.is_stub, credential, list, query, wanted).await
+    read(
+        pool,
+        (owner.id, owner.is_stub),
+        actor,
+        credential,
+        list,
+        query,
+        wanted,
+    )
+    .await
+}
+
+pub async fn recheck_stars(
+    pool: &DbPool,
+    owner: &codeyard_db_core::models::User,
+    actor: Option<&codeyard_db_core::queries::credentials::Actor>,
+) -> Result<()> {
+    if !owner.is_stub && pool.foreign_authorization().is_some() {
+        pointers::star_homes(pool, owner.id, actor, Config::default())
+            .await
+            .map_err(failure)?;
+    }
+    Ok(())
 }
 
 async fn homes(
@@ -95,22 +129,26 @@ async fn homes(
     config: Config,
 ) -> Result<Vec<codeyard_support::cells::Prefix>> {
     if list.stars() {
-        pointers::star_homes(pool, owner, actor, config).await.map_err(failure)
+        pointers::star_homes(pool, owner, actor, config)
+            .await
+            .map_err(failure)
     } else {
-        pointers::homes(pool, actor.ok_or_else(github_auth::required)?, config).await.map_err(failure)
+        pointers::homes(pool, actor.ok_or_else(github_auth::required)?, config)
+            .await
+            .map_err(failure)
     }
 }
 
 async fn read(
     pool: &DbPool,
-    owner: i64,
+    owner: (i64, bool),
     actor: Option<&codeyard_db_core::queries::credentials::Actor>,
-    stub: bool,
     credential: Option<&str>,
     list: List,
     query: Vec<(String, String)>,
     wanted: usize,
 ) -> Result<Option<PageResult>> {
+    let (owner, stub) = owner;
     if stub || pool.foreign_authorization().is_none() {
         return Ok(None);
     }
@@ -205,7 +243,9 @@ async fn read(
     Ok(Some(rows))
 }
 
-fn resource(row: &Value) -> &Value { row.get("repo").unwrap_or(row) }
+fn resource(row: &Value) -> &Value {
+    row.get("repo").unwrap_or(row)
+}
 
 pub fn page(
     mut values: Vec<Value>,
@@ -220,7 +260,11 @@ pub fn page(
         budget.add(value).map_err(Error::unavailable)?;
     }
     let mut seen = std::collections::HashSet::new();
-    values.retain(|row| resource(row)["id"].as_i64().is_some_and(|id| seen.insert(id)));
+    values.retain(|row| {
+        resource(row)["id"]
+            .as_i64()
+            .is_some_and(|id| seen.insert(id))
+    });
     values.sort_by(|left, right| {
         let a = resource(left);
         let b = resource(right);
@@ -249,8 +293,21 @@ pub fn page(
                     .or_else(|| row["created_at"].as_str())
                     .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
             };
-            if sort == "starred" { date(left).cmp(&date(right)) } else { date(a).cmp(&date(b)) }
+            if sort == "starred" {
+                date(left).cmp(&date(right))
+            } else {
+                date(a).cmp(&date(b))
+            }
         }
+        .then_with(|| {
+            if sort == "stars" && left.get("repo").is_some() {
+                left["starred_at"]
+                    .as_str()
+                    .cmp(&right["starred_at"].as_str())
+            } else {
+                std::cmp::Ordering::Equal
+            }
+        })
         .then(a["id"].as_i64().cmp(&b["id"].as_i64()));
         if descending {
             order.reverse()
@@ -267,4 +324,26 @@ pub async fn recheck(pool: &DbPool, auth: &Authentication) -> Result<()> {
         .await
         .map_err(failure)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn star_pages_merge_by_star_time_and_keep_independent_pages() {
+        let row = |id, at| serde_json::json!({"repo":{"id":id,"created_at":"2020-01-01T00:00:00Z","stargazers_count":1},"starred_at":at});
+        let rows = vec![
+            row(2, "2026-01-01T00:00:00Z"),
+            row(1, "2026-02-01T00:00:00Z"),
+            row(2, "2026-01-01T00:00:00Z"),
+        ];
+        let (first, more) = page(rows.clone(), "starred", true, 0, 1).unwrap();
+        assert!(more);
+        assert_eq!(first[0]["repo"]["id"], 1);
+        let (second, more) = page(rows.clone(), "starred", true, 1, 1).unwrap();
+        assert!(!more);
+        assert_eq!(second[0]["repo"]["id"], 2);
+        let (stars, _) = page(rows, "stars", true, 0, 2).unwrap();
+        assert_eq!(stars[0]["repo"]["id"], 1);
+    }
 }
