@@ -303,7 +303,146 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     `is_private`; App, fine-grained, job and foreign-session credentials see no private hits
     from other cells; an org that refuses classic tokens hides its other-cell hits from every
     whole-account credential, including ones that policy would exempt.
-    Stage 6 remains unwritten; automatic user moves are a documented owner decision. Owner follow-ups, outside this acceptance work:
+    Stage 6, item 1: every table of both baselines has one ownership decision in
+    `backend/db/core/src/cells/ownership.rs`, and `every_table_has_an_ownership_rule` fails
+    when a table has none or names a missing column or table. A row belongs to its first
+    non-null reference: an account column, a repository column (the repository's owner),
+    or a parent row. The decisions, by first reference (columns in brackets, `a>b` is a
+    parent row in table b):
+
+    - **Repository first, 120:** action_runner_group_repositories (repo_id);
+      action_runner_remove_tokens (repo_id, org_id); action_runner_tokens (repo_id, org_id);
+      action_runners (repo_id, org_id); actions_concurrency_groups (repo_id);
+      actions_job_concurrency (repo_id); actions_log_downloads (repo_id); actions_objects
+      (repo_id); actions_oidc_repo_settings (repo_id); actions_policies (repo_id, org_id);
+      actions_run_concurrency (repo_id); actions_workflows (repo_id); artifact_attestations
+      (repo_id); artifact_metadata (repo_id); branch_protection_rules (repo_id);
+      branch_redirects (repo_id); check_runs (repo_id); check_suite_preferences (repo_id);
+      check_suites (repo_id); ci_accepted_pushes (repo_id); ci_deployments (repo_id); ci_runs
+      (repo_id); ci_schedule_runs (repo_id); code_scanning_alert_counters (repo_id);
+      code_scanning_alerts (repo_id); code_scanning_analyses (repo_id); code_scanning_uploads
+      (repo_id); codeql_databases (repo_id); commit_comments (repo_id); commit_status_history
+      (repo_id); commit_statuses (repo_id); dependabot_alerts (repo_id); dependency_sbom_reports
+      (repo_id); dependency_snapshots (repo_id); deploy_keys (repo_id); deployment_environments
+      (repo_id); discussion_categories (repo_id); discussions (repo_id); events (repo_id);
+      gist_comments (repo_id); gist_stars (repo_id); gists (repo_id);
+      immutable_release_publications (repo_id); immutable_release_repository_names (repo_id);
+      interaction_contributors (repo_id); interaction_limits (repo_id, org_id, user_id);
+      interaction_pull_bypass (repo_id); interaction_pull_caps (repo_id, org_id);
+      issue_linked_branches (repo_id); issue_redirects (repo_id); issues (repo_id); labels
+      (repo_id); milestones (repo_id); org_actions_value_repositories (repo_id);
+      org_dependabot_access_repositories (repo_id); org_dependabot_secret_repositories
+      (repo_id); organization_external_property_values (repo_id);
+      organization_immutable_release_repositories (repo_id); pages_builds (id);
+      pages_deployments (id); pages_sites (repo_id); pinned_issues (repo_id); project_items
+      (repo_id); project_repositories (repo_id); pull_request_async_merges (repo_id);
+      pull_request_stacks (repo_id); pull_requests (repo_id); reactions (repo_id); releases
+      (repo_id); remote_pull_requests (base_repo_id); repo_access (repo_id); repo_actions_keys
+      (repo_id); repo_actions_settings (repo_id); repo_actions_variables (repo_id);
+      repo_dependabot_keys (repo_id); repo_dependabot_secrets (repo_id); repo_environment_values
+      (repo_id); repo_languages (repo_id); repo_secrets (repo_id); repositories (id);
+      repository_advisories (repo_id); repository_autolinks (repo_id);
+      repository_dependency_security (repo_id); repository_deployments (repo_id);
+      repository_discussion_counters (repo_id); repository_discussion_settings (repo_id);
+      repository_features (repo_id); repository_immutable_releases (repo_id);
+      repository_import_authors (repo_id); repository_imports (repo_id); repository_invitations
+      (repo_id); repository_issue_suggestions (repo_id); repository_merge_epochs (repo_id);
+      repository_migration_locks (repo_id); repository_private_reporting (repo_id);
+      repository_property_values (repo_id); repository_pushes (repo_id);
+      repository_ref_activities (repo_id); repository_rule_suites (repo_id, org_id);
+      repository_rulesets (owner_repo_id, owner_org_id); repository_security_reports (repo_id);
+      repository_security_settings (repo_id); repository_star_days (repo_id); repository_topics
+      (repo_id); repository_traffic_counts (repo_id); repository_traffic_keys (repo_id);
+      repository_traffic_visitors (repo_id); secret_scanning_alerts (repo_id);
+      secret_scanning_bypasses (repo_id); secret_scanning_commits (repo_id);
+      secret_scanning_jobs (repo_id); secret_scanning_locations (repo_id);
+      secret_scanning_patterns (repo_id, org_id); secret_scanning_settings (repo_id); stars
+      (repo_id); team_repo_access (repo_id); timeline_events (repo_id); vulnerability_jobs
+      (repo_id); watches (repo_id); webhooks (repo_id, org_id).
+    - **Account first, 58:** action_runner_groups (org_id); actions_oidc_org_settings (org_id);
+      artifact_metadata_jobs (org_id); artifact_metadata_records (org_id); audit_log (org_id);
+      cell_presence (organization_id); code_security_configurations (org_id); email_tokens
+      (user_id); follows (following_id); github_app_installations (org_id, user_id);
+      github_app_manifests (user_id); github_app_requests (org_id, user_id); github_apps
+      (owner_id); gpg_keys (user_id); immutable_release_owner_names (owner_id);
+      issue_attribute_guard (owner_user_id, owner_org_id); issue_attributes (owner_user_id,
+      owner_org_id); notification_threads (user_id); notifications (user_id); oauth_accounts
+      (user_id); oauth_app_grants (user_id); oauth_applications (owner_id); org_actions_keys
+      (org_id); org_actions_settings (org_id); org_actions_values (org_id);
+      org_dependabot_access (org_id); org_dependabot_keys (org_id); org_dependabot_secrets
+      (org_id); org_memberships (org_id); org_private_registries (org_id); organization_blocks
+      (org_id); organization_external_property_installations (org_id);
+      organization_immutable_releases (org_id); organization_invitations (org_id);
+      organization_member_history (org_id); organization_repository_properties (org_id);
+      organization_role_assignments (org_id); organization_settings (org_id);
+      organization_token_policies (org_id); organizations (id); packages (owner_user_id,
+      owner_org_id); personal_access_tokens (user_id); projects (owner_user_id, owner_org_id);
+      registry_namespaces (owner_user_id, owner_org_id); remote_pointers (user_id);
+      repository_exports (owner_user_id, owner_org_id); secret_scanning_pattern_configs
+      (org_id); sessions (user_id); ssh_keys (user_id); ssh_signing_keys (user_id); teams
+      (org_id); two_factor_auth (user_id); two_factor_recovery_codes (user_id); user_blocks
+      (user_id); user_emails (user_id); user_profile_settings (user_id); user_social_accounts
+      (user_id); users (id).
+    - **Parent row, 73:** actions_blob_grants (object_id>actions_objects); actions_blob_parts
+      (object_id>actions_objects); actions_deployment_reviews (run_id>ci_runs);
+      actions_github_tokens (run_id>ci_runs); actions_job_annotations (job_id>actions_jobs);
+      actions_job_states (run_id>ci_runs); actions_jobs (run_id>ci_runs); actions_oidc_jobs
+      (token_id>personal_access_tokens); actions_oidc_properties
+      (definition_id>organization_repository_properties); actions_replays (run_id>ci_runs);
+      actions_run_metadata (run_id>ci_runs); actions_runtime_tokens (run_id>ci_runs);
+      actions_step_summaries (job_id>actions_jobs); actions_steps (job_id>actions_jobs);
+      activity_feed_tokens (api_token_id>personal_access_tokens); attestation_subjects
+      (attestation_id>artifact_attestations); check_annotations (run_id>check_runs);
+      ci_log_chunks (run_id>ci_runs); code_scanning_analysis_findings
+      (analysis_id>code_scanning_analyses); code_scanning_instances
+      (alert_id>code_scanning_alerts); deployment_branch_policies
+      (environment_id>deployment_environments); deployment_protection_gates (run_id>ci_runs);
+      deployment_protection_rules (environment_id>deployment_environments); deployment_statuses
+      (deployment_id>repository_deployments); discussion_comments (discussion_id>discussions);
+      discussion_labels (discussion_id>discussions); fine_grained_token_repositories
+      (token_id>fine_grained_tokens); fine_grained_tokens (token_id>personal_access_tokens);
+      github_app_callbacks (app_id>github_apps); github_app_deliveries
+      (webhook_id>github_app_hooks); github_app_hooks (app_id>github_apps);
+      github_app_repositories (installation_id>github_app_installations); github_app_tokens
+      (token_id>personal_access_tokens); issue_assignees (issue_id>issues);
+      issue_attribute_options (attribute_id>issue_attributes); issue_comment_pins
+      (issue_id>issues); issue_comments (issue_id>issues); issue_duplicates (issue_id>issues);
+      issue_field_values (issue_id>issues); issue_labels (issue_id>issues); issue_relation_guard
+      (source_id>issues); issue_relations (source_id>issues); issue_suggestions
+      (issue_id>issues); issue_type_assignments (issue_id>issues);
+      notification_thread_subscriptions (thread_id>notification_threads); oauth_app_tokens
+      (token_id>personal_access_tokens); package_blob_grants (package_id>packages);
+      package_files (package_id>packages); package_registry_tokens
+      (token_id>personal_access_tokens); package_tags (package_id>packages); package_uploads
+      (package_id>packages); package_version_blobs (version_id>package_versions);
+      package_versions (package_id>packages); pr_assignees (pull_request_id>pull_requests);
+      pr_comment_pins (pull_request_id>pull_requests); pr_comments
+      (pull_request_id>pull_requests); pr_labels (pull_request_id>pull_requests); pr_reviewers
+      (pull_request_id>pull_requests); pr_reviews (pull_request_id>pull_requests);
+      pr_team_reviewers (pull_request_id>pull_requests); project_fields (project_id>projects);
+      project_teams (project_id>projects); project_views (project_id>projects);
+      pull_request_auto_merges (pull_request_id>pull_requests); pull_request_viewed_files
+      (pull_request_id>pull_requests); release_assets (release_id>releases); release_discussions
+      (release_id>releases); repository_ruleset_versions (ruleset_id>repository_rulesets);
+      repository_security_replies (report_id>repository_security_reports); team_ancestors
+      (team_id>teams); team_invitations (team_id>teams); team_memberships (team_id>teams);
+      webhook_deliveries (webhook_id>webhooks).
+    - **Cell (never moves), 40:** actions_oidc_key; actions_settings; anonymous_sessions;
+      auth_login_limits; cell_outbox; cell_prefixes; cell_region_policy; cell_request_counts;
+      cluster_leases; cluster_scaling_policies; cluster_ssh_host_key; download_rate_limit;
+      email_outbox; email_settings; file_reason_limits; foreign_credentials; github_api_limits;
+      graphql_rate_limits; join_tokens; node_configuration; node_drain_repositories; nodes;
+      notification_events; oauth_states; pending_object_deletions; repo_language_cache;
+      repo_storage_history; repository_committed_refs; repository_move_nodes; repository_moves;
+      repository_replicas; repository_voters; repository_write_control; repository_write_refs;
+      repository_write_votes; repository_writes; signup_requests; storage_object_copies;
+      upload_rate_limit; vulnerability_settings.
+    - **Shared (copied when a moved row points at it), 12:** attestation_bundles;
+      check_run_identities; files; gist_identifiers; global_advisories; organization_roles;
+      osv_advisories; osv_packages; package_blobs; signature_verifications; storage_objects;
+      topics.
+
+    Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
     scheduled bounded expired directory-claim collection.
 
