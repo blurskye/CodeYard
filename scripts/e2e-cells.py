@@ -328,7 +328,9 @@ def acceptance(deployment):
         client.git("remote", "add", "origin", deployment.base + "/alice/shared.git")
         client.git("push", "origin", "main", git_auth=True)
         invitation = client.api("repos/alice/shared/collaborators/bob", "--method", "PUT", "-f", "permission=push")
-        client.api(f"user/repository_invitations/{invitation['id']}", "--method", "PATCH", who="bob")
+        accepted = client.gh("api", f"user/repository_invitations/{invitation['id']}",
+                             "--method", "PATCH", "--include", who="bob")
+        assert re.match(r"HTTP/\S+ 204(?: |$)", accepted.stdout), accepted.stdout
         client.checked("cell one collaborator accepts the cell zero repository invitation")
         deadline = time.monotonic() + 30
         while not any(repo["full_name"] == "alice/shared" for repo in client.api("user/repos", who="bob")):

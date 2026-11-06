@@ -175,8 +175,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     and an AST-based source guard pass workspace e61baa09e6034fafa8a91863eaf3311d,
     Clippy c27f3283f3184921b50ac3b9e0133afe and WASM 82d549a4627049fa85f94f2e34842033.
     Runtime c1b52bba8227426b9bd3d054d5c85bb1 covers REST, the route guard, all cluster
-    tests and the real public cells round. The next snapshot adds actual browser
-    JavaScript precision assertions for cell-1 account and repository IDs.
+    tests and the real public cells round. HTTP Git push and foreign invitation
+    creation/acceptance pass; the fixture then tries to JSON-decode the successful
+    empty 204 response. Its fix asserts the gh HTTP status directly. The next snapshot
+    also adds browser JavaScript precision checks for cell-1 account/repository IDs.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:
