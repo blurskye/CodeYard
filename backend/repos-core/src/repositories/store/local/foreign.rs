@@ -1,7 +1,7 @@
 //! A foreign fork stages fetched objects privately and uses the normal copy publisher.
 use super::*;
 use crate::repositories::store::{fork_pack_bytes, CopyOptions, RepoStore};
-use codeyard_db_core::cells::repositories::Admission;
+use codeyard_db_core::cells::{pulls::HeadRequest, repositories::Admission};
 use tokio::io::AsyncWriteExt;
 
 impl LocalStore {
@@ -140,6 +140,79 @@ impl LocalStore {
         .await
         .map_err(|_| RepoError::storage_node_unavailable())?
     }
+    pub(in crate::repositories::store) async fn follow_foreign_pull_head(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        repository: i64,
+        request: &HeadRequest,
+        expected_head: Option<&str>,
+    ) -> Result<Option<String>, RepoError> {
+        tokio::time::timeout(crate::wire::TIMEOUT, async {
+            self.admitted_path(true).await?;
+            let base =
+                codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository)
+                    .await
+                    .map_err(|_| RepoError::authority_unavailable())?
+                    .ok_or_else(RepoError::write_denied)?;
+            if base.is_stub || !repository_matches_path(&base, self.path(), self.node_id) {
+                return Err(RepoError::write_denied());
+            }
+            let binding = &request.binding;
+            let source = PullHeadSource::Followed(binding);
+            let actor = crate::store_types::PullHeadActor {
+                user: request.publisher_id,
+                token: None,
+            };
+            source
+                .check(pool, repository, binding.head_repo_id, actor)
+                .await?;
+            let parent = self
+                .path()
+                .parent()
+                .ok_or_else(|| unavailable("Invalid repository path"))?;
+            let Some((temporary, snapshot)) =
+                stage_export(parent, pool, Export::Pull(request)).await?
+            else {
+                return Ok(None);
+            };
+            let Some(head) = snapshot
+                .refs
+                .get(&format!("refs/heads/{}", binding.head_branch))
+                .cloned()
+            else {
+                return Ok(None);
+            };
+            let current = git::repository::current_pull_head(self.path(), binding.number)
+                .await
+                .map_err(RepoError::from)?;
+            if current.as_deref() == Some(head.as_str()) {
+                return Ok(Some(head));
+            }
+            if current.as_deref() != expected_head {
+                return Err(RepoError::from(anyhow::Error::new(
+                    git::repository::PullHeadConflict,
+                )));
+            }
+            let prepared = git::repository::prepare_pull_head(self.path(), temporary.path(), &head)
+                .await
+                .map_err(RepoError::from)?;
+            self.publish_prepared_pull_head(
+                pool,
+                repository,
+                binding.head_repo_id,
+                actor,
+                source,
+                binding.number,
+                &head,
+                expected_head,
+                prepared,
+            )
+            .await?;
+            Ok(Some(head))
+        })
+        .await
+        .map_err(|_| RepoError::storage_node_unavailable())?
+    }
     pub(in crate::repositories::store) async fn initialize_foreign_copy(
         &self,
         pool: &codeyard_db_core::DbPool,
@@ -217,6 +290,34 @@ pub(super) async fn stage(
     ),
     RepoError,
 > {
+    let mut request = admission
+        .snapshot_request(
+            default_branch_only,
+            fork_pack_bytes().map_err(RepoError::from)?,
+        )
+        .map_err(RepoError::from)?;
+    request.branch = branch.map(str::to_owned);
+    stage_export(parent, pool, Export::Fork(&request))
+        .await?
+        .ok_or_else(RepoError::authority_unavailable)
+}
+
+pub(super) enum Export<'a> {
+    Fork(&'a codeyard_db_core::cells::repositories::SnapshotRequest),
+    Pull(&'a HeadRequest),
+}
+
+async fn stage_export(
+    parent: &Path,
+    pool: &codeyard_db_core::DbPool,
+    export: Export<'_>,
+) -> Result<
+    Option<(
+        tempfile::TempDir,
+        codeyard_db_core::cells::repositories::Snapshot,
+    )>,
+    RepoError,
+> {
     let temporary = tempfile::Builder::new()
         .prefix(".fork-")
         .tempdir_in(parent)
@@ -227,22 +328,34 @@ pub(super) async fn stage(
         pack.reopen()
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?,
     );
-    let mut request = admission
-        .snapshot_request(
-            default_branch_only,
-            fork_pack_bytes().map_err(RepoError::from)?,
-        )
-        .map_err(RepoError::from)?;
-    request.branch = branch.map(str::to_owned);
-    request.validate().map_err(RepoError::from)?;
     let provider = pool
         .foreign_authorization()
         .ok_or_else(RepoError::authority_unavailable)?;
-    let snapshot = provider
-        .snapshot(&request, &mut output)
-        .await
-        .map_err(RepoError::from)?;
-    snapshot.validate(&request).map_err(RepoError::from)?;
+    let snapshot = match export {
+        Export::Fork(request) => {
+            request.validate().map_err(RepoError::from)?;
+            let snapshot = provider
+                .snapshot(request, &mut output)
+                .await
+                .map_err(RepoError::from)?;
+            snapshot.validate(request).map_err(RepoError::from)?;
+            snapshot
+        }
+        Export::Pull(request) => {
+            request.validate().map_err(RepoError::from)?;
+            let Some(snapshot) = provider
+                .pull_snapshot(request, &mut output)
+                .await
+                .map_err(RepoError::from)?
+            else {
+                return Ok(None);
+            };
+            request
+                .validate_snapshot(&snapshot)
+                .map_err(RepoError::from)?;
+            snapshot
+        }
+    };
     output
         .flush()
         .await
@@ -261,5 +374,5 @@ pub(super) async fn stage(
     staged.initialize(None, &snapshot.default_branch).await?;
     staged.index_pack(pack.path(), true).await?;
     staged.set_refs(&snapshot.refs).await?;
-    Ok((temporary, snapshot))
+    Ok(Some((temporary, snapshot)))
 }

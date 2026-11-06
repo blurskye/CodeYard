@@ -190,9 +190,14 @@ impl RpcHandler {
                     let write = codeyard_db_cluster::cluster::writes::load_write(self.context.database()?, id).await.map_err(RepoError::from)?.ok_or_else(unavailable)?;
                     (Value::Null, write_targets(&write).map_err(RepoError::from)?)
                 }
-                Operation::ForkPack { authority, default_branch_only, branch } => {
-                    let snapshot = store.fork_listing(self.context.database()?, authority,
-                        repo_id.ok_or_else(unavailable)?, *default_branch_only, branch.as_deref()).await.map_err(RepoError::from)?;
+                Operation::ForkPack { authority, default_branch_only, branch, publisher } => {
+                    let pool = self.context.database()?;
+                    let repo_id = repo_id.ok_or_else(unavailable)?;
+                    let snapshot = match (*publisher, branch.as_deref()) {
+                        (true, Some(branch)) => store.pull_listing(pool, authority.user_id, repo_id, branch).await,
+                        (true, None) => Err(anyhow::anyhow!("Pull export requires its branch")),
+                        (false, _) => store.fork_listing(pool, authority, repo_id, *default_branch_only, branch.as_deref()).await,
+                    }.map_err(RepoError::from)?;
                     let targets = snapshot.refs.values().cloned().collect();
                     (serde_json::to_value(snapshot).map_err(|_| unavailable())?, targets)
                 }

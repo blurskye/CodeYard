@@ -130,7 +130,12 @@ async fn publish_created_head(
                 &pull.head_sha,
                 None,
             )
+            .await?;
+        // Later pushes follow only after the head cell holds the publisher's consent.
+        foreign
+            .subscribe_pull(pool, base.id, pull.number, &pull.head_branch)
             .await
+            .map_err(RepoError::from)
     } else {
         store
             .fetch_pull_head(

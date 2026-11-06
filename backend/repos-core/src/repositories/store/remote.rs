@@ -336,6 +336,7 @@ impl RemoteStore {
                         authority: actor.clone(),
                         default_branch_only,
                         branch: branch.map(str::to_owned),
+                        publisher: actor.credential.is_none(),
                     },
                     actor: Some(actor.user_id),
                     ci_run: None,

@@ -195,6 +195,28 @@ impl Admission {
         request.validate()?;
         Ok(request)
     }
+    /// The head cell records this publisher's consent to follow `branch` with the
+    /// original credential; repeating it is harmless.
+    pub async fn subscribe_pull(
+        &self,
+        pool: &crate::DbPool,
+        base_repo_id: i64,
+        number: i32,
+        branch: &str,
+    ) -> Result<()> {
+        let binding = super::pulls::Binding {
+            base_repo_id,
+            number,
+            head_repo_id: self.source.repository.id,
+            head_branch: branch.to_owned(),
+        };
+        binding.validate()?;
+        let proof = self.proof()?;
+        pool.foreign_authorization()
+            .ok_or_else(|| anyhow::anyhow!("Pull head cell is unavailable"))?
+            .send_pull(&binding, &proof)
+            .await
+    }
     pub async fn check(&self, pool: &crate::DbPool) -> Result<Source> {
         let source = self.read(pool).await?;
         ensure!(

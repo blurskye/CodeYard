@@ -1082,6 +1082,155 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .unwrap()
         .is_none()
     );
+    // A push to the fork in cell one moves the pull request in cell zero.
+    let moved = client.put(format!("{}/api/v3/repos/bob/http-fork/contents/followed.txt", bob_http.url()))
+        .bearer_auth(&value).json(&serde_json::json!({"branch":"foreign-topic", "message":"Followed head", "content":"Zm9sbG93ZWQK"}))
+        .send().await.unwrap();
+    let status = moved.status();
+    let moved: serde_json::Value = moved.json().await.unwrap();
+    assert_eq!(status, 201, "{moved}");
+    let followed_tip = moved["commit"]["sha"].as_str().unwrap().to_owned();
+    let push_event: i64 = sqlx::query_scalar("SELECT id FROM cell_outbox WHERE topic='repository.push' AND root_id=$1 AND delivered_at IS NULL ORDER BY id DESC LIMIT 1")
+        .bind(fork_id).fetch_one(&one.raw).await.unwrap();
+    let refreshes = codeyard_app::cells::Refreshes {
+        state: codeyard_app::app::AppState::new(
+            zero.pool.clone(),
+            root.path().to_owned(),
+            Arc::new(
+                codeyard_storage::ObjectStore::open(root.path(), None)
+                    .await
+                    .unwrap(),
+            ),
+            None,
+            codeyard_ci::config::CiConfig::default(),
+            None,
+        ),
+    };
+    let drain = |pool: &codeyard_db_core::DbPool| {
+        let pool = pool.clone();
+        let refreshes = &refreshes;
+        async move {
+            for _ in 0..50 {
+                if !codeyard_db_core::cells::outbox::deliver_with(&pool, refreshes)
+                    .await
+                    .unwrap()
+                {
+                    return;
+                }
+            }
+            panic!("cell outbox did not drain");
+        }
+    };
+    drain(&one.pool).await;
+    drain(&zero.pool).await;
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM cell_outbox WHERE delivered_at IS NULL AND topic IN ('repository.push','pull.refresh')")
+        .fetch_one(&one.raw).await.unwrap() + sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM cell_outbox WHERE delivered_at IS NULL AND topic IN ('repository.push','pull.refresh')")
+        .fetch_one(&zero.raw).await.unwrap(), 0);
+    let followed = |number: i32| {
+        let repository = repository.clone();
+        async move {
+            codeyard_repos_core::repositories::store::repo_store(&repository, None)
+                .commit(&format!("refs/pull/{number}/head"))
+                .await
+                .unwrap()
+                .sha
+        }
+    };
+    assert_eq!(followed(number).await, followed_tip);
+    let stored_pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
+        &zero.pool,
+        created_pull["id"].as_i64().unwrap(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(stored_pull.head_sha, followed_tip);
+    let listed = client
+        .get(format!(
+            "{}/api/v3/repos/alice/private/pulls/{number}",
+            http.url()
+        ))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap()
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(listed["head"]["sha"], followed_tip.as_str());
+    // The same event delivered twice queues no second refresh.
+    let pushed_event: serde_json::Value = serde_json::from_str(
+        &sqlx::query_scalar::<_, String>("SELECT payload FROM cell_outbox WHERE id=$1")
+            .bind(push_event)
+            .fetch_one(&one.raw)
+            .await
+            .unwrap(),
+    )
+    .unwrap();
+    one.pool
+        .foreign_authorization()
+        .unwrap()
+        .send_push(&codeyard_db_core::cells::pulls::Event {
+            id: push_event,
+            change: serde_json::from_value(pushed_event).unwrap(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM cell_outbox WHERE delivered_at IS NULL AND topic='pull.refresh'"
+        )
+        .fetch_one(&zero.raw)
+        .await
+        .unwrap(),
+        0
+    );
+    // The head cell streams the branch only to the recorded publisher of a live binding.
+    let binding = codeyard_db_core::cells::pulls::Binding {
+        base_repo_id: repository.id,
+        number,
+        head_repo_id: fork_id,
+        head_branch: "foreign-topic".into(),
+    };
+    for (binding, publisher_id) in [
+        (binding.clone(), alice.id),
+        (
+            codeyard_db_core::cells::pulls::Binding {
+                number: number + 1000,
+                ..binding.clone()
+            },
+            user.id,
+        ),
+        (
+            codeyard_db_core::cells::pulls::Binding {
+                head_branch: "main".into(),
+                ..binding.clone()
+            },
+            user.id,
+        ),
+    ] {
+        let request = codeyard_db_core::cells::pulls::HeadRequest {
+            binding,
+            publisher_id,
+            maximum_bytes: 1 << 26,
+            timeout_seconds: 30,
+        };
+        let mut sink = Vec::new();
+        let refused = zero
+            .pool
+            .foreign_authorization()
+            .unwrap()
+            .pull_snapshot(&request, &mut sink)
+            .await;
+        assert!(!matches!(refused, Ok(Some(_))), "{request:?}");
+        assert!(sink.is_empty(), "{request:?}");
+    }
+    // A push that the base already holds leaves the pull request where it is.
+    let unchanged = codeyard_db_core::cells::outbox::deliver_with(&zero.pool, &refreshes)
+        .await
+        .unwrap();
+    assert!(!unchanged);
+    assert_eq!(followed(number).await, followed_tip);
     let source_by_id = zero
         .pool
         .foreign_authorization()

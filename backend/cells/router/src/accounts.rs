@@ -45,6 +45,16 @@ enum Request {
     },
     Snapshot(codeyard_db_core::cells::repositories::SnapshotRequest),
     Pointer(codeyard_db_core::cells::pointers::Event),
+    Push(codeyard_db_core::cells::pulls::Event),
+    Subscribe {
+        binding: codeyard_db_core::cells::pulls::Binding,
+        proof: Proof,
+    },
+    PullGrant {
+        binding: codeyard_db_core::cells::pulls::Binding,
+        proof: Option<Proof>,
+    },
+    PullSnapshot(codeyard_db_core::cells::pulls::HeadRequest),
 }
 #[derive(Serialize, Deserialize)]
 #[serde(
@@ -58,6 +68,8 @@ enum Reply {
     User(Option<Box<User>>),
     RepositorySource(Option<Box<codeyard_db_core::cells::repositories::Source>>),
     Snapshot(codeyard_db_core::cells::repositories::Snapshot),
+    PullSnapshot(Option<codeyard_db_core::cells::repositories::Snapshot>),
+    PullGrant(Option<codeyard_db_core::cells::pulls::Grant>),
     Done,
     Unavailable,
 }
@@ -96,6 +108,59 @@ impl Remote {
     }
 }
 impl Remote {
+    async fn stream(
+        &self,
+        cell: &ReadyCell,
+        request: &Request,
+        reader: i64,
+        output: &mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+        maximum: u64,
+        seconds: u64,
+    ) -> Result<Reply> {
+        let address = cell
+            .rpc_addresses
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("Source has no RPC listener"))?
+            .parse()?;
+        for public in &cell.node_keys {
+            let Ok(public) = codeyard_support::node_identity::parse_public_key(public) else {
+                continue;
+            };
+            let candidate = rpc::Client::new(
+                self.key.clone(),
+                address,
+                public,
+                ALPN,
+                rpc::Config {
+                    maximum_bytes: 128 * 1024,
+                    ..Default::default()
+                },
+            )?;
+            // Select a live pinned key before writing anything into the owned pack.
+            if !matches!(
+                candidate
+                    .request::<_, Reply>(&Request::UserId(reader))
+                    .await,
+                Ok(Reply::User(_))
+            ) {
+                continue;
+            }
+            return candidate
+                .response_stream(request, output, maximum, seconds)
+                .await;
+        }
+        anyhow::bail!("Source is unavailable")
+    }
+    async fn roots(&self, source: Object, target: Object) -> Result<(ReadyCell, ReadyCell)> {
+        source.validate()?;
+        target.validate()?;
+        let (source, target) =
+            tokio::try_join!(self.routes.by_object(source), self.routes.by_object(target))?;
+        Ok((
+            source.ok_or_else(|| anyhow::anyhow!("Source home is unavailable"))?,
+            target.ok_or_else(|| anyhow::anyhow!("Target home is unavailable"))?,
+        ))
+    }
     async fn source(
         &self,
         proof: &Proof,
@@ -229,6 +294,145 @@ impl Remote {
     }
 }
 impl Home for Remote {
+    fn send_push<'a>(
+        &'a self,
+        event: &'a codeyard_db_core::cells::pulls::Event,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            event.validate()?;
+            let _slot = self.slots.clone().try_acquire_owned()?;
+            // A deleted resource has no consumer; a directory outage still retries.
+            let (source, target) = tokio::try_join!(
+                self.routes.by_object(event.change.head()),
+                self.routes.by_object(event.change.base())
+            )?;
+            let (Some(source), Some(target)) = (source, target) else {
+                return Ok(());
+            };
+            let issuer = self
+                .routes
+                .cell(codeyard_support::cells::Prefix::for_id(event.id)?)
+                .await?;
+            if issuer.is_none_or(|issuer| issuer.id != source.id) {
+                return Ok(());
+            }
+            ensure!(
+                matches!(
+                    self.exchange(&target, &Request::Push(event.clone()))
+                        .await?,
+                    Reply::Done
+                ),
+                "Push delivery is unavailable"
+            );
+            Ok(())
+        })
+    }
+    fn send_pull<'a>(
+        &'a self,
+        binding: &'a codeyard_db_core::cells::pulls::Binding,
+        proof: &'a Proof,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            binding.validate()?;
+            proof.validate()?;
+            let _slot = self.slots.clone().try_acquire_owned()?;
+            let (_, target) = self.roots(binding.base(), binding.head()).await?;
+            ensure!(
+                matches!(
+                    self.exchange(
+                        &target,
+                        &Request::Subscribe {
+                            binding: binding.clone(),
+                            proof: proof.clone()
+                        }
+                    )
+                    .await?,
+                    Reply::Done
+                ),
+                "Pull subscription is unavailable"
+            );
+            Ok(())
+        })
+    }
+    fn pull_grant<'a>(
+        &'a self,
+        binding: &'a codeyard_db_core::cells::pulls::Binding,
+        proof: Option<&'a Proof>,
+    ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::pulls::Grant>>> {
+        Box::pin(async move {
+            binding.validate()?;
+            if let Some(proof) = proof {
+                proof.validate()?;
+            }
+            let _slot = self.slots.clone().try_acquire_owned()?;
+            let (source, target) = self.roots(binding.head(), binding.base()).await?;
+            let Reply::PullGrant(grant) = self
+                .exchange(
+                    &target,
+                    &Request::PullGrant {
+                        binding: binding.clone(),
+                        proof: proof.cloned(),
+                    },
+                )
+                .await?
+            else {
+                anyhow::bail!("Pull authority is unavailable");
+            };
+            if let Some(grant) = &grant {
+                grant.validate(binding)?;
+            }
+            let (current_source, current_target) =
+                self.roots(binding.head(), binding.base()).await?;
+            ensure!(
+                source.id == current_source.id && target.id == current_target.id,
+                "Pull homes changed"
+            );
+            Ok(grant)
+        })
+    }
+    fn pull_snapshot<'a>(
+        &'a self,
+        request: &'a codeyard_db_core::cells::pulls::HeadRequest,
+        output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+    ) -> BoxFuture<'a, Result<Option<codeyard_db_core::cells::repositories::Snapshot>>> {
+        Box::pin(async move {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(request.timeout_seconds),
+                async {
+                    request.validate()?;
+                    let _slot = self.slots.clone().try_acquire_owned()?;
+                    let (source, target) = self
+                        .roots(request.binding.base(), request.binding.head())
+                        .await?;
+                    let Reply::PullSnapshot(snapshot) = self
+                        .stream(
+                            &target,
+                            &Request::PullSnapshot(request.clone()),
+                            request.publisher_id,
+                            output,
+                            request.maximum_bytes,
+                            request.timeout_seconds,
+                        )
+                        .await?
+                    else {
+                        anyhow::bail!("Invalid pull snapshot answer");
+                    };
+                    if let Some(snapshot) = &snapshot {
+                        request.validate_snapshot(snapshot)?;
+                    }
+                    let (current_source, current_target) = self
+                        .roots(request.binding.base(), request.binding.head())
+                        .await?;
+                    ensure!(
+                        source.id == current_source.id && target.id == current_target.id,
+                        "Pull homes changed"
+                    );
+                    Ok(snapshot)
+                },
+            )
+            .await?
+        })
+    }
     fn forward_fork<'a>(
         &'a self,
         owner: &'a str,
@@ -316,42 +520,11 @@ impl Home for Remote {
                             .is_some_and(|home| home.id == cell.id),
                         "Fork source has another home"
                     );
-                    let address = cell
-                        .rpc_addresses
-                        .first()
-                        .ok_or_else(|| anyhow::anyhow!("Fork source has no RPC listener"))?
-                        .parse()?;
-                    let mut client = None;
-                    for public in &cell.node_keys {
-                        if let Ok(public) =
-                            codeyard_support::node_identity::parse_public_key(public)
-                        {
-                            let candidate = rpc::Client::new(
-                                self.key.clone(),
-                                address,
-                                public,
-                                ALPN,
-                                rpc::Config {
-                                    maximum_bytes: 128 * 1024,
-                                    ..Default::default()
-                                },
-                            )?;
-                            // Select a live pinned key before writing anything into the owned pack.
-                            if candidate
-                                .request::<_, Reply>(&Request::User(request.owner.clone()))
-                                .await
-                                .is_ok()
-                            {
-                                client = Some(candidate);
-                                break;
-                            }
-                        }
-                    }
-                    let client =
-                        client.ok_or_else(|| anyhow::anyhow!("Fork source is unavailable"))?;
-                    let Reply::Snapshot(snapshot) = client
-                        .response_stream(
+                    let Reply::Snapshot(snapshot) = self
+                        .stream(
+                            &cell,
                             &Request::Snapshot(request.clone()),
+                            request.reader_id,
                             output,
                             request.maximum_bytes,
                             request.timeout_seconds,
@@ -758,31 +931,73 @@ impl codeyard_db_core::cells::pointers::Admission for PointerAdmission {
     ) -> BoxFuture<'a, Result<codeyard_support::cells::Prefix>> {
         Box::pin(async move {
             event.validate()?;
-            let resource_request = DirectoryRequest::Home {
-                object: event.change.object,
-            };
-            let recipient_request = DirectoryRequest::Home {
-                object: Object {
+            roots(
+                &self.directory,
+                self.peer,
+                self.recipient,
+                event.change.object,
+                Object {
                     kind: ObjectKind::User,
                     id: event.change.user_id,
                 },
-            };
-            let issuer_request = DirectoryRequest::Cell {
-                prefix: codeyard_support::cells::Prefix::for_id(event.id)?,
-            };
-            let (source, resource, recipient, issuer) = tokio::try_join!(
-                enrolled(&self.directory, self.peer),
-                self.directory.request(&resource_request),
-                self.directory.request(&recipient_request),
-                self.directory.request(&issuer_request)
-            )?;
-            ensure!(
-                matches!(resource,DirectoryReply::Home(Some(home)) if home == source)
-                    && matches!(recipient,DirectoryReply::Home(Some(home)) if home == self.recipient)
-                    && matches!(issuer,DirectoryReply::Cell(Some(cell)) if cell.id == source),
-                "Pointer source or recipient has another home"
-            );
-            Ok(source)
+                Some(event.id),
+            )
+            .await
+        })
+    }
+}
+async fn roots(
+    directory: &Directory,
+    peer: PublicKey,
+    recipient: codeyard_support::cells::Prefix,
+    source: Object,
+    target: Object,
+    event: Option<i64>,
+) -> Result<codeyard_support::cells::Prefix> {
+    source.validate()?;
+    target.validate()?;
+    let resource_request = DirectoryRequest::Home { object: source };
+    let recipient_request = DirectoryRequest::Home { object: target };
+    let (caller, resource, target) = tokio::try_join!(
+        enrolled(directory, peer),
+        directory.request(&resource_request),
+        directory.request(&recipient_request)
+    )?;
+    ensure!(
+        matches!(resource,DirectoryReply::Home(Some(home)) if home==caller)
+            && matches!(target,DirectoryReply::Home(Some(home)) if home==recipient),
+        "Source or recipient has another home"
+    );
+    if let Some(id) = event {
+        ensure!(
+            matches!(directory.request(&DirectoryRequest::Cell {prefix:codeyard_support::cells::Prefix::for_id(id)?}).await?,DirectoryReply::Cell(Some(cell)) if cell.id==caller),
+            "Event issuer has another home"
+        );
+    }
+    Ok(caller)
+}
+struct PullAdmission {
+    directory: Directory,
+    peer: PublicKey,
+    recipient: codeyard_support::cells::Prefix,
+}
+impl codeyard_db_core::cells::pulls::Admission for PullAdmission {
+    fn check<'a>(
+        &'a self,
+        source: Object,
+        target: Object,
+        event: Option<i64>,
+    ) -> BoxFuture<'a, Result<codeyard_support::cells::Prefix>> {
+        Box::pin(async move {
+            roots(
+                &self.directory,
+                self.peer,
+                self.recipient,
+                source,
+                target,
+                event,
+            )
+            .await
         })
     }
 }
@@ -799,7 +1014,7 @@ impl rpc::Service for Accounts {
     fn streams_reply(&self, bytes: &[u8]) -> bool {
         matches!(
             serde_json::from_slice::<Request>(bytes),
-            Ok(Request::Snapshot(_))
+            Ok(Request::Snapshot(_) | Request::PullSnapshot(_))
         )
     }
     fn stream_reply<'a>(
@@ -812,10 +1027,35 @@ impl rpc::Service for Accounts {
             use codeyard_cluster_core::link::write_frame;
             use tokio::io::AsyncReadExt;
             self.admitted(peer).await?;
-            let Request::Snapshot(request) = serde_json::from_slice(bytes)? else {
-                anyhow::bail!("Invalid snapshot request");
+            let request: Request = serde_json::from_slice(bytes)?;
+            let maximum = match &request {
+                Request::Snapshot(request) => {
+                    request.validate()?;
+                    request.maximum_bytes
+                }
+                Request::PullSnapshot(request) => {
+                    request.validate()?;
+                    request.maximum_bytes
+                }
+                _ => anyhow::bail!("Invalid snapshot request"),
             };
-            request.validate()?;
+            let admission = PullAdmission {
+                directory: self.directory.clone(),
+                peer,
+                recipient: self
+                    .home
+                    .cell()
+                    .ok_or_else(|| anyhow::anyhow!("No native home"))?,
+            };
+            if let Request::PullSnapshot(request) = &request {
+                codeyard_db_core::cells::pulls::Admission::check(
+                    &admission,
+                    request.binding.base(),
+                    request.binding.head(),
+                    None,
+                )
+                .await?;
+            }
             let (mut writer, mut reader) = tokio::io::duplex(32768);
             let send = async {
                 let mut received = 0_u64;
@@ -828,30 +1068,51 @@ impl rpc::Service for Accounts {
                     received = received
                         .checked_add(count as u64)
                         .ok_or_else(|| anyhow::anyhow!("Fork snapshot exceeds its limit"))?;
-                    ensure!(
-                        received <= request.maximum_bytes,
-                        "Fork snapshot exceeds its limit"
-                    );
+                    ensure!(received <= maximum, "Fork snapshot exceeds its limit");
                     write_frame(output, &chunk[..count], 32768).await?;
                 }
                 anyhow::Ok(())
             };
             // Returning from generation closes the pipe even on an authorization failure.
             let generate = async {
-                let result = self.home.snapshot(&request, &mut writer).await;
+                let result = match &request {
+                    Request::Snapshot(request) => self
+                        .home
+                        .snapshot(request, &mut writer)
+                        .await
+                        .map(Reply::Snapshot),
+                    Request::PullSnapshot(request) => self
+                        .home
+                        .pull_snapshot(request, &mut writer)
+                        .await
+                        .map(Reply::PullSnapshot),
+                    _ => unreachable!(),
+                };
                 drop(writer);
                 result
             };
             let (snapshot, ()) = tokio::try_join!(generate, send)?;
-            snapshot.validate(&request)?;
+            match (&request, &snapshot) {
+                (Request::Snapshot(request), Reply::Snapshot(snapshot)) => {
+                    snapshot.validate(request)?
+                }
+                (Request::PullSnapshot(request), Reply::PullSnapshot(snapshot)) => {
+                    if let Some(snapshot) = snapshot {
+                        request.validate_snapshot(snapshot)?;
+                    }
+                    codeyard_db_core::cells::pulls::Admission::check(
+                        &admission,
+                        request.binding.base(),
+                        request.binding.head(),
+                        None,
+                    )
+                    .await?;
+                }
+                _ => anyhow::bail!("Invalid snapshot answer"),
+            }
             self.admitted(peer).await?;
             write_frame(output, b"", 32768).await?;
-            write_frame(
-                output,
-                &serde_json::to_vec(&Reply::Snapshot(snapshot))?,
-                128 * 1024,
-            )
-            .await?;
+            write_frame(output, &serde_json::to_vec(&snapshot)?, 128 * 1024).await?;
             Ok(())
         })
     }
@@ -863,7 +1124,70 @@ impl rpc::Service for Accounts {
             self.admitted(peer).await?;
             let request: Request = serde_json::from_slice(bytes)?;
             let reply = match request {
-                Request::Snapshot(_) => anyhow::bail!("Snapshot requires streaming"),
+                Request::Snapshot(_) | Request::PullSnapshot(_) => {
+                    anyhow::bail!("Snapshot requires streaming")
+                }
+                Request::Push(event) => {
+                    let admission = PullAdmission {
+                        directory: self.directory.clone(),
+                        peer,
+                        recipient: self
+                            .home
+                            .cell()
+                            .ok_or_else(|| anyhow::anyhow!("No native home"))?,
+                    };
+                    match self.home.receive_push(&event, &admission).await {
+                        Ok(()) => Reply::Done,
+                        Err(_) => Reply::Unavailable,
+                    }
+                }
+                Request::Subscribe { binding, proof } => {
+                    let admission = PullAdmission {
+                        directory: self.directory.clone(),
+                        peer,
+                        recipient: self
+                            .home
+                            .cell()
+                            .ok_or_else(|| anyhow::anyhow!("No native home"))?,
+                    };
+                    match self.home.receive_pull(&binding, &proof, &admission).await {
+                        Ok(()) => Reply::Done,
+                        Err(_) => Reply::Unavailable,
+                    }
+                }
+                Request::PullGrant { binding, proof } => {
+                    binding.validate()?;
+                    if let Some(proof) = &proof {
+                        proof.validate()?;
+                    }
+                    let admission = PullAdmission {
+                        directory: self.directory.clone(),
+                        peer,
+                        recipient: self
+                            .home
+                            .cell()
+                            .ok_or_else(|| anyhow::anyhow!("No native home"))?,
+                    };
+                    codeyard_db_core::cells::pulls::Admission::check(
+                        &admission,
+                        binding.head(),
+                        binding.base(),
+                        None,
+                    )
+                    .await?;
+                    let result = self.home.pull_grant(&binding, proof.as_ref()).await;
+                    codeyard_db_core::cells::pulls::Admission::check(
+                        &admission,
+                        binding.head(),
+                        binding.base(),
+                        None,
+                    )
+                    .await?;
+                    match result {
+                        Ok(grant) => Reply::PullGrant(grant),
+                        Err(_) => Reply::Unavailable,
+                    }
+                }
                 Request::RepositorySource { owner, name, proof } => {
                     match self.home.repository_source(&owner, &name, &proof).await {
                         Ok(source) => Reply::RepositorySource(source.map(Box::new)),

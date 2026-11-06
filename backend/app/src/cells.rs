@@ -4,6 +4,7 @@ use anyhow::{ensure, Context, Result};
 use codeyard_db_core::{
     cells::{
         authorization::{Answer, Home, Proof},
+        pulls::{Binding, Grant, HeadRequest},
         repositories::{Snapshot, SnapshotRequest},
     },
     models::User,
@@ -18,6 +19,94 @@ impl Native {
         codeyard_identity::cells::Local {
             pool: self.state.pool.clone(),
         }
+    }
+    /// The native fork, while its recorded publisher still has consent and read access.
+    async fn consented_head(
+        &self,
+        request: &HeadRequest,
+    ) -> Result<Option<codeyard_db_core::models::Repository>> {
+        let pool = &self.state.pool;
+        let binding = &request.binding;
+        if codeyard_db_repos::pull_requests::cells::publisher(pool, binding).await?
+            != Some(request.publisher_id)
+        {
+            return Ok(None);
+        }
+        let Some(repository) = codeyard_db_repos::repositories::creation::read_repository_source(
+            pool,
+            &codeyard_db_core::queries::credentials::Actor::from(request.publisher_id),
+            binding.head_repo_id,
+        )
+        .await?
+        .filter(|repository| repository.forked_from_id == Some(binding.base_repo_id)) else {
+            return Ok(None);
+        };
+        if !codeyard_repos::maintainer_edit::publication_authorized(
+            pool,
+            Some(request.publisher_id),
+            &repository,
+        )
+        .await?
+        {
+            return Ok(None);
+        }
+        Ok(Some(repository))
+    }
+    /// A maintainer's credential grants edits of this pull head only while the pull allows
+    /// maintainer edits and the credential can still write the base.
+    async fn maintainer(
+        &self,
+        proof: &Proof,
+        base: &codeyard_db_core::models::Repository,
+        pull: &codeyard_db_core::models::PullRequest,
+    ) -> Result<Option<i64>> {
+        if !pull.maintainer_edits_enabled() {
+            return Ok(None);
+        }
+        let Some(actor) = self.identity().fork_actor(proof).await? else {
+            return Ok(None);
+        };
+        // Any failure, including an outage, refuses the edit.
+        Ok(
+            codeyard_repos_core::repositories::access::check_publication_actor(
+                &self.state.pool,
+                &actor,
+                base,
+            )
+            .await
+            .is_ok()
+            .then_some(actor.user_id),
+        )
+    }
+}
+
+/// Push events from head cells move cross-cell pull heads, one pull request per delivery.
+pub struct Refreshes {
+    pub state: AppState,
+}
+impl codeyard_db_core::cells::outbox::Consumer for Refreshes {
+    fn refresh_pull_head<'a>(
+        &'a self,
+        refresh: &'a mut codeyard_db_core::cells::pulls::Refresh,
+    ) -> BoxFuture<'a, Result<bool>> {
+        Box::pin(async move {
+            let Some(pull) =
+                codeyard_db_repos::pull_requests::cells::open(&self.state.pool, refresh, 1)
+                    .await?
+                    .into_iter()
+                    .next()
+            else {
+                return Ok(true);
+            };
+            codeyard_ci_engine::pull_requests::branches::follow_foreign_head(
+                &self.state.pool,
+                &self.state.ci_runs,
+                &pull,
+            )
+            .await?;
+            refresh.after = pull.id;
+            Ok(false)
+        })
     }
 }
 impl Home for Native {
@@ -39,6 +128,155 @@ impl Home for Native {
         admission: &'a dyn codeyard_db_core::cells::pointers::Admission,
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move { self.identity().receive_pointer(event, admission).await })
+    }
+    fn receive_push<'a>(
+        &'a self,
+        event: &'a codeyard_db_core::cells::pulls::Event,
+        admission: &'a dyn codeyard_db_core::cells::pulls::Admission,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            codeyard_db_repos::pull_requests::cells::receive_push(
+                &self.state.pool,
+                event,
+                admission,
+            )
+            .await
+        })
+    }
+    fn receive_pull<'a>(
+        &'a self,
+        binding: &'a Binding,
+        proof: &'a Proof,
+        admission: &'a dyn codeyard_db_core::cells::pulls::Admission,
+    ) -> BoxFuture<'a, Result<()>> {
+        Box::pin(async move {
+            let actor = self
+                .identity()
+                .fork_actor(proof)
+                .await?
+                .ok_or(codeyard_support::credentials::AccountRestricted)?;
+            codeyard_db_repos::pull_requests::cells::subscribe(
+                &self.state.pool,
+                binding,
+                &actor,
+                admission,
+            )
+            .await
+        })
+    }
+    /// The base answers for its own open pull request; it never lends a credential.
+    fn pull_grant<'a>(
+        &'a self,
+        binding: &'a Binding,
+        proof: Option<&'a Proof>,
+    ) -> BoxFuture<'a, Result<Option<Grant>>> {
+        Box::pin(async move {
+            binding.validate()?;
+            let pool = &self.state.pool;
+            let native = i32::from(pool.cell_id().get());
+            let Some(base) = codeyard_db_repos::repositories::records::get_repository_by_id(
+                pool,
+                binding.base_repo_id,
+            )
+            .await?
+            .filter(|base| !base.is_stub && base.home_cell == native) else {
+                return Ok(None);
+            };
+            let Some(pull) = codeyard_db_repos::pull_requests::records::get_pull_request(
+                pool,
+                base.id,
+                binding.number,
+            )
+            .await?
+            .filter(|pull| {
+                pull.state == "open"
+                    && pull.head_repo_id == Some(binding.head_repo_id)
+                    && pull.head_branch == binding.head_branch
+            }) else {
+                return Ok(None);
+            };
+            let Some(publisher_id) = pull.head_publisher_id else {
+                return Ok(None);
+            };
+            let actor_id = match proof {
+                Some(proof) => self.maintainer(proof, &base, &pull).await?,
+                None => None,
+            };
+            let grant = Grant {
+                binding: binding.clone(),
+                publisher_id,
+                maintainer_edit_granted_by_id: pull
+                    .maintainer_edits_enabled()
+                    .then_some(pull.maintainer_edit_granted_by_id)
+                    .flatten(),
+                actor_id,
+            };
+            grant.validate(binding)?;
+            Ok(Some(grant))
+        })
+    }
+    /// The head exports one branch only while the consent its publisher recorded here
+    /// still matches and that publisher can still read the fork.
+    fn pull_snapshot<'a>(
+        &'a self,
+        request: &'a HeadRequest,
+        output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
+    ) -> BoxFuture<'a, Result<Option<Snapshot>>> {
+        Box::pin(async move {
+            request.validate()?;
+            let maximum = codeyard_repos_core::repositories::store::fork_pack_bytes()?;
+            let _slot = self
+                .state
+                .repository_downloads
+                .clone()
+                .try_acquire_owned()?;
+            tokio::time::timeout(
+                std::time::Duration::from_secs(request.timeout_seconds),
+                async {
+                    let pool = &self.state.pool;
+                    let binding = &request.binding;
+                    let Some(repository) = self.consented_head(request).await? else {
+                        return Ok(None);
+                    };
+                    let store = codeyard_repos_core::repositories::store::repo_store(
+                        &repository,
+                        self.state.cluster.as_ref(),
+                    );
+                    let reference = format!("refs/heads/{}", binding.head_branch);
+                    if !store
+                        .matching_refs(&reference)
+                        .await?
+                        .contains_key(&reference)
+                    {
+                        return Ok(None);
+                    }
+                    let mut bounded = codeyard_repos_core::git_transport::LimitedWriter::new(
+                        output,
+                        maximum.min(request.maximum_bytes),
+                    );
+                    let snapshot = store
+                        .pull_snapshot(
+                            pool,
+                            request.publisher_id,
+                            repository.id,
+                            &binding.head_branch,
+                            codeyard_repos_core::store_types::GitStreams {
+                                input: &mut tokio::io::empty(),
+                                output: &mut bounded,
+                                errors: &mut tokio::io::sink(),
+                            },
+                        )
+                        .await?;
+                    request.validate_snapshot(&snapshot)?;
+                    ensure!(
+                        self.consented_head(request).await?.is_some(),
+                        "Pull head consent changed"
+                    );
+                    Ok(Some(snapshot))
+                },
+            )
+            .await?
+        })
     }
     fn repository_id<'a>(
         &'a self,

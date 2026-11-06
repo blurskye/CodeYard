@@ -38,6 +38,39 @@ impl RepoStore {
             actor.credential.is_some(),
             "Fork snapshot requires its original credential"
         );
+        self.listing(pool, actor, repository, default_branch_only, branch)
+            .await
+    }
+    /// A pull head export names one branch and reads it as the publisher its head cell
+    /// recorded when the pull request was opened with that publisher's credential.
+    pub async fn pull_listing(
+        &self,
+        pool: &DbPool,
+        publisher: i64,
+        repository: i64,
+        branch: &str,
+    ) -> Result<Snapshot> {
+        ensure!(
+            codeyard_git::branch_ref(branch).is_some(),
+            "Invalid snapshot branch selection"
+        );
+        self.listing(
+            pool,
+            &Actor::from(publisher),
+            repository,
+            false,
+            Some(branch),
+        )
+        .await
+    }
+    async fn listing(
+        &self,
+        pool: &DbPool,
+        actor: &Actor,
+        repository: i64,
+        default_branch_only: bool,
+        branch: Option<&str>,
+    ) -> Result<Snapshot> {
         let source = codeyard_db_repos::repositories::creation::read_repository_source(
             pool, actor, repository,
         )
@@ -74,13 +107,58 @@ impl RepoStore {
         branch: Option<&str>,
         streams: GitStreams<'_>,
     ) -> Result<Snapshot> {
+        ensure!(
+            actor.credential.is_some(),
+            "Fork snapshot requires its original credential"
+        );
+        self.export(
+            pool,
+            actor,
+            repository,
+            default_branch_only,
+            branch,
+            streams,
+        )
+        .await
+    }
+    pub async fn pull_snapshot(
+        &self,
+        pool: &DbPool,
+        publisher: i64,
+        repository: i64,
+        branch: &str,
+        streams: GitStreams<'_>,
+    ) -> Result<Snapshot> {
+        ensure!(
+            codeyard_git::branch_ref(branch).is_some(),
+            "Invalid snapshot branch selection"
+        );
+        self.export(
+            pool,
+            &Actor::from(publisher),
+            repository,
+            false,
+            Some(branch),
+            streams,
+        )
+        .await
+    }
+    async fn export(
+        &self,
+        pool: &DbPool,
+        actor: &Actor,
+        repository: i64,
+        default_branch_only: bool,
+        branch: Option<&str>,
+        streams: GitStreams<'_>,
+    ) -> Result<Snapshot> {
         if let Backend::Remote(remote) = &self.0 {
             return remote
                 .fork_snapshot(actor, repository, default_branch_only, branch, streams)
                 .await;
         }
         let snapshot = self
-            .fork_listing(pool, actor, repository, default_branch_only, branch)
+            .listing(pool, actor, repository, default_branch_only, branch)
             .await?;
         let targets: Vec<_> = snapshot.refs.values().cloned().collect();
         let mut bounded = crate::git_transport::LimitedWriter::new(streams.output, pack_bytes()?);

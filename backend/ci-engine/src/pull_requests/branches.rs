@@ -143,6 +143,8 @@ async fn move_head(
         Some(id) => match codeyard_db_repos::repositories::records::get_repository_by_id(pool, id)
             .await
             .map_err(|_| RefreshError::Database)?
+            // A foreign head's publications are recorded in its own cell.
+            .filter(|head| !head.is_stub)
         {
             Some(head) => repo_store(&head, ci.cluster.as_ref())
                 .branch_publication(head.id, &format!("refs/heads/{head_branch}"))
@@ -318,7 +320,9 @@ pub async fn refresh_one(
                 .map_err(|_| RefreshError::Database)?,
             None => None,
         };
-        let new_head = if let Some(head) = &head {
+        // A head in another cell moves only through its push events (`follow_foreign_head`).
+        let foreign_head = head.as_ref().is_some_and(|head| head.is_stub);
+        let new_head = if let Some(head) = head.as_ref().filter(|_| !foreign_head) {
             let head_store = repo_store(head, context);
             branch_commit(listed, &head_store, head.id, attempt, &pull.head_branch)
                 .await?
@@ -362,7 +366,7 @@ pub async fn refresh_one(
                 Err(_) => return Err(RefreshError::Storage),
             }
         }
-        if let Some(head) = &head {
+        if let Some(head) = head.as_ref().filter(|_| !foreign_head) {
             // The pull request may have been closed while the refs were read. A closed
             // one takes no new commits from its fork.
             let open =
@@ -462,6 +466,93 @@ pub async fn refresh_one(
         if attempt + 1 < MAX_REFRESH_ATTEMPTS {
             tokio::time::sleep(Duration::from_millis(10 * (attempt as u64 + 1))).await;
         }
+    }
+    Err(RefreshError::Conflict)
+}
+
+/// A push event from the head cell moves a cross-cell pull request to the branch that cell
+/// exports under the recorded publisher. A refusal or a deleted branch leaves the head as it
+/// is; the next push event tries again.
+pub async fn follow_foreign_head(
+    pool: &DbPool,
+    ci: &CiRuns,
+    pull: &codeyard_db_core::models::PullRequest,
+) -> Result<(), RefreshError> {
+    let (Some(head_repo_id), Some(publisher)) = (pull.head_repo_id, pull.head_publisher_id) else {
+        return Ok(());
+    };
+    let base = codeyard_db_repos::repositories::records::get_repository_by_id(pool, pull.repo_id)
+        .await
+        .map_err(|_| RefreshError::Database)?
+        .filter(|base| !base.is_stub)
+        .ok_or(RefreshError::MissingBase)?;
+    let store = repo_store(&base, ci.cluster.as_ref());
+    let maximum_bytes = codeyard_repos_core::repositories::store::fork_pack_bytes()
+        .map_err(|_| RefreshError::Storage)?;
+    for attempt in 0..MAX_REFRESH_ATTEMPTS {
+        let Some(current) =
+            codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull.id)
+                .await
+                .map_err(|_| RefreshError::Database)?
+                .filter(|row| {
+                    row.state == "open"
+                        && row.repo_id == base.id
+                        && row.head_repo_id == Some(head_repo_id)
+                        && row.head_branch == pull.head_branch
+                        && row.head_publisher_id == Some(publisher)
+                })
+        else {
+            return Ok(());
+        };
+        let expected = match store
+            .commit_from_primary(&format!("refs/pull/{}/head", current.number))
+            .await
+        {
+            Ok(commit) => Some(commit.sha),
+            Err(error) if error.kind == ErrorKind::NotFound => None,
+            Err(_) => return Err(RefreshError::Storage),
+        };
+        let request = codeyard_db_core::cells::pulls::HeadRequest {
+            binding: codeyard_db_core::cells::pulls::Binding {
+                base_repo_id: base.id,
+                number: current.number,
+                head_repo_id,
+                head_branch: current.head_branch.clone(),
+            },
+            publisher_id: publisher,
+            maximum_bytes,
+            timeout_seconds: 120,
+        };
+        let head = match store
+            .follow_foreign_pull_head(pool, base.id, &request, expected.as_deref())
+            .await
+        {
+            Ok(Some(head)) => head,
+            Ok(None) => return Ok(()),
+            Err(error) if error.kind == ErrorKind::Conflict => {
+                tokio::time::sleep(Duration::from_millis(10 * (attempt as u64 + 1))).await;
+                continue;
+            }
+            Err(_) => return Err(RefreshError::Storage),
+        };
+        if head == current.head_sha
+            || move_head(
+                pool,
+                ci,
+                &base,
+                current.id,
+                &current.head_sha,
+                &head,
+                Some(head_repo_id),
+                &current.head_branch,
+                publisher,
+                Some(codeyard_db_core::models::AccessLevel::Owner),
+            )
+            .await?
+        {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(10 * (attempt as u64 + 1))).await;
     }
     Err(RefreshError::Conflict)
 }
@@ -603,6 +694,13 @@ pub async fn refresh_open_pull_requests(
 ) -> Result<usize, RefreshError> {
     if let Err(error) = codeyard_db_security::vulnerabilities::enqueue(pool, repo.id).await {
         tracing::warn!(repo_id=repo.id,%error,"could not queue dependency vulnerability scan");
+    }
+    // A fork whose base lives in another cell tells that cell after the branch moved.
+    if repo.forked_from_id.is_some() && !repo.is_stub {
+        if let Err(error) = codeyard_db_repos::pull_requests::cells::queue_push(pool, repo.id).await
+        {
+            tracing::warn!(repo_id=repo.id,%error,"could not queue a foreign pull request refresh");
+        }
     }
     let open = match branches.filter(|names| names.len() <= MAX_FILTERED_BRANCHES) {
         Some(names) => {

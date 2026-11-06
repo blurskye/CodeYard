@@ -187,6 +187,11 @@ pub enum Operation {
         head: String,
         expected_head: Option<String>,
     },
+    /// Follows a cross-cell pull head under the publisher its head cell recorded.
+    FollowForeignPullHead {
+        request: Box<codeyard_db_core::cells::pulls::HeadRequest>,
+        expected_head: Option<String>,
+    },
     Exists,
     SizeBytes,
     RefreshStorageSize,
@@ -593,6 +598,9 @@ pub enum Operation {
         authority: codeyard_db_core::queries::credentials::Actor,
         default_branch_only: bool,
         branch: Option<String>,
+        /// One pull head branch under its recorded publisher, who has no credential here.
+        #[serde(default)]
+        publisher: bool,
     },
     /// A replica copy asks its primary for the objects it lacks. `have` lists the tips the
     /// copy already holds. The reply lists HEAD and refs before the object stream.
@@ -693,6 +701,7 @@ impl Operation {
             | Self::FetchPullHead { .. }
             | Self::CompareForeignPullHead { .. }
             | Self::FetchForeignPullHead { .. }
+            | Self::FollowForeignPullHead { .. }
             | Self::PrepareFile { .. }
             | Self::WriteGitObject { .. }
             | Self::GistWrite { .. }

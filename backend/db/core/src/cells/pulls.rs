@@ -113,7 +113,7 @@ pub trait Admission: Send + Sync {
         event: Option<i64>,
     ) -> BoxFuture<'a, Result<Prefix>>;
 }
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HeadRequest {
     pub binding: Binding,

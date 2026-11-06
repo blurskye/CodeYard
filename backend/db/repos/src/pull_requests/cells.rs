@@ -14,6 +14,9 @@ native_operation!(crate::postgres::pull_requests::cells::subscribe, crate::sqlit
     fn subscribe(pool: &DbPool, binding: &Binding, actor: &Actor, admission: &dyn Admission) -> Result<()>);
 native_operation!(crate::postgres::pull_requests::cells::receive_push, crate::sqlite::pull_requests::cells::receive_push,
     fn receive_push(pool: &DbPool, event: &Event, admission: &dyn Admission) -> Result<()>);
+native_operation!(crate::postgres::pull_requests::cells::queue_push, crate::sqlite::pull_requests::cells::queue_push,
+    /// Queues one push event for a native fork whose foreign base holds a consented pull request.
+    fn queue_push(pool: &DbPool, head: i64) -> Result<bool>);
 native_operation!(crate::postgres::pull_requests::cells::publisher, crate::sqlite::pull_requests::cells::publisher,
     fn publisher(pool: &DbPool, binding: &Binding) -> Result<Option<i64>>);
 native_operation!(crate::postgres::pull_requests::cells::open, crate::sqlite::pull_requests::cells::open,

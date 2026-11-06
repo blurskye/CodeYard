@@ -26,14 +26,7 @@ pub async fn subscribe(
     let source = admission
         .check(binding.base(), binding.head(), None)
         .await?;
-    let mut tx = pool.begin().await?;
-    ensure!(
-        readable(&mut tx, actor, binding.head_repo_id).await?,
-        codeyard_support::credentials::AccountRestricted
-    );
-    let head: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE id=$1 AND NOT is_stub AND NOT is_gist AND home_cell=$2 AND forked_from_id=$3 FOR SHARE")
-        .bind(binding.head_repo_id).bind(i32::from(pool.cell_id().get())).bind(binding.base_repo_id).fetch_optional(&mut *tx).await?;
-    ensure!(head.is_some(), "Pull head has another home or source");
+    // The base answers before any local lock is held; the writes below recheck the reader.
     let grant = pool
         .foreign_authorization()
         .ok_or_else(|| anyhow::anyhow!("Base cell is unavailable"))?
@@ -45,6 +38,14 @@ pub async fn subscribe(
         grant.publisher_id == actor.user_id,
         codeyard_support::credentials::AccountRestricted
     );
+    let mut tx = pool.begin().await?;
+    ensure!(
+        readable(&mut tx, actor, binding.head_repo_id).await?,
+        codeyard_support::credentials::AccountRestricted
+    );
+    let head: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE id=$1 AND NOT is_stub AND NOT is_gist AND home_cell=$2 AND forked_from_id=$3 FOR SHARE")
+        .bind(binding.head_repo_id).bind(i32::from(pool.cell_id().get())).bind(binding.base_repo_id).fetch_optional(&mut *tx).await?;
+    ensure!(head.is_some(), "Pull head has another home or source");
     ensure!(
         readable(&mut tx, actor, binding.head_repo_id).await?,
         codeyard_support::credentials::AccountRestricted
@@ -94,6 +95,13 @@ pub async fn receive_push(pool: &PgPool, event: &Event, admission: &dyn Admissio
     );
     tx.commit().await?;
     Ok(())
+}
+/// Runs after the branch moved, so the base never fetches a head older than the event.
+pub async fn queue_push(pool: &PgPool, head: i64) -> Result<bool> {
+    codeyard_support::cells::Prefix::for_id(head)?;
+    let queued = sqlx::query("INSERT INTO cell_outbox(root_kind,root_id,topic,payload) SELECT 'repository',r.id,'repository.push',jsonb_build_object('base_repo_id',r.forked_from_id,'head_repo_id',r.id,'version',r.contribution_version)::TEXT FROM repositories r JOIN repositories p ON p.id=r.forked_from_id AND p.is_stub AND p.home_cell<>r.home_cell WHERE r.id=$1 AND NOT r.is_stub AND NOT r.is_gist AND r.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0) AND EXISTS(SELECT 1 FROM remote_pull_requests c WHERE c.head_repo_id=r.id AND c.base_repo_id=r.forked_from_id)")
+        .bind(head).execute(pool).await?;
+    Ok(queued.rows_affected() > 0)
 }
 pub async fn publisher(pool: &PgPool, binding: &Binding) -> Result<Option<i64>> {
     binding.validate()?;

@@ -190,6 +190,8 @@ enum PullHeadSource<'a> {
         branch: &'a str,
         number: i32,
     },
+    /// A head cell push event, exported under the publisher that head cell recorded.
+    Followed(&'a codeyard_db_core::cells::pulls::Binding),
 }
 impl PullHeadSource<'_> {
     async fn admitted(&self) -> Result<(), RepoError> {
@@ -237,6 +239,32 @@ impl PullHeadSource<'_> {
                 }
                 foreign_ingress(pool, admission).await
             }
+            Self::Followed(binding) => {
+                let pull = codeyard_db_repos::pull_requests::records::get_pull_request(
+                    pool,
+                    base,
+                    binding.number,
+                )
+                .await
+                .map_err(|_| RepoError::authority_unavailable())?
+                .ok_or_else(RepoError::write_denied)?;
+                let head =
+                    codeyard_db_repos::repositories::records::get_repository_by_id(pool, source)
+                        .await
+                        .map_err(|_| RepoError::authority_unavailable())?;
+                if actor.token.is_some()
+                    || binding.base_repo_id != base
+                    || binding.head_repo_id != source
+                    || pull.state != "open"
+                    || pull.head_repo_id != Some(source)
+                    || pull.head_branch != binding.head_branch
+                    || pull.head_publisher_id != Some(actor.user)
+                    || !head.is_some_and(|head| head.is_stub && head.forked_from_id == Some(base))
+                {
+                    return Err(RepoError::write_denied());
+                }
+                Ok(())
+            }
         }
     }
     async fn check_base(
@@ -247,7 +275,9 @@ impl PullHeadSource<'_> {
         actor: crate::store_types::PullHeadActor,
     ) -> Result<(), RepoError> {
         match self {
-            Self::Native(_) => live_pull_read(pool, base, actor, store.path(), store.node_id).await,
+            Self::Native(_) | Self::Followed(_) => {
+                live_pull_read(pool, base, actor, store.path(), store.node_id).await
+            }
             Self::Foreign { admission, .. } => store
                 .foreign_pull_base(pool, base, admission)
                 .await

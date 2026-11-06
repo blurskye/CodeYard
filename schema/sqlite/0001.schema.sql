@@ -4313,12 +4313,3 @@ CREATE TABLE remote_pull_requests (
 );
 CREATE INDEX remote_pull_requests_head ON remote_pull_requests(head_repo_id,head_branch,base_repo_id,number);
 CREATE INDEX remote_pull_requests_publisher ON remote_pull_requests(publisher_id);
-
-CREATE TRIGGER foreign_repository_push AFTER UPDATE OF write_version ON repositories
-WHEN NOT NEW.is_stub AND NOT NEW.is_gist AND NEW.write_version>OLD.write_version
-    AND NEW.home_cell=COALESCE((SELECT cell_id FROM node_configuration WHERE id=1),0)
-    AND EXISTS(SELECT 1 FROM repositories p WHERE p.id=NEW.forked_from_id AND p.is_stub AND p.home_cell<>NEW.home_cell)
-BEGIN
-    INSERT INTO cell_outbox(root_kind,root_id,topic,payload) VALUES('repository',NEW.id,'repository.push',
-        json_object('base_repo_id',NEW.forked_from_id,'head_repo_id',NEW.id,'version',NEW.write_version));
-END;

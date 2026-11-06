@@ -588,6 +588,9 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let outbox = (config.roles.contains(NodeRole::Web) && pool.directory().is_some()).then(|| {
         tokio::spawn(codeyard_db_core::cells::outbox::run(
             pool.clone(),
+            Arc::new(codeyard_app::cells::Refreshes {
+                state: state.clone(),
+            }),
             outbox_stop,
         ))
     });

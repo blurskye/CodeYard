@@ -1821,6 +1821,42 @@ impl RepoStore {
         }
     }
 
+    /// Moves `refs/pull/N/head` of a cross-cell pull to the head cell's current branch.
+    /// `None` means the head cell refused or the branch is gone; the ref stays.
+    pub async fn follow_foreign_pull_head(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        repository: i64,
+        request: &codeyard_db_core::cells::pulls::HeadRequest,
+        expected_head: Option<&str>,
+    ) -> Result<Option<String>, RepoError> {
+        request.validate().map_err(RepoError::from)?;
+        if request.binding.base_repo_id != repository
+            || expected_head.is_some_and(|head| !git::is_full_commit_id(head))
+        {
+            return Err(crate::wire::invalid("Invalid foreign pull head"));
+        }
+        match &self.0 {
+            Backend::Local(local) => {
+                local
+                    .follow_foreign_pull_head(pool, repository, request, expected_head)
+                    .await
+            }
+            Backend::Remote(remote) => {
+                remote
+                    .call_as(
+                        request.publisher_id,
+                        Operation::FollowForeignPullHead {
+                            request: Box::new(request.clone()),
+                            expected_head: expected_head.map(str::to_owned),
+                        },
+                        b"",
+                    )
+                    .await
+            }
+        }
+    }
+
     /// Renames a branch and follows it in protection and default-branch metadata.
     pub async fn rename_branch_as(
         &self,

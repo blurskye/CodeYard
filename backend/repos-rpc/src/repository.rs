@@ -58,6 +58,7 @@ pub fn authorize_operation(
         Operation::FetchPullHead { .. } => ("FetchPullHead", false),
         Operation::CompareForeignPullHead { .. } => ("CompareForeignPullHead", false),
         Operation::FetchForeignPullHead { .. } => ("FetchForeignPullHead", false),
+        Operation::FollowForeignPullHead { .. } => ("FollowForeignPullHead", false),
         Operation::Exists => ("Exists", false),
         Operation::SizeBytes => ("SizeBytes", false),
         Operation::RefreshStorageSize => ("RefreshStorageSize", false),
@@ -196,6 +197,7 @@ fn requires_actor(operation: &Operation) -> bool {
             | Operation::FetchPullHead { .. }
             | Operation::CompareForeignPullHead { .. }
             | Operation::FetchForeignPullHead { .. }
+            | Operation::FollowForeignPullHead { .. }
             | Operation::RenameBranch { .. }
             | Operation::MergeUpstream { .. }
             | Operation::CreateBranch { .. }
@@ -617,8 +619,19 @@ impl RpcHandler {
                 return Err(invalid("repository RPC requires a running CI claim for this repository and worker node"));
             }
         }
-        if let Operation::ForkPack { authority, .. } = &request.operation {
-            if request.actor != Some(authority.user_id) || authority.credential.is_none() {
+        if let Operation::ForkPack {
+            authority,
+            default_branch_only,
+            branch,
+            publisher,
+        } = &request.operation
+        {
+            // A publisher export names one branch and carries no credential; a fork copy
+            // always carries its initiating credential.
+            if request.actor != Some(authority.user_id)
+                || authority.credential.is_some() == *publisher
+                || (*publisher && (*default_branch_only || branch.is_none()))
+            {
                 return Err(invalid("Fork credential actor mismatch"));
             }
             codeyard_db_repos::repositories::creation::read_repository_source(
@@ -995,6 +1008,20 @@ impl RpcHandler {
                     number,
                     &branch,
                     &head,
+                    expected_head.as_deref()
+                ))
+            }
+            Operation::FollowForeignPullHead {
+                request,
+                expected_head,
+            } => {
+                if actor != Some(request.publisher_id) {
+                    return Err(invalid("Pull actor mismatch").into());
+                }
+                json!(store.follow_foreign_pull_head(
+                    pool,
+                    repo_id.ok_or_else(unavailable)?,
+                    &request,
                     expected_head.as_deref()
                 ))
             }
