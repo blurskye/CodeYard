@@ -44,7 +44,7 @@ async fn objects(f: &Database, id: i64) -> std::path::PathBuf {
 
 #[tokio::test]
 async fn forks_of_a_public_repository_share_one_object_pool() {
-    let mut f = Database::new(false).await;
+    let f = Database::new(false).await;
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
@@ -141,7 +141,7 @@ async fn forks_of_a_public_repository_share_one_object_pool() {
 
 #[tokio::test]
 async fn forks_of_a_private_repository_keep_whole_copies() {
-    let mut f = Database::new(false).await;
+    let f = Database::new(false).await;
     f.complete_setup().await;
     let alice_id = f.actor("alice").await;
     let bob_id = f.actor("bob").await;
