@@ -171,16 +171,19 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     its actual list resolver and root preflight before every mutation family, removing
     the unreachable duplicate. New HTTP checks cover sorted/zero-sized org pages and
     forged roots in both review-request mutations.
-    Runtime 9a78fe99403a4962b155fdec3a848af1 covers these fixes, native dashboard/org lists,
-    cluster, both database engines and the public two-cell gh/Git round. The cells fixture
-    now isolates UDP listeners after the earlier startup collision; it checks native cell-1
-    Git pushes/clones, scoped IDs, private dashboard output and stopped-cell page errors.
-    This run gets through native startup, signup and key registration, then its client
-    fixture fails because a local HTTP helper shadows the imported module. That helper
-    is renamed. All 114 selected library tests pass without skips; integration targets
-    are building.
-    The strengthened both-cell node query and real browser navigation through the foreign
-    private dashboard link, with and without hydration, await a later cells round.
+    Runtime 9a78fe99403a4962b155fdec3a848af1 passes all 114 selected library tests,
+    both-engine membership/stub/reviewer contracts, all six project tests, both organization
+    connection tests and both exhaustive GraphQL contracts without skips. The mutation-root
+    fix is proven by project and review-request HTTP checks on both engines.
+    Cluster passes 233 and fails one new raw-HTML assertion because its test never installed
+    the existing fake browser bundle; that fixture call is added before startup. Its earlier
+    page-model checks pass, while later org discovery still awaits this retry.
+    Both native cells now start and complete signup/key setup. The client fixture then fails
+    because a local HTTP helper shadows the imported module; it is renamed and checked.
+    The next cells round also checks both repository node IDs in one query and real foreign
+    private dashboard navigation with and without hydration. Browser failures remain required
+    and are collected with the independent Git/gh checks. The fixture batch is ready for
+    workspace, Clippy and WASM checks, followed by the failed cluster/cells targets only.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:

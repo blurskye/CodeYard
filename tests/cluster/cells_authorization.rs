@@ -25,6 +25,7 @@ fn cell(prefix: Prefix, key: &NodeKey, rpc: Vec<String>) -> Cell {
 }
 #[tokio::test]
 async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_answers() {
+    crate::support::fake_webui_bundle::install();
     let mut registry = PostgresDatabase::unmigrated().await;
     let directory = Directory::connect(&registry.connection_url(), Default::default())
         .await

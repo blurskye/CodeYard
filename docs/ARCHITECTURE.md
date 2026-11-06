@@ -757,13 +757,12 @@ checks pass; finished-CI shutdown and measured capacity need a delegated cgroup.
 Stage 2 source covers directory transport/claims/cache, public HTTP/SSH routing, scoped
 credentials and rooted IDs, stable homes, stubs, home authorization, native publication
 and cleanup, capacity reporting and bounded home membership lists. Workspace, Clippy and
-WASM pass; generated GraphQL is unchanged. Earlier runtime passes Git, identity and both
-exhaustive GraphQL contracts. The latest completed retry passes 300 selected library tests
-and the selected both-engine membership, browser, gist, reviewer and CI contracts. It
-exposes GraphQL discovery and mutation-root failures; their collected fixes pass source
-checks and join native home lists and the isolated cells fixture in runtime 9a78fe9.
-The cells start and complete signup/key setup; a Python helper-shadowing failure is fixed
-for retry while Rust tests continue.
+WASM pass; generated GraphQL is unchanged. Runtime 9a78fe9 passes 114 selected library
+checks and both-engine membership, stub, reviewer, project, organization connection and
+exhaustive GraphQL contracts. Project and review mutations reject forged roots. Cluster
+passes 233 with one raw-HTML fixture failure; the existing test bundle is now installed.
+Both cells start and complete signup/key setup. The client fixture's HTTP helper name
+collision is fixed for retry, alongside both-cell node queries and real browser navigation.
 Public two-cell gh/Git acceptance remains open. Stages 3 to 6 are not built; range renewal
 is a deferred owner follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and
 runtime gaps. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity
