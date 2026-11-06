@@ -709,10 +709,22 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
         .execute(&one.raw)
         .await
         .unwrap();
-    drain_outbox(&one.pool).await;
-    assert_eq!(outbox_state(&one.raw, event).await, (2, true, false));
+    // The newer claim waits for the stalled call's key lock, so a key added again meanwhile
+    // cannot be released; the stalled call then fails and records nothing.
+    let newer = tokio::spawn({
+        let pool = one.pool.clone();
+        async move { drain_outbox(&pool).await }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
+        while outbox_state(&one.raw, event).await.0 < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the expired lease was not claimed again");
     stalled.resume.notify_one();
     assert!(in_flight.await.unwrap().unwrap());
+    newer.await.unwrap();
     assert_eq!(outbox_state(&one.raw, event).await, (2, true, false));
 
     // A worker that dies during the call leaves the event leased, then retryable.

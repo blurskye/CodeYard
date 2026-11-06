@@ -229,7 +229,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     accounts reach their home inbox once per event with one email. Runtime
     07c720ed82c04c5ab170002893bbe5e2 passes the public cells workflow (cross-cell fork,
     followed pushes, `gh pr checkout`, `gh pr merge`, maintainer SSH push, mention in
-    `gh api notifications`, outage and revocation checks), object pools (2), the concurrent
+    `gh api notifications`, outage and revocation checks), object pools (2, one with 100
+    forks sharing one pool), the concurrent
     fork and native SSH maintainer tests; 9a0617eca5484ff3b023592c0a81fb67 passes the six
     cluster `cells_` tests; 19757052dce8440bb55447cb4d7bb1b3 passes git 43, cluster 235,
     storage 100 (3 ignored), the pull-request maintainer tests and the changed libraries.
@@ -240,8 +241,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     without failures. Item 6, cross-cell repository transfer, is not written: it needs
     the stage 6 row-ownership copy for one repository.
     Owner notes: every followed push ships the whole branch pack; a pull that keeps failing
-    holds back later pulls on the same refresh event, with backoff; the outbox holds its row
-    lock across the network call; maintainer pushes get no CI token; a native maintainer
+    holds back later pulls on the same refresh event, with backoff; maintainer pushes get no CI token; a native maintainer
     credential with a foreign base is refused; the upstream owner does not read a private
     cross-cell fork (head.repo is null for them); pools are never pruned when forks go and
     are not used in cluster storage; private-repository mentions stay in their cell; a

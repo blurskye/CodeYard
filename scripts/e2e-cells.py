@@ -445,7 +445,14 @@ def global_search(deployment, client, tokens, http_get):
     client.gh("issue", "create", "-R", "alice/beacon-secret", "--title", "Beacon issue secret", "--body", "private")
     changed = time.monotonic()
 
+    def budget(who, needed):
+        # Search allows 30 requests a minute per account, as on GitHub; wait for the window.
+        window = client.api("rate_limit", who=who)["resources"]["search"]
+        if window["remaining"] < needed:
+            threading.Event().wait(max(1, window["reset"] - time.time() + 1))
+
     def searched(who):
+        budget(who, 5)
         repos = {item["fullName"] for item in client.data("search", "repos", "beacon", "--json", "fullName", who=who)}
         issues = {item["title"] for item in client.data("search", "issues", "beacon", "--json", "title", who=who)}
         pulls = {item["title"] for item in client.data("search", "prs", "collaborator", "--json", "title", who=who)}
@@ -468,7 +475,7 @@ def global_search(deployment, client, tokens, http_get):
             if seen == expected:
                 return
             assert time.monotonic() < deadline, f"search did not converge: {seen}"
-            threading.Event().wait(1)
+            threading.Event().wait(3)
     converge(60)
     assert time.monotonic() - changed <= 60
     status, body = http_get("/api/v3/search/repositories?q=beacon")
@@ -476,6 +483,7 @@ def global_search(deployment, client, tokens, http_get):
     status, body = http_get("/api/v3/search/repositories?q=shared")
     assert status == 200 and json.loads(body)["items"] == [], body
     # Code items carry GitHub's shape, with text matches from the indexed file.
+    budget("alice", 1)
     code = client.api("search/code?q=glowmarker+repo:bob/beacon-one", "-H", "Accept: application/vnd.github.text-match+json")
     assert code["total_count"] == 1 and code["items"][0]["path"] == "beacon.txt", code
     assert "glowmarker" in code["items"][0]["text_matches"][0]["fragment"], code
@@ -494,6 +502,7 @@ def global_search(deployment, client, tokens, http_get):
     # Without the index, pages work and search says it is unavailable; changes made meanwhile
     # arrive once it is back.
     deployment.stop("search")
+    budget("alice", 2)
     status, body = http_get("/api/v3/search/repositories?q=beacon", tokens["alice"])
     assert status == 503 and "Search is unavailable" in json.loads(body)["message"], body
     assert client.gh("search", "repos", "beacon", ok=(1,)).returncode == 1
