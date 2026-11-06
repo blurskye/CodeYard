@@ -765,9 +765,11 @@ push/clone, foreign pushes, gh pr create and gh pr merge. The typed-proof public
 and hostile store regression pass 68 library and 61 store tests. The real public cells
 round passes all five checks and all 234 cluster tests without skips. Stage 2 runnable
 acceptance passes.
-Stage 3 star pointers and bounded home lists are being written against acceptance items
-5 and 7; their initial source checks pass and runtime is running. A bounded
-star-list projection and credential follow-up is checking. Cross-cell forks, pull requests, notifications,
+Stage 3 star pointers and bounded home lists address acceptance items 5 and 7.
+Their source checks and the real public two-cell star/SIGKILL replay round pass;
+library/integration runtime is still running. Fork-source admission is in source
+work, with directory-verified metadata and original credentials retained through
+both-engine creation transactions. Public fork publication is not wired. Cross-cell forks, pull requests, notifications,
 transfers and pools remain open, as do stages 4 to 6. Range renewal is a deferred owner
 follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain

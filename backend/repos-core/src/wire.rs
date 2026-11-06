@@ -21,10 +21,6 @@ use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
 use std::time::Duration;
-use tokio::io::AsyncRead;
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWrite;
-use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 pub const MAX_BYTES: usize = 128 * 1024 * 1024;
@@ -782,29 +778,6 @@ pub fn operation_body_limit(operation: &Operation) -> usize {
     }
 }
 
-/// Check the length before allocating, including zero-length binary bodies.
-pub async fn read_frame(reader: &mut (impl AsyncRead + Unpin), limit: usize) -> Result<Vec<u8>> {
-    let length = reader.read_u32().await? as usize;
-    ensure!(length <= limit, "RPC frame exceeds its limit");
-    let mut bytes = vec![0; length];
-    reader.read_exact(&mut bytes).await?;
-    Ok(bytes)
-}
-
-pub async fn write_frame(
-    writer: &mut (impl AsyncWrite + Unpin),
-    bytes: &[u8],
-    limit: usize,
-) -> Result<()> {
-    ensure!(bytes.len() <= limit, "RPC frame exceeds its limit");
-    writer.write_u32(bytes.len() as u32).await?;
-    writer.write_all(bytes).await?;
-    // A TLS writer can accept the bytes while records still wait behind a full socket. The
-    // peer may need this frame before it sends anything, so push it out now.
-    writer.flush().await?;
-    Ok(())
-}
-
 pub fn repository_uuid(path: &str) -> Result<Uuid, RepoError> {
     let filename = std::path::Path::new(path)
         .file_name()
@@ -819,7 +792,9 @@ pub fn repository_uuid(path: &str) -> Result<Uuid, RepoError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codeyard_cluster_core::link::{read_frame, write_frame};
     use codeyard_db_core::limits::MAX_JSON;
+    use tokio::io::AsyncWriteExt;
 
     #[test]
     fn unavailable_keeps_its_typed_reason_on_the_wire() {

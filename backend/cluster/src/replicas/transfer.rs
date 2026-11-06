@@ -297,7 +297,7 @@ mod tests {
             loop {
                 let (socket, _) = listener.accept().await.unwrap();
                 let mut stream = acceptor.accept(socket).await.unwrap();
-                let header = codeyard_repos_core::wire::read_frame(
+                let header = codeyard_cluster_core::link::read_frame(
                     &mut stream,
                     codeyard_db_core::limits::MAX_JSON,
                 )
@@ -312,7 +312,7 @@ mod tests {
                 let reply = codeyard_repos_core::wire::Reply {
                     result: Ok(serde_json::json!({"head":null,"refs":{}})),
                 };
-                codeyard_repos_core::wire::write_frame(
+                codeyard_cluster_core::link::write_frame(
                     &mut stream,
                     &serde_json::to_vec(&reply).unwrap(),
                     codeyard_db_core::limits::MAX_JSON,
@@ -320,17 +320,17 @@ mod tests {
                 .await
                 .unwrap();
                 // An invalid pack models a local indexing failure after a successful download.
-                codeyard_repos_core::wire::write_frame(&mut stream, b"invalid pack", 32768)
+                codeyard_cluster_core::link::write_frame(&mut stream, b"invalid pack", 32768)
                     .await
                     .unwrap();
-                codeyard_repos_core::wire::write_frame(&mut stream, b"", 32768)
+                codeyard_cluster_core::link::write_frame(&mut stream, b"", 32768)
                     .await
                     .unwrap();
                 let code = i32::from(primary_rejects && call == 0);
                 let exit =
                     serde_json::to_vec(&serde_json::json!({"result":{"Ok":code},"stderr":""}))
                         .unwrap();
-                codeyard_repos_core::wire::write_frame(
+                codeyard_cluster_core::link::write_frame(
                     &mut stream,
                     &exit,
                     codeyard_db_core::limits::MAX_JSON,

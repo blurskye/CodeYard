@@ -117,3 +117,29 @@ pub async fn read_to_end_within(
     }
     Ok(bytes)
 }
+
+/// Check the length before allocating, including zero-length binary bodies.
+pub async fn read_frame(
+    reader: &mut (impl AsyncRead + Unpin),
+    limit: usize,
+) -> anyhow::Result<Vec<u8>> {
+    let length = reader.read_u32().await? as usize;
+    anyhow::ensure!(length <= limit, "RPC frame exceeds its limit");
+    let mut bytes = vec![0; length];
+    reader.read_exact(&mut bytes).await?;
+    Ok(bytes)
+}
+
+pub async fn write_frame(
+    writer: &mut (impl AsyncWrite + Unpin),
+    bytes: &[u8],
+    limit: usize,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(bytes.len() <= limit, "RPC frame exceeds its limit");
+    writer.write_u32(bytes.len() as u32).await?;
+    writer.write_all(bytes).await?;
+    // A TLS writer can accept the bytes while records still wait behind a full socket. The
+    // peer may need this frame before it sends anything, so push it out now.
+    writer.flush().await?;
+    Ok(())
+}

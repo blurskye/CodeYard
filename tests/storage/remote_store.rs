@@ -496,27 +496,28 @@ async fn compare_reads(remote: &RepoStore, local: &RepoStore, sha: &str) {
 
 async fn stream_call(connection: &iroh::endpoint::Connection, request: &Request) -> Reply {
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut send,
         &serde_json::to_vec(request).unwrap(),
         codeyard_db_core::limits::MAX_JSON,
     )
     .await
     .unwrap();
-    codeyard_repos_core::wire::write_frame(&mut send, b"", codeyard_repos_core::wire::MAX_BYTES)
+    codeyard_cluster_core::link::write_frame(&mut send, b"", codeyard_repos_core::wire::MAX_BYTES)
         .await
         .unwrap();
     send.finish().unwrap();
     let reply =
-        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        codeyard_cluster_core::link::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
             .await
             .unwrap();
-    assert!(
-        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_repos_core::wire::MAX_BYTES)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_cluster_core::link::read_frame(
+        &mut recv,
+        codeyard_repos_core::wire::MAX_BYTES
+    )
+    .await
+    .unwrap()
+    .is_empty());
     serde_json::from_slice(&reply).unwrap()
 }
 
@@ -539,7 +540,7 @@ async fn oversized(
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
     if binary {
-        codeyard_repos_core::wire::write_frame(
+        codeyard_cluster_core::link::write_frame(
             &mut send,
             &serde_json::to_vec(&Request {
                 repository: uuid,
@@ -566,7 +567,7 @@ async fn oversized(
     send.finish().unwrap();
     assert!(tokio::time::timeout(
         Duration::from_secs(5),
-        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        codeyard_cluster_core::link::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
     )
     .await
     .unwrap()
@@ -577,14 +578,14 @@ async fn oversized(
 async fn rpc_reply(recv: &mut iroh::endpoint::RecvStream) -> Reply {
     let header = tokio::time::timeout(
         Duration::from_secs(3),
-        codeyard_repos_core::wire::read_frame(recv, codeyard_db_core::limits::MAX_JSON),
+        codeyard_cluster_core::link::read_frame(recv, codeyard_db_core::limits::MAX_JSON),
     )
     .await
     .expect("repository RPC reply timed out")
     .unwrap();
     let reply = serde_json::from_slice(&header).unwrap();
     assert!(
-        codeyard_repos_core::wire::read_frame(recv, codeyard_repos_core::wire::MAX_BYTES)
+        codeyard_cluster_core::link::read_frame(recv, codeyard_repos_core::wire::MAX_BYTES)
             .await
             .unwrap()
             .is_empty()
@@ -614,7 +615,7 @@ async fn body_refusal_without_payload(
         .await
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut send,
         &serde_json::to_vec(request).unwrap(),
         codeyard_db_core::limits::MAX_JSON,
@@ -645,14 +646,14 @@ async fn raw_editor_call(
         .await
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut send,
         &serde_json::to_vec(request).unwrap(),
         codeyard_db_core::limits::MAX_JSON,
     )
     .await
     .unwrap();
-    codeyard_repos_core::wire::write_frame(&mut send, body, MAX_EDITOR_BYTES)
+    codeyard_cluster_core::link::write_frame(&mut send, body, MAX_EDITOR_BYTES)
         .await
         .unwrap();
     send.finish().unwrap();
@@ -681,7 +682,7 @@ async fn open_git_session(
         .await
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut send,
         &serde_json::to_vec(&Request {
             repository,
@@ -696,7 +697,7 @@ async fn open_git_session(
     .unwrap();
     let header = tokio::time::timeout(
         Duration::from_secs(3),
-        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON),
+        codeyard_cluster_core::link::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON),
     )
     .await
     .expect("Git admission timed out")
@@ -874,7 +875,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         .await
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut send,
         &serde_json::to_vec(&Request {
             repository: uuid,
@@ -890,7 +891,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
     send.write_all(&1u32.to_be_bytes()).await.unwrap();
     assert!(tokio::time::timeout(
         Duration::from_secs(3),
-        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        codeyard_cluster_core::link::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
     )
     .await
     .expect("bodyless frame refusal timed out")
@@ -953,7 +954,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         .await
         .unwrap();
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut send,
         &serde_json::to_vec(&Request {
             repository: uuid,
@@ -971,7 +972,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         .unwrap();
     assert!(tokio::time::timeout(
         Duration::from_secs(3),
-        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        codeyard_cluster_core::link::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
     )
     .await
     .expect("oversized editor frame refusal timed out")
@@ -999,7 +1000,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         actor: Some(writer.id),
         ci_run: None,
     };
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut send,
         &serde_json::to_vec(&request).unwrap(),
         codeyard_db_core::limits::MAX_JSON,
@@ -1102,7 +1103,7 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         open_git_session(&web, &storage, uuid).await;
     let error = repository_error(busy);
     assert_eq!(error.message, "Git sessions busy");
-    assert!(codeyard_repos_core::wire::read_frame(
+    assert!(codeyard_cluster_core::link::read_frame(
         &mut busy_recv,
         codeyard_repos_core::wire::MAX_BYTES
     )

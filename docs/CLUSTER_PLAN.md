@@ -174,7 +174,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     5993a963beb74088a032f3f29c97fbdc covers the public cells round, changed library
     crates, both-engine pointer contracts and the full cluster target. Its public
     two-cell round passes all five checks without skips, including star counts/home
-    lists and outbox replay after SIGKILL; library/integration targets are running.
+    lists and outbox replay after SIGKILL. All 144 selected library tests pass
+    without skips; database/cluster targets are still running.
     The star-list follow-up retains native/foreign credential proofs, bounds card
     projection batches and tests malformed resource pages and a merged third browser
     page. Its checks pass: workspace
@@ -196,7 +197,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     source permission reads and tests access lost immediately before commit.
     Checks are workspace e401f6085a944da88801854b240a525d, Clippy
     25ac9880ad294027a1ac8a783e8f92a4 and WASM 7078759ffd0242dcb456214cdb71a296;
-    WASM passes, native jobs are running.
+    All three pass. Native repository framing now has one shared transport owner
+    in cluster-core for the next fork-copy stream; its caller-only move is unchecked.
     Fork publication is not wired.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
     object pools, mentions/home inbox/email, and repository transfers/redirects.

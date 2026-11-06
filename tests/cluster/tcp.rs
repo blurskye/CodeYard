@@ -214,23 +214,25 @@ fn exists_request() -> codeyard_repos_core::wire::Request {
 /// frame, and the reply. Returns the reply frame, or the error if the node closed.
 async fn exists(link: &mut Link) -> anyhow::Result<Vec<u8>> {
     let header = serde_json::to_vec(&exists_request()).unwrap();
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut link.writer,
         &header,
         codeyard_db_core::limits::MAX_JSON,
     )
     .await?;
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut link.writer,
         b"",
         codeyard_repos_core::wire::MAX_BYTES,
     )
     .await?;
     link.finish().await?;
-    let reply =
-        codeyard_repos_core::wire::read_frame(&mut link.reader, codeyard_db_core::limits::MAX_JSON)
-            .await?;
-    codeyard_repos_core::wire::read_frame(&mut link.reader, codeyard_repos_core::wire::MAX_BYTES)
+    let reply = codeyard_cluster_core::link::read_frame(
+        &mut link.reader,
+        codeyard_db_core::limits::MAX_JSON,
+    )
+    .await?;
+    codeyard_cluster_core::link::read_frame(&mut link.reader, codeyard_repos_core::wire::MAX_BYTES)
         .await?;
     Ok(reply)
 }
@@ -247,15 +249,19 @@ async fn request_through(
         .connect(ServerName::IpAddress(address.ip().into()), socket)
         .await?;
     let header = serde_json::to_vec(&exists_request())?;
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut stream,
         &header,
         codeyard_db_core::limits::MAX_JSON,
     )
     .await?;
-    codeyard_repos_core::wire::write_frame(&mut stream, b"", codeyard_repos_core::wire::MAX_BYTES)
-        .await?;
-    codeyard_repos_core::wire::read_frame(&mut stream, codeyard_db_core::limits::MAX_JSON).await
+    codeyard_cluster_core::link::write_frame(
+        &mut stream,
+        b"",
+        codeyard_repos_core::wire::MAX_BYTES,
+    )
+    .await?;
+    codeyard_cluster_core::link::read_frame(&mut stream, codeyard_db_core::limits::MAX_JSON).await
 }
 
 #[tokio::test]
@@ -354,13 +360,13 @@ async fn unknown_keys_are_closed_on_rpc_and_events_before_any_answer() {
                 .await
                 .expect("the handshake completes for any well-formed key");
         let answer = tokio::time::timeout(Duration::from_secs(5), async {
-            let _ = codeyard_repos_core::wire::write_frame(
+            let _ = codeyard_cluster_core::link::write_frame(
                 &mut link.writer,
                 b"{}",
                 codeyard_db_core::limits::MAX_JSON,
             )
             .await;
-            codeyard_repos_core::wire::read_frame(
+            codeyard_cluster_core::link::read_frame(
                 &mut link.reader,
                 codeyard_db_core::limits::MAX_JSON,
             )

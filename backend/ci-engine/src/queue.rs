@@ -1022,7 +1022,7 @@ impl RunQueue {
                 continue;
             };
             let result = tokio::time::timeout(std::time::Duration::from_secs(100), async {
-                codeyard_repos_core::wire::write_frame(
+                codeyard_cluster_core::link::write_frame(
                     &mut link.writer,
                     &header,
                     codeyard_db_core::limits::MAX_JSON + 64 * 1024,
@@ -1030,7 +1030,7 @@ impl RunQueue {
                 .await?;
                 link.finish().await?;
                 let reply: Reply = serde_json::from_slice(
-                    &codeyard_repos_core::wire::read_frame(
+                    &codeyard_cluster_core::link::read_frame(
                         &mut link.reader,
                         codeyard_db_core::limits::MAX_JSON,
                     )

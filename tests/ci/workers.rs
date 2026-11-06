@@ -325,7 +325,7 @@ async fn stream_request(
     request: serde_json::Value,
 ) -> serde_json::Value {
     let (mut send, mut recv) = connection.open_bi().await.unwrap();
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut send,
         &serde_json::to_vec(&request).unwrap(),
         codeyard_db_core::limits::MAX_JSON,
@@ -334,7 +334,7 @@ async fn stream_request(
     .unwrap();
     send.finish().unwrap();
     serde_json::from_slice(
-        &codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        &codeyard_cluster_core::link::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
             .await
             .unwrap(),
     )
@@ -354,7 +354,7 @@ async fn repository_refused_with_claim(
         codeyard_repos_core::wire::Operation::GitSession(_)
             | codeyard_repos_core::wire::Operation::ReplicaPack { .. }
     );
-    codeyard_repos_core::wire::write_frame(
+    codeyard_cluster_core::link::write_frame(
         &mut send,
         &serde_json::to_vec(&codeyard_repos_core::wire::Request {
             repository,
@@ -368,7 +368,7 @@ async fn repository_refused_with_claim(
     .await
     .unwrap();
     if !streaming {
-        codeyard_repos_core::wire::write_frame(
+        codeyard_cluster_core::link::write_frame(
             &mut send,
             b"",
             codeyard_repos_core::wire::MAX_BYTES,
@@ -378,17 +378,18 @@ async fn repository_refused_with_claim(
         send.finish().unwrap();
     }
     let reply: codeyard_repos_core::wire::Reply = serde_json::from_slice(
-        &codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        &codeyard_cluster_core::link::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
             .await
             .unwrap(),
     )
     .unwrap();
-    assert!(
-        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_repos_core::wire::MAX_BYTES)
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(codeyard_cluster_core::link::read_frame(
+        &mut recv,
+        codeyard_repos_core::wire::MAX_BYTES
+    )
+    .await
+    .unwrap()
+    .is_empty());
     match reply.result {
         Err(codeyard_repos_core::wire::Failure::Repository(error)) => {
             assert_eq!(error.kind, ErrorKind::Invalid);
@@ -2443,7 +2444,7 @@ impl ProtocolHandler for StalledWorkflowReads {
         connection: iroh::endpoint::Connection,
     ) -> Result<(), iroh::protocol::AcceptError> {
         let (_send, mut recv) = connection.accept_bi().await.unwrap();
-        codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        codeyard_cluster_core::link::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
             .await
             .unwrap();
         let _ = self.0.send(());
@@ -4809,7 +4810,7 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
     send.write_all(&frame).await.unwrap();
     send.finish().unwrap();
     let reply: serde_json::Value = serde_json::from_slice(
-        &codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+        &codeyard_cluster_core::link::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
             .await
             .unwrap(),
     )
@@ -4963,7 +4964,7 @@ async fn a_busy_core_refuses_a_request_at_once_when_all_slots_are_taken() {
         send.write_all(&body).await.unwrap();
         send.finish().unwrap();
         let reply: serde_json::Value = serde_json::from_slice(
-            &codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+            &codeyard_cluster_core::link::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
                 .await
                 .unwrap(),
         )
@@ -5034,7 +5035,7 @@ async fn stalled_ci_replies_keep_their_admission_slots() {
             .unwrap();
         let (mut send, mut recv) = connection.open_bi().await.unwrap();
         // Each stalled claim is a different slot, so it takes its own queued run.
-        codeyard_repos_core::wire::write_frame(
+        codeyard_cluster_core::link::write_frame(
             &mut send,
             &serde_json::to_vec(
                 &json!({"worker": format!("stalled-{index}"), "operation": {"Claim": {"mode": "local", "platforms": CiConfig::default().platform_labels()}}}),
@@ -5290,7 +5291,7 @@ impl ProtocolHandler for LogReplyProxy {
     ) -> Result<(), iroh::protocol::AcceptError> {
         let (mut send, mut recv) = connection.accept_bi().await.unwrap();
         let header =
-            codeyard_repos_core::wire::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
+            codeyard_cluster_core::link::read_frame(&mut recv, codeyard_db_core::limits::MAX_JSON)
                 .await
                 .unwrap();
         let request: serde_json::Value = serde_json::from_slice(&header).unwrap();
@@ -5312,7 +5313,7 @@ impl ProtocolHandler for LogReplyProxy {
             .await
             .unwrap();
         let (mut writer, mut reader) = upstream.open_bi().await.unwrap();
-        codeyard_repos_core::wire::write_frame(
+        codeyard_cluster_core::link::write_frame(
             &mut writer,
             &header,
             codeyard_db_core::limits::MAX_JSON,
@@ -5320,15 +5321,17 @@ impl ProtocolHandler for LogReplyProxy {
         .await
         .unwrap();
         writer.finish().unwrap();
-        let reply =
-            codeyard_repos_core::wire::read_frame(&mut reader, codeyard_db_core::limits::MAX_JSON)
-                .await
-                .unwrap();
+        let reply = codeyard_cluster_core::link::read_frame(
+            &mut reader,
+            codeyard_db_core::limits::MAX_JSON,
+        )
+        .await
+        .unwrap();
         if logs {
             let _ = self.logs.send(());
             connection.close(0u32.into(), b"lost log reply");
         } else {
-            codeyard_repos_core::wire::write_frame(
+            codeyard_cluster_core::link::write_frame(
                 &mut send,
                 &reply,
                 codeyard_db_core::limits::MAX_JSON,

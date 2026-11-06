@@ -560,7 +560,7 @@ impl CiHandler {
             return Ok(Err(refusal.to_owned()));
         }
         tracing::trace!(name: "ci_request_authorized", %peer, "CI queue request authorized; waiting for frame");
-        let header = codeyard_repos_core::wire::read_frame(
+        let header = codeyard_cluster_core::link::read_frame(
             &mut link.reader,
             codeyard_db_core::limits::MAX_JSON + 64 * 1024,
         )
@@ -628,7 +628,7 @@ impl CiHandler {
                 Err(_) => Err(CORE_UNAVAILABLE.to_owned()),
             };
             let header = serde_json::to_vec(&Reply { result })?;
-            codeyard_repos_core::wire::write_frame(
+            codeyard_cluster_core::link::write_frame(
                 &mut link.writer,
                 &header,
                 codeyard_db_core::limits::MAX_JSON,

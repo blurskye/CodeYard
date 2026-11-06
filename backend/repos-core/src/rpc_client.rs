@@ -1,9 +1,7 @@
 use crate::context::NodeContext;
 use crate::wire::invalid;
 use crate::wire::operation_body_limit;
-use crate::wire::read_frame;
 use crate::wire::unavailable;
-use crate::wire::write_frame;
 use crate::wire::Failure;
 use crate::wire::Operation;
 use crate::wire::Reply;
@@ -11,6 +9,8 @@ use crate::wire::Request;
 use crate::wire::MAX_BYTES;
 use crate::wire::TIMEOUT;
 use anyhow::Result;
+use codeyard_cluster_core::link::read_frame;
+use codeyard_cluster_core::link::write_frame;
 use codeyard_cluster_core::link::Link;
 use codeyard_cluster_core::transport::NodeAddress;
 use codeyard_db_core::limits::MAX_JSON;
