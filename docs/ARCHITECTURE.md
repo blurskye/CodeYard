@@ -1015,6 +1015,11 @@ listing that forgets the filter shows a stub as an account.
   never supplies permission; a resource-cell outage gives a service-unavailable error. Native
   browser lists use those cells' authorized page models with the original cookie. One shared
   row/byte budget bounds all merged lists; home credentials are rechecked after remote waits.
+- Stars keep their rows and count in the repository's cell. The same transactional
+  outbox sends a distinct star pointer to the actor's home; removing a collaborator does
+  not remove a star pointer. GitHub and browser star lists merge authorized resource-cell
+  pages in star order, including home-cell stars. Anonymous profile reads request public
+  repositories only. Duplicate delivery and an older event cannot restore a removed star.
 
 ### Global features
 
