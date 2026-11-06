@@ -261,8 +261,34 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     rebuild from nothing, 503 with pages working while search is stopped) and the seven
     cluster `cells_` tests, including `cells_search` and the lease test. Job
     685e69df09084b428803679f3f1b6e09 passes cluster search 5, collaboration search 15,
-    database 185, object pools 2 and the changed libraries (150). Item 3
-    (explore, trending, "used by" and advisory alerts across cells) is not written.
+    database 185, object pools 2 and the changed libraries (150). Item 3 is written:
+    Explore, Trending and "Used by" read the shared index (`search_packages` holds each
+    public repository's dependencies and its root npm name), and each cell matches the same
+    OSV mirror itself (`cells_advisories`). Runtime STAGE4_RUN.
+    Item 3 notes: the Explore language list stays local; index cards show no language
+    colour; Explore pages past 1,000 results and failed index calls list this cell only;
+    "Used by" covers public repositories and root npm names only, and shows nothing without
+    an index; every cell's admin configures the same OSV source.
+    Stage 5 is partly written. (1) Signups follow the router's region and accounts keep
+    their home (`cells_regions`); pinning only matters once stage 6 moves accounts, so it
+    is built with them. (2) Region loss: the operator restarts cells from paired copies,
+    runs `repo verify --repair` (already listing its fixes) and registers the paired
+    addresses; `cells_regions` checks routers follow. The real restart is runtime pending,
+    needs a second region with a PostgreSQL standby and Git copies. (3) `cell directory
+    rollout` updates cells in waves and stops at a failing canary (e2e); old routers read
+    new cell records. Running the previous release beside this one is runtime pending,
+    needs the previous release binary. (4) Moving a directory shard to another cluster is
+    not written: claims and their object rows commit in one transaction, so it needs that
+    split and a move protocol first. (5) Presence is set by hand (`cell directory
+    presence`), and routers in a present region send reads to the home cell's regional web
+    nodes, falling back home; writes go home (`cells_regions`). Automatic presence from
+    counted member requests is not written; it shares the request counting with stage 6's
+    automatic user moves. Serving from a real replica and regional Git copies is runtime
+    pending, needs a cell in cluster mode with a PostgreSQL streaming replica and storage
+    nodes in a second region. Runtime STAGE5_RUN.
+    Stage 5 notes: SSH Git and package paths always go home; a router learns presence
+    changes within its 60-second route cache; a rollout's apply program is killed on
+    timeout but its own children are not.
     Stage 4 notes: users, labels, topics, commits and GraphQL search stay local; star counts
     in the index wait for the repository's next change; an issue document keeps its old
     `repository_url` after a rename until it changes; READMEs, comments and licenses are not
@@ -270,8 +296,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     `is_private`; App, fine-grained, job and foreign-session credentials see no private hits
     from other cells; an org that refuses classic tokens hides its other-cell hits from every
     whole-account credential, including ones that policy would exempt.
-    Stages 5 and 6 remain unwritten; automatic user moves and org regional presence
-    are documented owner decisions. Owner follow-ups, outside this acceptance work:
+    Stage 6 remains unwritten; automatic user moves and automatic org presence are
+    documented owner decisions. Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
     scheduled bounded expired directory-claim collection.
 

@@ -181,13 +181,23 @@ async fn regions_place_signups_keep_homes_and_serve_present_organizations_nearby
     let post = |router: &Server, path: &str| client.post(format!("{}{path}", router.url()));
 
     // Signups go to an open cell in the router's own region.
-    let signup = [("mode", "signup"), ("username", "carol")];
+    let signup = || "mode=signup&username=carol";
     assert_eq!(
-        answered(post(&b, "/enter").form(&signup)).await,
+        answered(
+            post(&b, "/enter")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(signup())
+        )
+        .await,
         "one POST /enter"
     );
     assert_eq!(
-        answered(post(&a, "/enter").form(&signup)).await,
+        answered(
+            post(&a, "/enter")
+                .header("content-type", "application/x-www-form-urlencoded")
+                .body(signup())
+        )
+        .await,
         "zero POST /enter"
     );
     // An account keeps its home cell whichever region it works from.

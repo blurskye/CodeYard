@@ -219,7 +219,8 @@ impl Frontend {
         let credential = credential
             .as_ref()
             .map_or("", |credential| credential.value());
-        if let Some(nearby) = self.nearby(owner.as_deref(), &target, &request).await {
+        let reads = reads_only(&request, self.config.maximum_control_bytes);
+        if let Some(nearby) = self.nearby(owner.as_deref(), &target, reads).await {
             return self.read_nearby(nearby, &target, credential, request).await;
         }
         self.transport.forward(&target, credential, request).await
@@ -231,9 +232,9 @@ impl Frontend {
         &self,
         owner: Option<&str>,
         target: &ReadyCell,
-        request: &Request<Body>,
+        reads: bool,
     ) -> Option<ReadyCell> {
-        if !reads_only(request, self.config.maximum_control_bytes) {
+        if !reads {
             return None;
         }
         let nearby = target.reads_in(&self.config.region)?;
@@ -243,10 +244,7 @@ impl Frontend {
             return None;
         }
         let regions = self.routes.presence(location.object.id).await.ok()?;
-        regions
-            .iter()
-            .any(|region| *region == self.config.region)
-            .then_some(nearby)
+        regions.contains(&self.config.region).then_some(nearby)
     }
     /// A read is repeated at the home cell when the regional web nodes cannot answer it.
     async fn read_nearby(
