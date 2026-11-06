@@ -1139,9 +1139,26 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     };
     drain(&one.pool).await;
     drain(&zero.pool).await;
-    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM cell_outbox WHERE delivered_at IS NULL AND topic IN ('repository.push','pull.refresh')")
-        .fetch_one(&one.raw).await.unwrap() + sqlx::query_scalar::<_,i64>("SELECT COUNT(*) FROM cell_outbox WHERE delivered_at IS NULL AND topic IN ('repository.push','pull.refresh')")
-        .fetch_one(&zero.raw).await.unwrap(), 0);
+    let pending = "SELECT topic||' '||root_id FROM cell_outbox WHERE delivered_at IS NULL AND topic IN ('repository.push','pull.refresh')";
+    let mut left: Vec<String> = sqlx::query_scalar(pending)
+        .fetch_all(&one.raw)
+        .await
+        .unwrap();
+    left.extend(
+        sqlx::query_scalar::<_, String>(pending)
+            .fetch_all(&zero.raw)
+            .await
+            .unwrap(),
+    );
+    assert!(
+        left.is_empty(),
+        "{left:?}\n{}",
+        log.text()
+            .lines()
+            .filter(|line| line.contains("WARN"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
     let followed = |number: i32| {
         let repository = repository.clone();
         async move {
@@ -1324,6 +1341,31 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         )
         .await
         .is_err());
+    // The base merges the followed head of a fork that has no storage in its cell.
+    let merged = client
+        .put(format!(
+            "{}/api/v3/repos/alice/private/pulls/{number}/merge",
+            http.url()
+        ))
+        .bearer_auth(&alice_token)
+        .json(&serde_json::json!({"merge_method":"merge"}))
+        .send()
+        .await
+        .unwrap();
+    let status = merged.status();
+    let merged: serde_json::Value = merged.json().await.unwrap();
+    assert_eq!(status, 200, "{merged}");
+    assert_eq!(merged["merged"], true);
+    assert_eq!(
+        codeyard_repos_core::repositories::store::repo_store(&repository, None)
+            .commit("refs/heads/main")
+            .await
+            .unwrap()
+            .parents
+            .last()
+            .map(String::as_str),
+        Some(followed_tip.as_str())
+    );
     // A mention in a public repository of cell zero reaches Bob's inbox in cell one once,
     // with one email. A private repository sends nothing to another cell.
     let mail_admin =

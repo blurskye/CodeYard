@@ -291,7 +291,7 @@ impl GitSshHandler {
             let _ = session.channel_failure(channel);
             return Ok(None);
         };
-        let authorized = credential.authorize(&self.pool, repo, write).await;
+        let authorized = credential.authorize_session(&self.pool, repo, write).await;
         let message = match authorized {
             Ok((actor, _))
                 if self.deploy_key.is_some()
@@ -795,7 +795,7 @@ impl russh::server::Handler for GitSshHandler {
                     ReceiveCredential::SshKey(id) => { let _ = tokio::time::timeout(std::time::Duration::from_secs(1), codeyard_db_identity::users::ssh_keys::touch_ssh_key(&pool, id)).await; }
                     _ => {}
                 }
-                let (actor,_) = tokio::time::timeout(std::time::Duration::from_secs(5), credential.authorize(&pool, &repo, git_cmd.write)).await??;
+                let (actor,_) = tokio::time::timeout(std::time::Duration::from_secs(5), credential.authorize_session(&pool, &repo, git_cmd.write)).await??;
                 let visitor=match credential { ReceiveCredential::DeployKey(id)=>codeyard_db_repos::repositories::traffic::Identity::deploy_key(id), _=>codeyard_db_repos::repositories::traffic::Identity::account(actor.id) };
                 let observation=codeyard_repos::traffic::clone::Observation::default();
                 let mut input=observation.input(io.input.as_mut().expect("open input"));

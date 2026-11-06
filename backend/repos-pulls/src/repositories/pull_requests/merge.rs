@@ -891,6 +891,8 @@ async fn head_branch_exists(
         return Ok(true);
     };
     match codeyard_db_repos::repositories::records::get_repository_by_id(pool, id).await {
+        // A fork in another cell has no storage here; its pushes move the followed pull ref.
+        Ok(Some(head)) if head.is_stub => Ok(true),
         Ok(Some(head)) => Ok(repo_store(&head, ci.cluster.as_ref())
             .refs()
             .await

@@ -187,10 +187,10 @@ async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool>
                     sqlx::query("UPDATE cell_outbox SET delivered_at=clock_timestamp() WHERE id=$1").bind(id).execute(&mut *tx).await?;
                 }
             }
-            Err(_) => {
+            Err(error) => {
                 sqlx::query("UPDATE cell_outbox SET next_attempt_at=clock_timestamp()+$2::bigint*INTERVAL '1 second' WHERE id=$1")
                     .bind(id).bind(config.request_seconds as i64).execute(&mut *tx).await?;
-                tracing::warn!(event_id=id, "Cell event remains queued");
+                tracing::warn!(event_id=id, %topic, error=%format!("{error:#}"), "Cell event remains queued");
             }
         }
         tx.commit().await?;

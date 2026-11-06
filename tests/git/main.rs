@@ -1,6 +1,7 @@
 mod deploy_keys;
 mod gists;
 mod http;
+mod maintainer_ssh;
 mod production;
 mod publication_authority;
 mod ref_limits;
