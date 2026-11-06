@@ -175,7 +175,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     cluster, both database engines and the public two-cell gh/Git round. The cells fixture
     now isolates UDP listeners after the earlier startup collision; it checks native cell-1
     Git pushes/clones, scoped IDs, private dashboard output and stopped-cell page errors.
-    The strengthened both-cell node query awaits a later cells round.
+    The strengthened both-cell node query and real browser navigation through the foreign
+    private dashboard link, with and without hydration, await a later cells round.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:

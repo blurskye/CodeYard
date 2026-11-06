@@ -205,6 +205,52 @@ class Deployment:
         assert re.fullmatch(r"cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64}", value)
         return value
 
+    def browser_navigation(self, who):
+        from playwright.sync_api import expect, sync_playwright
+
+        session = json.loads((self.root / (who + ".json")).read_text())["session_id"]
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(executable_path=os.environ["CODEYARD_BROWSER_CHROMIUM"])
+            try:
+                for javascript in (False, True):
+                    context = browser.new_context(java_script_enabled=javascript)
+                    try:
+                        context.add_cookies([{"name": "session_id", "value": session, "url": self.base}])
+                        page = context.new_page()
+                        page.set_default_timeout(15000)
+                        errors = []
+                        page.on("pageerror", lambda error: errors.append(str(error)))
+
+                        def navigate(path, link):
+                            if javascript:
+                                with page.expect_response(lambda response:
+                                        response.url == self.base + path and
+                                        response.request.headers.get("accept") == "application/vnd.codeyard.page+json") as pending:
+                                    link.click()
+                                response = pending.value
+                                assert response.status == 200 and response.request.resource_type != "document", path
+                            else:
+                                link.click()
+                            page.wait_for_url(self.base + path)
+                            if javascript:
+                                page.locator('[data-hydrated="true"]').wait_for(state="attached", timeout=60000)
+
+                        response = page.goto(self.base + "/")
+                        assert response.status == 200
+                        if javascript:
+                            page.locator('[data-hydrated="true"]').wait_for(state="attached", timeout=60000)
+                        shared = page.locator('.discovery-shared a[href="/alice/shared"]')
+                        expect(shared).to_be_visible()
+                        navigate("/alice/shared", shared)
+                        expect(page.get_by_text("two cells", exact=True)).to_be_visible()
+                        navigate("/", page.locator("header .site-brand"))
+                        expect(shared).to_be_visible()
+                        assert not errors, errors
+                    finally:
+                        context.close()
+            finally:
+                browser.close()
+
 
 def acceptance(deployment):
     github = load("codeyard_cells_github", ROOT / "scripts/e2e-github.py")
@@ -274,6 +320,8 @@ def acceptance(deployment):
         assert dashboard["shared_count"] == 1, dashboard
         assert dashboard["shared"][0]["repository"]["name"] == "shared", dashboard
         client.checked("the home dashboard shows the foreign private repository in raw HTML and hydration data")
+        deployment.browser_navigation("bob")
+        client.checked("foreign private repository navigation works without JavaScript and through hydrated page models")
 
         def ssh_environment(who):
             return {"GIT_SSH_COMMAND": shlex.join(["ssh", "-F", "/dev/null", "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes",
