@@ -154,6 +154,102 @@ impl publication::Directory for LostConfirmation {
     }
 }
 
+/// Holds a release call open until the test resumes it, then fails it.
+struct StalledRelease {
+    client: Client,
+    entered: tokio::sync::Notify,
+    resume: tokio::sync::Notify,
+}
+impl publication::Directory for StalledRelease {
+    fn config(&self) -> publication::Config {
+        publication::Directory::config(&self.client)
+    }
+    fn lookup<'a>(&'a self, key: &'a Key) -> BoxFuture<'a, anyhow::Result<Option<Location>>> {
+        publication::Directory::lookup(&self.client, key)
+    }
+    fn reserve<'a>(
+        &'a self,
+        object: Object,
+        keys: &'a [Key],
+        nonce: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        publication::Directory::reserve(&self.client, object, keys, nonce)
+    }
+    fn confirm<'a>(
+        &'a self,
+        object: Object,
+        keys: &'a [Key],
+        nonce: &'a str,
+    ) -> BoxFuture<'a, anyhow::Result<()>> {
+        publication::Directory::confirm(&self.client, object, keys, nonce)
+    }
+    fn release<'a>(&'a self, _: Object, _: &'a [Key]) -> BoxFuture<'a, anyhow::Result<()>> {
+        Box::pin(async move {
+            self.entered.notify_one();
+            self.resume.notified().await;
+            Err(publication::Refusal::Unavailable.into())
+        })
+    }
+    fn forget(&self, object: Object) -> BoxFuture<'_, anyhow::Result<()>> {
+        publication::Directory::forget(&self.client, object)
+    }
+}
+
+/// Queues one key release for bob and returns its outbox event.
+async fn queued_key_release(
+    client: &reqwest::Client,
+    bob: &Server,
+    bob_token: &str,
+    public_key: &str,
+    raw: &codeyard_db_core::pool::PgPool,
+) -> i64 {
+    let key = api(
+        client,
+        bob,
+        bob_token,
+        reqwest::Method::POST,
+        "/api/v3/user/keys",
+        json!({"title":"laptop", "key":public_key}),
+        201,
+    )
+    .await;
+    api(
+        client,
+        bob,
+        bob_token,
+        reqwest::Method::DELETE,
+        &format!("/api/v3/user/keys/{}", key["id"]),
+        Value::Null,
+        204,
+    )
+    .await;
+    sqlx::query_scalar(
+        "SELECT id FROM cell_outbox WHERE delivered_at IS NULL ORDER BY id DESC LIMIT 1",
+    )
+    .fetch_one(raw)
+    .await
+    .unwrap()
+}
+/// The event's claim count and whether it is delivered or leased.
+async fn outbox_state(raw: &codeyard_db_core::pool::PgPool, event: i64) -> (i64, bool, bool) {
+    sqlx::query_as("SELECT attempts,delivered_at IS NOT NULL,next_attempt_at>clock_timestamp() FROM cell_outbox WHERE id=$1")
+        .bind(event)
+        .fetch_one(raw)
+        .await
+        .unwrap()
+}
+async fn drain_outbox(pool: &DbPool) {
+    for _ in 0..64 {
+        if !codeyard_db_core::cells::outbox::deliver_one(pool)
+            .await
+            .unwrap()
+        {
+            return;
+        }
+    }
+    panic!("the outbox did not drain");
+}
+
 #[tokio::test]
 async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_retry_lost_replies() {
     crate::support::fake_webui_bundle::install();
@@ -582,6 +678,69 @@ async fn native_claims_refuse_cross_cell_signup_email_and_ssh_duplicates_and_ret
     assert!(!codeyard_db_core::cells::outbox::deliver_one(&resumed)
         .await
         .unwrap());
+
+    // A delivery in flight holds no row lock or transaction: the event is leased, another
+    // session locks the row at once and a second worker skips it. A late result from a
+    // claim whose lease ran out records nothing over the newer delivery.
+    let stalled = Arc::new(StalledRelease {
+        client: connect(one_key.clone()),
+        entered: tokio::sync::Notify::new(),
+        resume: tokio::sync::Notify::new(),
+    });
+    resumed.set_directory(stalled.clone()).unwrap();
+    let event = queued_key_release(&client, &bob, &bob_token, public_key, &one.raw).await;
+    let in_flight = tokio::spawn({
+        let pool = resumed.clone();
+        async move { codeyard_db_core::cells::outbox::deliver_one(&pool).await }
+    });
+    stalled.entered.notified().await;
+    let mut lock = one.raw.begin().await.unwrap();
+    sqlx::query("SELECT id FROM cell_outbox WHERE id=$1 FOR UPDATE NOWAIT")
+        .bind(event)
+        .execute(&mut *lock)
+        .await
+        .unwrap();
+    lock.rollback().await.unwrap();
+    assert_eq!(outbox_state(&one.raw, event).await, (1, false, true));
+    drain_outbox(&one.pool).await;
+    assert_eq!(outbox_state(&one.raw, event).await, (1, false, true));
+    sqlx::query("UPDATE cell_outbox SET next_attempt_at=clock_timestamp() WHERE id=$1")
+        .bind(event)
+        .execute(&one.raw)
+        .await
+        .unwrap();
+    drain_outbox(&one.pool).await;
+    assert_eq!(outbox_state(&one.raw, event).await, (2, true, false));
+    stalled.resume.notify_one();
+    assert!(in_flight.await.unwrap().unwrap());
+    assert_eq!(outbox_state(&one.raw, event).await, (2, true, false));
+
+    // A worker that dies during the call leaves the event leased, then retryable.
+    let event = queued_key_release(&client, &bob, &bob_token, public_key, &one.raw).await;
+    let in_flight = tokio::spawn({
+        let pool = resumed.clone();
+        async move { codeyard_db_core::cells::outbox::deliver_one(&pool).await }
+    });
+    stalled.entered.notified().await;
+    in_flight.abort();
+    assert!(in_flight.await.unwrap_err().is_cancelled());
+    assert_eq!(outbox_state(&one.raw, event).await, (1, false, true));
+    drain_outbox(&one.pool).await;
+    assert_eq!(outbox_state(&one.raw, event).await, (1, false, true));
+    sqlx::query("UPDATE cell_outbox SET next_attempt_at=clock_timestamp() WHERE id=$1")
+        .bind(event)
+        .execute(&one.raw)
+        .await
+        .unwrap();
+    drain_outbox(&one.pool).await;
+    assert_eq!(outbox_state(&one.raw, event).await, (2, true, false));
+    assert_eq!(
+        directory
+            .lookup(&Key::new(KeyKind::Ssh, &fingerprint).unwrap())
+            .await
+            .unwrap(),
+        None
+    );
     resumed.close().await;
 
     zero.pool

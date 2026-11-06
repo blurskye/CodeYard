@@ -105,8 +105,9 @@ macro_rules! engine {
 engine!(postgres, crate::pool::PgPool, sqlx::PgConnection);
 engine!(sqlite, crate::pool::SqlitePool, sqlx::SqliteConnection);
 
-/// A row lock owns one event through its bounded delivery and acknowledgement.
-/// A crash after the remote effect rolls it back to pending; repeating that effect is safe.
+/// A claim leases one event; the lease outlives the bounded delivery, so no row lock or
+/// transaction is held across the network call. A crash or timeout leaves the event to be
+/// retried after the lease; only the latest claim records a result. Repeating an effect is safe.
 pub async fn deliver_one(pool: &DbPool) -> Result<bool> {
     deliver(pool, None).await
 }
@@ -122,11 +123,16 @@ async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool>
     };
     let config = provider.config();
     config.validate()?;
-    tokio::time::timeout(std::time::Duration::from_secs((config.request_seconds * 30).clamp(1,300)), async {
-        let mut tx = native.begin().await?;
-        let row: Option<(i64, String, String, i64, String)> = sqlx::query_as("SELECT id,substr(payload,1,524289),root_kind,root_id,topic FROM cell_outbox WHERE topic IN ($1,$2,$3,$4,$6) AND (topic<>$4 OR $5) AND delivered_at IS NULL AND next_attempt_at<=clock_timestamp() ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED")
-            .bind(TOPIC).bind(POINTER_TOPIC).bind(PUSH_TOPIC).bind(REFRESH_TOPIC).bind(consumer.is_some()).bind(super::notices::TOPIC).fetch_optional(&mut *tx).await?;
-        let Some((id, payload, kind, root, topic)) = row else { return Ok(false); };
+    let request = config.request_seconds.max(1);
+    let deadline = (config.request_seconds * 30).clamp(1, 300);
+    // Claim and record get their own request time on top of the delivery deadline.
+    let whole = deadline + 2 * request + 2;
+    let lease = (whole + request) as i64;
+    tokio::time::timeout(std::time::Duration::from_secs(whole), async {
+        let row: Option<(i64, String, String, i64, String, i64)> = sqlx::query_as("UPDATE cell_outbox SET attempts=attempts+1,next_attempt_at=clock_timestamp()+$7::bigint*INTERVAL '1 second' WHERE id=(SELECT id FROM cell_outbox WHERE topic IN ($1,$2,$3,$4,$6) AND (topic<>$4 OR $5) AND delivered_at IS NULL AND next_attempt_at<=clock_timestamp() ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id,substr(payload,1,524289),root_kind,root_id,topic,attempts")
+            .bind(TOPIC).bind(POINTER_TOPIC).bind(PUSH_TOPIC).bind(REFRESH_TOPIC).bind(consumer.is_some()).bind(super::notices::TOPIC).bind(lease)
+            .fetch_optional(native).await?;
+        let Some((id, payload, kind, root, topic, attempt)) = row else { return Ok(false); };
         let mut continuation = None;
         let operation = async {
             ensure!(payload.len() <= MAXIMUM_BYTES, Refusal::Unavailable);
@@ -152,7 +158,7 @@ async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool>
                 ensure!(kind == "repository" && root == notice.repository.id, Refusal::Denied);
                 // A repository that went private or was deleted since the mention sends nothing.
                 let public: Option<bool> = sqlx::query_scalar("SELECT NOT is_private AND NOT is_internal FROM repositories WHERE id=$1 AND NOT is_stub")
-                    .bind(root).fetch_optional(&mut *tx).await?;
+                    .bind(root).fetch_optional(native).await?;
                 if public != Some(true) { return Ok(()); }
                 let home = native.foreign_authorization().ok_or(Refusal::Unavailable)?;
                 return home.send_notice(&super::notices::Event { id, notice }).await;
@@ -172,28 +178,29 @@ async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool>
                 Delivery::Forget { object } => directory::postgres::forget(native, object).await,
             }
         };
-        let result: Result<()> = if topic == REFRESH_TOPIC {
-            operation.await
-        } else {
-            tokio::time::timeout(std::time::Duration::from_secs(config.request_seconds*2+1), operation)
-                .await.unwrap_or_else(|_| Err(Refusal::Unavailable.into()))
-        };
-        match result {
-            Ok(()) => {
-                if let Some(payload) = continuation {
+        let limit = if topic == REFRESH_TOPIC { deadline } else { config.request_seconds * 2 + 1 };
+        let result: Result<()> = tokio::time::timeout(std::time::Duration::from_secs(limit), operation)
+            .await.unwrap_or_else(|_| Err(Refusal::Unavailable.into()));
+        // A claim whose lease ran out and was taken again records nothing.
+        let recorded = match result {
+            Ok(()) => match continuation {
+                Some(payload) => {
                     ensure!(payload.len() <= MAXIMUM_BYTES, Refusal::Unavailable);
-                    sqlx::query("UPDATE cell_outbox SET payload=$2,next_attempt_at=clock_timestamp() WHERE id=$1").bind(id).bind(payload).execute(&mut *tx).await?;
-                } else {
-                    sqlx::query("UPDATE cell_outbox SET delivered_at=clock_timestamp() WHERE id=$1").bind(id).execute(&mut *tx).await?;
+                    sqlx::query("UPDATE cell_outbox SET payload=$3,next_attempt_at=clock_timestamp() WHERE id=$1 AND attempts=$2 AND delivered_at IS NULL")
+                        .bind(id).bind(attempt).bind(payload).execute(native).await?
                 }
-            }
+                None => sqlx::query("UPDATE cell_outbox SET delivered_at=clock_timestamp() WHERE id=$1 AND attempts=$2 AND delivered_at IS NULL")
+                    .bind(id).bind(attempt).execute(native).await?,
+            },
             Err(error) => {
-                sqlx::query("UPDATE cell_outbox SET next_attempt_at=clock_timestamp()+$2::bigint*INTERVAL '1 second' WHERE id=$1")
-                    .bind(id).bind(config.request_seconds as i64).execute(&mut *tx).await?;
                 tracing::warn!(event_id=id, %topic, error=%format!("{error:#}"), "Cell event remains queued");
+                sqlx::query("UPDATE cell_outbox SET next_attempt_at=clock_timestamp()+$3::bigint*INTERVAL '1 second' WHERE id=$1 AND attempts=$2 AND delivered_at IS NULL")
+                    .bind(id).bind(attempt).bind(config.request_seconds as i64).execute(native).await?
             }
+        };
+        if recorded.rows_affected() == 0 {
+            tracing::warn!(event_id=id, %topic, "Cell event was claimed again before its result was recorded");
         }
-        tx.commit().await?;
         Ok(true)
     }).await.map_err(|_| Refusal::Unavailable)?
 }

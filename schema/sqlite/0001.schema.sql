@@ -43,6 +43,7 @@ CREATE TABLE cell_outbox (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     next_attempt_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     delivered_at TEXT,
+    attempts INTEGER NOT NULL DEFAULT 0 CHECK(typeof(attempts)='integer' AND attempts>=0),
     source_cell INTEGER CHECK(source_cell IS NULL OR (typeof(source_cell)='integer' AND source_cell BETWEEN 0 AND 65535)),
     source_event INTEGER CHECK(source_event IS NULL OR (typeof(source_event)='integer' AND source_event>0)),
     CHECK((source_cell IS NULL)=(source_event IS NULL)),

@@ -49,6 +49,8 @@ CREATE TABLE cell_outbox (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     delivered_at TIMESTAMPTZ,
+    -- Each claim takes a lease; only the latest claim may record the result.
+    attempts BIGINT NOT NULL DEFAULT 0 CHECK(attempts>=0),
     source_cell INTEGER CHECK(source_cell BETWEEN 0 AND 65535),
     source_event BIGINT CHECK(source_event>0),
     CHECK((source_cell IS NULL)=(source_event IS NULL)),
