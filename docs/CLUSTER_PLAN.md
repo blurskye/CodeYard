@@ -191,6 +191,11 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     the source checks above.
     A native HTTP regression proves the cell emits gzip, then exercises token-scheme
     viewer queries in both cells and a compressed-client split query through the router.
+    Retry 72a0f3463856498c89dd47fc7baea36f passes all nine router library tests and
+    all 234 cluster tests without skips. Both real gh logins and repository creations
+    pass; the first HTTP Git push receives 404 because the three Git constructors did
+    not declare catalogue routes. Their shared declarations and an AST-based source
+    guard fix are written, with native-cell Git advertisement coverage; checks are next.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:

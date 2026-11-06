@@ -14,6 +14,7 @@ use axum::http::HeaderMap;
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::response::Response;
+use codeyard_api_http::cell_routes::CellRoutes;
 use codeyard_app::app::AppState;
 use codeyard_db_core::models::Repository;
 use codeyard_git::error::RepoError;
@@ -548,15 +549,15 @@ pub async fn info_refs_head(
 
 pub fn router() -> axum::Router<Arc<AppState>> {
     axum::Router::new()
-        .route(
+        .cell_route(
             "/:owner/:repo/info/refs",
             axum::routing::get(info_refs).head(info_refs_head),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/git-upload-pack",
             axum::routing::post(upload_pack),
         )
-        .route(
+        .cell_route(
             "/:owner/:repo/git-receive-pack",
             axum::routing::post(receive_pack),
         )

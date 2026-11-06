@@ -288,6 +288,26 @@ async fn native_http_cells_route_by_owner_and_keep_working_when_another_cell_sto
         assert_eq!(status, 200, "{body}");
         assert!(body.get("errors").is_none(), "{body}");
         assert_eq!(body["data"]["viewer"]["login"], name, "{body}");
+        for service in ["git-upload-pack", "git-receive-pack"] {
+            let response = client
+                .get(format!("{}/{name}/repo.git/info/refs?service={service}", router.url()))
+                .basic_auth(name, Some(token))
+                .send()
+                .await
+                .unwrap();
+            let status = response.status();
+            let content_type = response.headers().get("content-type").cloned();
+            let body = axum::body::to_bytes(
+                axum::body::Body::from_stream(response.bytes_stream()),
+                codeyard_cells_router::graphql_dispatch::Config::default().maximum_bytes,
+            )
+            .await
+            .unwrap();
+            assert_eq!(status, 200, "{name}/{service}: {}", String::from_utf8_lossy(&body));
+            let mime = format!("application/x-{service}-advertisement");
+            assert_eq!(content_type.as_ref().and_then(|value| value.to_str().ok()), Some(mime.as_str()));
+            assert!(body.get(4..).is_some_and(|bytes| bytes.starts_with(format!("# service={service}\n").as_bytes())));
+        }
     }
     for (name, id) in [("alice", alice_id), ("bob", bob_id)] {
         let response = client

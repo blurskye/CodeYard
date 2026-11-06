@@ -1438,6 +1438,7 @@ dependencies = [
  "sqlx",
  "ssh-key 0.6.7",
  "subtle",
+ "syn 2.0.119",
  "tar",
  "tempfile",
  "thiserror 2.0.21",

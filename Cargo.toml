@@ -137,6 +137,7 @@ rsa.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tower.workspace = true
 jsonschema.workspace = true
+syn = { version = "=2.0.119", features = ["full", "visit"] }
 
 [lints]
 workspace = true
