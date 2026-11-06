@@ -183,7 +183,11 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     fccc5bc15490436392c6f19bf8c72d25 and WASM eb68fc08c42d4a218b972875f7f457c7.
     The next source fixture starts an existing standalone account/session/repository,
     writes a commit, enrolls it as cell zero and checks unchanged IDs/session/Git data
-    through HTTP, gh and clone. Its syntax is checked; source checks and runtime are next.
+    through HTTP, gh and clone. It passes workspace d7cca32c08ff442ea69ef26b8dd42c74,
+    Clippy 4f81ccaaf4a74e72bae0a9b170545a76 and WASM 05a37dc0d556468a9134ff146219c08e.
+    The next cells snapshot also checks real gh org/team grants, home org discovery and
+    native-only member lists/counts, and asserts both empty stub search items and count.
+    Fixture runtime remains pending. The current job passes all 67 REST library tests.
     No stage 2 completion is claimed. Stages 3 to 6 are not built; automatic user moves
     and org regional presence remain documented owner decisions.
     Committed range renewal is a deferred owner follow-up. Other owner follow-ups:

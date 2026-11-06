@@ -399,6 +399,27 @@ def acceptance(deployment):
         assert dashboard["shared_count"] == 1, dashboard
         assert dashboard["shared"][0]["repository"]["name"] == "shared", dashboard
         client.checked("the home dashboard shows the foreign private repository in raw HTML and hydration data")
+        with client.check("foreign org and team grants work while member lists and counts exclude metadata stubs"):
+            deployment.web("alice", "form", "/settings/organizations", "--action", "/settings/organizations",
+                "--has", "action=create", "--set", "slug=cell-org", "--set", "display_name=Cell organization",
+                "--location", "/settings/organizations")
+            client.api("orgs/cell-org/memberships/bob", "--method", "PUT", "-f", "role=member")
+            membership = client.api("user/memberships/orgs/cell-org", "--method", "PATCH", "-f", "state=active", who="bob")
+            assert membership["state"] == "active", membership
+            deadline = time.monotonic() + 30
+            while not any(org["login"] == "cell-org" for org in client.api("user/orgs", who="bob")):
+                assert time.monotonic() < deadline, "the home org list did not receive the remote membership"
+                threading.Event().wait(0.1)
+            members = client.api("orgs/cell-org/members")
+            assert [member["login"] for member in members] == ["alice"], members
+            team = client.api("orgs/cell-org/teams", "--method", "POST", "-f", "name=Contributors", "-f", "privacy=closed")
+            team_path = "orgs/cell-org/teams/" + team["slug"]
+            for who, role in (("alice", "maintainer"), ("bob", "member")):
+                member = client.api(team_path + "/memberships/" + who, "--method", "PUT", "-f", "role=" + role)
+                assert member["state"] == "active", member
+            members = client.api(team_path + "/members")
+            assert [member["login"] for member in members] == ["alice"], members
+            assert client.api(team_path)["members_count"] == 1
         with client.check("foreign private repository navigation works without JavaScript and through hydrated page models"):
             deployment.browser_navigation("bob", bob["id"], other["id"])
 
@@ -448,7 +469,7 @@ def acceptance(deployment):
         assert nodes["data"]["zero"] == {"id": identities["zero"], "name": "shared"}, nodes
         assert nodes["data"]["one"] == {"id": identities["one"], "name": "other"}, nodes
         people = client.api("search/users?q=bob")
-        assert all(item["id"] != bob["id"] for item in people["items"]), "a local search must not expose metadata stubs"
+        assert people["total_count"] == 0 and people["items"] == [], "a local search must not expose metadata stubs"
         client.checked("node lookup and one native GraphQL query span both cells; stubs stay out of account search")
 
         def http_get(path, token=None):
