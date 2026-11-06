@@ -767,9 +767,10 @@ round passes all five checks and all 234 cluster tests without skips. Stage 2 ru
 acceptance passes.
 Stage 3 star pointers and bounded home lists address acceptance items 5 and 7.
 Their source checks and the real public two-cell star/SIGKILL replay round pass;
-library/integration runtime is still running. Fork-source admission is in source
-work, with directory-verified metadata and original credentials retained through
-both-engine creation transactions. Public fork publication is not wired. Cross-cell forks, pull requests, notifications,
+144 selected library tests and both membership contracts also pass. Two cluster tests
+await retry. Fork-source admission and bounded TLS exports are in source work, with
+directory-verified metadata and original credentials retained through both-engine creation
+transactions and native storage forwarding. Public fork publication is not wired. Cross-cell forks, pull requests, notifications,
 transfers and pools remain open, as do stages 4 to 6. Range renewal is a deferred owner
 follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain

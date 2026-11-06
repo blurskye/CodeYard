@@ -4,6 +4,21 @@ use crate::store_types::GitStreams;
 use anyhow::{ensure, Context, Result};
 use codeyard_db_core::{cells::repositories::Snapshot, queries::credentials::Actor, DbPool};
 
+pub fn pack_bytes() -> Result<u64> {
+    let maximum = match std::env::var("FORK_MAX_PACK_BYTES") {
+        Ok(value) => value
+            .parse::<u64>()
+            .context("Invalid FORK_MAX_PACK_BYTES")?,
+        Err(std::env::VarError::NotPresent) => 128 * 1024 * 1024,
+        Err(error) => return Err(error.into()),
+    };
+    ensure!(
+        (1..=64 * 1024 * 1024 * 1024).contains(&maximum),
+        "Invalid FORK_MAX_PACK_BYTES"
+    );
+    Ok(maximum)
+}
+
 impl RepoStore {
     pub async fn fork_listing(
         &self,
@@ -57,7 +72,18 @@ impl RepoStore {
             .fork_listing(pool, actor, repository, default_branch_only)
             .await?;
         let targets: Vec<_> = snapshot.refs.values().cloned().collect();
-        let status = self.replica_pack(&targets, &[], streams).await?;
+        let mut bounded = crate::git_transport::LimitedWriter::new(streams.output, pack_bytes()?);
+        let status = self
+            .replica_pack(
+                &targets,
+                &[],
+                GitStreams {
+                    input: streams.input,
+                    output: &mut bounded,
+                    errors: streams.errors,
+                },
+            )
+            .await?;
         ensure!(status.success(), "Fork snapshot pack failed");
         codeyard_db_repos::repositories::creation::read_fork_source(pool, actor, repository)
             .await?

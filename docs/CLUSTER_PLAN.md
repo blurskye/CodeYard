@@ -201,7 +201,12 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     in cluster-core for the next fork-copy stream. Workspace 11231ca76cc54d888ae59a27418e098e
     and Clippy cf96651d85f24e5aa454febcda6f5345 found two imports, now fixed;
     WASM 852b0ae8aa2f4351a77286f7840b1706 passes. Bounded pinned-TLS fork export,
-    native storage forwarding and hostile/revoked snapshot tests are written but unchecked.
+    native storage forwarding and hostile/revoked snapshot tests are written. Workspace
+    c533dc9bbab3421798899f39e7cb7ba2 and Clippy 60b7ee3a51974e43ad16ae2cc38d5805
+    report stream-pipe borrowing, a retained repository id and JSON error conversion;
+    all are fixed together. WASM 273d1812982d4716821c0d707ff5bf33 passes. Recheck jobs:
+    workspace 693c4fdac519429e8ea01446c01f4402, Clippy 35d9047eb87840b096823571b58623a6
+    and WASM a5bd1ceff3ca4a118123667d3a00f703.
     Runtime 5993a963beb74088a032f3f29c97fbdc passes five public cells checks,
     144 selected library tests and both membership contracts without skips. Cluster
     passes 232/234; duplicate-begin recovery on SQLite and replica rebalancing fail

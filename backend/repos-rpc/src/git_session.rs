@@ -194,7 +194,7 @@ impl RpcHandler {
                     let snapshot = store.fork_listing(self.context.database()?, authority,
                         repo_id.ok_or_else(unavailable)?, *default_branch_only).await.map_err(RepoError::from)?;
                     let targets = snapshot.refs.values().cloned().collect();
-                    (serde_json::to_value(snapshot).map_err(RepoError::from)?, targets)
+                    (serde_json::to_value(snapshot).map_err(|_| unavailable())?, targets)
                 }
                 Operation::ReplicaPack { want,.. } => {
                     if want.len()>codeyard_git::repository::MAX_MIRROR_REFS || want.iter().any(|id|!codeyard_git::is_full_commit_id(id)) {
@@ -230,17 +230,26 @@ impl RpcHandler {
             } else {
                 None
             };
-            Ok::<_, RepoError>((store, admission, targets, receive, permit, checkout, read_guard, pack_admission))
+            Ok::<_, RepoError>((store, admission, targets, receive, permit, checkout, read_guard, pack_admission, repo_id))
         })
         .await.unwrap_or_else(|_| Err(unavailable()));
-        let (store, admission, targets, receive, _permit, checkout, _read_guard, _pack_admission) =
-            match prepared {
-                Ok(prepared) => prepared,
-                Err(error) => {
-                    crate::refuse(&mut link, error).await?;
-                    return Ok(());
-                }
-            };
+        let (
+            store,
+            admission,
+            targets,
+            receive,
+            _permit,
+            checkout,
+            _read_guard,
+            _pack_admission,
+            repo_id,
+        ) = match prepared {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                crate::refuse(&mut link, error).await?;
+                return Ok(());
+            }
+        };
         // The permit is held while the reply is written, so the write has a deadline too.
         tokio::time::timeout_at(
             deadline,
@@ -273,7 +282,26 @@ impl RpcHandler {
                     session.allow_unreachable = checkout;
                     store.git_session(session, receive, streams).await
                 }
-                Operation::ForkPack { .. } => store.replica_pack(&targets, &[], streams).await,
+                Operation::ForkPack { .. } => {
+                    async {
+                        let mut bounded = LimitedWriter::new(
+                            streams.output,
+                            codeyard_repos_core::repositories::store::fork_pack_bytes()?,
+                        );
+                        store
+                            .replica_pack(
+                                &targets,
+                                &[],
+                                GitStreams {
+                                    input: streams.input,
+                                    output: &mut bounded,
+                                    errors: streams.errors,
+                                },
+                            )
+                            .await
+                    }
+                    .await
+                }
                 Operation::ReplicaPack { have, .. } => {
                     store.replica_pack(&targets, &have, streams).await
                 }

@@ -55,17 +55,7 @@ impl Home for Native {
     ) -> BoxFuture<'a, Result<Snapshot>> {
         Box::pin(async move {
             request.validate()?;
-            let maximum = match std::env::var("FORK_MAX_PACK_BYTES") {
-                Ok(value) => value
-                    .parse::<u64>()
-                    .context("Invalid FORK_MAX_PACK_BYTES")?,
-                Err(std::env::VarError::NotPresent) => 128 * 1024 * 1024,
-                Err(error) => return Err(error.into()),
-            };
-            ensure!(
-                (1..=64 * 1024 * 1024 * 1024).contains(&maximum),
-                "Invalid FORK_MAX_PACK_BYTES"
-            );
+            let maximum = codeyard_repos_core::repositories::store::fork_pack_bytes()?;
             let _slot = self
                 .state
                 .repository_downloads

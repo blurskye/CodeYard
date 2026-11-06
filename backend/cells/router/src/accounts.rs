@@ -677,7 +677,6 @@ impl rpc::Service for Accounts {
             };
             request.validate()?;
             let (mut writer, mut reader) = tokio::io::duplex(32768);
-            let generate = async { self.home.snapshot(&request, &mut writer).await };
             let send = async {
                 let mut received = 0_u64;
                 let mut chunk = vec![0; 32768];
@@ -699,7 +698,7 @@ impl rpc::Service for Accounts {
             };
             // Returning from generation closes the pipe even on an authorization failure.
             let generate = async {
-                let result = generate.await;
+                let result = self.home.snapshot(&request, &mut writer).await;
                 drop(writer);
                 result
             };

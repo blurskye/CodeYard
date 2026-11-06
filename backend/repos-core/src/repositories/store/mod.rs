@@ -62,6 +62,7 @@ use std::path::Path;
 use std::time::Instant;
 
 mod fork_snapshot;
+pub use fork_snapshot::pack_bytes as fork_pack_bytes;
 pub mod local;
 mod remote;
 
