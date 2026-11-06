@@ -762,6 +762,8 @@ exhaustive GraphQL contracts. The latest completed retry passes 300 selected lib
 and the selected both-engine membership, browser, gist, reviewer and CI contracts. It
 exposes GraphQL discovery and mutation-root failures; their collected fixes pass source
 checks and join native home lists and the isolated cells fixture in runtime 9a78fe9.
+The cells start and complete signup/key setup; a Python helper-shadowing failure is fixed
+for retry while Rust tests continue.
 Public two-cell gh/Git acceptance remains open. Stages 3 to 6 are not built; range renewal
 is a deferred owner follow-up. [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and
 runtime gaps. The owner authorized cells on 2026-11-05 without waiting for A16. Capacity

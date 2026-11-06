@@ -218,6 +218,7 @@ class Deployment:
                         context.add_cookies([{"name": "session_id", "value": session, "url": self.base}])
                         page = context.new_page()
                         page.set_default_timeout(15000)
+                        page.set_default_navigation_timeout(60000)
                         errors = []
                         page.on("pageerror", lambda error: errors.append(str(error)))
 
@@ -372,7 +373,7 @@ def acceptance(deployment):
         assert all(item["id"] != bob["id"] for item in people["items"]), "a local search must not expose metadata stubs"
         client.checked("node lookup and one native GraphQL query span both cells; stubs stay out of account search")
 
-        def http(path, token=None):
+        def http_get(path, token=None):
             request = urllib.request.Request(deployment.base + path, headers={"Accept": "application/json", **({"Authorization": "Bearer " + token} if token else {})})
             try:
                 response = deployment.http.open(request, timeout=15)
@@ -383,20 +384,20 @@ def acceptance(deployment):
                 assert len(body) <= 2 * 1024 * 1024
                 return response.status, body
         deployment.stop("one")
-        assert http("/api/v3/repos/bob/other", tokens["alice"])[0] == 503
-        unavailable, body = http("/bob/other")
+        assert http_get("/api/v3/repos/bob/other", tokens["alice"])[0] == 503
+        unavailable, body = http_get("/bob/other")
         assert unavailable == 503 and "cell is unavailable" in json.loads(body)["message"], body
         assert client.api("repos/alice/shared")["name"] == "shared"
         deployment.start("one", "serve")
         deployment.wait("one", deployment.native[1][0])
         assert client.api("repos/bob/other")["name"] == "other"
         client.checked("a stopped cell returns a clear unavailable error while the other cell keeps working")
-        assert http("/api/v3/repos/alice/shared", tokens["bob"])[0] == 200
+        assert http_get("/api/v3/repos/alice/shared", tokens["bob"])[0] == 200
         token_id = deployment.web("bob", "req", "GET", "/settings?tab=tokens", "--print", r"re:/settings/tokens/([0-9]+)/delete")
         assert token_id.isdecimal()
         deployment.web("bob", "form", "/settings?tab=tokens", "--action", f"/settings/tokens/{token_id}/delete", "--set", "confirm=yes", "--status", "303")
         deadline = time.monotonic() + 61
-        while http("/api/v3/repos/alice/shared", tokens["bob"])[0] == 200:
+        while http_get("/api/v3/repos/alice/shared", tokens["bob"])[0] == 200:
             assert time.monotonic() < deadline, "home token revocation did not reach the resource cell within 60 seconds"
             threading.Event().wait(0.1)
         assert client.gh("issue", "create", "-R", "alice/shared", "--title", "Must not be written", "--body", "revoked", who="bob", ok=(1,)).returncode == 1
