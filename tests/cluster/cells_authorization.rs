@@ -1137,6 +1137,17 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             panic!("cell outbox did not drain");
         }
     };
+    // The mail admin for the mention check below is a local account made before cell one
+    // joins the directory.
+    let mail_admin =
+        codeyard_db_identity::users::accounts::create_user(&one.pool, "mailadmin", None)
+            .await
+            .unwrap();
+    sqlx::query("UPDATE users SET is_admin=TRUE WHERE id=$1")
+        .bind(mail_admin.id)
+        .execute(&one.raw)
+        .await
+        .unwrap();
     // Cell one delivers its own outbox once it has a directory.
     one.pool
         .set_directory(Arc::new(directory_client(one_key.clone())))
@@ -1372,15 +1383,6 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     );
     // A mention in a public repository of cell zero reaches Bob's inbox in cell one once,
     // with one email. A private repository sends nothing to another cell.
-    let mail_admin =
-        codeyard_db_identity::users::accounts::create_user(&one.pool, "mailadmin", None)
-            .await
-            .unwrap();
-    sqlx::query("UPDATE users SET is_admin=TRUE WHERE id=$1")
-        .bind(mail_admin.id)
-        .execute(&one.raw)
-        .await
-        .unwrap();
     let mail_session = codeyard_identity::sessions::fresh_id(&one.pool).unwrap();
     codeyard_db_identity::users::sessions::create_session(
         &one.pool,

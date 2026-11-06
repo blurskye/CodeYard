@@ -652,8 +652,9 @@ impl RpcHandler {
             .map_err(|_| unavailable())?
             .ok_or_else(unavailable)?;
             if let Some(credential) = session.credential {
+                // A receive admits a maintainer of a pull head; its hooks check each update.
                 credential
-                    .authorize(
+                    .authorize_session(
                         pool,
                         &repo,
                         session.service
