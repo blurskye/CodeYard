@@ -167,50 +167,24 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     pass workspace 1eea95d5da154951a089895b7e135cbc, Clippy
     5bbeecaa23534c9086bf16bc198a3001 and WASM 045f16dfddd44168a4379af54001a42c.
     Stage 3 items 5/7 have resource-owned stars, distinct home discovery pointers,
-    bounded authorized REST/browser lists and a SIGKILL outbox replay fixture.
-    Initial source checks pass workspace 21e6c57489b04937a62801e83dc6c96d,
-    Clippy 642e4e90dd194f728eed9b3b0fbaf20d and WASM
-    95844ccaeecb4f5fae389147be54758a. Runtime
-    5993a963beb74088a032f3f29c97fbdc covers the public cells round, changed library
-    crates, both-engine pointer contracts and the full cluster target. Its public
-    two-cell round passes all five checks without skips, including star counts/home
-    lists and outbox replay after SIGKILL. All 144 selected library tests pass
-    without skips; database/cluster targets are still running.
-    The star-list follow-up retains native/foreign credential proofs, bounds card
-    projection batches and tests malformed resource pages and a merged third browser
-    page. Its checks pass: workspace
+    bounded authorized REST/browser lists and SIGKILL outbox replay. Runtime
+    5993a963beb74088a032f3f29c97fbdc passes all five public cells checks, 144 selected
+    library tests and both membership contracts without skips. Cluster passes 232/234;
+    SQLite duplicate-begin recovery and replica rebalancing fail and await retry.
+    The bounded star projection/third-page follow-up passes workspace
     1e483729c5ba4ee3b5ca63ab06bc8212, Clippy 4b28e2a861b34559a3a9e540f49b5eb3
-    and WASM c6a1a0038b3147bb82688256662a5028. Runtime has not covered the third-page/invalid-owner follow-up yet.
-    The next source fixture drives gh repo fork, two head pushes, gh pr checkout,
-    an upstream maintainer SSH push and gh pr merge across cells; implementation
-    and runtime are pending. Bounded fork-source RPC now verifies the original
-    account proof and resource access, redacts local storage/private owner fields,
-    checks directory homes and retains metadata stubs; real TLS hostile/revocation
-    assertions are written. Source checks are pending: workspace
-    97e6c8e1da0e4e37850ac770f26f729c, Clippy 34dace7c07d4483bb4e04162e5d55875
-    and WASM 087dc848a5d4488cad45ad719cfecb9e. WASM passes; both native jobs
-    report the same missing identity-to-db-orgs dependency, now declared.
-    Recheck jobs are workspace 75d97024b4f44666a9f90ca4d05ee9b9, Clippy
-    d8b75871128d4b1f94b7dcf4c1296ca6 and WASM 4159cd3c47b1446bb08fbb06763f85df.
-    All three pass. The next unchecked source retains
-    original fork proofs through both-engine creation transactions, shares native
-    source permission reads and tests access lost immediately before commit.
-    Checks are workspace e401f6085a944da88801854b240a525d, Clippy
-    25ac9880ad294027a1ac8a783e8f92a4 and WASM 7078759ffd0242dcb456214cdb71a296;
-    All three pass. Native repository framing now has one shared transport owner
-    in cluster-core for the next fork-copy stream. Workspace 11231ca76cc54d888ae59a27418e098e
-    and Clippy cf96651d85f24e5aa454febcda6f5345 found two imports, now fixed;
-    WASM 852b0ae8aa2f4351a77286f7840b1706 passes. Bounded pinned-TLS fork export,
-    native storage forwarding and hostile/revoked snapshot tests are written. Workspace
-    c533dc9bbab3421798899f39e7cb7ba2 and Clippy 60b7ee3a51974e43ad16ae2cc38d5805
-    report stream-pipe borrowing, a retained repository id and JSON error conversion;
-    all are fixed together. WASM 273d1812982d4716821c0d707ff5bf33 passes. Recheck jobs:
-    workspace 693c4fdac519429e8ea01446c01f4402, Clippy 35d9047eb87840b096823571b58623a6
-    and WASM a5bd1ceff3ca4a118123667d3a00f703.
-    Runtime 5993a963beb74088a032f3f29c97fbdc passes five public cells checks,
-    144 selected library tests and both membership contracts without skips. Cluster
-    passes 232/234; duplicate-begin recovery on SQLite and replica rebalancing fail
-    and await retry. Fork publication is not wired.
+    and WASM c6a1a0038b3147bb82688256662a5028; its runtime is pending.
+    Fork-source admission retains original proofs, verifies directory homes, redacts
+    private metadata and rechecks source and destination access in both-engine writes.
+    It passes workspace e401f6085a944da88801854b240a525d, Clippy
+    25ac9880ad294027a1ac8a783e8f92a4 and WASM 7078759ffd0242dcb456214cdb71a296.
+    Bounded TLS fork exports share native framing and forward to storage nodes.
+    Hostile roots/readers, revoked access and failed/oversized stream tests are written.
+    Recheck passes: workspace 693c4fdac519429e8ea01446c01f4402, Clippy
+    35d9047eb87840b096823571b58623a6 and WASM a5bd1ceff3ca4a118123667d3a00f703. The gh/Git cross-cell fork/PR fixture is written; public fork creation
+    and publication are not wired, and their runtime acceptance is pending. Runtime
+    67eb28f748434d8d839860a974a0fb07 covers the touched libraries, store/write tests,
+    database cell contracts, cluster, CI, storage and the mandatory public cells fixture.
     Remaining stage 3 acceptance: cross-cell forks/PRs and maintainer pushes, shared
     object pools, mentions/home inbox/email, and repository transfers/redirects.
     Stages 4 to 6 remain unwritten; automatic user moves and org regional presence
