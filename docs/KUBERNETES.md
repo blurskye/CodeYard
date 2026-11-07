@@ -77,7 +77,7 @@ by default, database and owner `codeyard`) and a PgBouncer `Pooler` named
 (`dataDurability: required`): if no standby is reachable, writes stop instead of risking
 loss, and only a standby holding every acknowledged commit may be promoted. Core pods get
 three URLs built from the operator's `<release>-pg-app` Secret, all checked against its CA
-(`sslmode=verify-ca`):
+and host name (`sslmode=verify-full`; the server certificate also names the pooler):
 
 | Variable | Service | Used for |
 |---|---|---|

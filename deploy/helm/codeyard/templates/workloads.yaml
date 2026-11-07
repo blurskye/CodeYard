@@ -122,7 +122,11 @@ spec:
             - name: REPOS_PATH
               value: /data/repos
             - name: HOST_KEY_PATH
+              {{- if eq $role "ssh" }}
+              value: /run/codeyard/host_key
+              {{- else }}
               value: /data/host_key
+              {{- end }}
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
@@ -196,7 +200,7 @@ spec:
                   key: password
             {{- range $url := list (list "DATABASE_URL" (printf "%s-pgbouncer" $fullname)) (list "DATABASE_READ_URL" (printf "%s-ro" $pg)) (list "DATABASE_DIRECT_URL" (printf "%s-rw" $pg)) }}
             - name: {{ index $url 0 }}
-              value: "postgres://$(CNPG_APP_USER):$(CNPG_APP_PASSWORD)@{{ index $url 1 }}:5432/codeyard?sslmode=verify-ca&sslrootcert=/etc/codeyard/postgres/ca.crt"
+              value: "postgres://$(CNPG_APP_USER):$(CNPG_APP_PASSWORD)@{{ index $url 1 }}:5432/codeyard?sslmode=verify-full&sslrootcert=/etc/codeyard/postgres/ca.crt"
             {{- end }}
             {{- end }}
             {{- with $.Values.config.extraEnv }}
@@ -237,6 +241,10 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
+            {{- if eq $role "ssh" }}
+            - name: host-key
+              mountPath: /run/codeyard
+            {{- end }}
             {{- if and (ne $role "runner") $.Values.postgres.cnpg.enabled }}
             - name: postgres-ca
               mountPath: /etc/codeyard/postgres
@@ -255,6 +263,15 @@ spec:
         - name: tmp
           emptyDir:
             sizeLimit: {{ $.Values.tmpSizeLimit }}
+        {{- if eq $role "ssh" }}
+        # The host key lives in PostgreSQL; built-in SSH also writes it to a file whose
+        # parent directories may not be group- or world-writable unless sticky and
+        # root-owned. A disk emptyDir is 2777, a memory one 3777.
+        - name: host-key
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        {{- end }}
         {{- if ne $role "storage" }}
         - name: data
           emptyDir:

@@ -63,6 +63,10 @@ grep -q 'name: codeyard-storage-join' "$work/storage.yaml"
 grep -q 'volumeClaimTemplates:' "$work/storage.yaml"
 grep -q 'type: OnDelete' "$work/storage.yaml"
 [[ -z $(resource "$work/all.yaml" Secret codeyard) ]]
+# Built-in SSH refuses a host key under a non-sticky world-writable directory.
+resource "$work/all.yaml" Deployment codeyard-ssh > "$work/ssh.yaml"
+grep -q 'value: /run/codeyard/host_key' "$work/ssh.yaml"
+grep -q 'medium: Memory' "$work/ssh.yaml"
 
 # Exercise the other SSH exposure, existing account and explicit empty StorageClass.
 resource "$work/nodeport.yaml" Service codeyard-ssh > "$work/ssh-service.yaml"
@@ -76,12 +80,14 @@ grep -q 'registry.example.net/codeyard@sha256:' "$work/nodeport.yaml"
 [[ -n $(resource "$work/cnpg.yaml" Cluster codeyard-pg) ]]
 [[ -n $(resource "$work/cnpg.yaml" Pooler codeyard-pgbouncer) ]]
 resource "$work/cnpg.yaml" Cluster codeyard-pg | grep -q 'dataDurability: required'
+# verify-full against PgBouncer needs the pooler Service name in the server certificate.
+resource "$work/cnpg.yaml" Cluster codeyard-pg | grep -Eq -- '- codeyard-pgbouncer$'
 resource "$work/cnpg.yaml" Pooler codeyard-pgbouncer | grep -q 'poolMode: transaction'
 for role in web ssh; do
     resource "$work/cnpg.yaml" Deployment "codeyard-$role" > "$work/$role-cnpg.yaml"
-    grep -q '@codeyard-pgbouncer:5432/codeyard?sslmode=verify-ca' "$work/$role-cnpg.yaml"
-    grep -q '@codeyard-pg-ro:5432/codeyard?sslmode=verify-ca' "$work/$role-cnpg.yaml"
-    grep -q '@codeyard-pg-rw:5432/codeyard?sslmode=verify-ca' "$work/$role-cnpg.yaml"
+    grep -q '@codeyard-pgbouncer:5432/codeyard?sslmode=verify-full' "$work/$role-cnpg.yaml"
+    grep -q '@codeyard-pg-ro:5432/codeyard?sslmode=verify-full' "$work/$role-cnpg.yaml"
+    grep -q '@codeyard-pg-rw:5432/codeyard?sslmode=verify-full' "$work/$role-cnpg.yaml"
     grep -q 'secretName: codeyard-pg-ca' "$work/$role-cnpg.yaml"
     if grep -q 'key: DATABASE_URL' "$work/$role-cnpg.yaml"; then
         echo "CloudNativePG $role pods still read DATABASE_URL from the Secret" >&2

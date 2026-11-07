@@ -12,6 +12,12 @@ spec:
   instances: {{ $cnpg.instances }}
   imageName: {{ $cnpg.imageName | quote }}
   primaryUpdateStrategy: unsupervised
+  certificates:
+    # PgBouncer presents the server certificate, so it must name the pooler Service too.
+    serverAltDNSNames:
+      - {{ $fullname }}-pgbouncer
+      - {{ $fullname }}-pgbouncer.{{ .Release.Namespace }}
+      - {{ $fullname }}-pgbouncer.{{ .Release.Namespace }}.svc
   bootstrap:
     initdb:
       database: codeyard
