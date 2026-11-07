@@ -454,80 +454,31 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     a freeze that also stops the source cell's own background writers, not only routers.
     Each is a design decision for the owner before the move is built.
 
-    Stage 7 side lane: notice withdrawal and live source checks pass workspace
-    5773433098f74a23b60d3bb760b2234e and WASM 5b56e1e158f34324ba1cd9571c6b3ddd;
-    Clippy fdec851f92ed4b8ea4f5207c1e523c40 also passes. Runtime
-    81357bd2c79f464382707c2c7ac47704 passes 80 selected library tests, both-engine
-    stub HTTP tests (2), all 239 cluster tests and 47 notification collaboration tests.
-    Notification polling passes 4 and fails the PostgreSQL 100-client two-second
-    delivery bound. The public cells notice/privacy flow passes, but its overall round
-    fails maintainer PR creation and a disabled dependency-graph submission, and skips
-    cleanup after failure. The builder also reports no delegated CI cgroup. No assertion
-    is relaxed; a focused retry adds timeout diagnostics and retains the two-second bound.
-    `s7-notices-test.sh` owns its focused targets and cells round. A further two-cell
-    HTTP member-revocation/outbox-reclaim assertion passes workspace
-    5a7b4a57e8764a9994d446d064a9fe83, Clippy bdc1355fc4ef42cf926c94010991881a
-    and WASM 045556818d024ac59e14f1530301606b. Its runtime is not yet run.
-    Review also restores badge queries' restriction to the recipient's notification
-    repositories on both engines. That and polling diagnostics pass workspace
-    a419fe0ad7374ae7bd82e6137e89d58b, Clippy fdaec63b4bde452da44fd6ff71352c73
-    and WASM d6679477a8f0495abe8eeef4dc753222.
-    Runtime retry cfc7a969e5824a269d9273e69619239c passes: 54 library tests, both
-    stub HTTP contracts, all 239 cluster tests (including notice revocation), 47
-    notification collaboration tests and all 5 polling tests, with no ignored tests.
-    `s7-notices-retry.sh` covers the changed targets without repeating unrelated e2e failures.
-    Both baseline schemas add separate notice-refresh trigger/index blocks (no FK edits).
-    Both-engine HTTP/stub outage tests and two-cell HTTP privacy/deletion tests are added;
-    the public gh cells script also checks privacy after delivery. Heartbeat credential
-    work has a source-checked deadline helper and five deterministic unit tests in
-    `authorization/freshness.rs`: the clock allowance is inside the age bound, and wall
-    and monotonic deadlines survive waits without renewal. Its policy parser accepts
-    `IDENTITY_MAXIMUM_AGE_MS` (2000) and `IDENTITY_CLOCK_ERROR_MS` (250), but no running
-    reader consumes that configuration yet. It is not wired into readers;
-    the old foreign cache remains until the snapshot/RPC/transaction replacement is complete.
-    Foreign proofs now reject expiry after PostgreSQL user-row lock waits and after
-    repository/policy reads. Workspace fccfcb3a68684eec9227aded28d5586d, Clippy
-    65a4644af98741149d6cd19687ebeef8 and WASM e8886cf24abb453b8147cc7e87430afa pass;
-    runtime 988f12f45c6f46e68acbd6e1d6c24f40 passes all 27 core library tests,
-    both-engine authorization contracts (including the real PostgreSQL lock wait)
-    and all 239 cluster tests, with no ignored tests.
-    This still uses the old cache deadline, not a heartbeat snapshot. Removing the old
-    `foreign_credentials` table and adding a cell-local identity-heartbeat table also
-    requires updating `cells/ownership.rs`: its exhaustive test rejects both missing
-    tables and unclassified additions. The owner granted this lane a narrow exception:
-    classify the new cell-local heartbeat table and remove `foreign_credentials`,
-    including the exhaustive fixtures, without changing other ownership rules.
-    The replacement is now in progress: operation-owned proofs replace the table in
-    authorization queries, home answers select a credential and heartbeat together,
-    and HTTP/RPC/Git/SSH admission retains bounded proof deadlines. Both baselines
-    replace the cache table with `identity_heartbeat`; ownership changes only its Cell
-    classification. Workspace 4511a7fa911d4e3cbf70575540f8e486, Clippy
-    9d9f17aef51a444c9b0bcdb1dbb8064b and WASM f6f0292a9ae34b72be8411e7e376a59e
-    pass. Replacement fixtures cover separate operations, stale/revoked snapshots,
-    PostgreSQL lock expiry and HTTP home loss; runtime is next. Home reads currently
-    use the primary, not an identity replica. Runtime 280f2198cf0543ff861b236ead01ffe7
-    is running. While it runs, the optional content-cache source is written in
-    `backend/cache`: local LRU, Redis standalone/Cluster, slot batches, deadlines,
-    breaker and bounded single-flight; Markdown integration authorizes before lookup.
-    Cache source is checking in workspace 2f13c047e2c2484abb8f2acd50b6806a,
-    Clippy d90ba7d044114fd4afed46bf42cb9514 and WASM
-    1b6cd894b14342df8374a213488466ba. Lock-only job aab2834744584e5b9c3f094ccd558e6c
-    added the cache, Redis and CRC16 without changing existing package versions.
-    Remote contracts need external Valkey endpoints. `s7-cache-test.sh` is prepared;
-    it waits for the active identity test job and the cache source checks.
-    Runtime 280f2198cf0543ff861b236ead01ffe7 finishes with four failed targets:
-    the ownership catalog order, foreign browser CSRF, the publication fixture's
-    missing operation scope, and a fork response outliving its admission proof.
-    Fixes sort the heartbeat classification, bound browser sessions by the proof
-    deadline, retain the fixture's proof in its operation and ask the home again
-    before exposing an expired operation's response. These fixes await checks.
-    Cache workspace, Clippy and WASM pass. The acceptance-fix check found one
-    private deadline accessor, now exposed for bounded browser projections; WASM
-    7efda07fa42a4b4aafcda081ff3c0fe7 passes. The combined recheck is workspace
-    edd212b7024740a082cd9f423bdf267b, Clippy 495cd4061db140f5b91f553c8385de8c
-    and WASM 01b42d03e14f4a67bbb527388b795510; all three pass. Combined runtime
-    ea8c74f4b1794a86a4359d7def525470 runs cache libraries/HTTP contracts, retries
-    the failed identity targets and checks the new browser expiry assertion.
+    Stage 7 side lane:
+    - Notice withdrawal and live source checks pass runtime
+      cfc7a969e5824a269d9273e69619239c: 54 library tests, both stub HTTP contracts,
+      all 239 cluster tests, 47 notification collaboration tests and all 5 polling
+      tests, without ignores. Both baselines add separate notice-refresh trigger/index
+      blocks. Tests cover privacy, deletion, membership revocation and source outage.
+      The earlier public cells notice flow passed, but unrelated maintainer-PR and
+      dependency-graph failures prevented an overall e2e pass; no full pass is claimed.
+    - Home credential answers now select the credential and cell-local heartbeat in
+      one snapshot on the primary. Operation-owned proofs replace the shared 60-second
+      cache; both baselines replace `foreign_credentials` with `identity_heartbeat`.
+      The only ownership-catalog changes remove the former Cell rule and add the latter.
+      `IDENTITY_MAXIMUM_AGE_MS` defaults to 2000, including the 250 ms clock allowance.
+      No identity-replica routing is enabled. Tests cover stale/revoked snapshots,
+      isolated operations, home loss and PostgreSQL lock-wait expiry. Runtime 280f2198
+      found catalog ordering, browser expiry, publication fixture scope and long-response
+      expiry failures; fixes are in the combined retry below.
+    - `backend/cache` owns the bounded local LRU, optional Redis standalone/Cluster,
+      slot batches, deadlines, breaker and single-flight. Markdown authorizes before
+      lookup; no access decision uses the cache. Compose Valkey is off by default.
+      Remote contracts require external endpoints; no remote certification is claimed.
+    Combined workspace edd212b7024740a082cd9f423bdf267b, Clippy
+    495cd4061db140f5b91f553c8385de8c and WASM 01b42d03e14f4a67bbb527388b795510
+    pass. Runtime ea8c74f4b1794a86a4359d7def525470 runs cache libraries/HTTP contracts,
+    retries failed identity targets and checks the browser expiry assertion.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
@@ -543,7 +494,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     number, and OFFSET is already capped at 1,000); read routing from the session's last
     write position (token
     clients carry no position, so a primary-free check needs shared state such as the
-    optional cache); item 4, the heartbeat-proved credential read; item 5, the cache.
+    optional cache). Items 4 and 5 are implemented by the side lane above; their runtime
+    acceptance is pending.
     The e2e run (job 34215ceffd2d4150b4cc419834481210) stopped at its 140-minute cap in
     the PostgreSQL round's `gh auth login` check, which waited for a device code without
     the cell prefix; that check and a profile 503 for signed-out visitors are fixed, and the
