@@ -313,6 +313,10 @@ postgres:
         default_pool_size: "20"
         max_prepared_statements: "200"
         ignore_startup_parameters: extra_float_digits,options
+        # After a failover, retry server logins every second instead of handing every
+        # client the cached login error for 15 seconds.
+        server_login_retry: "1"
+        server_connect_timeout: "5"
 ingress:
   # Enable HTTP routing through an installed ingress controller.
   enabled: false

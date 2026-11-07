@@ -6,7 +6,7 @@
   kube-ha.py up IMAGE       the operator, a test S3 store, then the chart with a three-instance
                             PostgreSQL 18 cluster, PgBouncer and an ingress on <name>.<ip>.nip.io
   kube-ha.py test [STEP..]  steps (default all): basic (setup, Git over HTTP and SSH, issues),
-                            kill (delete the primary pod), drain (cordon and drain its node),
+                            kill (crash the primary pod), drain (cordon and drain its node),
                             restart (rolling restart of web), scale (web 2 -> 4 under load)
   kube-ha.py down           delete the namespace; the operator and its CRDs stay
 
@@ -16,6 +16,7 @@ external IP). Generated passwords and keys live only in cluster Secrets. Needs k
 git, ssh and ssh-keygen; `image` also needs podman and k3s nodes reachable over SSH.
 """
 import base64
+import collections
 import contextlib
 import json
 import os
@@ -578,7 +579,8 @@ def report(forge, name, traffic, since, before, watch=None, note=""):
         moment, primary = watch.changes[-1]
         promoted = f", operator named {primary} primary after {moment - since:.1f} s"
     duration = max(read.end for read in traffic.reads) - min(read.start for read in traffic.reads)
-    print(f"{name}: writes back after {write_back} s ({write_failed} failed of {len(traffic.writes)}, slowest ack "
+    errors = collections.Counter(str(write.status) for write in traffic.writes if not write.ok).most_common(3)
+    print(f"{name}: writes back after {write_back} s ({write_failed} failed of {len(traffic.writes)} {errors}, slowest ack "
           f"{slowest:.1f} s), {len(acked)} acknowledged, {len(missing)} missing {missing[:10]}; reads back after "
           f"{read_back} s ({read_failed} failed of {len(traffic.reads)}, {len(traffic.reads) / duration:.0f}/s); "
           f"web container restarts {restarts}{promoted}{note}", flush=True)
@@ -596,9 +598,17 @@ def step_kill(forge):
     with Traffic(forge, "kill") as traffic, PrimaryWatch() as watch:
         time.sleep(10)
         since = time.time()
-        log(f"deleting the primary pod {primary}")
-        kubectl("delete", "pod", primary, "--wait=false")
-        wait_for("writes after the primary pod deletion", lambda: time.time() > since + 30 and traffic.recovered(since), 280, 1)
+        # A one-second grace period stops PostgreSQL like a crash. A plain delete waits for
+        # open sessions (PgBouncer keeps them) up to the operator's three-minute smart
+        # shutdown before failing over; the drain step covers that graceful path.
+        log(f"deleting the primary pod {primary} with a 1 s grace period")
+        kubectl("delete", "pod", primary, "--grace-period=1", "--wait=false")
+
+        def promoted_and_writing():
+            if not watch.changes or watch.changes[-1][1] == primary:
+                return False
+            return traffic.recovered(watch.changes[-1][0])
+        wait_for("a new primary and writes after it", promoted_and_writing, 400, 1)
     report(forge, "kill-primary", traffic, since, before, watch)
     wait_cluster_whole()
 
