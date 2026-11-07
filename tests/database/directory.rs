@@ -591,3 +591,171 @@ async fn directory_shards_move_between_clusters_with_no_failed_lookup() {
     registry.finish().await;
     second.finish().await;
 }
+
+#[tokio::test]
+async fn directory_search_comments_are_bounded_and_pending_reviews_stay_private() {
+    use codeyard_db_core::cells::search::{self, Item};
+    let mut database = PostgresDatabase::new().await;
+    let user = codeyard_db_identity::users::accounts::create_user(&database.pool, "indexer", None)
+        .await
+        .unwrap();
+    let repo = codeyard_db_repos::repositories::records::create_repository(
+        &database.pool,
+        user.id,
+        "comments",
+        None,
+        false,
+        "/unused/search.git",
+    )
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO node_configuration(id,search_index) VALUES(1,TRUE) ON CONFLICT(id) DO UPDATE SET search_index=TRUE")
+        .execute(&database.raw).await.unwrap();
+    let issue: i64 = sqlx::query_scalar(
+        "INSERT INTO issues(repo_id,number,author_id,title) VALUES($1,1,$2,'Issue') RETURNING id",
+    )
+    .bind(repo.id)
+    .bind(user.id)
+    .fetch_one(&database.raw)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO issue_comments(issue_id,author_id,body) SELECT $1,$2,CASE WHEN n=1 THEN 'oldest' ELSE repeat('é',2000) END FROM generate_series(1,101) n ORDER BY n")
+        .bind(issue).bind(user.id).execute(&database.raw).await.unwrap();
+    let text = search::comment_text(&database.raw, Item::Issue { id: issue })
+        .await
+        .unwrap();
+    assert_eq!(text.lines().count(), 100);
+    assert!(text.lines().all(|line| line.chars().count() == 1024));
+    assert!(!text.contains("oldest"));
+    assert!(text.len() <= search::MAXIMUM_COMMENT_BYTES);
+    let pull: i64 = sqlx::query_scalar("INSERT INTO pull_requests(repo_id,number,author_id,title,head_branch,base_branch,head_sha,base_sha) VALUES($1,2,$2,'Pull','branch','main',repeat('a',40),repeat('b',40)) RETURNING id")
+        .bind(repo.id).bind(user.id).fetch_one(&database.raw).await.unwrap();
+    let review: i64 = sqlx::query_scalar("INSERT INTO pr_reviews(pull_request_id,author_id,state) VALUES($1,$2,'pending') RETURNING id")
+        .bind(pull).bind(user.id).fetch_one(&database.raw).await.unwrap();
+    sqlx::query("INSERT INTO pr_comments(pull_request_id,author_id,body,review_id) VALUES($1,$2,'draftsecret',$3),($1,$2,'publicword',NULL)")
+        .bind(pull).bind(user.id).bind(review).execute(&database.raw).await.unwrap();
+    let item = Item::Pull { id: pull };
+    assert_eq!(
+        search::comment_text(&database.raw, item).await.unwrap(),
+        "publicword"
+    );
+    for state in ["commented", "pending"] {
+        sqlx::query("DELETE FROM cell_outbox WHERE topic='search'")
+            .execute(&database.raw)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE pr_reviews SET state=$2 WHERE id=$1")
+            .bind(review)
+            .bind(state)
+            .execute(&database.raw)
+            .await
+            .unwrap();
+        let text = search::comment_text(&database.raw, item).await.unwrap();
+        assert_eq!(text.contains("draftsecret"), state == "commented");
+        let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cell_outbox WHERE topic='search' AND payload::jsonb->>'item'='pull'")
+            .fetch_one(&database.raw).await.unwrap();
+        assert_eq!(queued, 1);
+    }
+    // Edits and deletion both invalidate the parent document, for each comment family.
+    for (table, parent, id, kind) in [
+        ("issue_comments", "issue_id", issue, "issue"),
+        ("pr_comments", "pull_request_id", pull, "pull"),
+    ] {
+        for change in [
+            format!("UPDATE {table} SET body='editedword' WHERE {parent}=$1"),
+            format!("DELETE FROM {table} WHERE {parent}=$1"),
+        ] {
+            sqlx::query("DELETE FROM cell_outbox WHERE topic='search'")
+                .execute(&database.raw)
+                .await
+                .unwrap();
+            sqlx::query(&change)
+                .bind(id)
+                .execute(&database.raw)
+                .await
+                .unwrap();
+            let queued: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM cell_outbox WHERE topic='search' AND payload::jsonb->>'item'=$1")
+                .bind(kind).fetch_one(&database.raw).await.unwrap();
+            assert_eq!(queued, 1);
+        }
+    }
+    assert!(search::comment_text(&database.raw, item)
+        .await
+        .unwrap()
+        .is_empty());
+    database.finish().await;
+}
+
+#[tokio::test]
+async fn directory_ranked_search_bounds_input_counts_and_last_page() {
+    use codeyard_db_core::cells::search::{Filter, Kind, Query};
+    let mut database = PostgresDatabase::unmigrated().await;
+    let directory = Directory::connect(
+        &database.connection_url(),
+        Config {
+            search_query_bytes: 64,
+            ..Config::default()
+        },
+    )
+    .await
+    .unwrap();
+    directory.migrate().await.unwrap();
+    directory.register_cell(cell(0, 'a')).await.unwrap();
+    let key = "a".repeat(64);
+    sqlx::query("INSERT INTO search_repositories(id,cell_id,event_id,attempt,document,public,name,description) SELECT n,0,1,1,jsonb_build_object('id',n),TRUE,'boundedname','boundedword' FROM generate_series(1,1005) AS n")
+        .execute(&database.raw).await.unwrap();
+    let mut query = Query {
+        kind: Kind::Repositories,
+        viewer: None,
+        filter: Filter::Term("text".into(), "boundedword".into()),
+        sort: None,
+        ascending: false,
+        offset: 0,
+        limit: 100,
+    };
+    let found = directory.search(&key, &query).await.unwrap();
+    assert_eq!(found.total, 1000);
+    assert_eq!(found.items.len(), 100);
+    assert_eq!(found.items[0].id, 1);
+    query.offset = 999;
+    let found = directory.search(&key, &query).await.unwrap();
+    assert_eq!(found.total, 1000);
+    assert_eq!(found.items.len(), 1);
+    assert_eq!(found.items[0].id, 1000);
+    query.offset = 1000;
+    assert!(directory.search(&key, &query).await.is_err());
+    query.offset = 0;
+    query.filter = Filter::Term("text".into(), "boundedw".into());
+    assert_eq!(directory.search(&key, &query).await.unwrap().total, 0);
+    query.filter = Filter::Term("text".into(), "boundedn".into());
+    assert_eq!(directory.search(&key, &query).await.unwrap().total, 1000);
+
+    sqlx::query("UPDATE search_repositories SET description=CASE id WHEN 1 THEN 'the descriptionword' ELSE 'the descriptionword descriptionword descriptionword' END WHERE id IN (1,2)")
+        .execute(&database.raw).await.unwrap();
+    query.filter = Filter::Term("text".into(), "descriptionword".into());
+    let found = directory.search(&key, &query).await.unwrap();
+    assert_eq!(
+        found.items.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        [2, 1]
+    );
+    assert!(found.items[0].score > found.items[1].score);
+    // The schema's simple dictionary retains stop words too.
+    query.filter = Filter::Term("text".into(), "the".into());
+    assert_eq!(directory.search(&key, &query).await.unwrap().total, 2);
+    sqlx::query("UPDATE search_repositories SET public=FALSE WHERE id=2")
+        .execute(&database.raw)
+        .await
+        .unwrap();
+    assert_eq!(directory.search(&key, &query).await.unwrap().total, 1);
+    query.filter = Filter::Term("text".into(), "x".repeat(61));
+    let error = directory.search(&key, &query).await.unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<codeyard_db_directory::Refusal>(),
+        Some(codeyard_db_directory::Refusal::Invalid)
+    ));
+    // A hostile operator string cannot turn a text match into a match-all.
+    query.filter = Filter::Term("text".into(), "\"' & | ! :* <->".into());
+    assert_eq!(directory.search(&key, &query).await.unwrap().total, 0);
+    directory.close().await;
+    database.finish().await;
+}

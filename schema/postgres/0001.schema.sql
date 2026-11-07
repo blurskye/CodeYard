@@ -4545,7 +4545,7 @@ BEGIN
         WHEN 'issue_labels','issue_assignees','issue_comments' THEN
             PERFORM queue_search(i.repo_id,'issue',i.id) FROM issues i
                 WHERE i.id=(row_data->>'issue_id')::BIGINT;
-        WHEN 'pr_labels','pr_assignees','pr_comments' THEN
+        WHEN 'pr_labels','pr_assignees','pr_comments','pr_reviews' THEN
             PERFORM queue_search(p.repo_id,'pull',p.id) FROM pull_requests p
                 WHERE p.id=(row_data->>'pull_request_id')::BIGINT;
         WHEN 'repo_access','team_repo_access','repository_pushes','repository_topics','repo_languages','dependency_snapshots' THEN
@@ -4580,13 +4580,16 @@ CREATE TRIGGER search_issue_labels AFTER INSERT OR DELETE ON issue_labels
     FOR EACH ROW EXECUTE FUNCTION queue_search_change();
 CREATE TRIGGER search_issue_assignees AFTER INSERT OR DELETE ON issue_assignees
     FOR EACH ROW EXECUTE FUNCTION queue_search_change();
-CREATE TRIGGER search_issue_comments AFTER INSERT OR DELETE ON issue_comments
+CREATE TRIGGER search_issue_comments AFTER INSERT OR UPDATE OR DELETE ON issue_comments
     FOR EACH ROW EXECUTE FUNCTION queue_search_change();
 CREATE TRIGGER search_pr_labels AFTER INSERT OR DELETE ON pr_labels
     FOR EACH ROW EXECUTE FUNCTION queue_search_change();
 CREATE TRIGGER search_pr_assignees AFTER INSERT OR DELETE ON pr_assignees
     FOR EACH ROW EXECUTE FUNCTION queue_search_change();
-CREATE TRIGGER search_pr_comments AFTER INSERT OR DELETE ON pr_comments
+CREATE TRIGGER search_pr_comments AFTER INSERT OR UPDATE OR DELETE ON pr_comments
+    FOR EACH ROW EXECUTE FUNCTION queue_search_change();
+-- Publishing or hiding a review changes whether its comments may enter the index.
+CREATE TRIGGER search_pr_reviews AFTER INSERT OR UPDATE OR DELETE ON pr_reviews
     FOR EACH ROW EXECUTE FUNCTION queue_search_change();
 CREATE TRIGGER search_repo_access AFTER INSERT OR UPDATE OR DELETE ON repo_access
     FOR EACH ROW EXECUTE FUNCTION queue_search_change();

@@ -209,6 +209,7 @@ async fn cells_write_only_their_own_documents_and_private_ones_reach_only_reader
             attempt: 1,
         },
         document: Some(json!({"id": base + 20, "name": "issue", "title": "Lantern flickers", "state": "open", "user": {"login": "bob"}})),
+        comments: String::new(),
     })
     .await
     .unwrap();
@@ -412,7 +413,158 @@ async fn cells_write_only_their_own_documents_and_private_ones_reach_only_reader
 
     directory.reset_search().await.unwrap();
     assert_eq!(names(&zero, &all(None)).await, Vec::<String>::new());
+    ranked_words(&zero, &one).await;
     listener.stop().await;
     directory.close().await;
     drop(registry);
+}
+
+/// Runs through pinned TLS, including query validation and private counts, not just SQL.
+async fn ranked_words(zero: &Client, one: &Client) {
+    let foreign = *Prefix::new(1).ids().start() + 70;
+    zero.index(&repository(70, (1, 1), "word-library", true, &[]))
+        .await
+        .unwrap();
+    one.index(&repository(foreign, (1, 1), "word-secret", false, &[500]))
+        .await
+        .unwrap();
+    // Deliberately give the higher rank a later ID: rank must beat the stable ID order.
+    for (id, root, pull, title, body, comments) in [
+        (71, 70, false, "Other", "quartz", ""),
+        (72, 70, true, "Quartz quartz quartz", "", ""),
+        (73, 70, false, "Quartz", "", ""),
+        (74, 70, false, "Other", "", "quartz"),
+        (
+            75,
+            foreign,
+            true,
+            "Quartz quartz quartz quartz",
+            "privateword",
+            "secretword",
+        ),
+        (76, 70, false, "Quartz", "", ""),
+    ] {
+        let client = if root == foreign { one } else { zero };
+        client
+            .index(&Batch::Issue {
+                id,
+                repository_id: root,
+                pull,
+                version: Version {
+                    event: 1,
+                    attempt: 1,
+                },
+                document: Some(json!({"id":id,"title":title,"body":body})),
+                comments: comments.into(),
+            })
+            .await
+            .unwrap();
+    }
+    let mut words = query(Kind::Issues, None, text("QUARTZ"));
+    let found = zero.search(&words).await.unwrap();
+    assert_eq!(found.total, 5);
+    assert_eq!(
+        found.items.iter().map(|hit| hit.id).collect::<Vec<_>>(),
+        [72, 73, 76, 71, 74]
+    );
+    assert!(found.items[0].score > found.items[1].score);
+    assert!(found.items[1].score > found.items[3].score);
+    assert!(found.items[3].score > found.items[4].score);
+    assert!(found
+        .items
+        .iter()
+        .all(|hit| hit.document.get("comments").is_none()));
+    // Paging is deterministic, including ties, and explicit sort is the secondary order.
+    words.limit = 1;
+    words.sort = Some("created".into());
+    words.ascending = true;
+    for (offset, id) in [72, 73, 76, 71, 74].into_iter().enumerate() {
+        words.offset = offset as u32;
+        assert_eq!(zero.search(&words).await.unwrap().items[0].id, id);
+    }
+    for viewer in [None, Some(501)] {
+        for term in ["privateword", "secretword"] {
+            let found = zero
+                .search(&query(Kind::Issues, viewer, text(term)))
+                .await
+                .unwrap();
+            assert_eq!(found.total, 0);
+            assert!(found.items.is_empty());
+        }
+    }
+    assert_eq!(
+        zero.search(&query(Kind::Issues, Some(500), text("secretword")))
+            .await
+            .unwrap()
+            .total,
+        1
+    );
+    // Prose is words, not substrings; repository names still use substring matching.
+    assert_eq!(
+        zero.search(&query(Kind::Issues, None, text("quar")))
+            .await
+            .unwrap()
+            .total,
+        0
+    );
+    assert_eq!(
+        zero.search(&query(Kind::Repositories, None, text("libr")))
+            .await
+            .unwrap()
+            .total,
+        1
+    );
+    for (field, total) in [("title", 3), ("body", 1), ("comments", 1)] {
+        let filter = Filter::All(vec![
+            text("quartz"),
+            Filter::Term("in".into(), field.into()),
+        ]);
+        assert_eq!(
+            zero.search(&query(Kind::Issues, None, filter))
+                .await
+                .unwrap()
+                .total,
+            total
+        );
+    }
+    // Raw punctuation/operators are data, never to_tsquery or SQL syntax. Empty lexemes
+    // match nothing; a very long value is refused without exposing private text.
+    for hostile in ["'\" & | ! :* <-> ( )", "'); DROP TABLE search_issues; --"] {
+        assert_eq!(
+            zero.search(&query(Kind::Issues, None, text(hostile)))
+                .await
+                .unwrap()
+                .total,
+            0
+        );
+    }
+    let error = zero
+        .search(&query(Kind::Issues, None, text(&"q".repeat(100_000))))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error.downcast_ref::<Refusal>(),
+        Some(Refusal::Invalid)
+    ));
+    // Editing/deleting comments replaces their indexed words rather than accumulating them.
+    zero.index(&Batch::Issue {
+        id: 74,
+        repository_id: 70,
+        pull: false,
+        version: Version {
+            event: 2,
+            attempt: 1,
+        },
+        document: Some(json!({"id":74,"title":"Other"})),
+        comments: String::new(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        zero.search(&query(Kind::Issues, None, text("quartz")))
+            .await
+            .unwrap()
+            .total,
+        4
+    );
 }

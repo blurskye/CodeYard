@@ -97,7 +97,7 @@ CREATE TRIGGER directory_claim_count AFTER INSERT OR DELETE OR UPDATE OF shard,o
 -- The global search index. Each cell writes its own repositories' documents through its
 -- outbox; a later (event, attempt) replaces an earlier one, and a removed repository keeps
 -- an empty row so a late write cannot bring it back. Private documents are returned only to
--- the readers their cell names. Free text matches substrings through trigram indexes.
+-- the readers their cell names. Names and code match substrings; prose matches words.
 -- The extension lives in `public`, not the directory's own schema, so dropping a schema
 -- never drops it; if it is already installed elsewhere, that schema is searched for the
 -- rest of this migration.
@@ -130,7 +130,6 @@ CREATE TABLE search_repositories (
 CREATE INDEX search_repositories_full_name ON search_repositories(lower(full_name));
 CREATE INDEX search_repositories_owner ON search_repositories(lower(owner));
 CREATE INDEX search_repositories_name_text ON search_repositories USING gin(name gin_trgm_ops);
-CREATE INDEX search_repositories_description_text ON search_repositories USING gin(description gin_trgm_ops);
 CREATE INDEX search_repositories_stars ON search_repositories(stars DESC,id DESC) WHERE document IS NOT NULL AND public;
 CREATE TABLE search_readers (
     repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
@@ -161,8 +160,21 @@ CREATE TABLE search_issues (
     PRIMARY KEY(pull,id)
 );
 CREATE INDEX search_issues_repository ON search_issues(repository_id);
-CREATE INDEX search_issues_title_text ON search_issues USING gin(title gin_trgm_ops);
-CREATE INDEX search_issues_body_text ON search_issues USING gin(body gin_trgm_ops);
+-- Ranked prose uses a fixed dictionary, independent of each connection's configuration.
+-- Separate vectors keep `in:title`, `in:body` and `in:comments` indexed as well.
+ALTER TABLE search_repositories ADD COLUMN description_words TSVECTOR GENERATED ALWAYS AS
+    (to_tsvector('simple'::regconfig,coalesce(description,''))) STORED;
+CREATE INDEX search_repositories_description_words ON search_repositories USING gin(description_words);
+ALTER TABLE search_issues ADD COLUMN comment_text TEXT NOT NULL DEFAULT '';
+ALTER TABLE search_issues ADD COLUMN title_words TSVECTOR GENERATED ALWAYS AS
+    (setweight(to_tsvector('simple'::regconfig,coalesce(title,'')),'A')) STORED;
+ALTER TABLE search_issues ADD COLUMN body_words TSVECTOR GENERATED ALWAYS AS
+    (setweight(to_tsvector('simple'::regconfig,coalesce(body,'')),'B')) STORED;
+ALTER TABLE search_issues ADD COLUMN comment_words TSVECTOR GENERATED ALWAYS AS
+    (setweight(to_tsvector('simple'::regconfig,comment_text),'C')) STORED;
+CREATE INDEX search_issues_title_words ON search_issues USING gin(title_words);
+CREATE INDEX search_issues_body_words ON search_issues USING gin(body_words);
+CREATE INDEX search_issues_comment_words ON search_issues USING gin(comment_words);
 -- File text is stored once per distinct content, keyed by the SHA-256 the directory computes
 -- itself, so a cell cannot attach other text to another repository's file.
 CREATE TABLE search_blobs (

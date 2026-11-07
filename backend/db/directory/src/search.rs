@@ -187,6 +187,7 @@ impl Directory {
                     repository_id,
                     version,
                     document,
+                    comments,
                 } => {
                     let current: Option<(i64, i32, i64, i64)> = sqlx::query_as(
                         "SELECT repository_id,cell_id,event_id,attempt FROM search_issues WHERE pull=$1 AND id=$2 FOR UPDATE",
@@ -217,9 +218,9 @@ impl Directory {
                         .and_then(|user| user.get("login"))
                         .and_then(Value::as_str);
                     sqlx::query(
-                        "INSERT INTO search_issues(pull,id,repository_id,cell_id,event_id,attempt,document,state,merged,draft,locked,author,labels,assignees,comments,created_at,updated_at,title,body) \
-                         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) \
-                         ON CONFLICT(pull,id) DO UPDATE SET repository_id=excluded.repository_id,cell_id=excluded.cell_id,event_id=excluded.event_id,attempt=excluded.attempt,document=excluded.document,state=excluded.state,merged=excluded.merged,draft=excluded.draft,locked=excluded.locked,author=excluded.author,labels=excluded.labels,assignees=excluded.assignees,comments=excluded.comments,created_at=excluded.created_at,updated_at=excluded.updated_at,title=excluded.title,body=excluded.body",
+                        "INSERT INTO search_issues(pull,id,repository_id,cell_id,event_id,attempt,document,state,merged,draft,locked,author,labels,assignees,comments,created_at,updated_at,title,body,comment_text) \
+                         VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20) \
+                         ON CONFLICT(pull,id) DO UPDATE SET repository_id=excluded.repository_id,cell_id=excluded.cell_id,event_id=excluded.event_id,attempt=excluded.attempt,document=excluded.document,state=excluded.state,merged=excluded.merged,draft=excluded.draft,locked=excluded.locked,author=excluded.author,labels=excluded.labels,assignees=excluded.assignees,comments=excluded.comments,created_at=excluded.created_at,updated_at=excluded.updated_at,title=excluded.title,body=excluded.body,comment_text=excluded.comment_text",
                     )
                     .bind(pull)
                     .bind(id)
@@ -240,6 +241,7 @@ impl Directory {
                     .bind(time(d, "updated_at"))
                     .bind(text(d, "title"))
                     .bind(text(d, "body"))
+                    .bind(comments)
                     .execute(&mut *tx)
                     .await?;
                     Indexed::default()
@@ -331,6 +333,7 @@ impl Directory {
     pub async fn search(&self, peer: &str, query: &Query) -> Result<Results> {
         self.run(async {
             query.validate().map_err(|_| Refusal::Invalid)?;
+            ensure!(query_bytes(&query.filter) <= self.config.search_query_bytes, Refusal::Invalid);
             let mut tx = self.begin().await?;
             super::owner(&mut tx, peer, false).await?;
             let fields = text_fields(query.kind, &query.filter)?;
@@ -351,7 +354,7 @@ impl Directory {
             page.push(" ORDER BY ");
             page.push(order(query));
             page.push(" LIMIT ");
-            page.push_bind(i64::from(query.limit));
+            page.push_bind(i64::from(query.limit).min(MAXIMUM_TOTAL - i64::from(query.offset)));
             page.push(" OFFSET ");
             page.push_bind(i64::from(query.offset));
             let rows: Vec<Row> = page.build_query_as::<Row>().fetch_all(&mut *tx).await?;
@@ -426,7 +429,7 @@ struct Row {
     size: Option<i64>,
     content: Option<String>,
     code_head: Option<String>,
-    score: i64,
+    score: f64,
 }
 
 /// The columns free text matches: the kind's defaults, or the ones `in:` names.
@@ -446,7 +449,7 @@ fn text_fields(kind: Kind, filter: &Filter) -> Result<Vec<&'static str>> {
     if values.is_empty() {
         return Ok(match kind {
             Kind::Repositories => vec!["r.name", "r.description"],
-            Kind::Issues => vec!["i.title", "i.body"],
+            Kind::Issues => vec!["i.title", "i.body", "i.comment_text"],
             Kind::Code => vec!["b.content"],
         });
     }
@@ -457,7 +460,8 @@ fn text_fields(kind: Kind, filter: &Filter) -> Result<Vec<&'static str>> {
             (Kind::Repositories, "description") => Some("r.description"),
             (Kind::Repositories, "topics") => Some("array_to_string(r.topics,' ')"),
             // README text is not indexed.
-            (Kind::Repositories, "readme") | (Kind::Issues, "comments") => None,
+            (Kind::Repositories, "readme") => None,
+            (Kind::Issues, "comments") => Some("i.comment_text"),
             (Kind::Issues, "title") => Some("i.title"),
             (Kind::Issues, "body") => Some("i.body"),
             (Kind::Code, "file") => Some("b.content"),
@@ -471,6 +475,34 @@ fn text_fields(kind: Kind, filter: &Filter) -> Result<Vec<&'static str>> {
         }
     }
     Ok(fields)
+}
+
+/// All terms, including negations, share the directory's configured input budget.
+fn query_bytes(filter: &Filter) -> usize {
+    match filter {
+        Filter::All(items) | Filter::Any(items) => items.iter().map(query_bytes).sum(),
+        Filter::Not(item) => query_bytes(item),
+        Filter::Term(key, value) => key.len() + value.len(),
+    }
+}
+
+/// Only these schema-owned columns use word matching; names, paths and code stay literal.
+fn vector(field: &str) -> Option<&'static str> {
+    match field {
+        "r.description" => Some("r.description_words"),
+        "i.title" => Some("i.title_words"),
+        "i.body" => Some("i.body_words"),
+        "i.comment_text" => Some("i.comment_words"),
+        _ => None,
+    }
+}
+
+fn word_query(sql: &mut QueryBuilder<'_, Postgres>, value: &str) {
+    // GitHub's parser already owns operators and quoting. A term is plain text, never SQL
+    // or tsquery syntax, including a quoted term containing punctuation or operators.
+    sql.push("plainto_tsquery('simple'::regconfig,");
+    sql.push_bind(value.to_owned());
+    sql.push(")");
 }
 
 fn like(value: &str) -> String {
@@ -494,12 +526,17 @@ fn push_text(sql: &mut QueryBuilder<'_, Postgres>, fields: &[&'static str], valu
         if index > 0 {
             sql.push(" OR ");
         }
-        // A bare column keeps the trigram index usable. A null column gives NULL rather than
-        // FALSE, which every NOT in `filter` already folds to FALSE.
-        sql.push(*field);
-        sql.push(" ILIKE ");
-        sql.push_bind(format!("%{}%", like(value)));
-        sql.push(" ESCAPE '\\'");
+        if let Some(vector) = vector(field) {
+            sql.push(vector);
+            sql.push(" @@ ");
+            word_query(sql, value);
+        } else {
+            // Bare columns retain trigram index use; NOT folds nulls to false.
+            sql.push(*field);
+            sql.push(" ILIKE ");
+            sql.push_bind(format!("%{}%", like(value)));
+            sql.push(" ESCAPE '\\'");
+        }
     }
     sql.push(")");
 }
@@ -696,7 +733,8 @@ fn term(
     Ok(())
 }
 
-/// One point for each positive free-text word a hit matches.
+/// Weighted word frequency for prose, plus the existing literal score for names and code.
+/// Negative terms filter only; they never raise a document's rank.
 fn score(
     sql: &mut QueryBuilder<'_, Postgres>,
     kind: Kind,
@@ -705,7 +743,7 @@ fn score(
 ) {
     let words = filter.positive_text();
     if words.is_empty() {
-        sql.push("0::BIGINT");
+        sql.push("0::DOUBLE PRECISION");
         return;
     }
     let fields: Vec<&'static str> = if kind == Kind::Code {
@@ -718,11 +756,24 @@ fn score(
         if index > 0 {
             sql.push("+");
         }
-        sql.push("CASE WHEN ");
-        push_text(sql, &fields, word);
-        sql.push(" THEN 1 ELSE 0 END");
+        sql.push("(0");
+        for field in &fields {
+            sql.push("+");
+            if let Some(vector) = vector(field) {
+                sql.push("ts_rank(");
+                sql.push(vector);
+                sql.push(",");
+                word_query(sql, word);
+                sql.push(")");
+            } else {
+                sql.push("CASE WHEN ");
+                push_text(sql, &[*field], word);
+                sql.push(" THEN 1 ELSE 0 END");
+            }
+        }
+        sql.push(")");
     }
-    sql.push(")::BIGINT");
+    sql.push(")::DOUBLE PRECISION");
 }
 
 fn order(query: &Query) -> String {
@@ -743,7 +794,11 @@ fn order(query: &Query) -> String {
         Kind::Issues => "i.id ASC,i.pull ASC",
         Kind::Code => "r.id ASC,c.path ASC",
     };
-    format!("{column} {direction} NULLS LAST,{tie}")
+    if column == "score" {
+        format!("score DESC,{tie}")
+    } else {
+        format!("score DESC,{column} {direction} NULLS LAST,{tie}")
+    }
 }
 
 /// Removes a repository's code and any file text no other repository uses.
