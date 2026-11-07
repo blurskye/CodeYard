@@ -429,8 +429,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     - **Cell (never moves), 42:** actions_oidc_key; actions_settings; anonymous_sessions;
       auth_login_limits; cell_outbox; cell_prefixes; cell_region_policy; cell_request_counts;
       cluster_leases; cluster_scaling_policies; cluster_ssh_host_key; download_rate_limit;
-      email_outbox; email_settings; file_reason_limits; foreign_credentials; github_api_limits;
-      graphql_rate_limits; issue_attribute_guard; issue_relation_guard; join_tokens;
+      email_outbox; email_settings; file_reason_limits; github_api_limits;
+      graphql_rate_limits; identity_heartbeat; issue_attribute_guard; issue_relation_guard;
+      join_tokens;
       node_configuration; node_drain_repositories; nodes; notification_events; oauth_states;
       pending_object_deletions; repo_language_cache; repo_storage_history;
       repository_committed_refs; repository_move_nodes; repository_moves; repository_replicas;
@@ -468,13 +469,16 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       The only ownership-catalog changes remove the former Cell rule and add the latter.
       `IDENTITY_MAXIMUM_AGE_MS` defaults to 2000, including the 250 ms clock allowance.
       No identity-replica routing is enabled. Tests cover stale/revoked snapshots,
-      isolated operations, home loss and PostgreSQL lock-wait expiry. Runtime 280f2198
-      found catalog ordering, browser expiry, publication fixture scope and long-response
-      expiry failures; fixes are in the combined retry below.
+      isolated operations, home loss and PostgreSQL lock-wait expiry. A native database
+      operation that outlives its proof first asks the home once more; a refusal stays
+      denied and the response is 503. Spawned follow-up work keeps the operation's proofs
+      with their original deadlines.
     - `backend/cache` owns the bounded local LRU, optional Redis standalone/Cluster,
       slot batches, deadlines, breaker and single-flight. Markdown authorizes before
       lookup; no access decision uses the cache. Compose Valkey is off by default.
-      Remote contracts require external endpoints; no remote certification is claimed.
+      `scripts/with-valkey.sh` runs the remote contracts against disposable standalone
+      and three-shard Cluster servers whose ACL allows only the cache's commands on `cy:*`
+      keys. TLS is not covered.
     Combined workspace edd212b7024740a082cd9f423bdf267b, Clippy
     495cd4061db140f5b91f553c8385de8c and WASM 01b42d03e14f4a67bbb527388b795510
     pass. Runtime ea8c74f4b1794a86a4359d7def525470 runs cache libraries/HTTP contracts,
