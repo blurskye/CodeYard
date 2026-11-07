@@ -1651,7 +1651,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba5a308b75df32fe02788e748662718f03fde005016435c444eea572398219fd"
 dependencies = [
  "bytes",
+ "futures-core",
  "memchr",
+ "pin-project-lite",
+ "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -9311,6 +9315,7 @@ dependencies = [
  "codeyard-actions",
  "codeyard-api-http",
  "codeyard-app",
+ "codeyard-cache",
  "codeyard-ci",
  "codeyard-ci-engine",
  "codeyard-cluster-core",
@@ -9360,8 +9365,8 @@ dependencies = [
  "codeyard-api-github",
  "codeyard-api-http",
  "codeyard-app",
- "codeyard-ci-engine",
  "codeyard-cells-router",
+ "codeyard-ci-engine",
  "codeyard-db-actions",
  "codeyard-db-core",
  "codeyard-db-identity",
@@ -9401,9 +9406,9 @@ dependencies = [
  "codeyard-actions",
  "codeyard-api-repos",
  "codeyard-app",
+ "codeyard-cells-router",
  "codeyard-ci",
  "codeyard-ci-engine",
- "codeyard-cells-router",
  "codeyard-db-actions",
  "codeyard-db-cluster",
  "codeyard-db-core",
@@ -9558,6 +9563,7 @@ dependencies = [
  "clap",
  "codeyard-actions",
  "codeyard-api-rest",
+ "codeyard-cache",
  "codeyard-ci",
  "codeyard-ci-engine",
  "codeyard-cluster",
@@ -10351,25 +10357,25 @@ name = "codeyard-cells-router"
 version = "0.1.5"
 dependencies = [
  "anyhow",
- "axum",
- "bytes",
- "futures-util",
  "async-graphql",
  "async-graphql-value",
- "codeyard-github-graphql",
+ "axum",
+ "bytes",
  "codeyard-cluster-core",
- "codeyard-db-directory",
  "codeyard-db-core",
+ "codeyard-db-directory",
+ "codeyard-github-graphql",
  "codeyard-model",
  "codeyard-support",
+ "futures-util",
  "http-body 1.0.1",
  "http-body-util",
  "hyper",
  "hyper-util",
- "reqwest",
+ "iroh",
  "matchit",
  "percent-encoding",
- "iroh",
+ "reqwest",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -10378,4 +10384,51 @@ dependencies = [
  "tokio-util",
  "tracing",
  "url",
+]
+
+[[package]]
+name = "codeyard-cache"
+version = "0.1.5"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "redis",
+ "rustls",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
+name = "crc16"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "338089f42c427b86394a5ee60ff321da23a5c89c9d89514c829687b26359fcff"
+
+[[package]]
+name = "redis"
+version = "0.32.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "014cc767fefab6a3e798ca45112bccad9c6e0e218fbd49720042716c73cfef44"
+dependencies = [
+ "bytes",
+ "cfg-if",
+ "combine",
+ "crc16",
+ "futures-sink",
+ "futures-util",
+ "itoa",
+ "log",
+ "num-bigint 0.4.8",
+ "percent-encoding",
+ "pin-project-lite",
+ "rand 0.9.5",
+ "rustls",
+ "rustls-native-certs",
+ "ryu",
+ "socket2",
+ "tokio",
+ "tokio-rustls",
+ "tokio-util",
+ "url",
+ "webpki-roots 1.0.9",
 ]

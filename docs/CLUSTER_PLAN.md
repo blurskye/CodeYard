@@ -509,7 +509,12 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     is running. While it runs, the optional content-cache source is written in
     `backend/cache`: local LRU, Redis standalone/Cluster, slot batches, deadlines,
     breaker and bounded single-flight; Markdown integration authorizes before lookup.
-    Cache source is unchecked, and remote contracts need external Valkey endpoints.
+    Cache source is checking in workspace 2f13c047e2c2484abb8f2acd50b6806a,
+    Clippy d90ba7d044114fd4afed46bf42cb9514 and WASM
+    1b6cd894b14342df8374a213488466ba. Lock-only job aab2834744584e5b9c3f094ccd558e6c
+    added the cache, Redis and CRC16 without changing existing package versions.
+    Remote contracts need external Valkey endpoints. `s7-cache-test.sh` is prepared;
+    it waits for the active identity test job and the cache source checks.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
