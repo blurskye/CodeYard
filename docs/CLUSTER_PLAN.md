@@ -519,7 +519,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     End-to-end rounds on this branch: PgBouncer 17 passed (228a251a), replica 18 (03370c95),
     quorum 20 (9b813575), cells 5 (8f11fc48). Cluster (9bbbc657): 48 passed, 7 skipped
     because the builder has no delegated cgroup v2 for CI runs, and 1 failed: a `gh api` ref
-    create got 503 right after a restarted primary rejoined; the same step passed in 695ea386.
+    create got 503 right after a restarted primary rejoined (fixed in the stage 7 merge).
     Not written: the bounded, resumable object copy between regions (a move between
     regions copies no package or artifact bytes yet), moves of repositories placed on
     cluster storage nodes (refused before the freeze), and the automatic region move.
@@ -549,13 +549,41 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       `scripts/with-valkey.sh` runs the remote contracts against disposable standalone
       and three-shard Cluster servers whose ACL allows only the cache's commands on `cy:*`
       keys. TLS is not covered.
-    Check, Clippy and WASM aa256156a7a8454c97c33fccd79a22c3 pass. Runtime
-    bf65e0b8d276407ca766fc295d1cf9b6 passes 255 library tests, the store, both-engine
-    identity, Valkey and repository targets, and 238 of 239 cluster tests. Cross-cell pull
-    creation (`cells_authorization.rs:1051`) passed in 4255851c2bd643b4bd8b13f8d3a889e2
-    but answered 503 here: the row committed and the fork head fetch failed. The cells e2e
-    still fails on the maintainer pull head ("Head repository storage is unavailable")
-    and the dependency-graph snapshot (422).
+    Merged into `cluster/full` on 2026-11-08. The merge keeps moved-token routing
+    (`moved_credentials`) beside the operation-owned proofs and drops
+    `foreign_credentials`. The token heartbeat snapshot no longer requires the issuing
+    prefix, so a moved token is answered at its new home, and PostgreSQL
+    `refresh_remote_notices` skips while a move loads or releases rows. Fixes from the
+    merge runs:
+    - A foreign proof is asked for again in the second half of its life, not after it
+      ran out, so it cannot expire between the renewal and the transaction's own check
+      after lock waits. This was the intermittent 503 in `cells_authorization.rs`. A
+      refused proof is denied at once; when the home cannot answer, the old proof keeps
+      its own deadline.
+    - Quorum write packs leave out the history the voter holds: voters send their ref
+      tips, as a fetch does. Packs with full history made voters miss the 10-second
+      write deadline after the 40 MiB storage-loss fixture (the cluster e2e 503 on a
+      `gh api` ref create after a restarted primary rejoined), and a repository over
+      the 128 MiB pack limit could not be written at all.
+    - A foreign pull head is read from its home again at each admission check inside
+      the creation transaction, as fork creation does, so a source revoked meanwhile
+      rolls the pull back (`cell_forks` on both engines).
+    - A home checks its own identity answer on its own clocks, counted from the
+      request's start. Comparing the database's heartbeat time with the node's wall
+      clock refused every fork and pull creation on a node whose clock is off from the
+      database's (the cluster e2e runs web2 five minutes ahead). A verifier in another
+      cell still compares the heartbeat with its own clock, so cells need synchronized
+      clocks.
+    - The debug quorum e2e round runs with the cluster round's 32 MiB worker stack; its
+      primary overflowed the default 2 MiB while merging a pull request.
+    Check, Clippy and WASM e101074f pass. Runtime 4124aa41: db-core and identity libraries 64,
+    database 199 on both engines, cluster 239 of 240; c289a42f: all library tests (269),
+    writes, Valkey and the GraphQL type check. E2E rounds: PgBouncer 17 (714787de),
+    replica 18 (afa58063), quorum 20 (76ad0f32), cells 5 (914b63cf), cluster 49 passed
+    with 7 skipped for the missing delegated cgroup (135b6731). Still intermittent under
+    the full cluster target: `cells_frontend` (a foreign proof ran out mid-request once
+    in three runs; 4 of 4 passed alone) and `quorum::*_three_voters_keep_a_majority`
+    (once in four runs, with a 2-second write timeout).
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
