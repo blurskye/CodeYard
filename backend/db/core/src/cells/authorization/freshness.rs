@@ -147,6 +147,19 @@ impl Read {
         };
         deadline.current(wall, monotonic).then_some(deadline)
     }
+
+    /// For a heartbeat that this request committed after `start`. Its timestamp comes from
+    /// the database's clock, which may differ from this node's. The heartbeat is at least
+    /// as new as the start, so the proof's life counts from the start on this node's
+    /// clocks and the two clocks are never compared.
+    pub fn prove_published(
+        self,
+        credential_expiry: Option<DateTime<Utc>>,
+        wall: DateTime<Utc>,
+        monotonic: Instant,
+    ) -> Option<Deadline> {
+        self.prove(self.started_wall, credential_expiry, wall, monotonic)
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -281,6 +294,26 @@ mod tests {
             deadline.remaining(wall, monotonic + Duration::from_secs(2)),
             Duration::ZERO
         );
+    }
+
+    #[test]
+    fn a_published_heartbeat_ignores_database_clock_skew_but_not_the_budget() {
+        let (wall, monotonic) = clocks();
+        let read = Policy::default().start(wall, monotonic).unwrap();
+        // A database five minutes behind this node would make its own timestamp look stale.
+        assert!(read
+            .prove(wall - TimeDelta::minutes(5), None, wall, monotonic)
+            .is_none());
+        let deadline = read.prove_published(None, wall, monotonic).unwrap();
+        assert_eq!(
+            deadline.remaining(wall, monotonic),
+            Duration::from_millis(1750)
+        );
+        let late = monotonic + Duration::from_millis(1750);
+        assert!(read
+            .prove_published(None, wall + TimeDelta::milliseconds(1750), late)
+            .is_none());
+        assert!(read.prove_published(Some(wall), wall, monotonic).is_none());
     }
 
     #[test]

@@ -488,14 +488,10 @@ impl Local {
         {
             return Ok(None);
         }
+        // `heartbeat::primary` published the heartbeat after `read` started.
         anyhow::ensure!(
-            read.prove(
-                heartbeat,
-                expires_at,
-                chrono::Utc::now(),
-                std::time::Instant::now()
-            )
-            .is_some(),
+            read.prove_published(expires_at, chrono::Utc::now(), std::time::Instant::now())
+                .is_some(),
             "Identity proof expired"
         );
         let mut answer = Answer {
