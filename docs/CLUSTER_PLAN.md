@@ -582,8 +582,14 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     discovery and fails because its private dependency graph was not enabled. The
     fixture now enables it through REST without weakening the privacy assertions, and
     the debug cluster runner uses the integration tests' 32 MiB worker-stack budget.
-    Checks c2cd722d (workspace), 9f54af44 (Clippy) and 558d6cba (WASM) pass;
-    runtime 4edbb000 retries cluster and cells.
+    Runtime 4edbb000 passes all five cells checks without skips, including discovery,
+    search rebuild/outage, cross-cell gh/Git and rollout waves. Cluster repeats its
+    failures: node startup cleared the requested stack budget. The fixture now retains
+    that explicit setting. Checks 3b3abdba (workspace), 97efb73b (Clippy) and a2761a58
+    (WASM) pass. Runtime de1c7469 completes cluster in 435 seconds: 48 passes,
+    two failures and six skips, with no stack overflow. Runner drain/resume reaches
+    execution but fails without a delegated cgroup. The editor-survival write still
+    returns 503 after the interrupted-storage checks; this is not a pass.
 
     Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;

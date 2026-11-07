@@ -502,6 +502,11 @@ configure_node() {
     if [[ -n ${CI_PROCESS_CGROUP_ROOT:-} ]]; then
         NODE_ENV+=("CI_PROCESS_CGROUP_ROOT=$CI_PROCESS_CGROUP_ROOT")
     fi
+    # node_exec clears inherited variables; explicitly retain a requested debug stack
+    # budget, just as the integration-test processes do.
+    if [[ -n ${RUST_MIN_STACK:-} ]]; then
+        NODE_ENV+=("RUST_MIN_STACK=$RUST_MIN_STACK")
+    fi
     # The gh sweep's accounts start CI runs and register after the server starts, so this
     # disposable server trusts every account to run CI.
     if [[ ${E2E_GH_SWEEP:-0} == 1 ]]; then NODE_ENV+=("CI_TRUSTED_ACTOR_IDS=$(seq -s, 1 500)"); fi

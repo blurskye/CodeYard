@@ -826,10 +826,12 @@ a process loss before switching leaves the source freeze to expire (`--freeze-se
 default 600). Rerun after a directory-switch failure to finish publishing the new homes.
 After the route-cache wait, release retains source account/repository stubs.
 
-This is not yet a generally usable move: existing credential prefixes do not follow the
-account, cluster-placed Git and cross-region object bytes are not handled, and full
-restart, CI/package and client acceptance is pending. Repository transfers and automatic
-region moves are not implemented. See [the acceptance status](CLUSTER_PLAN.md).
+Manual CLI failure/retry and HTTP checks pass for preserved issue/pull IDs and numbers,
+completed CI history and package/version metadata. This is not yet a generally usable
+move: existing credential prefixes do not follow the account, cluster-placed Git and
+cross-region object bytes are not handled, and package-byte and full routed-client
+acceptance is pending. Repository transfers and automatic region moves are not
+implemented. See [the acceptance status](CLUSTER_PLAN.md).
 
 ### Regions
 
