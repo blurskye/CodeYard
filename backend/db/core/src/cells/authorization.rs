@@ -479,20 +479,27 @@ pub async fn moved_token(pool: &DbPool, hash: &str) -> Result<bool> {
     })
 }
 
-/// Called before each native database operation, outside its transaction. An operation
-/// that outlived its proof asks the home once more instead of reusing the old answer; the
-/// operation's own transaction still checks the new deadline.
+/// Called before each native database operation, outside its transaction. A proof in the
+/// second half of its life is asked for again first, so the operation's own deadline
+/// checks (which run after its lock waits) do not see it run out mid-statement. The home
+/// is asked; no deadline is extended.
 pub async fn refresh(pool: &DbPool) {
-    if scope::any_expired() {
-        ask_again(pool).await;
+    let margin = freshness::policy()
+        .map(freshness::Policy::renewal_margin)
+        .unwrap_or_default();
+    if scope::any_due(margin) {
+        ask_again(pool, margin).await;
     }
 }
 /// Boxed because admission itself runs native operations, which call `refresh`.
-fn ask_again(pool: &DbPool) -> BoxFuture<'_, ()> {
+fn ask_again(pool: &DbPool, margin: std::time::Duration) -> BoxFuture<'_, ()> {
     Box::pin(async move {
-        for old in scope::take_expired() {
-            if !matches!(authorize(pool, &old.proof).await, Ok(Some(_))) {
-                scope::restore(old);
+        for old in scope::take_due(margin) {
+            match authorize(pool, &old.proof).await {
+                Ok(Some(_)) => {}
+                // The home could not answer; the old proof keeps its own deadline.
+                Err(_) if old.current() => scope::restore(old, false),
+                _ => scope::restore(old, true),
             }
         }
     })

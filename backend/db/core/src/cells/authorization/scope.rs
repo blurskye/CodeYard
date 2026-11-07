@@ -1,7 +1,11 @@
 //! Foreign proofs belong to one operation, never to a shared credential cache.
 use super::{freshness::Deadline, Answer, Proof, Query};
 use chrono::Utc;
-use std::{cell::RefCell, future::Future, time::Instant};
+use std::{
+    cell::RefCell,
+    future::Future,
+    time::{Duration, Instant},
+};
 
 #[derive(Clone)]
 pub(super) struct Verified {
@@ -15,8 +19,12 @@ pub(super) struct Verified {
     pub refused: bool,
 }
 impl Verified {
+    /// A proof the home refused is never current, even before its old deadline.
     pub fn current(&self) -> bool {
-        self.deadline.current(Utc::now(), Instant::now())
+        !self.refused && self.deadline.current(Utc::now(), Instant::now())
+    }
+    fn due(&self, margin: Duration) -> bool {
+        !self.refused && self.deadline.remaining(Utc::now(), Instant::now()) <= margin
     }
 }
 
@@ -40,35 +48,30 @@ pub fn inherit<F: Future>(work: F) -> impl Future<Output = F::Output> {
     PROOFS.scope(RefCell::new(proofs), work)
 }
 
-pub(super) fn any_expired() -> bool {
+/// Whether a proof is expired or has at most `margin` left.
+pub(super) fn any_due(margin: Duration) -> bool {
     PROOFS
-        .try_with(|proofs| {
-            proofs
-                .borrow()
-                .iter()
-                .any(|proof| !proof.refused && !proof.current())
-        })
+        .try_with(|proofs| proofs.borrow().iter().any(|proof| proof.due(margin)))
         .unwrap_or(false)
 }
 
-/// Remove and return the expired proofs, so asking for them again cannot recurse.
-pub(super) fn take_expired() -> Vec<Verified> {
+/// Remove and return the due proofs, so asking for them again cannot recurse.
+pub(super) fn take_due(margin: Duration) -> Vec<Verified> {
     PROOFS
         .try_with(|proofs| {
             let mut proofs = proofs.borrow_mut();
-            let (expired, kept) = proofs
-                .drain(..)
-                .partition(|proof| !proof.refused && !proof.current());
+            let (due, kept) = proofs.drain(..).partition(|proof| proof.due(margin));
             *proofs = kept;
-            expired
+            due
         })
         .unwrap_or_default()
 }
 
-/// Keep a proof the home did not confirm again: its effects stay denied and the
-/// request's final check answers 503 instead of exposing the response.
-pub(super) fn restore(mut proof: Verified) {
-    proof.refused = true;
+/// Put back a proof the home did not confirm. A refused one stays denied and the
+/// request's final check answers 503 instead of exposing the response; one the home
+/// could not be asked about stays usable until its own deadline.
+pub(super) fn restore(mut proof: Verified, refused: bool) {
+    proof.refused = refused;
     let _ = PROOFS.try_with(|proofs| {
         let mut proofs = proofs.borrow_mut();
         if !proofs

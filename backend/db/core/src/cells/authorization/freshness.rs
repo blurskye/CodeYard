@@ -66,6 +66,12 @@ impl Policy {
         self.maximum_age
     }
 
+    /// A proof with less than this left is asked for again before the next operation, so
+    /// a statement that waits on a lock starts with half a proof's life, not a few ms.
+    pub fn renewal_margin(self) -> Duration {
+        (self.maximum_age - self.clock_error) / 2
+    }
+
     /// Start before acquiring a connection or making a remote request. A slow primary
     /// response cannot start a fresh revocation budget when it finally arrives.
     pub fn start(self, wall: DateTime<Utc>, monotonic: Instant) -> Option<Read> {
@@ -162,6 +168,19 @@ impl Deadline {
     pub fn current(self, wall: DateTime<Utc>, monotonic: Instant) -> bool {
         self.read.current(wall, monotonic) && wall < self.wall && monotonic < self.monotonic
     }
+
+    /// Time left on both clocks; zero once the proof is no longer current.
+    pub fn remaining(self, wall: DateTime<Utc>, monotonic: Instant) -> Duration {
+        if !self.current(wall, monotonic) {
+            return Duration::ZERO;
+        }
+        let by_wall = self
+            .wall
+            .signed_duration_since(wall)
+            .to_std()
+            .unwrap_or_default();
+        by_wall.min(self.monotonic.saturating_duration_since(monotonic))
+    }
 }
 
 #[cfg(test)]
@@ -237,6 +256,31 @@ mod tests {
         assert!(read
             .prove(wall, None, wall - TimeDelta::milliseconds(200), after_wait)
             .is_none());
+    }
+
+    #[test]
+    fn renewal_starts_in_the_second_half_of_a_proof() {
+        let (wall, monotonic) = clocks();
+        let policy = Policy::default();
+        assert_eq!(policy.renewal_margin(), Duration::from_millis(875));
+        let deadline = policy
+            .start(wall, monotonic)
+            .unwrap()
+            .prove(wall, None, wall, monotonic)
+            .unwrap();
+        assert_eq!(
+            deadline.remaining(wall, monotonic),
+            Duration::from_millis(1750)
+        );
+        let later = Duration::from_millis(1000);
+        assert_eq!(
+            deadline.remaining(wall + TimeDelta::milliseconds(1000), monotonic + later),
+            Duration::from_millis(750)
+        );
+        assert_eq!(
+            deadline.remaining(wall, monotonic + Duration::from_secs(2)),
+            Duration::ZERO
+        );
     }
 
     #[test]
