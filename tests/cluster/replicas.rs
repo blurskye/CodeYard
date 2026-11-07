@@ -1210,7 +1210,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
             };
             let wrapper = root.path().join("git");
             std::fs::write(&wrapper, format!(
-                "#!/bin/sh\ncase \" $* \" in *' gc --no-prune '*)\n  : > '{root}/packing'\n  while test ! -e '{root}/release'; do '{sleep}' 0.01; done\n;; esac\nexec '{git}' \"$@\"\n",
+                "#!/bin/sh\ncase \" $* \" in *' repack -d '*)\n  : > '{root}/packing'\n  while test ! -e '{root}/release'; do '{sleep}' 0.01; done\n;; esac\nexec '{git}' \"$@\"\n",
                 root = root.path().display(), sleep = executable("sleep").display(),
                 git = executable("git").display(),
             )).unwrap();

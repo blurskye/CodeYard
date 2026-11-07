@@ -53,6 +53,21 @@ CREATE INDEX cell_outbox_pending ON cell_outbox(next_attempt_at,id) WHERE delive
 CREATE UNIQUE INDEX cell_outbox_search_pending ON cell_outbox(root_id,payload)
     WHERE topic='search' AND delivered_at IS NULL;
 
+-- Regional presence runs on PostgreSQL cells only. SQLite keeps these tables empty so both
+-- baselines list the same tables for `database copy`.
+CREATE TABLE cell_request_counts (
+    user_id INTEGER NOT NULL CHECK(typeof(user_id)='integer' AND user_id BETWEEN 1 AND 9007199254740991),
+    region TEXT NOT NULL CHECK(length(CAST(region AS BLOB)) BETWEEN 1 AND 63),
+    day TEXT NOT NULL CHECK(length(day)=10),
+    requests INTEGER NOT NULL CHECK(typeof(requests)='integer' AND requests>0),
+    PRIMARY KEY(user_id,region,day)
+);
+CREATE TABLE cell_region_policy (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    configuration TEXT NOT NULL CHECK(json_valid(configuration) AND json_type(configuration)='object' AND length(CAST(configuration AS BLOB))<=4096),
+    evaluated_at TEXT
+);
+
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
     home_cell INTEGER NOT NULL DEFAULT 0 CHECK (home_cell BETWEEN 0 AND 65535),
@@ -252,6 +267,14 @@ CREATE TABLE organizations (
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     CONSTRAINT organizations_stub_data CHECK (NOT is_stub OR (billing_email IS NULL AND avatar_file_id IS NULL))
+);
+
+-- Empty on SQLite, like the other regional presence tables.
+CREATE TABLE cell_presence (
+    organization_id INTEGER NOT NULL REFERENCES organizations(id) ON DELETE CASCADE CHECK(typeof(organization_id)='integer'),
+    region TEXT NOT NULL CHECK(length(CAST(region AS BLOB)) BETWEEN 1 AND 63),
+    added_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    PRIMARY KEY(organization_id,region)
 );
 
 CREATE TABLE org_memberships (

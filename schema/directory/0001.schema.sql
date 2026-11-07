@@ -98,7 +98,12 @@ CREATE TRIGGER directory_claim_count AFTER INSERT OR DELETE OR UPDATE OF shard,o
 -- outbox; a later (event, attempt) replaces an earlier one, and a removed repository keeps
 -- an empty row so a late write cannot bring it back. Private documents are returned only to
 -- the readers their cell names. Free text matches substrings through trigram indexes.
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- The extension lives in `public`, not the directory's own schema, so dropping a schema
+-- never drops it; if it is already installed elsewhere, that schema is searched for the
+-- rest of this migration.
+CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA public;
+SELECT set_config('search_path', current_setting('search_path') || ',' || quote_ident(n.nspname), true)
+FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm';
 CREATE TABLE search_repositories (
     id BIGINT PRIMARY KEY CHECK(id BETWEEN 1 AND 9007199254740991),
     cell_id INTEGER NOT NULL REFERENCES directory_cells(id),
