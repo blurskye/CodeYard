@@ -469,9 +469,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     5a7b4a57e8764a9994d446d064a9fe83, Clippy bdc1355fc4ef42cf926c94010991881a
     and WASM 045556818d024ac59e14f1530301606b. Its runtime is not yet run.
     Review also restores badge queries' restriction to the recipient's notification
-    repositories on both engines. That and polling diagnostics are checking in workspace
+    repositories on both engines. That and polling diagnostics pass workspace
     a419fe0ad7374ae7bd82e6137e89d58b, Clippy fdaec63b4bde452da44fd6ff71352c73
     and WASM d6679477a8f0495abe8eeef4dc753222.
+    Runtime retry cfc7a969e5824a269d9273e69619239c is compiling helpers; no results yet.
     `s7-notices-retry.sh` covers the changed targets without repeating unrelated e2e failures.
     Both baseline schemas add separate notice-refresh trigger/index blocks (no FK edits).
     Both-engine HTTP/stub outage tests and two-cell HTTP privacy/deletion tests are added;
