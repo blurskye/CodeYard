@@ -511,7 +511,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       cells send such a token to the user's current home, and the source lists the moved
       hashes in `moved_credentials` and asks the new home about them. Browser sessions do
       not move; the user signs in again. A token deleted after the move keeps its key,
-      which only routes: the home refuses the token.
+      which only routes: the home refuses the token. When the directory cannot be asked,
+      a router sends the token to its issuing cell.
+    Job df0177cea8d847309db8022760c6f687 passes the 10 move tests, the 11 cells cluster
+    tests (with `cells_moves`), the other 189 database tests and the library tests.
     Not written: the bounded, resumable object copy between regions (a move between
     regions copies no package or artifact bytes yet), moves of repositories placed on
     cluster storage nodes (refused before the freeze), and the automatic region move.
