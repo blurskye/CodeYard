@@ -674,7 +674,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
         )
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     for table in [
         "issues",
         "pull_requests",
