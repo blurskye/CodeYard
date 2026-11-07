@@ -527,11 +527,15 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Database: 177 pass, nine whole-database copy tests fail because the inherited change
     omitted `account_moves` from SQLite's catalogue. The parity table and an unfinished-
     move refusal before whole-database copy are written, with a CLI regression. Workspace
-    b010d72c, Clippy c819144f and WASM bb590c68 pass; runtime 5b4e1a29 is the combined retry.
+    b010d72c, Clippy c819144f and WASM bb590c68 pass. Runtime 5b4e1a29 passes all
+    195 database tests (eight move tests included), 239 cluster tests and 142 selected
+    library tests without skips, including the unfinished-copy CLI regression.
     The next move-retry batch takes the existing move lease at both cells and refuses an
     active target before touching its Git, not just during row loading. CLI regressions
-    cover a busy destination and preservation of a destination-only commit. Source checks
-    and runtime are pending.
+    cover a busy destination and preservation of a destination-only commit. Workspace
+    dbd30337, Clippy 90b6eacf and WASM 3c65a01e pass. Runtime 882eb0f2 passes the
+    extended CLI test, all 195 database tests, 239 cluster tests and 142 selected library
+    tests without skips. Repository transfer and automatic region moves remain unwritten.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

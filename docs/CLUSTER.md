@@ -812,8 +812,10 @@ new advisory arrives.
 --target-repositories <directory>` is the manual PostgreSQL move command; `--kind
 organization` moves an organization. Run it with the source cell's normal database,
 repository root and node key, and `DIRECTORY_ADDRESS` / `DIRECTORY_PUBLIC_KEY`. Both
-repository roots must be accessible on that machine and must differ. The CLI serializes
-moves from that source and drains its repositories' existing Git publication leases.
+repository roots must be accessible on that machine and must differ. The CLI takes the
+same move lease in both cells, excluding concurrent incoming or outgoing moves, and drains
+its repositories' existing Git publication leases. It refuses an active target before
+copying Git, so a retry cannot overwrite destination-only commits.
 
 Writes are frozen inside database transactions. The row copy commits in one target
 transaction with deferred foreign keys; the receiving copy cannot accept writes until
