@@ -192,7 +192,10 @@ async fn comment_reaches_connected_clients(pg: bool) {
         "100 idle clients issued {idle_queries} cursor queries"
     );
 
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let started = tokio::time::Instant::now();
+    let deadline = started + Duration::from_secs(2);
+    let mut response_elapsed = None;
+    let mut delivered_sockets = 0;
     tokio::time::timeout_at(deadline, async {
         let response = producer
             .oneshot(
@@ -210,6 +213,7 @@ async fn comment_reaches_connected_clients(pg: bool) {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::CREATED);
+        response_elapsed = Some(started.elapsed());
         for (user, socket) in &mut sockets {
             if *user != alice {
                 continue;
@@ -221,10 +225,16 @@ async fn comment_reaches_connected_clients(pg: bool) {
             assert_eq!(event["kind"], "issue_comment");
             assert_eq!(event["body"], "A live comment");
             assert_eq!(event["unread_count"], 1);
+            delivered_sockets += 1;
         }
     })
     .await
-    .expect("comment did not reach the real notification route within two seconds");
+    .unwrap_or_else(|_| {
+        panic!(
+            "comment did not reach the real notification route within two seconds: \
+             HTTP response after {response_elapsed:?}, delivered to {delivered_sockets}/8 sockets"
+        )
+    });
 
     tokio::time::timeout(Duration::from_secs(1), broadcaster.shutdown())
         .await

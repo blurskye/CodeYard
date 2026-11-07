@@ -707,7 +707,10 @@ pub async fn count_header_unread(pool: &PgPool, user_id: i64) -> Result<i64> {
          AND EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)
          AND (scope_repository_id=0 OR scope_repository_id IN (
              SELECT r.id FROM repositories r JOIN users u ON u.id=$1
-             WHERE NOT r.is_stub AND {readable}))"
+             WHERE r.id IN (SELECT scope_repository_id FROM notifications
+                            WHERE user_id=$1 AND read_at IS NULL AND done_at IS NULL
+                              AND scope_repository_id>0)
+               AND NOT r.is_stub AND {readable}))"
     ))
     .bind(user_id)
     .fetch_one(pool)

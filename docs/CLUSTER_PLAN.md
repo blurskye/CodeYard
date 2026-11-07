@@ -460,15 +460,23 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     81357bd2c79f464382707c2c7ac47704 passes 80 selected library tests, both-engine
     stub HTTP tests (2), all 239 cluster tests and 47 notification collaboration tests.
     Notification polling passes 4 and fails the PostgreSQL 100-client two-second
-    delivery bound; the public cells round is still pending. No assertion is relaxed.
+    delivery bound. The public cells notice/privacy flow passes, but its overall round
+    fails maintainer PR creation and a disabled dependency-graph submission, and skips
+    cleanup after failure. The builder also reports no delegated CI cgroup. No assertion
+    is relaxed; a focused retry adds timeout diagnostics and retains the two-second bound.
     `s7-notices-test.sh` owns its focused targets and cells round. A further two-cell
-    HTTP member-revocation/outbox-reclaim assertion is checking in workspace
+    HTTP member-revocation/outbox-reclaim assertion passes workspace
     5a7b4a57e8764a9994d446d064a9fe83, Clippy bdc1355fc4ef42cf926c94010991881a
-    and WASM 045556818d024ac59e14f1530301606b; its runtime is not yet run.
+    and WASM 045556818d024ac59e14f1530301606b. Its runtime is not yet run.
+    Review also restores badge queries' restriction to the recipient's notification
+    repositories on both engines. That and polling diagnostics are checking in workspace
+    a419fe0ad7374ae7bd82e6137e89d58b, Clippy fdaec63b4bde452da44fd6ff71352c73
+    and WASM d6679477a8f0495abe8eeef4dc753222.
+    `s7-notices-retry.sh` covers the changed targets without repeating unrelated e2e failures.
     Both baseline schemas add separate notice-refresh trigger/index blocks (no FK edits).
     Both-engine HTTP/stub outage tests and two-cell HTTP privacy/deletion tests are added;
     the public gh cells script also checks privacy after delivery. Heartbeat credential
-    work has an unchecked deadline helper and five deterministic unit tests in
+    work has a source-checked deadline helper and five deterministic unit tests in
     `authorization/freshness.rs`: the clock allowance is inside the age bound, and wall
     and monotonic deadlines survive waits without renewal. Its policy parser accepts
     `IDENTITY_MAXIMUM_AGE_MS` (2000) and `IDENTITY_CLOCK_ERROR_MS` (250), but no running
