@@ -555,13 +555,15 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Runtime 0826aaed passes all eight move tests, the other 189 database tests and
     188 selected library tests without skips. Cluster passes 237/239: the foreign
     credential fixture's cached answer expired before its assertion, and a replica
-    fixture could not acquire a disk-probe permit. Isolated retries are pending;
-    the new post-release cleanup failure/retry and repeated-command checks pass.
+    fixture could not acquire a disk-probe permit. Both pass unchanged in isolated
+    retry f75361c6; the new post-release cleanup failure/retry and repeated-command
+    checks pass.
     The next CLI fixture copies package blob references and checks the unchanged npm
     URL, exact archive bytes, integrity metadata and live private-download denial using
     one shared test store. It does not exercise S3 transport, cross-region byte copying
     or shared-store garbage collection. Workspace 1ba0b685, Clippy 53a18036 and
-    WASM 707952ea pass. Runtime waits for the isolated cluster retry f75361c6.
+    WASM 707952ea pass. Runtime c3826181 covers move, database, cluster and the
+    selected libraries.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

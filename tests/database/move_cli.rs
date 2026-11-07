@@ -658,7 +658,8 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
     assert_eq!(downloaded.as_ref(), package_bytes);
     assert_eq!(codeyard_app::packages::digest(&downloaded), digest);
     // Copied blob metadata is not permission: the destination's current visibility
-    // must still govern downloads using the old URL.
+    // must still govern downloads using the old URL. Anonymous registry clients get the
+    // same challenge for private and unknown packages, so this is 401, not 404.
     sqlx::query("UPDATE packages SET visibility='private' WHERE id=$1")
         .bind(package)
         .execute(&target.raw)
