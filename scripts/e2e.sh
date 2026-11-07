@@ -2986,6 +2986,9 @@ PYDATA
         git_with_token read clone -q "$BASE/alice/$name.git" "$destination" || return 1
         [[ $(git_as alice -C "$destination" rev-parse HEAD) == "$expected" ]] || return 1
         start_server "$primary" || return 1
+        # Read fallback proves durability, not that the primary can accept the next
+        # publisher. Finish recovery before the next fault or editor write.
+        wait_quorum_ready "$name" || return 1
     done
 }
 

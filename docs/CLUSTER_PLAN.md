@@ -590,6 +590,13 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     two failures and six skips, with no stack overflow. Runner drain/resume reaches
     execution but fails without a delegated cgroup. The editor-survival write still
     returns 503 after the interrupted-storage checks; this is not a pass.
+    The interrupted-storage fixture now waits for three recovered voters and the
+    frontend's failed-dial backoff before starting another publisher, as the other
+    fault fixtures already do. Workspace 5d0a566e, Clippy 141a5cf3 and WASM 70f94efc
+    pass. Runtime 7363a215 completes in 536 seconds: 49 passes, one failure and six
+    skips. Editor, gh branch and gh merge durability now pass; only finished-CI
+    drain/resume fails because the builder has no delegated cgroup. No assertion
+    was removed or weakened.
 
     Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
