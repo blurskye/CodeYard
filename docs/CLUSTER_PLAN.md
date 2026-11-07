@@ -550,7 +550,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     move row until deletion finishes. CLI failure/retry after row release and a repeated
     successful command must preserve destination-only commits and unrelated source
     directories. Paths are capped at 10,000 repositories and 16 MiB in both baselines.
-    This batch is written; source checks and runtime are pending.
+    Workspace 3aa2355c, Clippy 6b715d30 and WASM 82a41f63 pass, including the
+    preflight that rejects unsupported placement before asking CI to drain.
+    Runtime 0826aaed runs move, database, cluster and selected library tests.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
