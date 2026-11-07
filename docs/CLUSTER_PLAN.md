@@ -509,7 +509,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     publication leases across the copy and switch. HTTP freeze/cancel and CLI injected
     load-failure/retry with Git clone and preserved issue IDs are added. This follow-up
     passes workspace 841f54d9, Clippy 501107cb and WASM 4349aec7; its runtime is pending.
-    Manual-move acceptance remains incomplete.
+    Receiving-copy retry and a thousand-member organization with revoked-member HTTP
+    denial are also written; workspace 26494b58, Clippy 45e2db07 and WASM d048de00 pass.
+    Manual-move acceptance remains incomplete; these tests await the next runtime job.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

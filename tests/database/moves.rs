@@ -279,6 +279,50 @@ async fn a_move_that_fails_halfway_leaves_the_source_serving_and_the_freeze_lift
 }
 
 #[tokio::test]
+async fn a_committed_receiving_copy_stays_frozen_when_the_source_resumes_and_is_replaced_on_retry()
+{
+    let mut one = cell(1).await;
+    let mut two = cell(2).await;
+    let (source, target) = (&*one.raw, &*two.raw);
+    let alice = user(source, "alice", 1).await;
+    let repo = repository(source, "user", alice, "retry", 1).await;
+    let first = issue(source, repo, 1, alice).await;
+    let account = Account::new(ObjectKind::User, alice).unwrap();
+    let paths = BTreeMap::from([(repo, "/cells/two/retry.git".to_owned())]);
+    moves::begin(source, account, 2, WAIT).await.unwrap();
+    moves::freeze(source, account, HOLD, WAIT).await.unwrap();
+    moves::copy(source, target, account, 2, &paths)
+        .await
+        .unwrap();
+    // Model process loss after the target commit, followed by source cancellation.
+    assert!(moves::cancel(source, account).await.unwrap());
+    comment(source, first, alice).await.unwrap();
+    assert!(!moves::cancel(target, account).await.unwrap());
+    assert!(moves::activate(source, target, account).await.is_err());
+    refused_as_moving(comment(target, first, alice).await.unwrap_err());
+    moves::begin(source, account, 2, WAIT).await.unwrap();
+    moves::freeze(source, account, HOLD, WAIT).await.unwrap();
+    moves::copy(source, target, account, 2, &paths)
+        .await
+        .unwrap();
+    assert_eq!(
+        count(
+            target,
+            "SELECT count(*) FROM issue_comments WHERE issue_id=$1",
+            first
+        )
+        .await,
+        1
+    );
+    moves::switch(source, account).await.unwrap();
+    moves::activate(source, target, account).await.unwrap();
+    moves::release(source, account).await.unwrap();
+    comment(target, first, alice).await.unwrap();
+    one.finish().await;
+    two.finish().await;
+}
+
+#[tokio::test]
 async fn a_member_removed_during_an_organization_move_stays_removed() {
     let mut one = cell(1).await;
     let mut two = cell(2).await;
