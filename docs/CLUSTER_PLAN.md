@@ -457,12 +457,16 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 7 side lane: notice withdrawal and live source checks pass workspace
     5773433098f74a23b60d3bb760b2234e and WASM 5b56e1e158f34324ba1cd9571c6b3ddd;
     Clippy fdec851f92ed4b8ea4f5207c1e523c40 also passes. Runtime
-    81357bd2c79f464382707c2c7ac47704 is compiling the native helper binaries; no
-    test result is claimed yet. `s7-notices-test.sh` owns its focused targets and cells round.
+    81357bd2c79f464382707c2c7ac47704 built the native helper binaries and is compiling
+    the test targets; no test result is claimed yet. `s7-notices-test.sh` owns its focused targets and cells round.
     Both baseline schemas add separate notice-refresh trigger/index blocks (no FK edits).
     Both-engine HTTP/stub outage tests and two-cell HTTP privacy/deletion tests are added;
     the public gh cells script also checks privacy after delivery. Heartbeat credential
-    reads and the optional content cache are not started.
+    work has an unchecked deadline helper and five deterministic unit tests in
+    `authorization/freshness.rs`: the clock allowance is inside the age bound, and wall
+    and monotonic deadlines survive waits without renewal. It is not wired into readers;
+    the old foreign cache remains until the snapshot/RPC/transaction replacement is complete.
+    The optional content cache is not started.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

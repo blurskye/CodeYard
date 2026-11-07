@@ -1,5 +1,7 @@
 //! Home-cell proofs and bounded, short-lived authorization answers. No personal credentials
 //! are inserted into a stub's native credential tables.
+pub mod freshness;
+
 use crate::{models::User, DbPool};
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
