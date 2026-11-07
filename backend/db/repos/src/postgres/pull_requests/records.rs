@@ -303,19 +303,13 @@ pub async fn set_pull_request_draft(
 }
 
 async fn admit_creation_head(
-    pool: &PgPool,
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     input: &NewPullRequest<'_>,
     head: &codeyard_db_core::models::Repository,
     foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+    current: Option<&codeyard_db_core::cells::repositories::Source>,
 ) -> Result<()> {
-    crate::pull_requests::records::check_foreign_head(
-        &codeyard_db_core::DbPool::Postgres(pool.clone()),
-        input,
-        head,
-        foreign,
-    )
-    .await?;
+    crate::pull_requests::records::check_foreign_head(input, head, foreign, current)?;
     if let Some(foreign) = foreign {
         anyhow::ensure!(
             codeyard_db_core::queries::postgres::credentials::repository(
@@ -349,6 +343,11 @@ pub async fn create_pull_request_with_head(
     input: NewPullRequest<'_>,
     foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
 ) -> Result<PullRequest> {
+    let current = crate::pull_requests::records::read_foreign_head(
+        &codeyard_db_core::DbPool::Postgres(pool.clone()),
+        foreign,
+    )
+    .await?;
     let mut tx = pool.begin().await?;
     // Conversion retains the issue author; serialize that author's quota before repository locks.
     let cap_author = if let Some(number) = input.issue {
@@ -416,7 +415,7 @@ pub async fn create_pull_request_with_head(
     {
         return Err(crate::postgres::discussions::AUTHORITY_DENIED.into());
     }
-    admit_creation_head(pool, &mut tx, &input, &head, foreign).await?;
+    admit_creation_head(&mut tx, &input, &head, foreign, current.as_ref()).await?;
     anyhow::ensure!(
         !input.maintainer_can_modify
             || can_grant_maintainer_edit(input.author_id, input.repo_id, &head),
@@ -487,7 +486,7 @@ pub async fn create_pull_request_with_head(
         )
         .await?;
     }
-    admit_creation_head(pool, &mut tx, &input, &head, foreign).await?;
+    admit_creation_head(&mut tx, &input, &head, foreign, current.as_ref()).await?;
     if foreign.is_some() {
         let payload = crate::pull_requests::cells::initial(input.repo_id, head.id)?;
         sqlx::query("INSERT INTO cell_outbox(root_kind,root_id,topic,payload) VALUES('repository',$1,'pull.refresh',$2)")
