@@ -3081,8 +3081,14 @@ t_cluster_drain_worker() {
         [[ $(pg_query "SELECT status FROM ci_runs WHERE run_id='$id'") == queued ]]
     done
     cluster_cli web1 drain ci1 --cancel
-    wait_ci_run "$id"
+    deadline=$((SECONDS + 60))
+    until [[ $(pg_query "SELECT worker IS NOT NULL FROM ci_runs WHERE run_id='$id'") == t ]]; do
+        ((SECONDS < deadline)) || { echo 'the runner did not claim the run after the cancel' >&2; return 1; }
+        sleep 1
+    done
     assert_ci_worker "$id"
+    needs_ci_runs || return
+    wait_ci_run "$id"
 }
 
 t_cluster_browser() {
