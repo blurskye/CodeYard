@@ -41,18 +41,19 @@ fn name(value: &str, kind: ObjectKind) -> Result<()> {
 }
 const USER: &str = "INSERT INTO users(id,username,display_name,bio,location,website,is_banned,must_change_password,two_factor_enabled,home_cell,is_stub,created_at,updated_at)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,TRUE,$11,$12)
-ON CONFLICT(id) DO UPDATE SET username=excluded.username,display_name=excluded.display_name,bio=excluded.bio,location=excluded.location,website=excluded.website,is_banned=excluded.is_banned,must_change_password=excluded.must_change_password,two_factor_enabled=excluded.two_factor_enabled,updated_at=excluded.updated_at
-WHERE users.is_stub AND users.home_cell=excluded.home_cell AND users.updated_at<=excluded.updated_at";
+ON CONFLICT(id) DO UPDATE SET home_cell=excluded.home_cell,username=excluded.username,display_name=excluded.display_name,bio=excluded.bio,location=excluded.location,website=excluded.website,is_banned=excluded.is_banned,must_change_password=excluded.must_change_password,two_factor_enabled=excluded.two_factor_enabled,updated_at=excluded.updated_at
+WHERE users.is_stub AND users.updated_at<=excluded.updated_at";
 const ORGANIZATION: &str = "INSERT INTO organizations(id,name,display_name,description,is_verified,home_cell,is_stub,created_at,updated_at)
 VALUES($1,$2,$3,$4,$5,$6,TRUE,$7,$8)
-ON CONFLICT(id) DO UPDATE SET name=excluded.name,display_name=excluded.display_name,description=excluded.description,is_verified=excluded.is_verified,updated_at=excluded.updated_at
-WHERE organizations.is_stub AND organizations.home_cell=excluded.home_cell AND organizations.updated_at<=excluded.updated_at";
+ON CONFLICT(id) DO UPDATE SET home_cell=excluded.home_cell,name=excluded.name,display_name=excluded.display_name,description=excluded.description,is_verified=excluded.is_verified,updated_at=excluded.updated_at
+WHERE organizations.is_stub AND organizations.updated_at<=excluded.updated_at";
 const REPOSITORY: &str = "INSERT INTO repositories(id,owner_kind,owner_user_id,owner_org_id,name,description,website,is_private,is_archived,is_fork,is_gist,is_template,is_internal,default_branch,home_cell,stars_count,forks_count,watchers_count,open_issues_count,allow_merge_commit,allow_squash_merge,allow_rebase_merge,created_at,updated_at,is_stub,disk_path,forked_from_id)
 VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,TRUE,'',(SELECT id FROM repositories WHERE id=$25))
-ON CONFLICT(id) DO UPDATE SET owner_kind=excluded.owner_kind,owner_user_id=excluded.owner_user_id,owner_org_id=excluded.owner_org_id,name=excluded.name,description=excluded.description,website=excluded.website,is_private=excluded.is_private,is_archived=excluded.is_archived,is_fork=excluded.is_fork,forked_from_id=excluded.forked_from_id,is_gist=excluded.is_gist,is_template=excluded.is_template,is_internal=excluded.is_internal,default_branch=excluded.default_branch,stars_count=excluded.stars_count,forks_count=excluded.forks_count,watchers_count=excluded.watchers_count,open_issues_count=excluded.open_issues_count,allow_merge_commit=excluded.allow_merge_commit,allow_squash_merge=excluded.allow_squash_merge,allow_rebase_merge=excluded.allow_rebase_merge,updated_at=excluded.updated_at
-WHERE repositories.is_stub AND repositories.home_cell=excluded.home_cell AND repositories.updated_at<=excluded.updated_at";
+ON CONFLICT(id) DO UPDATE SET home_cell=excluded.home_cell,owner_kind=excluded.owner_kind,owner_user_id=excluded.owner_user_id,owner_org_id=excluded.owner_org_id,name=excluded.name,description=excluded.description,website=excluded.website,is_private=excluded.is_private,is_archived=excluded.is_archived,is_fork=excluded.is_fork,forked_from_id=excluded.forked_from_id,is_gist=excluded.is_gist,is_template=excluded.is_template,is_internal=excluded.is_internal,default_branch=excluded.default_branch,stars_count=excluded.stars_count,forks_count=excluded.forks_count,watchers_count=excluded.watchers_count,open_issues_count=excluded.open_issues_count,allow_merge_commit=excluded.allow_merge_commit,allow_squash_merge=excluded.allow_squash_merge,allow_rebase_merge=excluded.allow_rebase_merge,updated_at=excluded.updated_at
+WHERE repositories.is_stub AND repositories.updated_at<=excluded.updated_at";
 
-/// The caller verifies the source node against the directory's current object home.
+/// The caller verifies the source node against the directory's current object home, so a
+/// refresh from an account's new home after a move updates the stub's home too.
 /// False means the row is local, belongs to another home, or already has newer metadata.
 /// No password, email, session, key, token, private billing data or local storage is copied.
 pub async fn user(pool: &DbPool, source: Prefix, value: &User) -> Result<bool> {

@@ -1086,10 +1086,12 @@ Cost: four PostgreSQL nodes per 10 million accounts.
 **Moves are built last (stage 6).** Until then an account stays where it was placed and
 cells close at half their limit. Every table declares how its rows reach an owner, by an
 owner column or through a repository or another row; a test fails when a table has none,
-the way `codeyard db copy` already walks the catalog. A move copies rows in the background,
-freezes the account for the final catch-up (reads work, writes get a retry message), copies
-its repositories, switches the directory and forwarding entries, turns the source rows into
-stubs and lifts the freeze. Ids do not change, and the source copy stays until the move is
+the way `codeyard db copy` already walks the catalog. `codeyard cell move` freezes the
+account (reads work; a per-account trigger refuses writes, also from background workers),
+copies its repositories with Git and its rows in one target transaction with deferred
+foreign keys, switches the directory, waits out the routers' route cache, and turns the
+source rows into stubs (`backend/db/cluster/src/moves.rs`). A freeze lifts by itself when it
+runs out, and a failed move before the switch leaves the source serving. Ids do not change, and the source copy stays until the move is
 checked. Why: rebalancing matters only once cells fill unevenly, and logical replication
 cannot do it, since row filters see only a table's own columns. Cost: ownership rules for
 all tables, kept complete for good, and a freeze of minutes for a normal account, hours

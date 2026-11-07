@@ -97,7 +97,10 @@ pub const TABLES: &[(&str, Rule)] = &[
         Owned(&[Parent("token_id", "personal_access_tokens")]),
     ),
     ("actions_oidc_key", Cell),
-    ("actions_oidc_org_settings", Owned(&[Organization("org_id")])),
+    (
+        "actions_oidc_org_settings",
+        Owned(&[Organization("org_id")]),
+    ),
     (
         "actions_oidc_properties",
         Owned(&[Parent(
@@ -138,7 +141,10 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("artifact_attestations", Owned(&[Repository("repo_id")])),
     ("artifact_metadata", Owned(&[Repository("repo_id")])),
     ("artifact_metadata_jobs", Owned(&[Organization("org_id")])),
-    ("artifact_metadata_records", Owned(&[Organization("org_id")])),
+    (
+        "artifact_metadata_records",
+        Owned(&[Organization("org_id")]),
+    ),
     ("attestation_bundles", Shared),
     (
         "attestation_subjects",
@@ -184,7 +190,10 @@ pub const TABLES: &[(&str, Rule)] = &[
         Owned(&[Parent("alert_id", "code_scanning_alerts")]),
     ),
     ("code_scanning_uploads", Owned(&[Repository("repo_id")])),
-    ("code_security_configurations", Owned(&[Organization("org_id")])),
+    (
+        "code_security_configurations",
+        Owned(&[Organization("org_id")]),
+    ),
     ("codeql_databases", Owned(&[Repository("repo_id")])),
     ("commit_comments", Owned(&[Repository("repo_id")])),
     ("commit_status_history", Owned(&[Repository("repo_id")])),
@@ -290,7 +299,11 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("interaction_contributors", Owned(&[Repository("repo_id")])),
     (
         "interaction_limits",
-        Owned(&[Repository("repo_id"), Organization("org_id"), User("user_id")]),
+        Owned(&[
+            Repository("repo_id"),
+            Organization("org_id"),
+            User("user_id"),
+        ]),
     ),
     ("interaction_pull_bypass", Owned(&[Repository("repo_id")])),
     (
@@ -381,15 +394,24 @@ pub const TABLES: &[(&str, Rule)] = &[
         Owned(&[Organization("org_id")]),
     ),
     ("organization_invitations", Owned(&[Organization("org_id")])),
-    ("organization_member_history", Owned(&[Organization("org_id")])),
+    (
+        "organization_member_history",
+        Owned(&[Organization("org_id")]),
+    ),
     (
         "organization_repository_properties",
         Owned(&[Organization("org_id")]),
     ),
-    ("organization_role_assignments", Owned(&[Organization("org_id")])),
+    (
+        "organization_role_assignments",
+        Owned(&[Organization("org_id")]),
+    ),
     ("organization_roles", Shared),
     ("organization_settings", Owned(&[Organization("org_id")])),
-    ("organization_token_policies", Owned(&[Organization("org_id")])),
+    (
+        "organization_token_policies",
+        Owned(&[Organization("org_id")]),
+    ),
     ("organizations", Owned(&[Organization("id")])),
     ("osv_advisories", Shared),
     ("osv_packages", Shared),
@@ -841,7 +863,10 @@ mod tests {
                 .split(',')
                 .map(|path| path.trim().trim_matches('\'').to_owned())
                 .collect();
-            assert!(guarded.insert(table.clone(), paths).is_none(), "{table} twice");
+            assert!(
+                guarded.insert(table.clone(), paths).is_none(),
+                "{table} twice"
+            );
         }
         for (table, rule) in TABLES {
             match rule {
@@ -870,7 +895,10 @@ mod tests {
         assert!(owned_rows("files", ObjectKind::User).is_none());
         assert_eq!(
             guard_paths("webhook_deliveries"),
-            ["webhook_id@webhooks.id>repo_id:r", "webhook_id@webhooks.id>org_id:o"]
+            [
+                "webhook_id@webhooks.id>repo_id:r",
+                "webhook_id@webhooks.id>org_id:o"
+            ]
         );
         assert_eq!(
             guard_paths("immutable_release_owner_names"),

@@ -22,14 +22,14 @@ mod replay;
 pub mod retained;
 mod revert;
 pub use checked::{
-    adds_merge_commit, checkout, commit_is_ancestor, current_branch_head, current_pull_head,
-    initialize_repository, initialize_repository_copy, introduced_signatures, materialize_checkout,
-    merge_head_ref, prepare_merge, prepare_pull_branch_update, prepare_pull_head, prepare_squash,
-    prepare_upstream_merge, publish_branch_rename, publish_merge, publish_pull_branch_update,
-    publish_pull_head, publish_ref, publish_ref_create, publish_ref_delete, publish_restack,
-    quarantined_is_fast_forward, rewrite_template_history, validate_merge_revision, Person,
-    PreparedPullHead, PullHeadConflict, RefConflict, UnsupportedMerge, MAX_MERGE_MESSAGE_BYTES,
-    NO_CHANGES,
+    adds_merge_commit, checkout, commit_is_ancestor, copy_repository, current_branch_head,
+    current_pull_head, initialize_repository, initialize_repository_copy, introduced_signatures,
+    materialize_checkout, merge_head_ref, prepare_merge, prepare_pull_branch_update,
+    prepare_pull_head, prepare_squash, prepare_upstream_merge, publish_branch_rename,
+    publish_merge, publish_pull_branch_update, publish_pull_head, publish_ref, publish_ref_create,
+    publish_ref_delete, publish_restack, quarantined_is_fast_forward, rewrite_template_history,
+    same_refs, validate_merge_revision, Person, PreparedPullHead, PullHeadConflict, RefConflict,
+    UnsupportedMerge, MAX_MERGE_MESSAGE_BYTES, NO_CHANGES,
 };
 
 pub(crate) use checked::{quarantined_command, walk_commits, MergeConflict};

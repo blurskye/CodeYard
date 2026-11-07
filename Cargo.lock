@@ -9818,6 +9818,7 @@ dependencies = [
  "codeyard-db-core",
  "codeyard-db-identity",
  "codeyard-git",
+ "codeyard-model",
  "codeyard-support",
  "futures-util",
  "git2",

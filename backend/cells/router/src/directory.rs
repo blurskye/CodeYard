@@ -53,6 +53,10 @@ pub enum Request {
     Forget {
         object: Object,
     },
+    MoveHome {
+        object: Object,
+        to: Prefix,
+    },
     ReportLoad {
         database_bytes: i64,
         write_rate: i64,
@@ -233,6 +237,10 @@ async fn handle(directory: &Directory, peer: &str, request: Request) -> Result<R
         }
         Request::Forget { object } => {
             directory.forget(peer, object).await?;
+            Reply::Done
+        }
+        Request::MoveHome { object, to } => {
+            directory.move_home(peer, object, to).await?;
             Reply::Done
         }
         Request::ReportLoad {

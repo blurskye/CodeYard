@@ -9,7 +9,7 @@ use codeyard_db_core::postgres::migrations::validate_history;
 use sqlx::Postgres;
 use sqlx::Transaction;
 
-pub async fn catalog(tx: &mut Transaction<'static, Postgres>) -> Result<Catalog> {
+pub(crate) async fn catalog(tx: &mut Transaction<'static, Postgres>) -> Result<Catalog> {
     let has_history: bool =
         sqlx::query_scalar("SELECT to_regclass('_gitserv_migrations') IS NOT NULL")
             .fetch_one(&mut **tx)
@@ -102,7 +102,7 @@ fn is_due_date(table: &str, column: &str) -> bool {
 /// One JSON object per row, with every value as text in the form SQLite stores it:
 /// timestamps in the application's RFC 3339 microseconds, due dates as their day, INET as
 /// `address/prefix`, blobs as hex, booleans as 0 or 1 and arrays as JSON.
-pub(super) fn read_sql(table: &Table) -> String {
+pub(crate) fn read_sql(table: &Table) -> String {
     let fields = table
         .columns
         .iter()
@@ -142,6 +142,12 @@ fn read_value(column: &str, ty: &str) -> String {
 /// Inserts from `jsonb_to_recordset` with every column staged as text, then casts each
 /// value to its column type, so PostgreSQL does the parsing.
 pub(super) fn insert_sql(table: &Table) -> String {
+    insert_sql_with(table, &[], "")
+}
+
+/// `insert_sql` with some columns set to fixed SQL values and `suffix` (an `ON CONFLICT`
+/// clause) appended.
+pub(crate) fn insert_sql_with(table: &Table, fixed: &[(&str, &str)], suffix: &str) -> String {
     let columns = table
         .columns
         .iter()
@@ -159,7 +165,9 @@ pub(super) fn insert_sql(table: &Table) -> String {
         .iter()
         .map(|column| {
             let staged = format!("staged.{}", quote(&column.name));
-            if is_due_date(&table.name, &column.name) {
+            if let Some((_, value)) = fixed.iter().find(|(name, _)| *name == column.name) {
+                (*value).to_owned()
+            } else if is_due_date(&table.name, &column.name) {
                 format!("({staged}::DATE)::TIMESTAMP AT TIME ZONE 'UTC'")
             } else {
                 write_value(&staged, &column.ty)
@@ -168,7 +176,7 @@ pub(super) fn insert_sql(table: &Table) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "INSERT INTO {} ({columns}) SELECT {values} FROM jsonb_to_recordset($1::jsonb) AS staged({staged})",
+        "INSERT INTO {} ({columns}) SELECT {values} FROM jsonb_to_recordset($1::jsonb) AS staged({staged}){suffix}",
         quote(&table.name)
     )
 }

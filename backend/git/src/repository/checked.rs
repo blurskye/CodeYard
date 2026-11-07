@@ -677,6 +677,64 @@ pub async fn initialize_repository_copy(
     Ok(())
 }
 
+/// The refs of a repository with their objects, and its HEAD, as Git prints them.
+async fn ref_listing(path: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
+    let (status, refs) = command(
+        path,
+        &["for-each-ref", "--format=%(objectname) %(refname)"],
+        b"",
+        None,
+    )
+    .await?;
+    ensure!(status.success(), "Git ref listing failed");
+    let (status, head) = command(path, &["symbolic-ref", "HEAD"], b"", None).await?;
+    ensure!(status.success(), "Git HEAD is not a branch");
+    Ok((refs, head))
+}
+
+/// Copies every ref of `source`, with the objects they reach, into a new bare repository at
+/// `path`, sets the same HEAD, and checks that both list the same refs at the same objects.
+/// Git checks each object it receives. An account move copies repositories this way.
+pub async fn copy_repository(path: &Path, source: &Path, timeout: Duration) -> Result<()> {
+    let source_text = source
+        .to_str()
+        .ok_or_else(|| anyhow!("Invalid source storage path"))?;
+    let (_, head) = ref_listing(source).await?;
+    let head = std::str::from_utf8(&head)?.trim().to_owned();
+    let branch = head
+        .strip_prefix("refs/heads/")
+        .ok_or_else(|| anyhow!("Git HEAD is not a branch"))?;
+    validate_merge_revision(branch, "0000000000000000000000000000000000000000")?;
+    let (status, _) = command(path, &["init", "--bare", "--quiet"], b"", None).await?;
+    ensure!(status.success(), "Git repository initialization failed");
+    let mut fetch = process::git_command()?;
+    fetch.arg("--git-dir").arg(path).args([
+        "-c",
+        "fetch.fsckObjects=true",
+        "fetch",
+        "--quiet",
+        "--no-tags",
+        "--no-write-fetch-head",
+        "--",
+        source_text,
+        "+refs/*:refs/*",
+    ]);
+    let (status, _) = process::buffered(fetch, b"", MAX_OUTPUT, timeout).await?;
+    ensure!(status.success(), "Git repository copy failed");
+    let (status, _) = command(path, &["symbolic-ref", "HEAD", &head], b"", None).await?;
+    ensure!(status.success(), "Git HEAD update failed");
+    same_refs(path, source).await
+}
+
+/// Fails unless both repositories list the same refs at the same objects and the same HEAD.
+pub async fn same_refs(path: &Path, source: &Path) -> Result<()> {
+    ensure!(
+        ref_listing(path).await? == ref_listing(source).await?,
+        "The repository copy does not match its source"
+    );
+    Ok(())
+}
+
 /// A template copies trees, not history. Prune before publication so old private commits cannot
 /// be recovered through object-ID reads on the generated repository.
 pub async fn rewrite_template_history(

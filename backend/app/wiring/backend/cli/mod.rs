@@ -491,7 +491,8 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
             },
 
             Commands::Cell { action } => {
-                crate::backend::cli::cells::run(&action, &pool, &cli.state_dir).await?;
+                crate::backend::cli::cells::run(&action, &pool, &cli.state_dir, &cli.repos_path)
+                    .await?;
             }
 
             Commands::Cluster { action } => {

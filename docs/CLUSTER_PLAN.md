@@ -442,17 +442,64 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       osv_advisories; osv_packages; package_blobs; signature_verifications; storage_objects;
       topics.
 
-    Stage 6 items 2 to 6 (the move itself, automatic region moves, repository transfer) are
-    not written. A row copy by these rules is the easy part; what blocks a correct move is:
-    (a) the target loads rows in any order only if every foreign key is `DEFERRABLE` (492
-    of 501 are not), since the schema's references form cycles; (b) 70 triggers keep
-    counters, search events, membership notices and credential guards, and each needs a
-    decision for a moved row (skip, replay or rebuild); (c) file, avatar, package and
-    CodeQL bytes live in the source cell's object store and repositories on its storage
-    nodes, and no cell-to-cell copy exists for files, only the fork stream for Git; (d)
-    runners, webhooks deliveries in flight and CI jobs registered with the source cell; (e)
-    a freeze that also stops the source cell's own background writers, not only routers.
-    Each is a design decision for the owner before the move is built.
+    Stage 6 items 2 to 6, decided in restart 10: (a) every foreign key is `DEFERRABLE
+    INITIALLY IMMEDIATE` in both baselines, and the move loads the target in one transaction
+    with `SET CONSTRAINTS ALL DEFERRED`; SQLite never moves accounts. (b) Every trigger has a
+    decision, below. (c) One object store per region with globally unique ids, so a move
+    inside a region copies no file bytes; a move between regions needs a bounded, resumable
+    object copy (not written). Git moves with a fetch of every ref, compared ref by ref
+    before the switch. (d) Drain before the switch: running CI is asked to stop at the
+    begin and cancelled with a clear status in the target, the account's outgoing notices
+    must be delivered before the copy, runners register again. (e) An `account_moves` row
+    per moving account; the `account_move_guard` trigger on every owned table refuses
+    writes (SQLSTATE 55000) while the account is frozen or switched, inside the writing
+    transaction, so background workers are refused too. A freeze lifts by itself when it
+    runs out, and every step can run again after a crash.
+
+    Trigger decisions. The move sets `codeyard.move` to `load` in the target and to
+    `release` in the source, and these 27 trigger functions return at once then:
+    - counters (`update_repo_stars_count`, `update_repo_watchers_count`,
+      `update_repo_forks_count`, `record_repository_star_day`): copied as values; stars and
+      watchers are counted again in the target and the counted value kept; forks stay as
+      copied, since forks in other cells are counted from stubs;
+    - search events (`queue_search_change`): rebuilt in the target, which queues each moved
+      repository, issue and pull request;
+    - byte cleanup (`actions_blob_delete`, `actions_run_delete`, `actions_github_tokens_delete`,
+      `ci_log_chunk_cleanup`, `codeql_database_cleanup`, `repository_exports_cleanup`):
+      skipped, so the release deletes rows but no bytes the target now uses;
+    - timestamps and history (`touch_label_timestamp`, `touch_milestone_updated_at`,
+      `record_commit_status_history`, `record_upload_confirmation`,
+      `immutable_release_capture_names`, `advance_merge_policy_epoch`): skipped, the rows
+      carry their values;
+    - derived rows (`refresh_team_ancestors`, `narrow_descendant_fork_visibility`,
+      `dependency_security_default`, `dependency_security_reauthorize`,
+      `issue_suggestion_definition_changed`, `issue_suggestion_target_deleted`,
+      `register_repository_topic`, `repository_vulnerability_job`,
+      `delete_commit_comment_reactions`): skipped, the derived rows are copied as rows;
+    - cross-cell notices (`queue_remote_pointer`): skipped; membership and pointer notices
+      are not sent again.
+    Guards keep running: `cell_credential_home`, `cell_stub_credentials`,
+    `actions_bot_identity`, `actions_bot_session`, `github_app_bot_identity`,
+    `github_app_bot_session`, `guard_primary_email`, `immutable_release_guard_owner_name`,
+    `notifications_thread_scope`, `notification_threads_provenance` and
+    `enforce_repository_visibility_floor`. The account row loads first so the credential
+    guards see a local owner.
+
+    Written (`backend/db/cluster/src/moves.rs`, `codeyard cell move`): the manual move of a
+    user or organization with its repositories between PostgreSQL cells: begin (move row,
+    CI asked to stop, wait for older transactions), freeze, Git copy, row copy with stubs
+    for referenced accounts and repositories and copies of the shared rows they need,
+    switch, directory `move_home` for the account and each repository, a wait for the
+    routers' route cache, release (rows deleted, account and repositories kept as stubs of
+    the target, source Git directories removed). A failed step before the switch cancels
+    the move and removes the target copy. Not written: repository transfer between
+    accounts in different cells (item 6), the automatic region move, the cross-region
+    object copy, moves of repositories placed on cluster storage nodes, and turning a
+    refused write into a 503 with Retry-After (it is a 500 today). Owner notes: tokens and
+    sessions keep their source-cell prefix, so the router sends them to the old cell until
+    they are issued again; stubs in third cells keep the old home until their next refresh;
+    a push already running when the freeze starts fails the move at the second ref check
+    rather than being lost.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

@@ -21,3 +21,5 @@ pub mod scaling;
 pub mod rebalance;
 
 pub mod objects;
+
+pub mod moves;

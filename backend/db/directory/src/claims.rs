@@ -393,6 +393,66 @@ impl Directory {
         .await
     }
 
+    /// An account move switches each of its objects to the new cell. Only the current home
+    /// asks, the new cell must be registered and enabled, and repeating a finished switch
+    /// changes nothing. Like `forget`, it refuses while a shard holding a copy is moving.
+    pub async fn move_home(&self, peer: &str, object: Object, to: Prefix) -> Result<()> {
+        self.run(async {
+            object.validate().map_err(|_| Refusal::Invalid)?;
+            let origin = object.shard();
+            let mut registry = self.begin().await?;
+            let mut opened = Vec::new();
+            let result = async {
+                let cell = super::owner(&mut registry, peer, false).await?;
+                let enabled: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM directory_cells WHERE id=$1 AND state<>'disabled')",
+                )
+                .bind(i32::from(to.get()))
+                .fetch_one(&mut *registry)
+                .await?;
+                ensure!(enabled, Refusal::Invalid);
+                let (groups, moving) = shards::lock_all(&mut registry).await?;
+                for (cluster, shards) in moving {
+                    let query = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM directory_objects WHERE kind=$1 AND id=$2 AND shard=ANY($3))")
+                        .bind(object.kind.as_str()).bind(object.id).bind(shards);
+                    let held: bool = if cluster == MAIN_CLUSTER {
+                        query.fetch_one(&mut *registry).await?
+                    } else {
+                        query.fetch_one(self.cluster(&cluster)?).await?
+                    };
+                    ensure!(!held, Refusal::Unavailable);
+                }
+                opened = self.open_clusters(groups, origin).await?;
+                for (shards, tx) in opened.iter_mut() {
+                    let tx = pick(&mut registry, tx);
+                    if shards.contains(&origin) {
+                        let row = locked_copy(tx, origin, object)
+                            .await?
+                            .ok_or(Refusal::Denied)?;
+                        ensure!(row.active, Refusal::Conflict);
+                        ensure!(
+                            row.home_cell == i32::from(cell.get())
+                                || row.home_cell == i32::from(to.get()),
+                            Refusal::Denied
+                        );
+                    }
+                    sqlx::query("UPDATE directory_objects SET home_cell=$4 WHERE kind=$1 AND id=$2 AND shard=ANY($3) AND home_cell=$5")
+                        .bind(object.kind.as_str())
+                        .bind(object.id)
+                        .bind(&*shards)
+                        .bind(i32::from(to.get()))
+                        .bind(i32::from(cell.get()))
+                        .execute(&mut **tx)
+                        .await?;
+                }
+                Ok::<_, anyhow::Error>(())
+            }
+            .await;
+            finish(registry, opened, result).await
+        })
+        .await
+    }
+
     pub async fn lookup(&self, key: &Key) -> Result<Option<Location>> {
         self.lookup_for(None, key).await
     }

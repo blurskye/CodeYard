@@ -15,7 +15,7 @@ use sqlx::Postgres;
 use sqlx::Sqlite;
 use sqlx::Transaction;
 
-mod postgres;
+pub(crate) mod postgres;
 mod sqlite;
 
 /// Rows the migrations insert. A migrated destination that was never used
@@ -46,7 +46,7 @@ const MIGRATION_SEEDS: &[(&str, &str, &[&str])] = &[
 
 /// Rows travel as JSON arrays of about this many bytes, so a large table never sits in
 /// memory whole.
-const CHUNK_BYTES: usize = 4 << 20;
+pub(crate) const CHUNK_BYTES: usize = 4 << 20;
 
 #[derive(PartialEq, Eq)]
 enum Engine {
@@ -54,20 +54,20 @@ enum Engine {
     Postgres,
 }
 
-struct Column {
-    name: String,
+pub(crate) struct Column {
+    pub(crate) name: String,
     /// The SQLite declared type, or the PostgreSQL type without modifiers.
-    ty: String,
+    pub(crate) ty: String,
 }
 
-struct Table {
-    name: String,
-    columns: Vec<Column>,
+pub(crate) struct Table {
+    pub(crate) name: String,
+    pub(crate) columns: Vec<Column>,
 }
 
-struct Catalog {
-    migrations: Vec<i64>,
-    tables: Vec<Table>,
+pub(crate) struct Catalog {
+    pub(crate) migrations: Vec<i64>,
+    pub(crate) tables: Vec<Table>,
 }
 
 /// Where a table's id counter stands: the id it would issue next. Deleting a row does not
@@ -380,7 +380,7 @@ fn count_sql(table: &str) -> String {
 
 /// Table and column names, which must match on both sides. Column order is not compared:
 /// the rows are matched by name.
-fn shape(tables: &[Table]) -> Vec<(&str, Vec<&str>)> {
+pub(crate) fn shape(tables: &[Table]) -> Vec<(&str, Vec<&str>)> {
     tables
         .iter()
         .map(|table| {
@@ -396,7 +396,7 @@ fn shape(tables: &[Table]) -> Vec<(&str, Vec<&str>)> {
 }
 
 /// A double-quoted SQL identifier. Both engines accept this form.
-fn quote(identifier: &str) -> String {
+pub(crate) fn quote(identifier: &str) -> String {
     format!("\"{}\"", identifier.replace('"', "\"\""))
 }
 

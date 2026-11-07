@@ -37,6 +37,10 @@ pub enum Command {
         #[arg(long)]
         prefix: Prefix,
     },
+    /// Move a user or organization, with its repositories, from this cell to another. It runs
+    /// beside the servers; writes to the account are refused while it moves. Run it again
+    /// after a failure to continue or restart the move.
+    Move(MoveArgs),
     /// Queue a page of this cell's repositories, with their issues and pull requests, for the
     /// search index; the running servers deliver them. Use after the index was emptied.
     SearchReindex {
@@ -47,7 +51,37 @@ pub enum Command {
     },
 }
 
-pub async fn run(command: &Command, pool: &DbPool, state: &Path) -> Result<()> {
+#[derive(Debug, clap::Args)]
+pub struct MoveArgs {
+    #[arg(long, value_parser = ["user", "organization"])]
+    kind: String,
+    #[arg(long)]
+    name: String,
+    /// The target cell's PostgreSQL URL.
+    #[arg(long)]
+    target_database: String,
+    /// The target cell's repository directory, as this machine sees it.
+    #[arg(long)]
+    target_repositories: std::path::PathBuf,
+    /// How long writes stay refused before the move gives up by itself.
+    #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(60..=86400))]
+    freeze_seconds: u64,
+    /// How long to wait for older transactions and outgoing notices.
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    wait_seconds: u64,
+    /// The routers' route cache lifetime; the source keeps refusing writes this long after
+    /// the directory switch.
+    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(0..=3600))]
+    route_cache_seconds: u64,
+    /// The time limit for copying one repository with Git.
+    #[arg(long, default_value_t = 1800, value_parser = clap::value_parser!(u64).range(1..=86400))]
+    git_timeout_seconds: u64,
+}
+
+pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Path) -> Result<()> {
+    if let Command::Move(arguments) = command {
+        return move_account(arguments, pool, state, repos_path).await;
+    }
     if let Command::SearchReindex { after, limit } = command {
         let (next, count) =
             codeyard_db_core::cells::search::queue_all(pool, *after, *limit).await?;
@@ -119,6 +153,7 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path) -> Result<()> {
         }
         Command::Directory { .. } => anyhow::bail!("Directory commands use their own database"),
         Command::SearchReindex { .. } => unreachable!("reindexing runs beside the servers"),
+        Command::Move(_) => unreachable!("moves run beside the servers"),
     };
     maintenance.release().await;
     result?;
@@ -556,6 +591,178 @@ async fn rollout(
 }
 
 /// Native CLI constructors use the same pinned directory client as the server.
+/// The steps are in `codeyard_db_cluster::moves`; this adds the Git copy and the directory
+/// switch, and undoes an unswitched move when a step fails.
+async fn move_account(
+    arguments: &MoveArgs,
+    pool: &DbPool,
+    state: &Path,
+    repos_path: &Path,
+) -> Result<()> {
+    use codeyard_db_cluster::moves;
+    use codeyard_model::cells::{Object, ObjectKind};
+    let DbPool::Postgres(source) = pool else {
+        anyhow::bail!("Account moves need PostgreSQL in both cells");
+    };
+    let kind = ObjectKind::parse(&arguments.kind)
+        .ok_or_else(|| anyhow::anyhow!("Invalid account kind"))?;
+    let lookup = match kind {
+        ObjectKind::Organization => "SELECT id FROM organizations WHERE lower(name)=lower($1)",
+        _ => "SELECT id FROM users WHERE lower(username)=lower($1)",
+    };
+    let id: i64 = sqlx::query_scalar(lookup)
+        .bind(&arguments.name)
+        .fetch_optional(source)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("No such account in this cell"))?;
+    let account = moves::Account::new(kind, id)?;
+    let DbPool::Postgres(target) =
+        codeyard_db_core::connection::open_source(&arguments.target_database).await?
+    else {
+        anyhow::bail!("Account moves need PostgreSQL in both cells");
+    };
+    let source_cell = moves::cell(source).await?;
+    let target_cell = moves::cell(&target).await?;
+    let to = Prefix::new(u16::try_from(target_cell)?);
+    let address = std::env::var("DIRECTORY_ADDRESS")
+        .ok()
+        .map(|value| value.parse())
+        .transpose()?;
+    let key = std::env::var("DIRECTORY_PUBLIC_KEY").ok();
+    let directory =
+        crate::backend::node::router::DirectorySettings::from_options(address, key.as_deref())?
+            .ok_or_else(|| {
+                anyhow::anyhow!("Account moves need DIRECTORY_ADDRESS and DIRECTORY_PUBLIC_KEY")
+            })?
+            .client(state)?;
+    let wait = std::time::Duration::from_secs(arguments.wait_seconds);
+    let reached = moves::begin(source, account, target_cell, wait).await?;
+    let repositories = moves::repositories(source, account).await?;
+    let mut copied = None;
+    if reached != moves::State::Switched {
+        let result = async {
+            moves::freeze(
+                source,
+                account,
+                std::time::Duration::from_secs(arguments.freeze_seconds),
+                wait,
+            )
+            .await?;
+            let mut paths = std::collections::BTreeMap::new();
+            for repository in &repositories {
+                let (from, to) =
+                    repository_paths(repos_path, &arguments.target_repositories, repository)?;
+                copy_repository(
+                    &from,
+                    &to,
+                    std::time::Duration::from_secs(arguments.git_timeout_seconds),
+                )
+                .await?;
+                paths.insert(repository.id, to.to_string_lossy().into_owned());
+            }
+            let result = moves::copy(source, &target, account, target_cell, &paths).await?;
+            // A push that was already running may have landed after the Git copy.
+            for repository in &repositories {
+                let (from, to) =
+                    repository_paths(repos_path, &arguments.target_repositories, repository)?;
+                codeyard_git::repository::same_refs(&to, &from).await?;
+            }
+            moves::switch(source, account).await?;
+            Ok::<_, anyhow::Error>(result)
+        }
+        .await;
+        match result {
+            Ok(result) => copied = Some(result),
+            Err(error) => {
+                // Writes resume here, and the copy leaves the target.
+                if moves::cancel(source, account).await? {
+                    moves::discard(&target, account, source_cell).await?;
+                }
+                return Err(error);
+            }
+        }
+    }
+    let objects =
+        std::iter::once(Object { kind, id }).chain(repositories.iter().map(|repository| Object {
+            kind: ObjectKind::Repository,
+            id: repository.id,
+        }));
+    for object in objects {
+        let reply = directory
+            .request(&codeyard_cells_router::directory::Request::MoveHome { object, to })
+            .await?;
+        anyhow::ensure!(
+            matches!(reply, codeyard_cells_router::directory::Reply::Done),
+            "The directory returned an invalid reply"
+        );
+    }
+    // Routers may still send the account here until their cached routes expire.
+    tokio::time::sleep(std::time::Duration::from_secs(
+        arguments.route_cache_seconds + 5,
+    ))
+    .await;
+    moves::release(source, account).await?;
+    for repository in &repositories {
+        let (from, _) = repository_paths(repos_path, &arguments.target_repositories, repository)?;
+        if tokio::fs::try_exists(&from).await? {
+            tokio::fs::remove_dir_all(&from).await?;
+        }
+    }
+    println!(
+        "{}",
+        serde_json::json!({
+            "account": id,
+            "target_cell": target_cell,
+            "repositories": repositories.len(),
+            "rows": copied.as_ref().map(|copied| copied.rows),
+            "stubs": copied.as_ref().map(|copied| copied.stubs),
+            "shared_rows": copied.as_ref().map(|copied| copied.shared),
+            "counters_fixed": copied.as_ref().map(|copied| copied.counters_fixed),
+        })
+    );
+    Ok(())
+}
+
+/// A repository's Git directory in both cells: the same `<name>.git` under each root.
+fn repository_paths(
+    source_root: &Path,
+    target_root: &Path,
+    repository: &codeyard_db_cluster::moves::Repository,
+) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+    let from = std::path::PathBuf::from(&repository.disk_path);
+    let name = from
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| name.ends_with(".git") && !name.starts_with('.'))
+        .ok_or_else(|| anyhow::anyhow!("Invalid repository path"))?;
+    anyhow::ensure!(
+        from.parent() == Some(source_root),
+        "Repository {} is not in this cell's repository directory",
+        repository.id
+    );
+    Ok((from.clone(), target_root.join(name)))
+}
+
+/// Copies one repository into the target root, or keeps an earlier copy that matches.
+async fn copy_repository(from: &Path, to: &Path, timeout: std::time::Duration) -> Result<()> {
+    if tokio::fs::try_exists(to).await? {
+        if codeyard_git::repository::same_refs(to, from).await.is_ok() {
+            return Ok(());
+        }
+        // Only an earlier move run writes this path: the name is the repository's own.
+        tokio::fs::remove_dir_all(to).await?;
+    }
+    let parent = to
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Invalid target repository path"))?;
+    let staging = tempfile::Builder::new()
+        .prefix(".move-")
+        .tempdir_in(parent)?;
+    codeyard_git::repository::copy_repository(staging.path(), from, timeout).await?;
+    tokio::fs::rename(staging.keep(), to).await?;
+    Ok(())
+}
+
 pub fn attach_directory(pool: &DbPool, state: &Path) -> Result<()> {
     let address = std::env::var("DIRECTORY_ADDRESS")
         .ok()
