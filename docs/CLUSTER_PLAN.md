@@ -464,7 +464,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     comments contribute at most 1,024 characters each; pending review comments are excluded.
     Comment edits, deletion and review publication queue reindexing. Parsed input is bounded
     by directory config; totals and pages stop at 1,000. File text stays deduplicated in
-    `search_blobs`. Ranking source and regression tests are written; checks/runtime pending. (1, part) `DATABASE_DIRECT_URL` carries the serving, maintenance and
+    `search_blobs`. Ranking passes workspace `8eaf9092`, Clippy `0b73be53` and WASM
+    `f4727b35`; regression runtime is pending. (1, part) `DATABASE_DIRECT_URL` carries the serving, maintenance and
     package-collection leases and migrations past a transaction-pooling PgBouncer, and the
     PgBouncer e2e round sets it. Not written: keyset paging (the GitHub API pages by
     number, and OFFSET is already capped at 1,000); the privacy gap where a delivered
