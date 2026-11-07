@@ -264,7 +264,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     database 185, object pools 2 and the changed libraries (150). Item 3 is written:
     Explore, Trending and "Used by" read the shared index (`search_packages` holds each
     public repository's dependencies and its root npm name), and each cell matches the same
-    OSV mirror itself (`cells_advisories`). Runtime STAGE4_RUN.
+    OSV mirror itself (`cells_advisories`). Job 34215ceffd2d4150b4cc419834481210 passes the 28
+    cells, directory, search, backups and quorum cluster tests.
     Item 3 notes: the Explore language list stays local; index cards show no language
     colour; Explore pages past 1,000 results and failed index calls list this cell only;
     "Used by" covers public repositories and root npm names only, and shows nothing without
@@ -290,7 +291,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     4bc97cffa295491bae7a54bd6d778f06). Serving from a real replica
     and regional Git copies is runtime
     pending, needs a cell in cluster mode with a PostgreSQL streaming replica and storage
-    nodes in a second region. Runtime STAGE5_RUN.
+    nodes in a second region. The written parts pass in job 34215ceffd2d4150b4cc419834481210.
     Stage 5 notes: SSH Git and package paths always go home; a router learns presence
     changes within its 60-second route cache; a rollout's apply program is killed on
     timeout but its own children are not. SSH requests are not counted; counts of a minute
@@ -469,6 +470,12 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     stub is never refreshed); read routing from the session's last write position (token
     clients carry no position, so a primary-free check needs shared state such as the
     optional cache); item 4, the heartbeat-proved credential read; item 5, the cache.
+    The e2e run (job 34215ceffd2d4150b4cc419834481210) stopped at its 140-minute cap in
+    the PostgreSQL round's `gh auth login` check, which waited for a device code without
+    the cell prefix; that check and a profile 503 for signed-out visitors are fixed, and the
+    SQLite round then passes 55 checks with 6 skipped (job
+    51adf28cea65421eb9fe79b685ad5f44; the builder has no delegated cgroup for CI runs).
+    The PgBouncer, replica, cluster, quorum and cells rounds have not run since.
 
     Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
