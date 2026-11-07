@@ -454,7 +454,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     a freeze that also stops the source cell's own background writers, not only routers.
     Each is a design decision for the owner before the move is built.
 
-    Stage 7 side lane: notice withdrawal and live source checks are written, unchecked.
+    Stage 7 side lane: notice withdrawal and live source checks pass workspace
+    5773433098f74a23b60d3bb760b2234e and WASM 5b56e1e158f34324ba1cd9571c6b3ddd;
+    Clippy fdec851f92ed4b8ea4f5207c1e523c40 also passes. Runtime has not run yet.
     Both baseline schemas add separate notice-refresh trigger/index blocks (no FK edits).
     Both-engine HTTP/stub outage tests and two-cell HTTP privacy/deletion tests are added;
     the public gh cells script also checks privacy after delivery. Heartbeat credential
