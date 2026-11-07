@@ -123,7 +123,7 @@ spec:
               value: /data/repos
             - name: HOST_KEY_PATH
               {{- if eq $role "ssh" }}
-              value: /run/codeyard/host_key
+              value: /tmp/host_key
               {{- else }}
               value: /data/host_key
               {{- end }}
@@ -241,10 +241,6 @@ spec:
               mountPath: /data
             - name: tmp
               mountPath: /tmp
-            {{- if eq $role "ssh" }}
-            - name: host-key
-              mountPath: /run/codeyard
-            {{- end }}
             {{- if and (ne $role "runner") $.Values.postgres.cnpg.enabled }}
             - name: postgres-ca
               mountPath: /etc/codeyard/postgres
@@ -262,16 +258,13 @@ spec:
       volumes:
         - name: tmp
           emptyDir:
-            sizeLimit: {{ $.Values.tmpSizeLimit }}
-        {{- if eq $role "ssh" }}
-        # The host key lives in PostgreSQL; built-in SSH also writes it to a file whose
-        # parent directories may not be group- or world-writable unless sticky and
-        # root-owned. A disk emptyDir is 2777, a memory one 3777.
-        - name: host-key
-          emptyDir:
+            {{- if ne $role "runner" }}
+            # Git push sockets and the SSH host key file go here, and the server refuses a
+            # group- or world-writable parent unless it is sticky and root-owned. A disk
+            # emptyDir is 2777; a memory one is 3777. Its use counts toward pod memory.
             medium: Memory
-            sizeLimit: 1Mi
-        {{- end }}
+            {{- end }}
+            sizeLimit: {{ $.Values.tmpSizeLimit }}
         {{- if ne $role "storage" }}
         - name: data
           emptyDir:

@@ -63,10 +63,14 @@ grep -q 'name: codeyard-storage-join' "$work/storage.yaml"
 grep -q 'volumeClaimTemplates:' "$work/storage.yaml"
 grep -q 'type: OnDelete' "$work/storage.yaml"
 [[ -z $(resource "$work/all.yaml" Secret codeyard) ]]
-# Built-in SSH refuses a host key under a non-sticky world-writable directory.
+# Git push sockets and the SSH host key need a sticky /tmp, which only a memory emptyDir is.
 resource "$work/all.yaml" Deployment codeyard-ssh > "$work/ssh.yaml"
-grep -q 'value: /run/codeyard/host_key' "$work/ssh.yaml"
-grep -q 'medium: Memory' "$work/ssh.yaml"
+grep -q 'value: /tmp/host_key' "$work/ssh.yaml"
+for file in ssh.yaml storage.yaml; do grep -q 'medium: Memory' "$work/$file"; done
+if grep -q 'medium: Memory' "$work/runner.yaml"; then
+    echo 'Runner /tmp should stay on disk' >&2
+    exit 1
+fi
 
 # Exercise the other SSH exposure, existing account and explicit empty StorageClass.
 resource "$work/nodeport.yaml" Service codeyard-ssh > "$work/ssh-service.yaml"

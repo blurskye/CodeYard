@@ -332,7 +332,7 @@ def http(method, url, body=None, headers=None, timeout=10):
 class Forge:
     def __init__(self, base, work):
         self.base, self.work = base, Path(work)
-        self.token = self.owner = self.repo = ""
+        self.token = self.owner = self.repo = self.cookie = ""
 
     def forms(self, *args):
         return run([sys.executable, "-I", FORMS, args[0], "--base", self.base,
@@ -367,6 +367,12 @@ class Forge:
             "--status", "200",
             "--print", r"re:(?s)Copy this token now.*?(cy_pat_(?:[0-9]{1,5}_)?[0-9a-f]{64})")
         expect(self.token.startswith("cy_pat_"), "personal access token from the settings form")
+        jar = json.loads((self.work / "jar.json").read_text())
+        self.cookie = "; ".join(f"{name}={value}" for name, value in jar.items())
+
+    def page(self, path, timeout=10):
+        """An HTML page as the signed-in owner: the node is private, so pages need a session."""
+        return http("GET", self.base + path, headers={"Accept": "text/html", "Cookie": self.cookie}, timeout=timeout)[0]
 
     def issue_titles(self):
         titles, page = {}, 1
@@ -411,9 +417,11 @@ def git(forge, *args, cwd=None, ssh=None):
            "GIT_COMMITTER_NAME": forge.owner, "GIT_COMMITTER_EMAIL": f"{forge.owner}@example.test"}
     if ssh:
         env["GIT_SSH_COMMAND"] = ssh
+    # Through the environment, so the token stays out of argv and error messages.
     auth = base64.b64encode(f"token:{forge.token}".encode()).decode()
-    return run(["git", "-c", f"http.extraHeader=Authorization: Basic {auth}", *args],
-               cwd=cwd, env=env, timeout=120).stdout.strip()
+    env.update(GIT_CONFIG_COUNT="1", GIT_CONFIG_KEY_0="http.extraHeader",
+               GIT_CONFIG_VALUE_0=f"Authorization: Basic {auth}")
+    return run(["git", *args], cwd=cwd, env=env, timeout=120).stdout.strip()
 
 
 def step_basic(forge):
@@ -452,8 +460,8 @@ def step_basic(forge):
     expect(status == 201, f"open issue: {status} {issue}")
     status, again = forge.api("GET", f"/api/v3/repos/{forge.repo}/issues/{issue['number']}")
     expect(status == 200 and again["title"] == "Kubernetes check", "read the issue back")
-    status, _ = http("GET", f"{forge.base}/{forge.repo}/issues", headers={"Accept": "text/html"})
-    expect(status == 200, f"anonymous issue page: {status}")
+    status = forge.page(f"/{forge.repo}/issues")
+    expect(status == 200, f"issue page: {status}")
     print(f"basic: repository {forge.repo}, HTTP and SSH pushes, issue #{issue['number']}: ok", flush=True)
 
 
@@ -470,7 +478,7 @@ class Result:
 
 
 class Traffic:
-    """One issue write a second and steady anonymous page reads, each result recorded."""
+    """One issue write a second and steady issue-page reads, each result recorded."""
 
     def __init__(self, forge, label, readers=1, read_interval=1.0):
         self.forge, self.label = forge, label
@@ -504,11 +512,10 @@ class Traffic:
             self.stop.wait(max(0.0, start + 1 - time.time()))
 
     def read_loop(self, interval):
-        url = f"{self.forge.base}/{self.forge.repo}/issues"
         while not self.stop.is_set():
             start = time.time()
             try:
-                status = http("GET", url, headers={"Accept": "text/html"}, timeout=5)[0]
+                status = self.forge.page(f"/{self.forge.repo}/issues", timeout=5)
             except Exception as error:
                 status = type(error).__name__
             self.reads.append(Result(start, time.time(), status == 200, status))
