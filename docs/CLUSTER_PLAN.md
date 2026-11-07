@@ -480,10 +480,13 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       `scripts/with-valkey.sh` runs the remote contracts against disposable standalone
       and three-shard Cluster servers whose ACL allows only the cache's commands on `cy:*`
       keys. TLS is not covered.
-    Combined workspace edd212b7024740a082cd9f423bdf267b, Clippy
-    495cd4061db140f5b91f553c8385de8c and WASM 01b42d03e14f4a67bbb527388b795510
-    pass. Runtime ea8c74f4b1794a86a4359d7def525470 runs cache libraries/HTTP contracts,
-    retries failed identity targets and checks the browser expiry assertion.
+    Check, Clippy and WASM aa256156a7a8454c97c33fccd79a22c3 pass. Runtime
+    bf65e0b8d276407ca766fc295d1cf9b6 passes 255 library tests, the store, both-engine
+    identity, Valkey and repository targets, and 238 of 239 cluster tests. Cross-cell pull
+    creation (`cells_authorization.rs:1051`) passed in 4255851c2bd643b4bd8b13f8d3a889e2
+    but answered 503 here: the row committed and the fork head fetch failed. The cells e2e
+    still fails on the maintainer pull head ("Head repository storage is unavailable")
+    and the dependency-graph snapshot (422).
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
