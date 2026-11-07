@@ -151,7 +151,9 @@ pub struct Deadline {
 }
 
 impl Deadline {
-    pub(super) fn wall(self) -> DateTime<Utc> {
+    /// Upper bound for browser/SQL projections. Authority must also check `current`
+    /// so a clock adjustment cannot bypass the monotonic deadline.
+    pub fn wall(self) -> DateTime<Utc> {
         self.wall
     }
 
