@@ -93,6 +93,33 @@ and an object store) before keeping real data. Set `postgres.cnpg.storage.storag
 `resources` and `affinity` for your nodes; with a node-local StorageClass such as
 `local-path`, keep one instance per node with required anti-affinity.
 
+## Test on a cluster
+
+`scripts/kube-ha.py` installs everything into a test namespace and drives it over HTTP,
+Git and SSH. It needs kubectl, Helm and a context with cluster-admin rights.
+
+```sh
+scripts/release.sh TAG                  # or podman build -f Containerfile over dist/release
+NODE_SSH_KEY=~/.ssh/k3s python3 scripts/kube-ha.py image localhost/codeyard-backend:TAG
+python3 scripts/kube-ha.py up localhost/codeyard-backend:TAG
+python3 scripts/kube-ha.py test         # or: test basic kill drain restart scale
+python3 scripts/kube-ha.py down         # deletes the namespace, keeps the operator
+```
+
+`image` uploads one saved copy of the image to a temporary pod; each k3s node then fetches
+it over the cluster network and imports it with `k3s ctr images import` over SSH. No
+registry is involved and pods use `pullPolicy: Never`. `up` installs the operator, a
+single-pod RustFS as the S3 store, and the chart with three PostgreSQL instances on worker
+nodes, two web pods, an SSH pod, three storage pods and a Traefik ingress on
+`codeyard.<node IP>.nip.io`. SSH stays a ClusterIP service and the test reaches it through
+`kubectl port-forward`. Generated keys and passwords live only in cluster Secrets.
+
+`test` signs in through `/setup`, creates a token, a repository, pushes over HTTP and SSH,
+and opens an issue. The failure steps keep one issue write a second and anonymous page
+reads running, then check that every acknowledged issue is still there.
+
+MEASURED
+
 ## Scale
 
 - **Web:** set `web.replicas`, or enable `web.autoscaling.enabled` for the CPU HPA;

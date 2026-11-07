@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Run Codeyard on a Kubernetes cluster with CloudNativePG and test it through its real boundaries.
 
-  kube-ha.py image IMAGE    copy a local Podman image to every node (ssh, then k3s ctr import)
+  kube-ha.py image IMAGE    copy a local Podman image to every k3s node: one upload to a
+                            temporary pod, then each node imports it with k3s ctr over ssh
   kube-ha.py up IMAGE       the operator, a test S3 store, then the chart with a three-instance
                             PostgreSQL 18 cluster, PgBouncer and an ingress on <name>.<ip>.nip.io
   kube-ha.py test [STEP..]  steps (default all): basic (setup, Git over HTTP and SSH, issues),
@@ -44,6 +45,8 @@ RUSTFS_IMAGE = (
     "docker.io/rustfs/rustfs:1.0.1"
     "@sha256:1803faef57627e2d9c2e7d89d655d712ddded5389040054987163043fecb6a3c"
 )
+# Serves the image archive to the nodes during `image`.
+BUSYBOX_IMAGE = "docker.io/library/busybox:1.37.0@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec"
 NS = os.environ.get("NAMESPACE", "codeyard-test")
 CONTEXT = os.environ.get("KUBE_CONTEXT", "")
 RELEASE = "codeyard"
@@ -106,13 +109,32 @@ def nodes():
 
 # ------------------------------------------------------------------ image --
 
+def copy_pod():
+    labels = {"app.kubernetes.io/name": "codeyard-image-copy"}
+    return {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "codeyard-image-copy", "labels": labels}, "spec": {
+        "securityContext": {"runAsNonRoot": True, "runAsUser": 65534, "runAsGroup": 65534,
+                            "seccompProfile": {"type": "RuntimeDefault"}},
+        "containers": [{"name": "http", "image": BUSYBOX_IMAGE, "command": ["httpd", "-f", "-p", "8080", "-h", "/srv"],
+                        "readinessProbe": {"tcpSocket": {"port": 8080}, "periodSeconds": 2},
+                        "securityContext": {"allowPrivilegeEscalation": False, "readOnlyRootFilesystem": True,
+                                            "capabilities": {"drop": ["ALL"]}},
+                        "volumeMounts": [{"name": "srv", "mountPath": "/srv"}]}],
+        "volumes": [{"name": "srv", "emptyDir": {}}]}}
+
+
 def cmd_image(image):
-    """Stream one saved copy of the image to every node; nothing goes to a registry."""
+    """Upload one saved copy of the image to a temporary pod; every node imports it from there.
+
+    Nothing goes to a registry. The upload crosses the operator's link once; the nodes fetch
+    the archive over the cluster network and import it with `k3s ctr`.
+    """
     key = os.environ.get("NODE_SSH_KEY", "")
     user = os.environ.get("NODE_SSH_USER", "root")
     ssh = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new"]
     if key:
         ssh += ["-i", key, "-o", "IdentitiesOnly=yes"]
+    if not exists("namespace", NS, namespaced=False):
+        kubectl("create", "namespace", NS, namespaced=False)
     with tempfile.TemporaryDirectory() as work:
         archive = Path(work) / "image.tar.gz"
         log(f"saving {image}")
@@ -120,20 +142,31 @@ def cmd_image(image):
             save = subprocess.Popen(["podman", "save", "--format", "docker-archive", image], stdout=subprocess.PIPE)
             subprocess.run(["gzip", "-1"], stdin=save.stdout, stdout=out, check=True)
             expect(save.wait() == 0, "podman save")
-        log(f"importing {archive.stat().st_size >> 20} MiB on every node")
-        jobs = []
-        for name, address, _ in nodes():
+        kubectl("delete", "pod", "codeyard-image-copy", "--ignore-not-found")
+        kubectl("create", "-f", "-", input=json.dumps(copy_pod()))
+        try:
+            kubectl("wait", "--for=condition=Ready", "pod/codeyard-image-copy", "--timeout=240s")
+            log(f"uploading {archive.stat().st_size >> 20} MiB")
             with open(archive, "rb") as stream:
-                jobs.append((name, subprocess.Popen(
-                    ssh + [f"{user}@{address}", "gzip -dc | k3s ctr -n k8s.io images import -"],
-                    stdin=stream, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)))
-        failed = []
-        for name, job in jobs:
-            output = job.communicate(timeout=3600)[0]
-            log(f"{name}: {output.strip().splitlines()[-1:] or ['done']}")
-            if job.returncode:
-                failed.append(name)
-        expect(not failed, f"image import on {', '.join(failed)}")
+                upload = subprocess.run(kubectl_command() + [
+                    "exec", "-i", "codeyard-image-copy", "--", "sh", "-c",
+                    "cat > /srv/part && mv /srv/part /srv/image.tar.gz"], stdin=stream, timeout=3600)
+            expect(upload.returncode == 0, "upload to the copy pod")
+            source = "http://{}:8080/image.tar.gz".format(
+                kubectl("get", "pod", "codeyard-image-copy", "-o", "jsonpath={.status.podIP}"))
+            jobs = [(name, subprocess.Popen(
+                ssh + [f"{user}@{address}",
+                       f"set -o pipefail; curl -fsS {source} | gzip -dc | k3s ctr -n k8s.io images import -"],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)) for name, address, _ in nodes()]
+            failed = []
+            for name, job in jobs:
+                output = job.communicate(timeout=1800)[0]
+                log(f"{name}: {output.strip().splitlines()[-1:] or ['done']}")
+                if job.returncode:
+                    failed.append(name)
+            expect(not failed, f"image import on {', '.join(failed)}")
+        finally:
+            kubectl("delete", "pod", "codeyard-image-copy", "--wait=false")
 
 
 # --------------------------------------------------------------------- up --
