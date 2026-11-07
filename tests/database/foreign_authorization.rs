@@ -159,6 +159,13 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
             .id,
         user
     );
+    let browser = codeyard_db_identity::users::sessions::get_browser_session(pool, &value)
+        .await
+        .unwrap()
+        .expect("A non-expiring home credential still has a bounded browser proof");
+    assert_eq!(browser.user_id, Some(user));
+    assert!(browser.expires_at > chrono::Utc::now());
+    assert!(browser.expires_at <= chrono::Utc::now() + chrono::Duration::seconds(2));
     assert!(
         codeyard_db_identity::users::sessions::get_or_create_csrf_token(
             pool,
