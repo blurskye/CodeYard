@@ -1466,6 +1466,112 @@ pub async fn credentials(source: &PgPool, account: Account) -> Result<Vec<Key>> 
         .collect()
 }
 
+/// One stored object that the account's rows name.
+#[derive(sqlx::FromRow, Debug)]
+pub struct StoredObject {
+    pub object_key: String,
+    pub bytes: i64,
+    /// The SHA-256 the row recorded, when it records one.
+    pub sha256: Option<String>,
+    pub content_type: String,
+}
+
+/// The account's stored objects as one query that binds the account as `$1`: avatars,
+/// release assets, Actions artifact and cache parts, CI log chunks, CodeQL databases and,
+/// unless `unique_only`, package blobs. Package blob keys come from their digests, so
+/// another account's package may name the same bytes.
+fn stored_objects(kind: ObjectKind, unique_only: bool) -> String {
+    let owned =
+        |table: &str| ownership::owned_rows(table, kind).unwrap_or_else(|| "FALSE".to_owned());
+    let file = |table: &str, column: &str| {
+        format!(
+            "SELECT o.object_key,o.file_size AS bytes,o.sha256_hex AS sha256,o.content_type FROM {table} t0 \
+             JOIN files o ON o.id=t0.{column} AND o.is_active WHERE {}",
+            owned(table)
+        )
+    };
+    let mut parts = vec![
+        file("users", "avatar_file_id"),
+        file("organizations", "avatar_file_id"),
+        file("release_assets", "file_id"),
+        format!(
+            "SELECT t0.object_key,t0.size,NULL,'application/octet-stream' FROM actions_blob_parts t0 WHERE t0.ready AND {}",
+            owned("actions_blob_parts")
+        ),
+        format!(
+            "SELECT t0.object_key,t0.object_bytes,t0.object_digest,'application/octet-stream' FROM ci_log_chunks t0 WHERE {}",
+            owned("ci_log_chunks")
+        ),
+        format!(
+            "SELECT t0.object_key,t0.size,NULL,'application/zip' FROM codeql_databases t0 WHERE {}",
+            owned("codeql_databases")
+        ),
+    ];
+    if !unique_only {
+        for table in [
+            "package_version_blobs",
+            "package_files",
+            "package_blob_grants",
+        ] {
+            parts.push(format!(
+                "SELECT 'packages/sha256/'||regexp_replace(o.digest,'^sha256:',''),o.size,regexp_replace(o.digest,'^sha256:',''),'application/octet-stream' \
+                 FROM {table} t0 JOIN package_blobs o ON o.digest=t0.digest AND o.ready AND NOT o.deleting WHERE {}",
+                owned(table)
+            ));
+        }
+    }
+    parts.join(" UNION ")
+}
+
+/// A page of the account's stored objects with keys after `after`, in key order.
+pub async fn objects(
+    pool: &PgPool,
+    account: Account,
+    after: &str,
+    limit: i64,
+) -> Result<Vec<StoredObject>> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT object_key,bytes,sha256,content_type FROM ({}) o WHERE object_key>$2 ORDER BY object_key LIMIT $3",
+        stored_objects(account.kind, false)
+    ))
+    .bind(account.id)
+    .bind(after)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
+}
+
+/// After the account's bytes were copied to another region's store and the move switched,
+/// queues its uniquely named objects here for deletion after the restore window, as a
+/// deletion would. Package blobs stay for the package collector, which keeps the ones that
+/// packages left in this cell still use. Repeating it is safe.
+pub async fn retire_objects(pool: &PgPool, account: Account) -> Result<u64> {
+    let mut tx = pool.begin().await?;
+    let current: Option<String> = sqlx::query_scalar(
+        "SELECT state FROM account_moves WHERE account_kind=$1 AND account_id=$2 FOR SHARE",
+    )
+    .bind(account.kind.as_str())
+    .bind(account.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    ensure!(
+        current.as_deref() == Some("switched"),
+        "Stored objects are retired only between the switch and the release"
+    );
+    let queued = sqlx::query(&format!(
+        "INSERT INTO pending_object_deletions(object_key,delete_after) \
+         SELECT object_key,clock_timestamp()+make_interval(secs=>$2) FROM ({}) o ON CONFLICT(object_key) DO NOTHING",
+        stored_objects(account.kind, true)
+    ))
+    .bind(account.id)
+    .bind(codeyard_db_core::queries::files::RESTORE_WINDOW_SECONDS as f64)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+    Ok(queued)
+}
+
 /// The CLI calls this only after deleting every retained source Git directory. Keep
 /// the release record on any cleanup failure, so another invocation can finish it.
 pub async fn finish(pool: &PgPool, account: Account) -> Result<()> {

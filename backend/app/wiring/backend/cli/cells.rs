@@ -82,8 +82,16 @@ pub struct MoveArgs {
     git_timeout_seconds: u64,
     /// The state directory of a stopped web node of the target cell. A target that writes
     /// through a quorum receives each repository on a storage node through this identity.
+    /// A target in another region without TARGET_S3_* settings receives the account's
+    /// stored files here, or on its storage nodes when it is a cluster.
     #[arg(long)]
     target_state: Option<std::path::PathBuf>,
+    /// How many stored objects one page of the copy to another region lists.
+    #[arg(long, default_value_t = 500, value_parser = clap::value_parser!(i64).range(1..=10000))]
+    object_page_size: i64,
+    /// The time limit for copying one stored object to another region.
+    #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u64).range(1..=86400))]
+    object_timeout_seconds: u64,
 }
 
 pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Path) -> Result<()> {
@@ -706,6 +714,18 @@ async fn move_account(
     };
     let target_nodes =
         target_placement(arguments, &target_pool, &target_root, &repositories).await?;
+    let stores = object_stores(
+        arguments,
+        &directory,
+        (source_cell, target_cell),
+        (pool, &target_pool),
+        (state, repos_path, &target_root),
+        (
+            source_nodes.as_ref(),
+            target_nodes.as_ref().map(|(context, _)| context),
+        ),
+    )
+    .await?;
     let reached = moves::begin(source, account, target_cell, wait).await?;
     let mut copied = None;
     if matches!(reached, moves::State::Pending | moves::State::Frozen) {
@@ -827,6 +847,16 @@ async fn move_account(
                     .await?;
                 }
             }
+            if let Some(stores) = &stores {
+                copy_objects(
+                    source,
+                    account,
+                    stores,
+                    arguments.object_page_size,
+                    std::time::Duration::from_secs(arguments.object_timeout_seconds),
+                )
+                .await?;
+            }
             publish_credentials(&directory, id, &moves::credentials(source, account).await?)
                 .await?;
             moves::switch(source, account).await?;
@@ -867,6 +897,10 @@ async fn move_account(
             arguments.route_cache_seconds + 5,
         ))
         .await;
+        // The copy was read back from the target store before the switch.
+        if stores.is_some() {
+            moves::retire_objects(source, account).await?;
+        }
         moves::release(source, account, transfer.as_ref()).await?;
     }
     for repository in &repositories {
@@ -939,6 +973,171 @@ async fn publish_credentials(
         );
     }
     Ok(())
+}
+
+/// The object stores of both cells when the account's bytes must follow it. Cells in one
+/// region share the region's store, so only a move to another region copies. The source
+/// store is opened as this cell's servers open it; the target store uses the TARGET_S3_*
+/// settings, else the target cluster's storage nodes or the files under `--target-state`.
+async fn object_stores(
+    arguments: &MoveArgs,
+    directory: &codeyard_cells_router::directory::Client,
+    cells: (i32, i32),
+    pools: (&DbPool, &DbPool),
+    (state, repos_path, target_root): (&Path, &Path, &Path),
+    contexts: (
+        Option<&codeyard_repos_core::context::NodeContext>,
+        Option<&codeyard_repos_core::context::NodeContext>,
+    ),
+) -> Result<Option<(codeyard_storage::ObjectStore, codeyard_storage::ObjectStore)>> {
+    use codeyard_cells_router::directory::{Reply, Request};
+    use codeyard_storage::s3::S3Config;
+    let mut regions = Vec::with_capacity(2);
+    for id in [cells.0, cells.1] {
+        let prefix = Prefix::new(u16::try_from(id)?);
+        let Reply::Cell(Some(cell)) = directory.request(&Request::Cell { prefix }).await? else {
+            anyhow::bail!("The directory does not list cell {id}");
+        };
+        regions.push(cell.region);
+    }
+    if regions[0] == regions[1] {
+        return Ok(None);
+    }
+    let source_s3 = S3Config::optional_from_env()?;
+    let target_s3 = S3Config::optional_from_env_prefix("TARGET_S3_")?;
+    anyhow::ensure!(
+        source_s3.is_none() || target_s3.is_some(),
+        "A move from S3 to another region needs that region's TARGET_S3_* settings"
+    );
+    if let (Some(from), Some(to)) = (&source_s3, &target_s3) {
+        anyhow::ensure!(
+            (&from.endpoint, &from.bucket) != (&to.endpoint, &to.bucket),
+            "Cells in different regions must not share an S3 bucket"
+        );
+    }
+    let source = cell_store(pools.0, state, repos_path, source_s3, contexts.0).await?;
+    let target = match (target_s3, arguments.target_state.as_deref()) {
+        // S3 keeps nothing in the state directory.
+        (Some(s3), _) => codeyard_storage::ObjectStore::open(state, Some(s3)).await?,
+        (None, Some(target_state)) => {
+            anyhow::ensure!(
+                tokio::fs::canonicalize(state).await?
+                    != tokio::fs::canonicalize(target_state).await?,
+                "The source and target state directories must differ"
+            );
+            cell_store(pools.1, target_state, target_root, None, contexts.1).await?
+        }
+        (None, None) => anyhow::bail!(
+            "A move to another region needs the TARGET_S3_* settings or --target-state"
+        ),
+    };
+    Ok(Some((source, target)))
+}
+
+/// A cell's object store as its servers open it: S3 when configured, else the storage
+/// nodes of a cluster, else the files under the state directory.
+async fn cell_store(
+    pool: &DbPool,
+    state: &Path,
+    repos_path: &Path,
+    s3: Option<codeyard_storage::s3::S3Config>,
+    context: Option<&codeyard_repos_core::context::NodeContext>,
+) -> Result<codeyard_storage::ObjectStore> {
+    if s3.is_none() && codeyard_db_cluster::cluster::cluster_enabled(pool).await? {
+        let context = match context {
+            Some(context) => context.clone(),
+            None => codeyard_cluster::client_context(pool, state, repos_path)
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("A cluster cell's stored objects need its CLUSTER_* settings")
+                })?,
+        };
+        return codeyard_storage::ObjectStore::on_nodes(
+            state,
+            codeyard_repos_core::objects::Store::new(context),
+        )
+        .await;
+    }
+    codeyard_storage::ObjectStore::open(state, s3).await
+}
+
+/// Copies the account's stored objects a page at a time into the target store, reading
+/// each one back. A repeated run skips what the target already holds with the same digest.
+async fn copy_objects(
+    source: &sqlx::PgPool,
+    account: codeyard_db_cluster::moves::Account,
+    (from, to): &(codeyard_storage::ObjectStore, codeyard_storage::ObjectStore),
+    page: i64,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    let mut after = String::new();
+    loop {
+        let objects = codeyard_db_cluster::moves::objects(source, account, &after, page).await?;
+        for object in &objects {
+            tokio::time::timeout(timeout, copy_object(from, to, object))
+                .await
+                .map_err(|_| anyhow::anyhow!("Copying object {} timed out", object.object_key))??;
+        }
+        match objects.last() {
+            Some(last) if objects.len() as i64 == page => after.clone_from(&last.object_key),
+            _ => return Ok(()),
+        }
+    }
+}
+
+async fn copy_object(
+    from: &codeyard_storage::ObjectStore,
+    to: &codeyard_storage::ObjectStore,
+    object: &codeyard_db_cluster::moves::StoredObject,
+) -> Result<()> {
+    let key = object.object_key.as_str();
+    let length = usize::try_from(object.bytes)?;
+    if let Some(recorded) = &object.sha256 {
+        if holds(to, key, length, recorded).await {
+            return Ok(());
+        }
+    }
+    let bytes = from
+        .read_object(key, length)
+        .await
+        .map_err(|error| anyhow::anyhow!("Cannot read object {key} in this cell: {error}"))?;
+    let digest = hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes));
+    match &object.sha256 {
+        Some(recorded) => anyhow::ensure!(
+            &digest == recorded,
+            "Object {key} in this cell does not match its recorded digest"
+        ),
+        None if holds(to, key, length, &digest).await => return Ok(()),
+        None => {}
+    }
+    let upload = codeyard_storage::Upload {
+        key,
+        bytes: object.bytes,
+        content_type: &object.content_type,
+        sha256_hex: &digest,
+    };
+    let io = std::sync::Arc::new(to.try_acquire_io()?);
+    to.put_bytes(&upload, bytes, io)
+        .await
+        .map_err(|error| anyhow::anyhow!("Cannot store object {key} in the target: {error}"))?;
+    anyhow::ensure!(
+        holds(to, key, length, &digest).await,
+        "Object {key} did not read back from the target store"
+    );
+    Ok(())
+}
+
+/// Whether the store holds the object with this length and SHA-256.
+async fn holds(
+    store: &codeyard_storage::ObjectStore,
+    key: &str,
+    length: usize,
+    digest: &str,
+) -> bool {
+    store
+        .read_object(key, length)
+        .await
+        .is_ok_and(|bytes| hex::encode(<sha2::Sha256 as sha2::Digest>::digest(&bytes)) == digest)
 }
 
 /// The `<name>.git` directory name that a repository keeps in every cell.

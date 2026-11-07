@@ -103,42 +103,56 @@ fn public_url_host(value: &str) -> Result<ConfiguredHost> {
 
 impl S3Config {
     pub fn optional_from_env() -> Result<Option<Self>> {
+        Self::optional_from_env_prefix("S3_")
+    }
+
+    /// The settings whose names start with `prefix`, such as `TARGET_S3_` for the target
+    /// cell of an account move, or `None` when none of them is set.
+    pub fn optional_from_env_prefix(prefix: &str) -> Result<Option<Self>> {
         if [
-            "S3_ENDPOINT",
-            "S3_PUBLIC_ENDPOINT",
-            "S3_ACCESS_KEY",
-            "S3_SECRET_KEY",
-            "S3_BUCKET",
-            "S3_REGION",
+            "ENDPOINT",
+            "PUBLIC_ENDPOINT",
+            "ACCESS_KEY",
+            "SECRET_KEY",
+            "BUCKET",
+            "REGION",
         ]
         .iter()
-        .any(|name| std::env::var_os(name).is_some())
+        .any(|name| std::env::var_os(format!("{prefix}{name}")).is_some())
         {
-            Self::from_env().map(Some)
+            Self::from_env_prefix(prefix).map(Some)
         } else {
             Ok(None)
         }
     }
 
     pub fn from_env() -> Result<Self> {
-        let required = |name| {
-            std::env::var(name)
+        Self::from_env_prefix("S3_")
+    }
+
+    fn from_env_prefix(prefix: &str) -> Result<Self> {
+        let required = |name: &str| {
+            let name = format!("{prefix}{name}");
+            std::env::var(&name)
                 .ok()
                 .filter(|s| !s.is_empty())
                 .ok_or_else(|| anyhow!("Required S3 configuration is absent: {name}"))
         };
-        let optional = |name| match std::env::var(name) {
-            Ok(value) => Ok(Some(value)),
-            Err(std::env::VarError::NotPresent) => Ok(None),
-            Err(_) => Err(anyhow!("Invalid S3 configuration: {name}")),
+        let optional = |name: &str| {
+            let name = format!("{prefix}{name}");
+            match std::env::var(&name) {
+                Ok(value) => Ok(Some(value)),
+                Err(std::env::VarError::NotPresent) => Ok(None),
+                Err(_) => Err(anyhow!("Invalid S3 configuration: {name}")),
+            }
         };
         let config = Self {
-            endpoint: required("S3_ENDPOINT")?,
-            public_endpoint: optional("S3_PUBLIC_ENDPOINT")?,
-            access_key: required("S3_ACCESS_KEY")?,
-            secret_key: required("S3_SECRET_KEY")?,
-            bucket: required("S3_BUCKET")?,
-            region: optional("S3_REGION")?.unwrap_or_else(|| "us-east-1".into()),
+            endpoint: required("ENDPOINT")?,
+            public_endpoint: optional("PUBLIC_ENDPOINT")?,
+            access_key: required("ACCESS_KEY")?,
+            secret_key: required("SECRET_KEY")?,
+            bucket: required("BUCKET")?,
+            region: optional("REGION")?.unwrap_or_else(|| "us-east-1".into()),
         };
         config.validate()?;
         Ok(config)
