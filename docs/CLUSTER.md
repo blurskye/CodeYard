@@ -828,7 +828,8 @@ After the route-cache wait, release retains source account/repository stubs. The
 row keeps the source Git paths until cleanup finishes; rerunning after a cleanup failure
 only resumes deletion, never overwrites the active destination. A completed command may
 also be repeated safely. One move supports at most 10,000 repositories and 16 MiB of
-retained cleanup paths.
+retained cleanup paths. Source checks and the injected post-release cleanup failure,
+retry and repeated-command runtime checks pass.
 
 Manual CLI failure/retry and HTTP checks pass for preserved issue/pull IDs and numbers,
 completed CI history and package/version metadata. This is not yet a generally usable
