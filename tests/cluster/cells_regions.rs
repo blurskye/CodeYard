@@ -15,24 +15,24 @@ use codeyard_support::{cells::Prefix, node_identity::NodeKey};
 use std::time::Duration;
 
 /// A stand-in cell web node that names itself in every response. On `/alice/stamp` it also
-/// names the region the router stamped.
+/// names the region the router stamped. It reads the whole body first, as a real node does,
+/// so a large forwarded body is never cut off by an early reply.
 async fn web_node(name: &'static str) -> Server {
-    Server::start(
-        axum::Router::new().fallback(
-            move |method: axum::http::Method,
-                  uri: axum::http::Uri,
-                  headers: axum::http::HeaderMap| async move {
-                let mut reply = format!("{name} {method} {}", uri.path());
-                if uri.path() == "/alice/stamp" {
-                    for region in headers.get_all(codeyard_model::cells::REGION_HEADER) {
-                        reply.push(' ');
-                        reply.push_str(region.to_str().unwrap());
-                    }
+    Server::start(axum::Router::new().fallback(
+        move |method: axum::http::Method,
+              uri: axum::http::Uri,
+              headers: axum::http::HeaderMap,
+              _body: axum::body::Bytes| async move {
+            let mut reply = format!("{name} {method} {}", uri.path());
+            if uri.path() == "/alice/stamp" {
+                for region in headers.get_all(codeyard_model::cells::REGION_HEADER) {
+                    reply.push(' ');
+                    reply.push_str(region.to_str().unwrap());
                 }
-                reply
-            },
-        ),
-    )
+            }
+            reply
+        },
+    ))
     .await
 }
 
