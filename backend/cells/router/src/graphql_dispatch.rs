@@ -105,8 +105,8 @@ impl Dispatcher {
         serde_json::from_slice(&bytes).map_err(|_| Failure::Unavailable.into())
     }
     async fn home(&self, credential: &Credential) -> Result<ReadyCell> {
-        self.routes
-            .cell(credential.prefix)
+        credential
+            .home(&self.routes)
             .await?
             .ok_or_else(|| Failure::Unavailable.into())
     }

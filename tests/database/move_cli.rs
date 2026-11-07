@@ -42,23 +42,24 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
     let source_key = node_identity::load_or_create(&state).unwrap();
     let target_key = NodeKey::generate();
     let server_key = NodeKey::generate();
+    let cell = |prefix: u16, key: &NodeKey, state: State| Cell {
+        id: Prefix::new(prefix),
+        name: format!("cell-{prefix}"),
+        region: "a".into(),
+        state,
+        web_urls: vec![format!("http://127.0.0.1:{}/", 3000 + prefix)],
+        ssh_addresses: vec![],
+        rpc_addresses: vec![],
+        node_keys: vec![key.public_hex()],
+        database_bytes: 0,
+        write_rate: 0,
+        maximum_database_bytes: 1000000,
+        maximum_write_rate: 100,
+        read_regions: vec![],
+    };
     for (prefix, key) in [(1, &source_key), (2, &target_key)] {
         directory
-            .register_cell(Cell {
-                id: Prefix::new(prefix),
-                name: format!("cell-{prefix}"),
-                region: "a".into(),
-                state: State::Open,
-                web_urls: vec![format!("http://127.0.0.1:{}/", 3000 + prefix)],
-                ssh_addresses: vec![],
-                rpc_addresses: vec![],
-                node_keys: vec![key.public_hex()],
-                database_bytes: 0,
-                write_rate: 0,
-                maximum_database_bytes: 1000000,
-                maximum_write_rate: 100,
-                read_regions: vec![],
-            })
+            .register_cell(cell(prefix, key, State::Open))
             .await
             .unwrap();
     }
@@ -74,6 +75,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
     let alice = codeyard_db_identity::users::accounts::create_user(&source.pool, "alice", None)
         .await
         .unwrap();
+    let alice_token = crate::move_http::token(&source, alice.id).await;
     let disk = source_root.join(format!("{}.git", uuid::Uuid::new_v4()));
     let git = git2::Repository::init_bare(&disk).unwrap();
     let tree_id = git.treebuilder(None).unwrap().write().unwrap();
@@ -399,9 +401,12 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
         .execute(&target.raw)
         .await
         .unwrap();
-    // The destination can already have accepted writes when the directory reply is
-    // lost. A retry must finish switching, never replace that active copy.
-    listener.stop().await;
+    // The destination can already have accepted writes when the directory refuses the
+    // switch. A retry must finish switching, never replace that active copy.
+    directory
+        .register_cell(cell(2, &target_key, State::Disabled))
+        .await
+        .unwrap();
     let interrupted = tokio::time::timeout(Duration::from_secs(90), run().output())
         .await
         .unwrap()
@@ -425,14 +430,10 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
         .execute(&target.raw)
         .await
         .unwrap();
-    let listener = codeyard_cells_router::directory::Listener::bind(
-        directory.clone(),
-        &server_key,
-        directory_address,
-        Default::default(),
-    )
-    .await
-    .unwrap();
+    directory
+        .register_cell(cell(2, &target_key, State::Open))
+        .await
+        .unwrap();
     // Fail filesystem cleanup after the source rows have been released. Retain the
     // original directory aside and put a non-directory at its path, so remove_dir_all
     // fails deterministically even when the test runs with privileged filesystem access.
@@ -528,6 +529,22 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
         "{}",
         String::from_utf8_lossy(&repeated.stderr)
     );
+    // The token keeps its source prefix. The directory sends it to the new home, the new
+    // home holds it natively and the source asks the new home about it.
+    let hash = codeyard_support::token_hash::token_hash(&alice_token);
+    let location = directory
+        .lookup(&Key::new(KeyKind::Credential, &hash).unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(location.cell, Prefix::new(2));
+    let moved: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM moved_credentials WHERE token_hash=$1)")
+            .bind(&hash)
+            .fetch_one(&source.raw)
+            .await
+            .unwrap();
+    assert!(moved);
     let destination = target_root.join(disk.file_name().unwrap());
     let clone = root.path().join("clone");
     let cloned = tokio::time::timeout(
@@ -566,6 +583,16 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
         Default::default(),
         None,
     ));
+    let (status, viewer) = crate::move_http::request(
+        &app,
+        &alice_token,
+        "GET",
+        "/api/v3/user",
+        serde_json::Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{viewer}");
+    assert_eq!(viewer["login"], "alice");
     let response = app
         .clone()
         .oneshot(

@@ -60,6 +60,8 @@ pub enum KeyKind {
     Name,
     Email,
     Ssh,
+    /// The hash of a token issued by another cell before its account moved.
+    Credential,
 }
 impl KeyKind {
     pub fn as_str(self) -> &'static str {
@@ -67,6 +69,7 @@ impl KeyKind {
             Self::Name => "name",
             Self::Email => "email",
             Self::Ssh => "ssh",
+            Self::Credential => "credential",
         }
     }
 }
@@ -126,6 +129,13 @@ impl Key {
                 );
                 value.to_owned()
             }
+            KeyKind::Credential => {
+                ensure!(
+                    codeyard_support::tokens::is_hex_token(value, 64),
+                    "Invalid credential hash"
+                );
+                value.to_ascii_lowercase()
+            }
         };
         Ok(Self { kind, value })
     }
@@ -154,6 +164,7 @@ impl Key {
             (KeyKind::Name, ObjectKind::User | ObjectKind::Organization)
                 | (KeyKind::Email, ObjectKind::User)
                 | (KeyKind::Ssh, ObjectKind::User | ObjectKind::Repository)
+                | (KeyKind::Credential, ObjectKind::User)
         )
     }
 }

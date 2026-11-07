@@ -7,7 +7,7 @@ use crate::copy::postgres as pg;
 use crate::copy::{quote, shape, Table, CHUNK_BYTES};
 use anyhow::{bail, ensure, Result};
 use codeyard_db_core::cells::ownership::{self, Reference, Rule};
-use codeyard_model::cells::ObjectKind;
+use codeyard_model::cells::{Key, KeyKind, ObjectKind};
 use futures_util::TryStreamExt;
 use sqlx::{PgPool, Postgres, Transaction};
 use std::collections::{BTreeMap, BTreeSet};
@@ -21,6 +21,7 @@ const MAX_REFERENCED: usize = 100_000;
 const FREEZE_MARGIN_SECONDS: i64 = 30;
 /// Also enforced on the retained cleanup paths in both baseline schemas.
 const MAX_REPOSITORIES: usize = 10_000;
+const MAX_CREDENTIALS: usize = 10_000;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Account {
@@ -91,23 +92,25 @@ pub async fn transfer(
         repository.kind == ObjectKind::Repository,
         "Only a repository changes owner"
     );
-    let current: Option<(String, Option<i64>, Option<i64>, String, bool, bool)> = sqlx::query_as(
-        "SELECT owner_kind,owner_user_id,owner_org_id,name,is_stub,is_archived FROM repositories WHERE id=$1",
+    let current: Option<(String, Option<i64>, String, bool, bool)> = sqlx::query_as(
+        "SELECT owner_kind,CASE owner_kind WHEN 'org' THEN owner_org_id ELSE owner_user_id END,\
+         name,is_stub,is_archived FROM repositories WHERE id=$1",
     )
     .bind(repository.id)
     .fetch_optional(source)
     .await?;
-    let Some((kind, user, organization, name, stub, archived)) = current else {
+    let Some((kind, owner_id, name, stub, archived)) = current else {
         bail!("No such repository in this cell");
     };
     if stub {
         return Ok(None);
     }
     ensure!(!archived, "An archived repository cannot change owner");
-    let former = match (kind.as_str(), user, organization) {
-        ("org", _, Some(id)) => Account::new(ObjectKind::Organization, id)?,
-        (_, Some(id), _) => Account::new(ObjectKind::User, id)?,
-        _ => bail!("The repository has no owner"),
+    let owner_id = owner_id.ok_or_else(|| anyhow::anyhow!("The repository has no owner"))?;
+    let former = if kind == "org" {
+        Account::new(ObjectKind::Organization, owner_id)?
+    } else {
+        Account::new(ObjectKind::User, owner_id)?
     };
     let found: Option<(String, i64)> = sqlx::query_as(
         "SELECT 'user',id FROM users WHERE lower(username)=lower($1) AND NOT is_stub \
@@ -519,7 +522,7 @@ async fn missing(
 
 /// Streams the rows `read` selects from the source into the target and returns how many
 /// were read and how many the target took.
-async fn transfer(
+async fn copy_rows(
     from: &mut Tx,
     to: &mut Tx,
     read: &str,
@@ -907,7 +910,7 @@ pub async fn copy(
             pg::insert_sql_with(to_table, &[], "")
         };
         let (read_count, written) =
-            transfer(&mut from, &mut to, &read, Binding::Id(account.id), &insert).await?;
+            copy_rows(&mut from, &mut to, &read, Binding::Id(account.id), &insert).await?;
         ensure!(
             read_count == written,
             "{}: the target took {written} of {read_count} rows",
@@ -996,7 +999,7 @@ pub async fn copy(
             let read = format!("{} t0 WHERE {selection}", pg::read_sql(source_table));
             let insert = pg::insert_sql_with(to_table, &[], " ON CONFLICT DO NOTHING");
             let (_, written) =
-                transfer(&mut from, &mut to, &read, Binding::Keys(&values), &insert).await?;
+                copy_rows(&mut from, &mut to, &read, Binding::Keys(&values), &insert).await?;
             copied.shared += written;
             for key in keys.iter().filter(|key| key.child == table) {
                 let present = key
@@ -1354,6 +1357,13 @@ pub async fn release(pool: &PgPool, account: Account, transfer: Option<&Transfer
         .execute(&mut *tx)
         .await?;
     }
+    if account.kind == ObjectKind::User {
+        // Requests that still bring these tokens here are answered by the new home.
+        sqlx::query("INSERT INTO moved_credentials(token_hash) SELECT token_hash FROM personal_access_tokens WHERE user_id=$1 ON CONFLICT DO NOTHING")
+            .bind(account.id)
+            .execute(&mut *tx)
+            .await?;
+    }
     clear(
         &mut tx,
         &catalog.tables,
@@ -1364,6 +1374,30 @@ pub async fn release(pool: &PgPool, account: Account, transfer: Option<&Transfer
     .await?;
     tx.commit().await?;
     Ok(())
+}
+
+/// The hashes of a moving user's live tokens. The directory maps each to the user, so
+/// routers and other cells find a token's new home although its prefix names this cell.
+pub async fn credentials(source: &PgPool, account: Account) -> Result<Vec<Key>> {
+    if account.kind != ObjectKind::User {
+        return Ok(Vec::new());
+    }
+    let hashes: Vec<String> = sqlx::query_scalar(
+        "SELECT token_hash FROM personal_access_tokens WHERE user_id=$1 \
+         AND (expires_at IS NULL OR expires_at>clock_timestamp()) ORDER BY id LIMIT $2",
+    )
+    .bind(account.id)
+    .bind(MAX_CREDENTIALS as i64 + 1)
+    .fetch_all(source)
+    .await?;
+    ensure!(
+        hashes.len() <= MAX_CREDENTIALS,
+        "The account has more than {MAX_CREDENTIALS} live tokens"
+    );
+    hashes
+        .iter()
+        .map(|hash| Key::new(KeyKind::Credential, hash))
+        .collect()
 }
 
 /// The CLI calls this only after deleting every retained source Git directory. Keep

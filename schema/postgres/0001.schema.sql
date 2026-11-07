@@ -4433,6 +4433,10 @@ WHEN (NOT OLD.is_stub AND NEW.is_stub) EXECUTE FUNCTION cell_stub_credentials();
 -- Issuer prefixes retained locally so pending credentials survive range renewal.
 CREATE TABLE cell_prefixes (prefix INTEGER PRIMARY KEY CHECK(prefix BETWEEN 0 AND 65535));
 
+-- Hashes of tokens whose accounts moved to another cell. A request that still reaches this
+-- cell with one asks the account's new home instead of failing.
+CREATE TABLE moved_credentials (token_hash TEXT PRIMARY KEY CHECK (length(token_hash)=64));
+
 -- Short-lived home-cell authorization answers; stub rows own no personal credentials.
 CREATE TABLE foreign_credentials (
     slot INTEGER PRIMARY KEY CHECK (slot BETWEEN 0 AND 9999),

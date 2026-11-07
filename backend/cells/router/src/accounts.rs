@@ -892,9 +892,8 @@ impl Home for Remote {
             proof.validate()?;
             let _slot = self.slots.clone().try_acquire_owned()?;
             let cell = match proof {
-                Proof::Token { home, .. } | Proof::Session { home, .. } => {
-                    self.routes.cell(*home).await?
-                }
+                Proof::Token { home, hash } => self.routes.token_home(*home, hash).await?,
+                Proof::Session { home, .. } => self.routes.cell(*home).await?,
                 Proof::Ssh { fingerprint } => self.routes.by_key(KeyKind::Ssh, fingerprint).await?,
             };
             let Some(cell) = cell else { return Ok(None) };

@@ -65,7 +65,7 @@ CREATE INDEX directory_objects_object ON directory_objects(kind,id);
 CREATE INDEX directory_objects_expiry ON directory_objects(expires_at) WHERE NOT active;
 CREATE TABLE directory_claims (
     shard SMALLINT NOT NULL CHECK(shard BETWEEN 0 AND 255),
-    kind TEXT NOT NULL CHECK(kind IN ('name','email','ssh')),
+    kind TEXT NOT NULL CHECK(kind IN ('name','email','ssh','credential')),
     key_hash BYTEA NOT NULL CHECK(octet_length(key_hash)=32),
     value TEXT NOT NULL CHECK(octet_length(value) BETWEEN 1 AND 1024),
     object_kind TEXT NOT NULL,

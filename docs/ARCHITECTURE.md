@@ -768,13 +768,15 @@ acceptance passes.
 Stage 3 star pointers and bounded home lists address acceptance items 5 and 7.
 Their source checks and the real public two-cell star/SIGKILL replay round pass.
 Cross-cell forks and pulls that follow pushes, maintainer pushes over HTTP and SSH,
-object pools and cross-cell mention notices pass the public cells workflow. Cross-cell
-repository transfers remain open. Stage 4's shared search and discovery acceptance passes.
+object pools and cross-cell mention notices pass the public cells workflow. A repository
+moves to an owner in another cell with `codeyard cell move --kind repository`; its old
+public URL redirects. Stage 4's shared search and discovery acceptance passes.
 Stage 5 placement, presence policy, directory shard moves and rollout waves pass their
 local fixtures; real regional replicas, Git copies and disaster recovery remain pending.
 Stage 6's manual move and failure/retry tests cover stable resource IDs, organization
-access and frozen writes; routed credentials, file bytes and automatic moves remain
-incomplete. Range renewal is a deferred owner follow-up.
+access and frozen writes, and a moved user's tokens follow the user through the directory;
+file bytes between regions, moves of cluster-placed repositories and automatic moves
+remain incomplete. Range renewal is a deferred owner follow-up.
 [Cluster readiness](CLUSTER_PLAN.md) records exact jobs and gaps.
 The owner authorized cells on 2026-11-05 without waiting for A16. Capacity numbers remain
 assumptions until stage 1 measures a real cell.

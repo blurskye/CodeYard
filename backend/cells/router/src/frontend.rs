@@ -106,10 +106,11 @@ impl Frontend {
         Ok((Request::from_parts(parts, Body::from(bytes)), fields))
     }
     async fn home(&self, credential: Option<&Credential>) -> Result<ReadyCell> {
-        self.routes
-            .cell(credential.map_or(Prefix::ZERO, |credential| credential.prefix))
-            .await?
-            .ok_or_else(|| Failure::Unavailable.into())
+        match credential {
+            Some(credential) => credential.home(&self.routes).await?,
+            None => self.routes.cell(Prefix::ZERO).await?,
+        }
+        .ok_or_else(|| Failure::Unavailable.into())
     }
     async fn handle(&self, mut request: Request<Body>, peer: SocketAddr) -> Result<Response> {
         // Only this listener supplies forwarding information. Client-supplied chains have no authority.

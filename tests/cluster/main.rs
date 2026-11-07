@@ -3,6 +3,7 @@ mod cells_advisories;
 mod cells_authorization;
 mod cells_frontend;
 mod cells_graphql;
+mod cells_moves;
 mod cells_publication;
 mod cells_regions;
 mod cells_search;

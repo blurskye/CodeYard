@@ -11,7 +11,9 @@ use codeyard_model::{
 };
 use codeyard_support::{
     cells::{Prefix, Secret},
-    http_credentials, tokens,
+    http_credentials,
+    token_hash::token_hash,
+    tokens,
 };
 use std::collections::BTreeMap;
 
@@ -76,10 +78,22 @@ impl Matched<'_> {
 pub struct Credential {
     pub prefix: Prefix,
     value: String,
+    token: bool,
 }
 impl Credential {
     pub fn value(&self) -> &str {
         &self.value
+    }
+    /// The cell that answers for this credential. A token follows its account after a move;
+    /// a browser session stays with the cell that issued it.
+    pub async fn home(&self, routes: &Routes) -> Result<Option<ReadyCell>> {
+        if self.token {
+            routes
+                .token_home(self.prefix, &token_hash(&self.value))
+                .await
+        } else {
+            routes.cell(self.prefix).await
+        }
     }
     pub fn from_headers(headers: &HeaderMap, cookie_name: &str) -> Result<Option<Self>> {
         if headers.contains_key(header::AUTHORIZATION) {
@@ -109,7 +123,11 @@ impl Credential {
                     .map(|secret| secret.cell)
             })
             .ok_or(Failure::Denied)?;
-            return Ok(Some(Self { prefix, value }));
+            return Ok(Some(Self {
+                prefix,
+                value,
+                token: true,
+            }));
         }
         let has_cookie = headers.get_all(header::COOKIE).iter().any(|value| {
             value.to_str().map_or(true, |value| {
@@ -126,7 +144,11 @@ impl Credential {
         }
         let value = http_credentials::cookie(headers, cookie_name, 70).ok_or(Failure::Denied)?;
         let prefix = Secret::cookie(&value).map_err(|_| Failure::Denied)?.cell;
-        Ok(Some(Self { prefix, value }))
+        Ok(Some(Self {
+            prefix,
+            value,
+            token: false,
+        }))
     }
 }
 impl std::fmt::Debug for Credential {

@@ -137,16 +137,11 @@ impl Local {
     ) -> Result<Option<codeyard_db_core::queries::credentials::Actor>> {
         use codeyard_db_core::queries::users::accounts::AccountCredential;
         proof.validate()?;
-        let local = match proof {
-            Proof::Token { home, .. } | Proof::Session { home, .. } => self.pool.owns_prefix(*home),
-            Proof::Ssh { .. } => anyhow::bail!("Fork metadata requires an account credential"),
-        };
-        let answer = if local {
-            self.answer(proof).await?
-        } else {
-            codeyard_db_core::cells::authorization::authorize(&self.pool, proof).await?
-        };
-        let Some(answer) = answer else {
+        anyhow::ensure!(
+            !matches!(proof, Proof::Ssh { .. }),
+            "Fork metadata requires an account credential"
+        );
+        let Some(answer) = self.resolve(proof).await? else {
             return Ok(None);
         };
         let Some(user) =
@@ -173,6 +168,31 @@ impl Local {
             user.id,
             &credential,
         ))))
+    }
+    /// Whether another cell answers for this credential. A token is answered by the cell that
+    /// holds its row, which after a move is not the cell that issued it.
+    pub async fn remote(&self, proof: &Proof) -> Result<bool> {
+        Ok(match proof {
+            Proof::Token { home, hash } => {
+                // Most tokens were issued here and never moved: one lookup in a small table.
+                (!self.pool.owns_prefix(*home)
+                    || codeyard_db_core::cells::authorization::moved_token(&self.pool, hash)
+                        .await?)
+                    && codeyard_db_identity::users::tokens::find_native_token(&self.pool, hash)
+                        .await?
+                        .is_none()
+            }
+            Proof::Session { home, .. } => !self.pool.owns_prefix(*home),
+            Proof::Ssh { .. } => false,
+        })
+    }
+    /// The account behind a credential, answered here or by the cell that holds it.
+    pub async fn resolve(&self, proof: &Proof) -> Result<Option<Answer>> {
+        if self.remote(proof).await? {
+            codeyard_db_core::cells::authorization::authorize(&self.pool, proof).await
+        } else {
+            self.answer(proof).await
+        }
     }
     async fn source(
         &self,
@@ -276,10 +296,8 @@ impl Local {
         proof.validate()?;
         let pool = &self.pool;
         let (user, id, write, expires_at, authority) = match proof {
-            Proof::Token { home, hash } => {
-                if !pool.owns_prefix(*home) {
-                    return Ok(None);
-                }
+            Proof::Token { hash, .. } => {
+                // A token issued by another cell is native here after its account moved.
                 let Some(token) =
                     codeyard_db_identity::users::tokens::find_native_token(pool, hash).await?
                 else {

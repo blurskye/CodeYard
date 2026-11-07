@@ -145,20 +145,16 @@ async fn credential_account(
     state: &AppState,
     proof: &codeyard_db_core::cells::authorization::Proof,
 ) -> anyhow::Result<Option<i64>> {
-    use codeyard_db_core::cells::authorization::{authorize, Home, Proof};
-    let home = match proof {
-        Proof::Token { home, .. } | Proof::Session { home, .. } => *home,
-        Proof::Ssh { .. } => return Ok(None),
+    if matches!(
+        proof,
+        codeyard_db_core::cells::authorization::Proof::Ssh { .. }
+    ) {
+        return Ok(None);
+    }
+    let local = codeyard_identity::cells::Local {
+        pool: state.pool.clone(),
     };
-    let answer = if state.pool.owns_prefix(home) {
-        let local = codeyard_identity::cells::Local {
-            pool: state.pool.clone(),
-        };
-        Home::authorize(&local, proof).await?
-    } else {
-        authorize(&state.pool, proof).await?
-    };
-    Ok(answer.map(|answer| answer.user.id))
+    Ok(local.resolve(proof).await?.map(|answer| answer.user.id))
 }
 
 /// Prime home answers before any adapter looks up a foreign token or browser session.
@@ -171,18 +167,18 @@ pub async fn foreign_authorization(
     if state.pool.foreign_authorization().is_none() {
         return next.run(request).await;
     }
-    use codeyard_db_core::cells::authorization::{authorize, Proof};
-    let foreign = credential_proofs(request.headers())
-        .into_iter()
-        .flatten()
-        .filter(|proof| match proof {
-            Proof::Token { home, .. } | Proof::Session { home, .. } => {
-                !state.pool.owns_prefix(*home)
+    let local = codeyard_identity::cells::Local {
+        pool: state.pool.clone(),
+    };
+    for proof in credential_proofs(request.headers()).into_iter().flatten() {
+        let answered = match local.remote(&proof).await {
+            Ok(false) => Ok(None),
+            Ok(true) => {
+                codeyard_db_core::cells::authorization::authorize(&state.pool, &proof).await
             }
-            Proof::Ssh { .. } => false,
-        });
-    for proof in foreign {
-        if authorize(&state.pool, &proof).await.is_err() {
+            Err(error) => Err(error),
+        };
+        if answered.is_err() {
             return codeyard_model::github_error::Error::unavailable(()).into_response();
         }
     }

@@ -738,6 +738,8 @@ async fn move_account(
                     repository_paths(repos_path, &arguments.target_repositories, repository)?;
                 codeyard_git::repository::same_refs(&to, &from).await?;
             }
+            publish_credentials(&directory, id, &moves::credentials(source, account).await?)
+                .await?;
             moves::switch(source, account).await?;
             Ok::<_, anyhow::Error>(result)
         }
@@ -798,6 +800,47 @@ async fn move_account(
             "dropped_rows": copied.as_ref().map(|copied| copied.dropped),
         })
     );
+    Ok(())
+}
+
+/// Tokens keep the prefix of the cell that issued them. The directory maps each moving
+/// token to its user, so routers and other cells follow the user's home after the switch.
+/// Only the current home may add keys, so this runs before the switch; repeating it is safe.
+async fn publish_credentials(
+    directory: &codeyard_cells_router::directory::Client,
+    user: i64,
+    keys: &[codeyard_model::cells::Key],
+) -> Result<()> {
+    use codeyard_cells_router::directory::{Reply, Request};
+    let object = codeyard_model::cells::Object {
+        kind: codeyard_model::cells::ObjectKind::User,
+        id: user,
+    };
+    for chunk in keys.chunks(500) {
+        let nonce = codeyard_support::crypto::random_hex();
+        let reserved = directory
+            .request(&Request::Reserve {
+                object,
+                keys: chunk.to_vec(),
+                nonce: nonce.clone(),
+            })
+            .await?;
+        anyhow::ensure!(
+            matches!(reserved, Reply::Reserved),
+            "The directory returned an invalid reply"
+        );
+        let confirmed = directory
+            .request(&Request::Confirm {
+                object,
+                keys: chunk.to_vec(),
+                nonce,
+            })
+            .await?;
+        anyhow::ensure!(
+            matches!(confirmed, Reply::Done),
+            "The directory returned an invalid reply"
+        );
+    }
     Ok(())
 }
 

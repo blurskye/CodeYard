@@ -65,6 +65,7 @@ enum Value {
     Home(Prefix),
     Cell(Arc<Cell>),
     Regions(Arc<[String]>),
+    Missing,
 }
 struct Entry {
     value: Value,
@@ -184,8 +185,10 @@ impl Routes {
     }
     pub async fn location(&self, key: &Key) -> Result<Option<Location>> {
         let hash = RouteKey::Key(key.hash());
-        if let Some(Value::Location(location)) = self.get(hash) {
-            return Ok(Some(location));
+        match self.get(hash) {
+            Some(Value::Location(location)) => return Ok(Some(location)),
+            Some(Value::Missing) => return Ok(None),
+            _ => {}
         }
         let Reply::Location(location) = self
             .directory
@@ -201,8 +204,22 @@ impl Routes {
                 .map_err(|_| Failure::Unavailable)?;
             ensure!(key.belongs_to(location.object.kind), Failure::Unavailable);
             self.put(hash, Value::Location(location));
+        } else if key.kind() == KeyKind::Credential {
+            // Almost every token has no key, so its absence is cached like a route. A move
+            // publishes keys before its switch and waits for this cache before releasing.
+            self.put(hash, Value::Missing);
         }
         Ok(location)
+    }
+    /// The cell that answers for a token: its account's home when the token's hash has a
+    /// directory key, because the account moved after the token was issued, otherwise the
+    /// cell of its prefix.
+    pub async fn token_home(&self, prefix: Prefix, hash: &str) -> Result<Option<ReadyCell>> {
+        let key = Key::new(KeyKind::Credential, hash).map_err(|_| Failure::Invalid)?;
+        match self.location(&key).await? {
+            Some(location) => self.cell(location.cell).await,
+            None => self.cell(prefix).await,
+        }
     }
     pub async fn by_name(&self, name: &str) -> Result<Option<ReadyCell>> {
         self.by_key(KeyKind::Name, name).await

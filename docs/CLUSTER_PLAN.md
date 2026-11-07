@@ -486,84 +486,35 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     `enforce_repository_visibility_floor`. The account row loads first so the credential
     guards see a local owner.
 
-    Written (`backend/db/cluster/src/moves.rs`, `codeyard cell move`): the manual move of a
-    user or organization with its repositories between PostgreSQL cells: begin (move row,
-    CI asked to stop, wait for older transactions), freeze, Git copy, row copy with stubs
-    for referenced accounts and repositories and copies of the shared rows they need,
-    switch, directory `move_home` for the account and each repository, a wait for the
-    routers' route cache, release (rows deleted, account and repositories kept as stubs of
-    the target, source Git directories removed). A failed step before the switch cancels
-    the move and removes the target copy. Not written: repository transfer between
-    accounts in different cells (item 6), the automatic region move, the cross-region
-    object copy and moves of repositories placed on cluster storage nodes. The shared
-    GitHub 503 response now gives retry guidance and Retry-After; the freeze/cancel HTTP
-    test asserts both, preserved reads and unauthenticated denial. This follow-up passes
-    workspace bedef29b, Clippy 6ac0b2bb and WASM 056f73ad. Runtime 69ff2f67 passes
-    all 197 database tests, 239 cluster tests and 188 selected library tests without skips.
-    Native and Git retry responses remain unverified. Owner notes: tokens and
-    sessions keep their source-cell prefix, so the router sends them to the old cell until
-    they are issued again; stubs in third cells keep the old home until their next refresh;
-    a push already running when the freeze starts fails the move at the second ref check
-    rather than being lost.
-
-    Restart 11: the inherited manual move passes workspace ef59eb32, Clippy 9e01e414
-    and WASM 155bc753 after its type-complexity warning was fixed. Runtime 981665a7
-    is running the move, database and cluster tests. The next source batch keeps a
-    receiving copy write-frozen until its source has switched, serializes copy against
-    cancellation/renewal, refuses discarding an active target, and holds the existing Git
-    publication leases across the copy and switch. HTTP freeze/cancel and CLI injected
-    load-failure/retry with Git clone and preserved issue IDs are added. This follow-up
-    passes workspace 841f54d9, Clippy 501107cb and WASM 4349aec7; its runtime is pending.
-    Receiving-copy retry and a thousand-member organization with revoked-member HTTP
-    denial are also written; workspace 26494b58, Clippy 45e2db07 and WASM d048de00 pass.
-    Manual-move acceptance remains incomplete; these tests await the next runtime job.
-    Runtime 981665a7 passed 142 selected library tests but the inherited baseline failed
-    PostgreSQL parsing in the move/database tests (67 other database passes, 119 failures).
-    It was cancelled during cluster compilation. The move guard's reserved `freeze`
-    variable is renamed, and the test script parses the baseline before building.
-    Running CI now drains before freezing; a directory-outage retry test checks that
-    subsequent target writes are not recopied. Workspace 637a0631, Clippy 398f8b18 and
-    WASM 327a7219 pass. Runtime f24d8173 passes the PostgreSQL baseline parse and all
-    eight move tests: CLI rollback/retry and directory outage with preserved target writes,
-    Git clone and stable issue IDs, HTTP freeze/cancel, a thousand-member org and revoked
-    access, receiving-copy retry, a racing writer, automatic freeze expiry and CI drain/history.
-    It also passes all 239 cluster tests and 142 selected library tests, without skips.
-    Database: 177 pass, nine whole-database copy tests fail because the inherited change
-    omitted `account_moves` from SQLite's catalogue. The parity table and an unfinished-
-    move refusal before whole-database copy are written, with a CLI regression. Workspace
-    b010d72c, Clippy c819144f and WASM bb590c68 pass. Runtime 5b4e1a29 passes all
-    195 database tests (eight move tests included), 239 cluster tests and 142 selected
-    library tests without skips, including the unfinished-copy CLI regression.
-    The next move-retry batch takes the existing move lease at both cells and refuses an
-    active target before touching its Git, not just during row loading. CLI regressions
-    cover a busy destination and preservation of a destination-only commit. Workspace
-    dbd30337, Clippy 90b6eacf and WASM 3c65a01e pass. Runtime 882eb0f2 passes the
-    extended CLI test, all 195 database tests, 239 cluster tests and 142 selected library
-    tests without skips. Repository transfer and automatic region moves remain unwritten.
-    The CLI acceptance extension checks preserved pull numbers, issue/pull node IDs,
-    finished CI history and package/version metadata through HTTP after failure and retry,
-    plus removal of those source rows. Package bytes and routed credential continuity
-    remain separate, incomplete acceptance. This extension passes workspace d8cac32f,
-    Clippy 84e24a5d and WASM 8e8f7852. Runtime d800a1af passes all 197 database tests,
-    239 cluster tests and 188 selected library tests without skips.
-    The next restart-acceptance batch retains source Git cleanup paths in the released
-    move row until deletion finishes. CLI failure/retry after row release and a repeated
-    successful command must preserve destination-only commits and unrelated source
-    directories. Paths are capped at 10,000 repositories and 16 MiB in both baselines.
-    Workspace 3aa2355c, Clippy 6b715d30 and WASM 82a41f63 pass, including the
-    preflight that rejects unsupported placement before asking CI to drain.
-    Runtime 0826aaed passes all eight move tests, the other 189 database tests and
-    188 selected library tests without skips. Cluster passes 237/239: the foreign
-    credential fixture's cached answer expired before its assertion, and a replica
-    fixture could not acquire a disk-probe permit. Both pass unchanged in isolated
-    retry f75361c6; the new post-release cleanup failure/retry and repeated-command
-    checks pass.
-    The next CLI fixture copies package blob references and checks the unchanged npm
-    URL, exact archive bytes, integrity metadata and live private-download denial using
-    one shared test store. It does not exercise S3 transport, cross-region byte copying
-    or shared-store garbage collection. Workspace 1ba0b685, Clippy 53a18036 and
-    WASM 707952ea pass. Runtime c3826181 covers move, database, cluster and the
-    selected libraries.
+    Stage 6 status. Written in `backend/db/cluster/src/moves.rs` and `codeyard cell move`:
+    - The manual move of a user or organization with its repositories between PostgreSQL
+      cells: begin (move row, CI asked to stop, older transactions drained), freeze, Git
+      copy, row copy with stubs and the shared rows they need, ref comparison, switch,
+      directory `move_home` for the account and each repository, a wait for the routers'
+      route cache, release (rows deleted, stubs of the target kept, source Git directories
+      removed). A failed step before the switch cancels the move and removes the target
+      copy; every later step repeats safely. Tests: CLI failure and retry, a directory that
+      refuses or loses the switch, Git clone, stable issue, pull and node IDs, HTTP freeze
+      and cancel, a thousand-member organization with a revoked member, a racing writer,
+      freeze expiry, CI drain and package bytes in a shared store.
+    - Repository transfer to an owner in another cell (`--kind repository --name
+      owner/name --new-owner login`). Only that repository freezes, and issue and pull
+      numbers stay. The former owner's grants (an organization's collaborators and teams,
+      runner groups, organization values, security configuration) are dropped, as in a
+      transfer inside one cell. The source keeps a stub and a `repository_redirects` row,
+      so the old REST and Git HTTP URLs answer 301, or 307 for writes. Limits: no redirect
+      for private repositories, GraphQL or SSH; renames and transfers inside one cell
+      record no redirect; archived repositories are refused; the CLI has no acting user,
+      so the new owner's default grants are not applied.
+    - Tokens after a move. Before the switch the CLI publishes the hash of each live token
+      of a moving user (at most 10,000) as a directory `credential` key. Routers and other
+      cells send such a token to the user's current home, and the source lists the moved
+      hashes in `moved_credentials` and asks the new home about them. Browser sessions do
+      not move; the user signs in again. A token deleted after the move keeps its key,
+      which only routes: the home refuses the token.
+    Not written: the bounded, resumable object copy between regions (a move between
+    regions copies no package or artifact bytes yet), moves of repositories placed on
+    cluster storage nodes (refused before the freeze), and the automatic region move.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

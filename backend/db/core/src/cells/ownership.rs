@@ -338,6 +338,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("join_tokens", Cell),
     ("labels", Owned(&[Repository("repo_id")])),
     ("milestones", Owned(&[Repository("repo_id")])),
+    ("moved_credentials", Cell),
     ("node_configuration", Cell),
     ("node_drain_repositories", Cell),
     ("nodes", Cell),

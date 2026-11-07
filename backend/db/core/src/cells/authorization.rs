@@ -510,6 +510,15 @@ pub async fn authorize(pool: &DbPool, proof: &Proof) -> Result<Option<Answer>> {
     cached(pool, &key).await
 }
 
+/// Whether a token issued here belongs to an account that has since moved to another cell.
+pub async fn moved_token(pool: &DbPool, hash: &str) -> Result<bool> {
+    const MOVED: &str = "SELECT EXISTS(SELECT 1 FROM moved_credentials WHERE token_hash=$1)";
+    Ok(match pool {
+        DbPool::Postgres(pool) => sqlx::query_scalar(MOVED).bind(hash).fetch_one(pool).await?,
+        DbPool::Sqlite(pool) => sqlx::query_scalar(MOVED).bind(hash).fetch_one(pool).await?,
+    })
+}
+
 /// A cache lookup carries the exact credential hash through native transactions.
 pub struct Query<'a> {
     pub kind: &'static str,

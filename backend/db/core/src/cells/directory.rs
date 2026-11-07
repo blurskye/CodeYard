@@ -81,6 +81,7 @@ fn present_sql(object: ObjectKind, key: KeyKind) -> Result<&'static str> {
         (ObjectKind::Organization, KeyKind::Name) => "SELECT EXISTS(SELECT 1 FROM organizations WHERE id=$1 AND NOT is_stub AND CAST($2 AS TEXT) IS NOT NULL)",
         (ObjectKind::User, KeyKind::Email) => "SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_stub AND lower(email)=lower($2)) OR EXISTS(SELECT 1 FROM user_emails e JOIN users u ON u.id=e.user_id WHERE e.user_id=$1 AND NOT u.is_stub AND lower(e.email)=lower($2))",
         (ObjectKind::User, KeyKind::Ssh) => "SELECT EXISTS(SELECT 1 FROM ssh_keys k JOIN users u ON u.id=k.user_id WHERE k.user_id=$1 AND k.fingerprint=$2 AND NOT u.is_stub)",
+        (ObjectKind::User, KeyKind::Credential) => "SELECT EXISTS(SELECT 1 FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.user_id=$1 AND t.token_hash=$2 AND NOT u.is_stub)",
         (ObjectKind::Repository, KeyKind::Ssh) => "SELECT EXISTS(SELECT 1 FROM deploy_keys k JOIN repositories r ON r.id=k.repo_id WHERE k.repo_id=$1 AND k.fingerprint=$2 AND NOT r.is_stub)",
         _ => anyhow::bail!(Refusal::Denied),
     })
