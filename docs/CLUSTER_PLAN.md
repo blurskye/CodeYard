@@ -490,10 +490,11 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     65a4644af98741149d6cd19687ebeef8 and WASM e8886cf24abb453b8147cc7e87430afa pass;
     runtime 988f12f45c6f46e68acbd6e1d6c24f40 runs the real lock-wait regression,
     both-engine authorization contracts, core library and cluster tests.
-    This still uses the old cache deadline, not a heartbeat snapshot. Before adding an
-    identity-heartbeat table, the owner must assign its cell-local entry to the stage-6
-    lane or permit this lane to edit `cells/ownership.rs`: its exhaustive table test
-    rejects unclassified tables, and this lane is forbidden to edit that file.
+    This still uses the old cache deadline, not a heartbeat snapshot. Removing the old
+    `foreign_credentials` table and adding a cell-local identity-heartbeat table also
+    requires updating `cells/ownership.rs`: its exhaustive test rejects both missing
+    tables and unclassified additions. This lane is forbidden to edit that file; the
+    owner must assign those catalog edits to stage 6 or grant a narrow exception.
     Snapshot/RPC integration, cache removal and the optional content cache remain open.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
