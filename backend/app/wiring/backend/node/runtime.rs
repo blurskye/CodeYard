@@ -412,6 +412,16 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             return Err(error);
         }
     };
+    // Git receive sockets live in the private state directory, not the shared /tmp.
+    #[cfg(target_os = "linux")]
+    if let Err(error) =
+        codeyard_repos_core::repositories::git_sessions::private_files::prepare_run_dir(
+            &config.state_dir,
+        )
+    {
+        pool.close().await;
+        return Err(error);
+    }
     // The cluster transport is opt-in. Without cluster settings no cluster socket is
     // opened. With them, single-node mode still admits only runners.
     let member = match codeyard_cluster_core::settings::Settings::from_env()? {

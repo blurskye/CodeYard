@@ -153,7 +153,8 @@ pub(super) async fn receive_session(
     receive: crate::repositories::git_sessions::ReceiveSession<'_>,
     streams: GitStreams<'_>,
 ) -> Result<std::process::ExitStatus> {
-    let directory = codeyard_actions::fs::private_tempdir("git-receive-", None)?;
+    let run = crate::repositories::git_sessions::private_files::run_dir();
+    let directory = codeyard_actions::fs::private_tempdir("git-receive-", run.as_deref())?;
     let socket = directory.path().join("broker.sock");
     let uid = crate::repositories::git_sessions::private_files::effective_uid();
     let executable = crate::repositories::git_sessions::private_files::trusted_executable(
@@ -977,6 +978,15 @@ impl Gateway {
             .prefix("receive-hooks-")
             .tempdir_in(self.socket.parent().context("socket parent required")?)?;
         codeyard_repos::validation::shell_safe_path(directory.path())?;
+        // The hook checks the socket's directories up to the same trusted state directory.
+        let state_dir = match crate::repositories::git_sessions::private_files::trusted_state_dir()
+        {
+            Some(state) => format!(
+                " --state-dir {}",
+                codeyard_repos::validation::shell_safe_path(state)?
+            ),
+            None => String::new(),
+        };
         if write {
             for name in ["pre-receive", "post-receive", "reference-transaction"] {
                 let path = directory.path().join(name);
@@ -987,8 +997,9 @@ impl Gateway {
                     .open(&path)?;
                 writeln!(
                     file,
-                    "#!/bin/sh\nexec {} ssh {} --socket {} --key-id {} --repo-id {}{}",
+                    "#!/bin/sh\nexec {}{} ssh {} --socket {} --key-id {} --repo-id {}{}",
                     codeyard_repos::validation::shell_safe_path(&self.executable)?,
+                    state_dir,
                     name,
                     codeyard_repos::validation::shell_safe_path(&self.socket)?,
                     key_id,

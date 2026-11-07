@@ -188,9 +188,9 @@ need an explicit pod restart. Do not delete storage PVCs on uninstall.
 Web/storage probes use `/ready`; SSH currently has TCP probes only and database-free
 runners have no health listener/probes. Core pods wait five seconds (preStop) so Services
 drop them, then SIGTERM runs the bounded server shutdown, which may take up to 100 seconds;
-use the nodes page or drain API before removing pods. Core pods keep `/tmp` in memory
-because the server refuses Git push sockets and the SSH host key under a non-sticky
-world-writable directory, so `tmpSizeLimit` counts toward their memory. Disruption budgets
+use the nodes page or drain API before removing pods. Git push sockets and the SSH host
+key live in the private (0700) state directory `/data/state`, so `/tmp` is an ordinary
+disk volume. Disruption budgets
 do not guarantee Git durability. Runner/KEDA scale-down can interrupt active jobs during
 shutdown; it is not idle-only draining. Storage must **never**
 autoscale down: first move and verify every primary and replica assignment elsewhere.

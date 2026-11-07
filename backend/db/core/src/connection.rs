@@ -1,12 +1,12 @@
 //! Opening the application database (SQLite or PostgreSQL).
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 #[cfg(unix)]
 use std::path::Path;
 use std::{str::FromStr, time::Duration};
-use tracing::info;
+use tracing::{info, warn};
 
 /// Connection pool for whichever database `DATABASE_URL` selects.
 #[derive(Clone)]
@@ -391,9 +391,105 @@ pub(crate) fn postgres_pool_size(raw: Option<&str>) -> Result<u32> {
     Ok(size)
 }
 
+fn is_postgres(database_url: &str) -> bool {
+    database_url.starts_with("postgres://") || database_url.starts_with("postgresql://")
+}
+
+/// How long startup keeps retrying an unavailable PostgreSQL server:
+/// `DATABASE_CONNECT_WAIT_SECONDS`, 0 to 3,600, default 60.
+pub(crate) fn connect_wait(raw: Option<&str>) -> Result<Duration> {
+    raw.map_or(Some(60), |raw| {
+        raw.parse::<u64>().ok().filter(|seconds| *seconds <= 3600)
+    })
+    .map(Duration::from_secs)
+    .context("DATABASE_CONNECT_WAIT_SECONDS must be between 0 and 3600")
+}
+
+/// Why opening or migrating PostgreSQL failed in a way that can clear by itself: the server
+/// is unreachable, starting, stopping, still a standby or busy. Built from error kinds and
+/// SQLSTATE codes only, so no server text or connection setting reaches the log.
+fn retry_reason(error: &anyhow::Error) -> Option<String> {
+    error.chain().find_map(|cause| {
+        if cause.is::<tokio::time::error::Elapsed>() {
+            return Some("timed out".to_owned());
+        }
+        match cause.downcast_ref::<sqlx::Error>()? {
+            sqlx::Error::Io(error) => Some(format!("connection failed ({:?})", error.kind())),
+            sqlx::Error::Tls(_) => Some("TLS handshake failed".to_owned()),
+            sqlx::Error::PoolTimedOut => Some("timed out".to_owned()),
+            // 08: connection exception; 57P: shutting down or starting up; 25006: a standby
+            // not yet promoted; 53300: too many connections; 55P03: another node is migrating.
+            sqlx::Error::Database(error) => error
+                .code()
+                .filter(|code| {
+                    code.starts_with("08")
+                        || code.starts_with("57P")
+                        || matches!(code.as_ref(), "25006" | "53300" | "55P03")
+                })
+                .map(|code| format!("SQLSTATE {code}")),
+            _ => None,
+        }
+    })
+}
+
+const FIRST_RETRY: Duration = Duration::from_millis(500);
+const LONGEST_RETRY: Duration = Duration::from_secs(10);
+
+/// Opens and migrates the application database for a command or server start. PostgreSQL
+/// can be unreachable for a while when a node starts, during a failover or before the
+/// database itself is up, so failures that can clear by themselves are retried with doubling
+/// delays for up to `DATABASE_CONNECT_WAIT_SECONDS`. SQLite is opened once.
+pub async fn open_migrated(database_url: &str) -> Result<DbPool> {
+    let raw = match std::env::var("DATABASE_CONNECT_WAIT_SECONDS") {
+        Ok(raw) => Some(raw),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(_) => bail!("DATABASE_CONNECT_WAIT_SECONDS must be between 0 and 3600"),
+    };
+    let wait = connect_wait(raw.as_deref())?;
+    let wait = if is_postgres(database_url) {
+        wait
+    } else {
+        Duration::ZERO
+    };
+    open_migrated_within(database_url, wait).await
+}
+
+async fn open_migrated_within(database_url: &str, wait: Duration) -> Result<DbPool> {
+    let deadline = tokio::time::Instant::now() + wait;
+    let mut delay = FIRST_RETRY;
+    loop {
+        let (error, opened) = match init_db(database_url).await {
+            Err(error) => (error, false),
+            Ok(pool) => match crate::run_migrations(&pool).await {
+                Ok(()) => return Ok(pool),
+                Err(error) => {
+                    pool.close().await;
+                    (error, true)
+                }
+            },
+        };
+        let reason = retry_reason(&error);
+        match reason {
+            Some(reason) if tokio::time::Instant::now() + delay <= deadline => {
+                warn!(
+                    %reason,
+                    retry_in_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX),
+                    "the database is not available yet; retrying"
+                );
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(LONGEST_RETRY);
+            }
+            _ if opened => return Err(error),
+            // The driver's text can repeat connection settings, so only the reason is shown.
+            Some(reason) => bail!("could not open the configured application database: {reason}"),
+            None => bail!("could not open the configured application database"),
+        }
+    }
+}
+
 pub async fn init_db(database_url: &str) -> Result<DbPool> {
     // Never trace credential-bearing URLs or connection options.
-    if database_url.starts_with("postgres://") || database_url.starts_with("postgresql://") {
+    if is_postgres(database_url) {
         info!("Connecting to PostgreSQL");
         let options = postgres_options(database_url)?;
         let configured_pool = match std::env::var("DATABASE_POOL_SIZE") {
@@ -474,13 +570,13 @@ pub async fn session_connection(pool: &crate::pool::PgPool) -> Result<sqlx::PgCo
         }
         Err(_) => bail!("invalid DATABASE_DIRECT_URL"),
     };
-    if !(url.starts_with("postgres://") || url.starts_with("postgresql://")) {
+    if !is_postgres(&url) {
         bail!("DATABASE_DIRECT_URL requires PostgreSQL");
     }
     let options = postgres_options(&url)?;
     let mut direct = tokio::time::timeout(Duration::from_secs(5), options.connect())
         .await
-        .map_err(|_| anyhow::anyhow!("DATABASE_DIRECT_URL did not answer within 5 seconds"))??;
+        .context("DATABASE_DIRECT_URL did not answer within 5 seconds")??;
     const PLACE: &str = "SELECT current_database()::text,COALESCE(current_schema(),'')::text";
     let here: (String, String) = sqlx::query_as(PLACE).fetch_one(&mut direct).await?;
     let there: (String, String) = sqlx::query_as(PLACE).fetch_one(pool).await?;
@@ -493,7 +589,7 @@ pub async fn session_connection(pool: &crate::pool::PgPool) -> Result<sqlx::PgCo
 /// Opens an existing database for reading. Unlike `init_db`, it never creates a SQLite
 /// file and leaves the file's journal mode and permissions alone.
 pub async fn open_source(database_url: &str) -> Result<DbPool> {
-    if database_url.starts_with("postgres://") || database_url.starts_with("postgresql://") {
+    if is_postgres(database_url) {
         let options = postgres_options(database_url)?;
         return Ok(PgPoolOptions::new()
             .max_connections(1)
@@ -521,7 +617,7 @@ mod safe_logging_tests {
     use std::sync::{Arc, Mutex};
 
     #[derive(Clone)]
-    struct Capture(Arc<Mutex<Vec<u8>>>);
+    pub(super) struct Capture(pub(super) Arc<Mutex<Vec<u8>>>);
 
     impl Write for Capture {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -654,6 +750,160 @@ mod safe_logging_tests {
         assert!(!logged.contains(url));
         assert!(!logged.contains("logging-fixture-password"));
         assert!(!logged.contains("logging-fixture-query-password"));
+    }
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+
+    /// Runs `body` with warnings written to a buffer, then returns all of them and the
+    /// retry warnings among them.
+    async fn warnings<T>(body: impl std::future::Future<Output = T>) -> (T, String, Vec<String>) {
+        let output = Arc::new(Mutex::new(Vec::new()));
+        let writer = super::safe_logging_tests::Capture(output.clone());
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(move || writer.clone())
+            .finish();
+        let _logging = tracing::subscriber::set_default(subscriber);
+        let result = body.await;
+        let logged = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+        let retries = logged
+            .lines()
+            .filter(|line| line.contains("WARN") && line.contains("retrying"))
+            .map(str::to_owned)
+            .collect();
+        (result, logged, retries)
+    }
+
+    fn closed_port() -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    }
+
+    #[test]
+    fn connect_wait_is_bounded_without_echoing_input() {
+        assert_eq!(connect_wait(None).unwrap(), Duration::from_secs(60));
+        assert_eq!(connect_wait(Some("0")).unwrap(), Duration::ZERO);
+        assert_eq!(
+            connect_wait(Some("3600")).unwrap(),
+            Duration::from_secs(3600)
+        );
+        for raw in ["3601", "-1", "private-value", ""] {
+            assert_eq!(
+                connect_wait(Some(raw)).unwrap_err().to_string(),
+                "DATABASE_CONNECT_WAIT_SECONDS must be between 0 and 3600"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_server_is_retried_until_the_wait_runs_out() {
+        tokio::time::pause();
+        let url = format!(
+            "postgres://fixture:retry-fixture-password@127.0.0.1:{}/unused",
+            closed_port()
+        );
+        let start = tokio::time::Instant::now();
+        let wait = Duration::from_secs(30);
+        let (result, logged, retries) = warnings(open_migrated_within(&url, wait)).await;
+        let error = result.err().expect("nothing listens").to_string();
+        assert!(
+            error.starts_with("could not open the configured application database: "),
+            "{error}"
+        );
+        // Each attempt is bounded by the five-second acquisition deadline, and no retry
+        // starts after the wait.
+        let elapsed = start.elapsed();
+        assert!(
+            (wait - LONGEST_RETRY..=wait + Duration::from_secs(6)).contains(&elapsed),
+            "{elapsed:?}"
+        );
+        assert!(retries.len() >= 3, "{logged}");
+        assert!(!logged.contains("retry-fixture-password"));
+    }
+
+    #[tokio::test]
+    async fn sqlite_and_settings_errors_are_not_retried() {
+        tokio::time::pause();
+        let start = tokio::time::Instant::now();
+        let directory = tempfile::tempdir().unwrap();
+        let missing = directory.path().join("missing").join("app.db");
+        let sqlite = format!("sqlite://{}", missing.display());
+        let (result, _, retries) = warnings(open_migrated(&sqlite)).await;
+        assert!(result.is_err());
+        let typo = "postgres://fixture@127.0.0.1:1/unused?sslpassword=private";
+        let (typo_result, _, typo_retries) = warnings(open_migrated(typo)).await;
+        assert_eq!(
+            typo_result.err().unwrap().to_string(),
+            "could not open the configured application database"
+        );
+        assert!(retries.is_empty() && typo_retries.is_empty());
+        assert_eq!(start.elapsed(), Duration::ZERO);
+    }
+
+    /// PostgreSQL behind a TCP relay that drops its first `drops` connections, as a pooler
+    /// does while the primary is being replaced.
+    async fn flaky_relay(drops: usize) -> (String, tokio::task::JoinHandle<()>) {
+        let mut url = url::Url::parse(
+            &std::env::var("GITSERV_TEST_DATABASE_URL")
+                .expect("builder-test.sh supplies PostgreSQL"),
+        )
+        .unwrap();
+        let server = format!("{}:{}", url.host_str().unwrap(), url.port().unwrap_or(5432));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        url.set_port(Some(listener.local_addr().unwrap().port()))
+            .unwrap();
+        let relay = tokio::spawn(async move {
+            let mut accepted = 0;
+            loop {
+                let (mut client, _) = listener.accept().await.unwrap();
+                accepted += 1;
+                if accepted <= drops {
+                    drop(client);
+                    continue;
+                }
+                let server = server.clone();
+                tokio::spawn(async move {
+                    let mut upstream = tokio::net::TcpStream::connect(server).await.unwrap();
+                    let _ = tokio::io::copy_bidirectional(&mut client, &mut upstream).await;
+                });
+            }
+        });
+        (url.to_string(), relay)
+    }
+
+    #[tokio::test]
+    async fn a_server_that_drops_the_first_connections_is_waited_for() {
+        let (url, relay) = flaky_relay(2).await;
+        let (result, logged, retries) =
+            warnings(open_migrated_within(&url, Duration::from_secs(30))).await;
+        let pool = result.unwrap();
+        pool.ping().await.unwrap();
+        pool.close().await;
+        relay.abort();
+        assert_eq!(retries.len(), 2, "{logged}");
+    }
+
+    #[tokio::test]
+    async fn a_refused_password_is_not_retried() {
+        let (url, relay) = flaky_relay(0).await;
+        let mut url = url::Url::parse(&url).unwrap();
+        url.set_password(Some("not-the-password")).unwrap();
+        let started = std::time::Instant::now();
+        let (result, logged, retries) =
+            warnings(open_migrated_within(url.as_str(), Duration::from_secs(30))).await;
+        relay.abort();
+        assert_eq!(
+            result.err().unwrap().to_string(),
+            "could not open the configured application database"
+        );
+        assert!(retries.is_empty(), "{logged}");
+        assert!(started.elapsed() < Duration::from_secs(10));
     }
 }
 

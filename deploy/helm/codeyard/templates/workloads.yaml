@@ -122,11 +122,7 @@ spec:
             - name: REPOS_PATH
               value: /data/repos
             - name: HOST_KEY_PATH
-              {{- if eq $role "ssh" }}
-              value: /tmp/host_key
-              {{- else }}
-              value: /data/host_key
-              {{- end }}
+              value: /data/state/host_key
             - name: NODE_NAME
               valueFrom:
                 fieldRef:
@@ -264,12 +260,6 @@ spec:
       volumes:
         - name: tmp
           emptyDir:
-            {{- if ne $role "runner" }}
-            # Git push sockets and the SSH host key file go here, and the server refuses a
-            # group- or world-writable parent unless it is sticky and root-owned. A disk
-            # emptyDir is 2777; a memory one is 3777. Its use counts toward pod memory.
-            medium: Memory
-            {{- end }}
             sizeLimit: {{ $.Values.tmpSizeLimit }}
         {{- if ne $role "storage" }}
         - name: data
