@@ -172,7 +172,7 @@ pub async fn foreign_authorization(
         return next.run(request).await;
     }
     use codeyard_db_core::cells::authorization::{authorize, Proof};
-    let foreign = credential_proofs(request.headers())
+    let foreign: Vec<_> = credential_proofs(request.headers())
         .into_iter()
         .flatten()
         .filter(|proof| match proof {
@@ -180,13 +180,17 @@ pub async fn foreign_authorization(
                 !state.pool.owns_prefix(*home)
             }
             Proof::Ssh { .. } => false,
-        });
-    for proof in foreign {
-        if authorize(&state.pool, &proof).await.is_err() {
-            return codeyard_model::github_error::Error::unavailable(()).into_response();
+        })
+        .collect();
+    codeyard_db_core::cells::authorization::scope(async {
+        for proof in foreign {
+            if authorize(&state.pool, &proof).await.is_err() {
+                return codeyard_model::github_error::Error::unavailable(()).into_response();
+            }
         }
-    }
-    next.run(request).await
+        next.run(request).await
+    })
+    .await
 }
 
 fn client_key(request: &Request, trusted_proxies: &HashSet<IpAddr>) -> Option<String> {

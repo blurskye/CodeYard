@@ -217,7 +217,7 @@ pub const TABLES: &[(&str, Rule)] = &[
         Owned(&[Parent("token_id", "personal_access_tokens")]),
     ),
     ("follows", Owned(&[Account("following_id")])),
-    ("foreign_credentials", Cell),
+    ("identity_heartbeat", Cell),
     ("gist_comments", Owned(&[Repository("repo_id")])),
     ("gist_identifiers", Shared),
     ("gist_stars", Owned(&[Repository("repo_id")])),

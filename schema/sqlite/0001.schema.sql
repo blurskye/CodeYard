@@ -4195,19 +4195,11 @@ BEGIN SELECT RAISE(ABORT,'Remote account retains credentials'); END;
 -- Issuer prefixes retained locally so pending credentials survive range renewal.
 CREATE TABLE cell_prefixes (prefix INTEGER PRIMARY KEY CHECK(prefix =0));
 
--- Short-lived home-cell authorization answers; stub rows own no personal credentials.
-CREATE TABLE foreign_credentials (
-    slot INTEGER PRIMARY KEY CHECK (slot BETWEEN 0 AND 9999),
-    cache_key TEXT NOT NULL UNIQUE CHECK (length(cache_key)=64),
-    credential_hash TEXT NOT NULL CHECK (length(credential_hash)=64),
-    kind TEXT NOT NULL CHECK (kind IN ('token','session','ssh')),
-    credential_id INTEGER,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    answer TEXT NOT NULL CHECK (length(answer)<=131072),
-    validated_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL
+-- Cell-local identity freshness, selected in the same snapshot as credentials.
+CREATE TABLE identity_heartbeat (
+    id INTEGER PRIMARY KEY CHECK (id=1),
+    committed_at TEXT NOT NULL
 );
-CREATE INDEX foreign_credentials_identity ON foreign_credentials(kind,credential_id,expires_at);
 
 -- A user's home keeps discovery pointers; the resource cell still checks every read.
 CREATE TABLE remote_pointers (

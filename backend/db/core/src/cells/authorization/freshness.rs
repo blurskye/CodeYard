@@ -5,6 +5,16 @@ use anyhow::{ensure, Result};
 use chrono::{DateTime, TimeDelta, Utc};
 use std::time::{Duration, Instant};
 
+/// Parse once; a malformed configuration cannot silently enable a weaker policy.
+pub fn policy() -> Result<Policy> {
+    static POLICY: std::sync::OnceLock<Result<Policy, String>> = std::sync::OnceLock::new();
+    POLICY
+        .get_or_init(|| Policy::from_env().map_err(|error| error.to_string()))
+        .as_ref()
+        .copied()
+        .map_err(|error| anyhow::anyhow!(error.clone()))
+}
+
 /// The clock-error allowance is included in, not added to, the published age bound.
 #[derive(Clone, Copy, Debug)]
 pub struct Policy {
@@ -141,6 +151,10 @@ pub struct Deadline {
 }
 
 impl Deadline {
+    pub(super) fn wall(self) -> DateTime<Utc> {
+        self.wall
+    }
+
     /// Recheck after every wait, including waits for local resource row locks. SQL's
     /// predicate may have been evaluated before a lock was acquired.
     pub fn current(self, wall: DateTime<Utc>, monotonic: Instant) -> bool {

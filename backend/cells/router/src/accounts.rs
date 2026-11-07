@@ -1103,7 +1103,7 @@ impl rpc::Service for Accounts {
         bytes: &'a [u8],
         output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
     ) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
+        Box::pin(codeyard_db_core::cells::authorization::scope(async move {
             use codeyard_cluster_core::link::write_frame;
             use tokio::io::AsyncReadExt;
             self.admitted(peer).await?;
@@ -1194,13 +1194,13 @@ impl rpc::Service for Accounts {
             write_frame(output, b"", 32768).await?;
             write_frame(output, &serde_json::to_vec(&snapshot)?, 128 * 1024).await?;
             Ok(())
-        })
+        }))
     }
     fn admit<'a>(&'a self, peer: PublicKey) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move { self.admitted(peer).await })
     }
     fn handle<'a>(&'a self, peer: PublicKey, bytes: &'a [u8]) -> BoxFuture<'a, Result<Vec<u8>>> {
-        Box::pin(async move {
+        Box::pin(codeyard_db_core::cells::authorization::scope(async move {
             self.admitted(peer).await?;
             let request: Request = serde_json::from_slice(bytes)?;
             let reply = match request {
@@ -1344,7 +1344,7 @@ impl rpc::Service for Accounts {
             };
             self.admitted(peer).await?;
             Ok(serde_json::to_vec(&reply)?)
-        })
+        }))
     }
 }
 pub async fn listen(

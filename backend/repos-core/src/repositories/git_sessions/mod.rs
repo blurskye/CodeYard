@@ -222,22 +222,11 @@ impl ReceiveCredential {
         self,
         pool: &DbPool,
     ) -> Result<codeyard_db_core::cells::authorization::Credential> {
-        use codeyard_db_core::cells::authorization::{self, Query};
         let (id, proof) = self.proof()?;
-        authorization::authorize(pool, &proof)
+        codeyard_db_core::cells::authorization::admit(pool, &proof)
             .await?
-            .ok_or(CredentialRefusal::Credential)?;
-        authorization::lookup(
-            pool,
-            &Query {
-                kind: proof.kind(),
-                id: Some(id),
-                hash: Some(&proof.hash()),
-                write: false,
-            },
-        )
-        .await?
-        .ok_or_else(|| CredentialRefusal::Credential.into())
+            .filter(|credential| credential.answer.credential_id == Some(id))
+            .ok_or_else(|| CredentialRefusal::Credential.into())
     }
     pub async fn allows_workflows(self, pool: &DbPool) -> Result<bool> {
         use codeyard_db_core::cells::authorization::Authority;
@@ -318,9 +307,11 @@ impl ReceiveCredential {
             CredentialRefusal::Denied
         );
         // A token's App or fine-grained bounds, loaded once for both checks below.
+        let mut foreign_deadline = None;
         let (identity, bounds) = match self {
             Self::ForeignToken { .. } | Self::ForeignSsh { .. } => {
                 let credential = self.foreign(pool).await?;
+                foreign_deadline = Some(credential.deadline());
                 anyhow::ensure!(
                     !write || credential.answer.write,
                     CredentialRefusal::ReadOnly
@@ -496,6 +487,12 @@ impl ReceiveCredential {
         anyhow::ensure!(
             !write || !codeyard_db_repos::repository_exports::locked(pool, repo.id).await?,
             CredentialRefusal::Migration
+        );
+        anyhow::ensure!(
+            foreign_deadline.is_none_or(
+                |deadline| deadline.current(chrono::Utc::now(), std::time::Instant::now())
+            ),
+            CredentialRefusal::Credential
         );
         Ok((identity, level))
     }

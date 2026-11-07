@@ -494,9 +494,15 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     This still uses the old cache deadline, not a heartbeat snapshot. Removing the old
     `foreign_credentials` table and adding a cell-local identity-heartbeat table also
     requires updating `cells/ownership.rs`: its exhaustive test rejects both missing
-    tables and unclassified additions. This lane is forbidden to edit that file; the
-    owner must assign those catalog edits to stage 6 or grant a narrow exception.
-    Snapshot/RPC integration, cache removal and the optional content cache remain open.
+    tables and unclassified additions. The owner granted this lane a narrow exception:
+    classify the new cell-local heartbeat table and remove `foreign_credentials`,
+    including the exhaustive fixtures, without changing other ownership rules.
+    The replacement is now in progress: operation-owned proofs replace the table in
+    authorization queries, home answers select a credential and heartbeat together,
+    and HTTP/RPC/Git/SSH admission retains bounded proof deadlines. Both baselines
+    replace the cache table with `identity_heartbeat`; ownership changes only its Cell
+    classification. This batch is unchecked; fixtures, full wait-path review and tests
+    remain before acceptance. The optional content cache is not started.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
