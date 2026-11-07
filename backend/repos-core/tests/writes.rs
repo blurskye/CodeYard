@@ -116,6 +116,88 @@ async fn prepared_objects_are_pinned_without_publishing_and_apply_uses_old_value
     );
 }
 
+/// A write pack carries only what the voter lacks, so its size follows the change and
+/// not the repository's history.
+#[tokio::test]
+async fn write_packs_leave_out_history_the_voter_holds() {
+    let directory = tempfile::tempdir().unwrap();
+    let primary = directory.path().join("primary.git");
+    let follower = directory.path().join("follower.git");
+    let primary_repo = git2::Repository::init_bare(&primary).unwrap();
+    let author = git2::Signature::now("Writer", "writer@example.invalid").unwrap();
+    let tree_with = |content: &[u8]| {
+        let blob = primary_repo.blob(content).unwrap();
+        let mut builder = primary_repo.treebuilder(None).unwrap();
+        builder.insert("file", blob, 0o100644).unwrap();
+        primary_repo.find_tree(builder.write().unwrap()).unwrap()
+    };
+    let history = primary_repo
+        .commit(
+            Some("refs/heads/main"),
+            &author,
+            &author,
+            "history",
+            &tree_with(&[7u8; 64 * 1024]),
+            &[],
+        )
+        .unwrap();
+    let parent = primary_repo.find_commit(history).unwrap();
+    let proposed = primary_repo
+        .commit(
+            None,
+            &author,
+            &author,
+            "proposed",
+            &tree_with(b"change"),
+            &[&parent],
+        )
+        .unwrap()
+        .to_string();
+    git2::Repository::init_bare(&follower)
+        .unwrap()
+        .remote_anonymous(primary.to_str().unwrap())
+        .unwrap()
+        .fetch(&["refs/heads/main:refs/heads/main"], None, None)
+        .unwrap();
+    let have = voter_tips(&follower, limits()).await.unwrap();
+    assert_eq!(have, vec![history.to_string()]);
+    let mut record = write(&proposed);
+    record.changes[0].old_target = Some(history.to_string());
+    let pack_path = preparation_path(&follower, &record).unwrap();
+    tokio::fs::create_dir_all(&pack_path).await.unwrap();
+    let mut pack = tokio::fs::File::create(pack_path.join("objects.pack"))
+        .await
+        .unwrap();
+    let status = RepoStore::from_disk_path(primary.to_str().unwrap())
+        .replica_pack(
+            &write_targets(&record).unwrap(),
+            &have,
+            GitStreams {
+                input: &mut tokio::io::empty(),
+                output: &mut pack,
+                errors: &mut tokio::io::sink(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(status.success());
+    pack.sync_all().await.unwrap();
+    let bytes = tokio::fs::read(pack_path.join("objects.pack"))
+        .await
+        .unwrap();
+    // The proposed commit, its tree and its blob; nothing of the voter's history.
+    assert_eq!(u32::from_be_bytes(bytes[8..12].try_into().unwrap()), 3);
+    retain_write(&follower, &record, limits()).await.unwrap();
+    apply_refs(&follower, &record, limits().timeout)
+        .await
+        .unwrap();
+    let repo = git2::Repository::open_bare(&follower).unwrap();
+    assert_eq!(
+        repo.refname_to_id("refs/heads/main").unwrap().to_string(),
+        proposed
+    );
+}
+
 #[tokio::test]
 async fn a_non_commit_branch_target_cannot_receive_a_durable_vote() {
     let primary = tempfile::tempdir().unwrap();
@@ -193,6 +275,7 @@ fn voting_and_apply_are_storage_only_and_never_fail_over() {
         },
         Operation::WritePack {
             id: uuid::Uuid::new_v4().to_string(),
+            have: Vec::new(),
         },
     ] {
         assert!(codeyard_repos_rpc::repository::authorize_operation(

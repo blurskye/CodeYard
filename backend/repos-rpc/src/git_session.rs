@@ -23,8 +23,8 @@ use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 
 use codeyard_repos_core::git_transport::{
-    apply_refs, create_preparation, prepared_before, retain_write, write_targets, LimitedWriter,
-    WriteLimits,
+    apply_refs, create_preparation, prepared_before, retain_write, voter_tips, write_targets,
+    LimitedWriter, WriteLimits,
 };
 impl RpcHandler {
     pub(super) async fn prepare_write(
@@ -54,6 +54,7 @@ impl RpcHandler {
             .await?
             .context("repository disappeared")?;
             let repository = codeyard_repos_core::wire::repository_uuid(&repo.disk_path)?;
+            let have = voter_tips(path, limits).await?;
             let mut output = LimitedWriter::new(&mut pack, limits.pack_bytes);
             let (_, status) = self
                 .context
@@ -63,6 +64,7 @@ impl RpcHandler {
                         repository,
                         operation: Operation::WritePack {
                             id: write.id.clone(),
+                            have,
                         },
                         actor: None,
                         ci_run: None,
@@ -186,7 +188,10 @@ impl RpcHandler {
             let (admission, targets) = match &request.operation {
                 // The copy learns HEAD and every ref now. The pack covers exactly these
                 // refs, so a copy never points a ref at objects it does not have.
-                Operation::WritePack { id } => {
+                Operation::WritePack { id, have } => {
+                    if have.len() > codeyard_git::repository::MAX_MIRROR_REFS || have.iter().any(|tip| !codeyard_git::is_full_commit_id(tip)) {
+                        return Err(codeyard_repos_core::wire::invalid("invalid write pack tips"));
+                    }
                     let write = codeyard_db_cluster::cluster::writes::load_write(self.context.database()?, id).await.map_err(RepoError::from)?.ok_or_else(unavailable)?;
                     (Value::Null, write_targets(&write).map_err(RepoError::from)?)
                 }
@@ -298,7 +303,7 @@ impl RpcHandler {
                 Operation::ReplicaPack { have, .. } => {
                     store.replica_pack(&targets, &have, streams).await
                 }
-                Operation::WritePack { .. } => {
+                Operation::WritePack { have, .. } => {
                     async {
                         let limits = WriteLimits::load(self.context.database()?).await?;
                         let mut bounded = LimitedWriter::new(streams.output, limits.pack_bytes);
@@ -306,7 +311,7 @@ impl RpcHandler {
                             limits.timeout,
                             store.replica_pack(
                                 &targets,
-                                &[],
+                                &have,
                                 GitStreams {
                                     input: streams.input,
                                     output: &mut bounded,

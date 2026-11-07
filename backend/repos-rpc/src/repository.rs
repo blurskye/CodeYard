@@ -688,7 +688,7 @@ impl RpcHandler {
         let id = match &request.operation {
             Operation::PrepareWrite { id }
             | Operation::ApplyWrite { id }
-            | Operation::WritePack { id } => id,
+            | Operation::WritePack { id, .. } => id,
             _ => return Err(invalid("write operation required")),
         };
         journal::validate_id(id).map_err(|_| invalid("invalid write id"))?;

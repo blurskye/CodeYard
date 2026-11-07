@@ -616,8 +616,12 @@ pub enum Operation {
     ApplyWrite {
         id: String,
     },
+    /// A voter asks the write's primary for the proposed objects. `have` lists the tips the
+    /// voter holds at the write's base version; their history stays out of the pack.
     WritePack {
         id: String,
+        #[serde(default)]
+        have: Vec<String>,
     },
 }
 

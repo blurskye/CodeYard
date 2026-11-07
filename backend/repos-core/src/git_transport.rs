@@ -308,6 +308,22 @@ pub fn write_targets(write: &WriteRecord) -> Result<Vec<String>> {
     Ok(targets)
 }
 
+/// The distinct commits at a voter's refs. A voter votes only at the write's base version,
+/// so it already holds their history and a write pack leaves it out, as a fetch does.
+pub async fn voter_tips(path: &Path, limits: WriteLimits) -> Result<Vec<String>> {
+    let path = path.to_owned();
+    let mut tips: Vec<String> =
+        git_process::blocking_until(std::time::Instant::now() + limits.timeout, move || {
+            codeyard_git::repository::list_mirror_refs(&path)
+        })
+        .await?
+        .into_values()
+        .collect();
+    tips.sort();
+    tips.dedup();
+    Ok(tips)
+}
+
 pub fn preparation_path(path: &Path, write: &WriteRecord) -> Result<PathBuf> {
     codeyard_db_cluster::cluster::writes::validate_id(&write.id)?;
     Ok(path.join("codeyard-writes").join(&write.id))
@@ -423,7 +439,8 @@ fn branch_namespace_rename(changes: &[RefChange]) -> Option<(&RefChange, &RefCha
     .then_some((old, new))
 }
 
-/// Strictly index the complete retained pack before pinning any proposed object.
+/// Strictly index the retained pack before pinning any proposed object. Strict indexing
+/// also checks that history left out of the pack is present here.
 pub async fn retain_write(path: &Path, write: &WriteRecord, limits: WriteLimits) -> Result<()> {
     let directory = preparation_path(path, write)?;
     let mut input = tokio::fs::File::open(directory.join("objects.pack")).await?;
@@ -658,6 +675,7 @@ impl NodeContext {
             retain_write(path, write, limits).await?;
             return self.vote_prepared_write(write).await;
         }
+        let have = voter_tips(path, limits).await?;
         let mut pack = tokio::fs::File::create(directory.join("objects.pack")).await?;
         let store =
             RepoStore::from_disk_path(path.to_str().context("repository path is not text")?);
@@ -665,7 +683,7 @@ impl NodeContext {
         let status = store
             .replica_pack(
                 &write_targets(write)?,
-                &[],
+                &have,
                 GitStreams {
                     input: &mut tokio::io::empty(),
                     output: &mut output,
