@@ -59,7 +59,8 @@ CREATE TABLE account_moves (
     account_kind TEXT NOT NULL CHECK(account_kind IN ('user','organization')),
     account_id INTEGER NOT NULL CHECK(typeof(account_id)='integer' AND account_id>0),
     target_cell INTEGER NOT NULL CHECK(typeof(target_cell)='integer' AND target_cell BETWEEN 0 AND 65535),
-    state TEXT NOT NULL CHECK(state IN ('pending','frozen','switched','receiving')),
+    state TEXT NOT NULL CHECK(state IN ('pending','frozen','switched','receiving','released')),
+    repository_paths TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(repository_paths) AND json_type(repository_paths)='array' AND json_array_length(repository_paths)<=10000 AND length(CAST(repository_paths AS BLOB))<=16777216),
     started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     expires_at TEXT NOT NULL,
     PRIMARY KEY(account_kind,account_id)

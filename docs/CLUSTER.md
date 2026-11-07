@@ -824,7 +824,11 @@ transaction with deferred foreign keys; the receiving copy cannot accept writes 
 the source has switched. A failed load rolls back the target and unfreezes the source;
 a process loss before switching leaves the source freeze to expire (`--freeze-seconds`,
 default 600). Rerun after a directory-switch failure to finish publishing the new homes.
-After the route-cache wait, release retains source account/repository stubs.
+After the route-cache wait, release retains source account/repository stubs. The move
+row keeps the source Git paths until cleanup finishes; rerunning after a cleanup failure
+only resumes deletion, never overwrites the active destination. A completed command may
+also be repeated safely. One move supports at most 10,000 repositories and 16 MiB of
+retained cleanup paths.
 
 Manual CLI failure/retry and HTTP checks pass for preserved issue/pull IDs and numbers,
 completed CI history and package/version metadata. This is not yet a generally usable

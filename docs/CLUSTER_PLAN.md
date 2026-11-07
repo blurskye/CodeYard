@@ -546,6 +546,11 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     remain separate, incomplete acceptance. This extension passes workspace d8cac32f,
     Clippy 84e24a5d and WASM 8e8f7852. Runtime d800a1af passes all 197 database tests,
     239 cluster tests and 188 selected library tests without skips.
+    The next restart-acceptance batch retains source Git cleanup paths in the released
+    move row until deletion finishes. CLI failure/retry after row release and a repeated
+    successful command must preserve destination-only commits and unrelated source
+    directories. Paths are capped at 10,000 repositories and 16 MiB in both baselines.
+    This batch is written; source checks and runtime are pending.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

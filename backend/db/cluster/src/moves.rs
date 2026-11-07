@@ -18,6 +18,8 @@ type Tx = Transaction<'static, Postgres>;
 const MAX_REFERENCED: usize = 100_000;
 /// How long the freeze must still last when the copy commits.
 const FREEZE_MARGIN_SECONDS: i64 = 30;
+/// Also enforced on the retained cleanup paths in both baseline schemas.
+const MAX_REPOSITORIES: usize = 10_000;
 
 #[derive(Clone, Copy, Debug)]
 pub struct Account {
@@ -59,6 +61,7 @@ pub enum State {
     Pending,
     Frozen,
     Switched,
+    Released,
 }
 
 fn state(value: &str) -> Result<State> {
@@ -66,6 +69,7 @@ fn state(value: &str) -> Result<State> {
         "pending" => State::Pending,
         "frozen" => State::Frozen,
         "switched" => State::Switched,
+        "released" => State::Released,
         _ => bail!("Invalid move state"),
     })
 }
@@ -123,6 +127,20 @@ pub async fn begin(pool: &PgPool, account: Account, target: i32, wait: Duration)
             return Ok(value);
         }
     } else {
+        // A successful move may be repeated after its final reply was lost. A stub
+        // pointing at this destination proves completion, not a new move to start.
+        let released: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM {} WHERE id=$1 AND is_stub AND home_cell=$2)",
+            account.table()
+        ))
+        .bind(account.id)
+        .bind(target)
+        .fetch_one(&mut *tx)
+        .await?;
+        if released {
+            tx.commit().await?;
+            return Ok(State::Released);
+        }
         let native: bool = sqlx::query_scalar(&format!(
             "SELECT EXISTS(SELECT 1 FROM {} WHERE id=$1 AND NOT is_stub AND home_cell=$2)",
             account.table()
@@ -209,7 +227,7 @@ pub async fn freeze(pool: &PgPool, account: Account, hold: Duration, wait: Durat
     .await?;
     match current.as_deref().map(state).transpose()? {
         None => bail!("The move was not started"),
-        Some(State::Switched) => return Ok(tx.commit().await?),
+        Some(State::Switched | State::Released) => return Ok(tx.commit().await?),
         Some(State::Pending | State::Frozen) => {
             // The exclusive move-row lock has now drained every writer admitted since
             // begin. A CI claim racing the first check either finished before this check
@@ -251,6 +269,7 @@ pub async fn freeze(pool: &PgPool, account: Account, hold: Duration, wait: Durat
     .await
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
 pub struct Repository {
     pub id: i64,
     pub disk_path: String,
@@ -259,13 +278,28 @@ pub struct Repository {
 /// The account's repositories in this cell. Repositories placed on cluster storage nodes
 /// cannot move yet.
 pub async fn repositories(pool: &PgPool, account: Account) -> Result<Vec<Repository>> {
+    let released: Option<String> = sqlx::query_scalar(
+        "SELECT repository_paths::text FROM account_moves WHERE account_kind=$1 AND account_id=$2 AND state='released'",
+    )
+    .bind(account.kind.as_str())
+    .bind(account.id)
+    .fetch_optional(pool)
+    .await?;
+    if let Some(paths) = released {
+        return Ok(serde_json::from_str(&paths)?);
+    }
     let rows: Vec<(i64, String, bool)> = sqlx::query_as(&format!(
-        "SELECT id,disk_path,storage_node_id IS NOT NULL FROM repositories WHERE NOT is_stub AND {}=$1 ORDER BY id",
-        account.owner_column()
+        "SELECT id,disk_path,storage_node_id IS NOT NULL FROM repositories WHERE NOT is_stub AND {}=$1 ORDER BY id LIMIT {}",
+        account.owner_column(),
+        MAX_REPOSITORIES + 1
     ))
     .bind(account.id)
     .fetch_all(pool)
     .await?;
+    ensure!(
+        rows.len() <= MAX_REPOSITORIES,
+        "The account has too many repositories to move in one operation"
+    );
     ensure!(
         rows.iter().all(|(_, _, placed)| !placed),
         "The account has repositories on cluster storage nodes; accounts with placed repositories cannot move yet"
@@ -1081,6 +1115,10 @@ pub async fn release(pool: &PgPool, account: Account) -> Result<()> {
         ensure!(released, "The move was not started");
         return Ok(());
     };
+    if state(&value)? == State::Released {
+        tx.commit().await?;
+        return Ok(());
+    }
     ensure!(
         state(&value)? == State::Switched,
         "The account has not switched to the target cell yet"
@@ -1114,13 +1152,45 @@ pub async fn release(pool: &PgPool, account: Account) -> Result<()> {
             key.parent
         );
     }
-    clear(&mut tx, &catalog.tables, account, target).await?;
-    sqlx::query("DELETE FROM account_moves WHERE account_kind=$1 AND account_id=$2")
+    // Keep source paths in the same transaction that clears the rows. The CLI can
+    // then resume filesystem cleanup after release, even though the stubs have no path.
+    let paths: Vec<(i64, String)> = sqlx::query_as(&format!(
+        "SELECT id,disk_path FROM repositories WHERE NOT is_stub AND {}=$1 ORDER BY id LIMIT {}",
+        account.owner_column(),
+        MAX_REPOSITORIES + 1
+    ))
+    .bind(account.id)
+    .fetch_all(&mut *tx)
+    .await?;
+    ensure!(
+        paths.len() <= MAX_REPOSITORIES,
+        "The account has too many repositories to move in one operation"
+    );
+    let paths: Vec<Repository> = paths
+        .into_iter()
+        .map(|(id, disk_path)| Repository { id, disk_path })
+        .collect();
+    sqlx::query("UPDATE account_moves SET state='released',repository_paths=$3::jsonb WHERE account_kind=$1 AND account_id=$2")
         .bind(account.kind.as_str())
         .bind(account.id)
+        .bind(serde_json::to_string(&paths)?)
         .execute(&mut *tx)
         .await?;
+    clear(&mut tx, &catalog.tables, account, target).await?;
     tx.commit().await?;
+    Ok(())
+}
+
+/// The CLI calls this only after deleting every retained source Git directory. Keep
+/// the release record on any cleanup failure, so another invocation can finish it.
+pub async fn finish(pool: &PgPool, account: Account) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM account_moves WHERE account_kind=$1 AND account_id=$2 AND state='released'",
+    )
+    .bind(account.kind.as_str())
+    .bind(account.id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

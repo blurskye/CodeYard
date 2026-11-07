@@ -648,10 +648,12 @@ async fn move_account(
             })?
             .client(state)?;
     let wait = std::time::Duration::from_secs(arguments.wait_seconds);
-    let reached = moves::begin(source, account, target_cell, wait).await?;
+    // Reject unsupported placement or an oversized cleanup set before asking CI to
+    // drain. The frozen row copy later verifies that this repository set still matches.
     let repositories = moves::repositories(source, account).await?;
+    let reached = moves::begin(source, account, target_cell, wait).await?;
     let mut copied = None;
-    if reached != moves::State::Switched {
+    if matches!(reached, moves::State::Pending | moves::State::Frozen) {
         if let Err(error) = moves::check_target(target, account, source_cell).await {
             moves::cancel(source, account).await?;
             return Err(error);
@@ -713,33 +715,38 @@ async fn move_account(
             }
         }
     }
-    moves::activate(source, target, account).await?;
-    let objects =
-        std::iter::once(Object { kind, id }).chain(repositories.iter().map(|repository| Object {
-            kind: ObjectKind::Repository,
-            id: repository.id,
-        }));
-    for object in objects {
-        let reply = directory
-            .request(&codeyard_cells_router::directory::Request::MoveHome { object, to })
-            .await?;
-        anyhow::ensure!(
-            matches!(reply, codeyard_cells_router::directory::Reply::Done),
-            "The directory returned an invalid reply"
-        );
+    if reached != moves::State::Released {
+        moves::activate(source, target, account).await?;
+        let objects =
+            std::iter::once(Object { kind, id }).chain(repositories.iter().map(|repository| {
+                Object {
+                    kind: ObjectKind::Repository,
+                    id: repository.id,
+                }
+            }));
+        for object in objects {
+            let reply = directory
+                .request(&codeyard_cells_router::directory::Request::MoveHome { object, to })
+                .await?;
+            anyhow::ensure!(
+                matches!(reply, codeyard_cells_router::directory::Reply::Done),
+                "The directory returned an invalid reply"
+            );
+        }
+        // Routers may still send the account here until their cached routes expire.
+        tokio::time::sleep(std::time::Duration::from_secs(
+            arguments.route_cache_seconds + 5,
+        ))
+        .await;
+        moves::release(source, account).await?;
     }
-    // Routers may still send the account here until their cached routes expire.
-    tokio::time::sleep(std::time::Duration::from_secs(
-        arguments.route_cache_seconds + 5,
-    ))
-    .await;
-    moves::release(source, account).await?;
     for repository in &repositories {
         let (from, _) = repository_paths(repos_path, &arguments.target_repositories, repository)?;
         if tokio::fs::try_exists(&from).await? {
             tokio::fs::remove_dir_all(&from).await?;
         }
     }
+    moves::finish(source, account).await?;
     println!(
         "{}",
         serde_json::json!({

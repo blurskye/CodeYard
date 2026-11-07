@@ -348,6 +348,64 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
     )
     .await
     .unwrap();
+    // Fail filesystem cleanup after the source rows have been released. Retain the
+    // original directory aside and put a non-directory at its path, so remove_dir_all
+    // fails deterministically even when the test runs with privileged filesystem access.
+    let retained_source = source_root.join("retained-source.git");
+    std::fs::rename(&disk, &retained_source).unwrap();
+    std::fs::write(&disk, b"injected cleanup failure").unwrap();
+    let cleanup_failure = tokio::time::timeout(Duration::from_secs(90), run().output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!cleanup_failure.status.success());
+    let phase: String = sqlx::query_scalar(
+        "SELECT state FROM account_moves WHERE account_kind='user' AND account_id=$1",
+    )
+    .bind(alice.id)
+    .fetch_one(&source.raw)
+    .await
+    .unwrap();
+    assert_eq!(
+        phase,
+        "released",
+        "{}",
+        String::from_utf8_lossy(&cleanup_failure.stderr)
+    );
+    let source_stub: bool = sqlx::query_scalar("SELECT is_stub FROM users WHERE id=$1")
+        .bind(alice.id)
+        .fetch_one(&source.raw)
+        .await
+        .unwrap();
+    assert!(source_stub);
+    for object in objects {
+        assert_eq!(
+            directory.object_home(object).await.unwrap(),
+            Some(Prefix::new(2))
+        );
+    }
+    // The destination continues taking writes during cleanup and must never be copied
+    // again, including when the final successful reply is lost and the CLI repeats.
+    let target_git = git2::Repository::open_bare(&destination).unwrap();
+    let parent = target_git.find_commit(oid).unwrap();
+    let signature = git2::Signature::now("Alice", "alice@example.test").unwrap();
+    let final_oid = target_git
+        .commit(
+            Some("refs/heads/main"),
+            &signature,
+            &signature,
+            "After release",
+            &parent.tree().unwrap(),
+            &[&parent],
+        )
+        .unwrap();
+    drop(parent);
+    drop(target_git);
+    std::fs::remove_file(&disk).unwrap();
+    std::fs::rename(&retained_source, &disk).unwrap();
+    let unrelated = source_root.join("unrelated.git");
+    std::fs::create_dir(&unrelated).unwrap();
+    std::fs::write(unrelated.join("keep"), b"not moved").unwrap();
     let moved = tokio::time::timeout(Duration::from_secs(90), run().output())
         .await
         .unwrap()
@@ -366,6 +424,24 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
     assert!(
         !disk.exists(),
         "only the switched and released source Git copy is removed"
+    );
+    assert_eq!(std::fs::read(unrelated.join("keep")).unwrap(), b"not moved");
+    let outstanding: i64 = sqlx::query_scalar("SELECT count(*) FROM account_moves")
+        .fetch_one(&source.raw)
+        .await
+        .unwrap();
+    assert_eq!(
+        outstanding, 0,
+        "cleanup must finish before forgetting the move"
+    );
+    let repeated = tokio::time::timeout(Duration::from_secs(30), run().output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        repeated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&repeated.stderr)
     );
     let destination = target_root.join(disk.file_name().unwrap());
     let clone = root.path().join("clone");
@@ -392,7 +468,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
             .head()
             .unwrap()
             .target(),
-        Some(oid)
+        Some(final_oid)
     );
     codeyard_db_cluster::node_config::upsert_node_configuration(&target.pool, "public", true)
         .await

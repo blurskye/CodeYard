@@ -4638,7 +4638,8 @@ CREATE TABLE account_moves (
     account_kind TEXT NOT NULL CHECK(account_kind IN ('user','organization')),
     account_id BIGINT NOT NULL CHECK(account_id>0),
     target_cell INTEGER NOT NULL CHECK(target_cell BETWEEN 0 AND 65535),
-    state TEXT NOT NULL CHECK(state IN ('pending','frozen','switched','receiving')),
+    state TEXT NOT NULL CHECK(state IN ('pending','frozen','switched','receiving','released')),
+    repository_paths JSONB NOT NULL DEFAULT '[]' CHECK(jsonb_typeof(repository_paths)='array' AND jsonb_array_length(repository_paths)<=10000 AND octet_length(repository_paths::text)<=16777216),
     started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     expires_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY(account_kind,account_id)
@@ -4710,7 +4711,7 @@ BEGIN
             CONTINUE WHEN account.id IS NULL;
             SELECT m.state,m.expires_at INTO moving FROM account_moves m
                 WHERE m.account_kind=account.kind AND m.account_id=account.id FOR KEY SHARE;
-            IF FOUND AND (moving.state IN ('switched','receiving')
+            IF FOUND AND (moving.state IN ('switched','receiving','released')
                 OR (moving.state='frozen' AND moving.expires_at>clock_timestamp())) THEN
                 RAISE EXCEPTION 'This account is moving to another cell; try again in a few minutes'
                     USING ERRCODE='55000', CONSTRAINT='account_moving';

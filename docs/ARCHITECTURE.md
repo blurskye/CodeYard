@@ -1093,8 +1093,10 @@ copies its repositories with Git and its rows in one target transaction with def
 foreign keys, switches the directory, waits out the routers' route cache, and turns the
 source rows into stubs (`backend/db/cluster/src/moves.rs`). A receiving copy stays
 write-frozen until its source has durably switched; retries cannot replace an active
-target. The CLI takes the same move lease in both cells and checks the target before
-copying Git, so a refused retry preserves its commits as well as its rows. The CLI
+target. The source retains a released move row with bounded cleanup paths until its
+Git directories are removed, so a crash after row release resumes cleanup rather than
+recopying the destination. The CLI takes the same move lease in both cells and checks
+the target before copying Git, so a refused retry preserves its commits as well as its rows. The CLI
 retains the existing Git publication leases through the copy and switch
 so an earlier admitted push finishes before the snapshot. A source freeze lifts by itself when it
 runs out, and a failed move before the switch leaves the source serving. Ids do not change, and the source copy stays until the move is

@@ -160,6 +160,26 @@ async fn a_user_moves_with_its_repositories_and_a_racing_writer_lands_before_the
     refused_as_moving(comment(source, first, bob).await.unwrap_err());
     moves::release(source, account).await.unwrap();
     moves::release(source, account).await.unwrap();
+    assert_eq!(
+        moves::begin(source, account, 2, WAIT).await.unwrap(),
+        State::Released
+    );
+    assert!(moves::begin(source, account, 3, WAIT).await.is_err());
+    let cleanup = moves::repositories(source, account).await.unwrap();
+    assert_eq!(cleanup.len(), 1);
+    assert_eq!(cleanup[0].id, project);
+    assert!(!cleanup[0].disk_path.is_empty());
+    moves::finish(source, account).await.unwrap();
+    moves::finish(source, account).await.unwrap();
+    assert_eq!(
+        moves::begin(source, account, 2, WAIT).await.unwrap(),
+        State::Released
+    );
+    assert!(moves::repositories(source, account)
+        .await
+        .unwrap()
+        .is_empty());
+    assert!(moves::begin(source, account, 3, WAIT).await.is_err());
 
     let stub =
         "SELECT count(*) FROM users WHERE id=$1 AND is_stub AND home_cell=2 AND email IS NULL";
