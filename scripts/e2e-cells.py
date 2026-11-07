@@ -470,7 +470,11 @@ def discovery_across_cells(deployment, client):
         client.api(f"repos/{repository}/dependency-graph/snapshots", "--method", "POST", "--input", "-",
                    input=json.dumps(snapshot), who=who)
     depend("bob/beacon-one", "bob")
-    # A private dependent is never listed, not even to its owner.
+    # A private repository's graph is off by default. Enable it through the public API
+    # before testing that a private dependent is never listed, not even to its owner.
+    enabled = client.gh("api", "repos/alice/beacon-secret/vulnerability-alerts",
+                        "--method", "PUT", "--include").stdout
+    assert "204" in enabled.splitlines()[0], enabled
     depend("alice/beacon-secret", "alice")
     for who in ("visitor", "alice"):
         eventually(page(who, "/alice/beacon-zero/dependency-graph", "--contains", "Used by 1",

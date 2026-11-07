@@ -573,10 +573,17 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     the cell prefix; that check and a profile 503 for signed-out visitors are fixed, and the
     SQLite round then passes 55 checks with 6 skipped (job
     51adf28cea65421eb9fe79b685ad5f44; the builder has no delegated cgroup for CI runs).
-    The PgBouncer, replica, cluster, quorum and cells rounds have not run since.
-    Each now has its own `scripts/test-cell-e2e-<round>.sh` entry point with a
-    25-minute timeout; `scripts/test-cell-e2e.sh` runs those five rounds without stopping
-    at the first failure. Runtime 52f1aef2 is running these rounds after move acceptance.
+    Each remaining round has its own `scripts/test-cell-e2e-<round>.sh` entry point
+    with a 25-minute timeout; `scripts/test-cell-e2e.sh` runs all five, or named rounds,
+    without stopping at the first failure. Runtime 52f1aef2 finishes without stalls:
+    PgBouncer 17, replica 18 and quorum 20 pass without skips. Cluster has 46 passes,
+    five failures and five skips: web2 overflows its debug worker stack, CI needs a
+    delegated cgroup, and the editor-survival write gets 503. Cells reaches global
+    discovery and fails because its private dependency graph was not enabled. The
+    fixture now enables it through REST without weakening the privacy assertions, and
+    the debug cluster runner uses the integration tests' 32 MiB worker-stack budget.
+    Checks c2cd722d (workspace), 9f54af44 (Clippy) and 558d6cba (WASM) pass;
+    runtime 4edbb000 retries cluster and cells.
 
     Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
