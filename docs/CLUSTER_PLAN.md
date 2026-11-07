@@ -506,8 +506,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     is running the move, database and cluster tests. The next source batch keeps a
     receiving copy write-frozen until its source has switched, serializes copy against
     cancellation/renewal, refuses discarding an active target, and holds the existing Git
-    publication leases across the copy and switch. HTTP freeze/cancel acceptance is added;
-    this follow-up is not yet checked. Manual-move acceptance remains incomplete.
+    publication leases across the copy and switch. HTTP freeze/cancel and CLI injected
+    load-failure/retry with Git clone and preserved issue IDs are added. This follow-up
+    passes workspace 841f54d9, Clippy 501107cb and WASM 4349aec7; its runtime is pending.
+    Manual-move acceptance remains incomplete.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

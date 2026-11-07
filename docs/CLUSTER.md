@@ -804,6 +804,27 @@ another public repository's root `package.json`. Dependabot alerts need no share
 give every cell the same OSV source, and each cell matches its own repositories when a
 new advisory arrives.
 
+### Account moves
+
+`codeyard cell move --kind user --name alice --target-database <url>
+--target-repositories <directory>` is the manual PostgreSQL move command; `--kind
+organization` moves an organization. Run it with the source cell's normal database,
+repository root and node key, and `DIRECTORY_ADDRESS` / `DIRECTORY_PUBLIC_KEY`. Both
+repository roots must be accessible on that machine and must differ. The CLI serializes
+moves from that source and drains its repositories' existing Git publication leases.
+
+Writes are frozen inside database transactions. The row copy commits in one target
+transaction with deferred foreign keys; the receiving copy cannot accept writes until
+the source has switched. A failed load rolls back the target and unfreezes the source;
+a process loss before switching leaves the source freeze to expire (`--freeze-seconds`,
+default 600). Rerun after a directory-switch failure to finish publishing the new homes.
+After the route-cache wait, release retains source account/repository stubs.
+
+This is not yet a generally usable move: existing credential prefixes do not follow the
+account, cluster-placed Git and cross-region object bytes are not handled, and full
+restart, CI/package and client acceptance is pending. Repository transfers and automatic
+region moves are not implemented. See [the acceptance status](CLUSTER_PLAN.md).
+
 ### Regions
 
 Each cell has one region, and a router has `CELL_REGION`. A signup through a router goes

@@ -1090,7 +1090,10 @@ the way `codeyard db copy` already walks the catalog. `codeyard cell move` freez
 account (reads work; a per-account trigger refuses writes, also from background workers),
 copies its repositories with Git and its rows in one target transaction with deferred
 foreign keys, switches the directory, waits out the routers' route cache, and turns the
-source rows into stubs (`backend/db/cluster/src/moves.rs`). A freeze lifts by itself when it
+source rows into stubs (`backend/db/cluster/src/moves.rs`). A receiving copy stays
+write-frozen until its source has durably switched; retries cannot replace an active
+target. The CLI retains the existing Git publication leases through the copy and switch
+so an earlier admitted push finishes before the snapshot. A source freeze lifts by itself when it
 runs out, and a failed move before the switch leaves the source serving. Ids do not change, and the source copy stays until the move is
 checked. Why: rebalancing matters only once cells fill unevenly, and logical replication
 cannot do it, since row filters see only a table's own columns. Cost: ownership rules for
