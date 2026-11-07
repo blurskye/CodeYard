@@ -107,11 +107,14 @@ async fn remote_stars(
     wanted: usize,
 ) -> Result<Option<codeyard_db_core::cells::pointers::PageResult>, DiscoveryReadError> {
     let actor = ctx.user.as_ref().map(|user| ctx.database_actor(user.id));
+    // A signed-out visitor can still hold the anonymous session of a sign-in page; it is
+    // not a credential.
+    let credential = ctx.user.as_ref().and(ctx.session_id.as_deref());
     codeyard_app::api_shared::github::pointers::stars(
         &ctx.state.pool,
         target,
         actor.as_ref(),
-        ctx.session_id.as_deref(),
+        credential,
         codeyard_db_core::cells::pointers::List::BrowserStars,
         vec![
             ("username".into(), target.username.clone()),
