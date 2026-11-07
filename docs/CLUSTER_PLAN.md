@@ -495,8 +495,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     the target, source Git directories removed). A failed step before the switch cancels
     the move and removes the target copy. Not written: repository transfer between
     accounts in different cells (item 6), the automatic region move, the cross-region
-    object copy, moves of repositories placed on cluster storage nodes, and turning a
-    refused write into a 503 with Retry-After (it is a 500 today). Owner notes: tokens and
+    object copy and moves of repositories placed on cluster storage nodes. The shared
+    GitHub 503 response now gives retry guidance and Retry-After; the freeze/cancel HTTP
+    test asserts both, preserved reads and unauthenticated denial. This follow-up is
+    unchecked; native and Git retry responses remain unverified. Owner notes: tokens and
     sessions keep their source-cell prefix, so the router sends them to the old cell until
     they are issued again; stubs in third cells keep the old home until their next refresh;
     a push already running when the freeze starts fails the move at the second ref check

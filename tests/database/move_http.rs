@@ -32,6 +32,11 @@ async fn request(
         .await
         .unwrap();
     let status = response.status();
+    if status == StatusCode::SERVICE_UNAVAILABLE {
+        assert_eq!(response.headers().get("retry-after").unwrap(), "5");
+    } else if status.is_success() {
+        assert!(response.headers().get("retry-after").is_none());
+    }
     let bytes = to_bytes(response.into_body(), 1 << 20).await.unwrap();
     (status, serde_json::from_slice(&bytes).unwrap())
 }
@@ -125,6 +130,18 @@ async fn http_writes_obey_the_freeze_and_resume_after_a_cancel() {
     let (status, refusal) =
         request(&app, &token, "POST", path, json!({"title":"Must not land"})).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refusal}");
+    assert_eq!(refusal["status"], "503");
+    assert_eq!(
+        refusal["message"],
+        "Service unavailable. Check the result before retrying the request."
+    );
+    assert_eq!(
+        refusal["documentation_url"],
+        "https://docs.github.com/en/rest"
+    );
+    // An unauthenticated caller must not learn whether the account is frozen.
+    let (status, _) = request(&app, "invalid", "POST", path, json!({"title":"Denied"})).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
     let (status, issues) = request(&app, &token, "GET", path, Value::Null).await;
     assert_eq!(status, StatusCode::OK, "{issues}");
     assert_eq!(issues.as_array().unwrap().len(), 1, "{issues}");

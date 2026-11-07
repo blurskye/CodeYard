@@ -56,7 +56,10 @@ impl Error {
 
     pub fn unavailable<E: std::fmt::Debug>(error: E) -> Self {
         tracing::warn!(?error, "GitHub API dependency unavailable");
-        Self::new(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable")
+        Self::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Service unavailable. Check the result before retrying the request.",
+        )
     }
 
     pub fn invalid(message: impl Into<String>) -> Self {
@@ -98,12 +101,67 @@ impl Error {
         if self.0 == StatusCode::CONFLICT {
             body["metadata"] = Value::Null;
         }
-        (self.0, Json(body)).into_response()
+        let mut response = (self.0, Json(body)).into_response();
+        // A frozen account is refused by the writing transaction, like other temporary
+        // dependency failures. Give clients a bounded retry hint without exposing SQL
+        // diagnostics or claiming that an uncertain write was rolled back.
+        if self.0 == StatusCode::SERVICE_UNAVAILABLE {
+            response.headers_mut().insert(
+                axum::http::header::RETRY_AFTER,
+                axum::http::HeaderValue::from_static("5"),
+            );
+        }
+        response
     }
 }
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         self.response_with_docs("https://docs.github.com/en/rest")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn unavailable_responses_give_retry_guidance_without_driver_details() {
+        let response = Error::unavailable("private database diagnostic").into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "5");
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let body: Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(body["status"], "503");
+        assert_eq!(
+            body["message"],
+            "Service unavailable. Check the result before retrying the request."
+        );
+        assert!(!String::from_utf8(bytes.to_vec())
+            .unwrap()
+            .contains("private"));
+    }
+
+    #[test]
+    fn retry_hint_is_limited_to_temporary_unavailability() {
+        for status in [
+            StatusCode::UNAUTHORIZED,
+            StatusCode::FORBIDDEN,
+            StatusCode::NOT_FOUND,
+            StatusCode::CONFLICT,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            StatusCode::INTERNAL_SERVER_ERROR,
+        ] {
+            let response = Error::new(status, "refused").into_response();
+            assert_eq!(response.status(), status);
+            assert!(!response
+                .headers()
+                .contains_key(axum::http::header::RETRY_AFTER));
+        }
+        let response = Error::new(StatusCode::SERVICE_UNAVAILABLE, "temporarily unavailable")
+            .response_with_docs("https://docs.github.com/en/rest/issues/issues");
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "5");
     }
 }
