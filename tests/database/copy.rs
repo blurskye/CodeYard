@@ -787,6 +787,59 @@ async fn nul_text_is_refused_before_postgres_is_written() {
 }
 
 #[tokio::test]
+async fn copy_cli_refuses_an_unfinished_account_move_before_opening_sqlite() {
+    let _turn = TURNS.lock().await;
+    let mut source = PostgresDatabase::new().await;
+    let user = codeyard_db_identity::users::accounts::create_user(&source.pool, "moving", None)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO account_moves(account_kind,account_id,target_cell,state,expires_at) VALUES('user',$1,1,'frozen',clock_timestamp()+INTERVAL '1 hour')")
+        .bind(user.id).execute(&source.raw).await.unwrap();
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("copy.sqlite");
+    let target = format!("sqlite://{}", path.display());
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_codeyard"));
+    command
+        .args(["db", "copy"])
+        .env("COPY_FROM_DATABASE_URL", source.connection_url())
+        .env("COPY_TO_DATABASE_URL", &target)
+        .env_remove("DATABASE_URL")
+        .kill_on_drop(true);
+    let refused = tokio::time::timeout(std::time::Duration::from_secs(30), command.output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!refused.status.success());
+    assert!(
+        String::from_utf8_lossy(&refused.stderr).contains("account move"),
+        "{}",
+        String::from_utf8_lossy(&refused.stderr)
+    );
+    assert!(
+        !path.exists(),
+        "an in-flight move must not become writable through SQLite"
+    );
+    assert!(codeyard_db_cluster::moves::cancel(
+        &source.raw,
+        codeyard_db_cluster::moves::Account::new(codeyard_model::cells::ObjectKind::User, user.id)
+            .unwrap()
+    )
+    .await
+    .unwrap());
+    let copied = tokio::time::timeout(std::time::Duration::from_secs(30), command.output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        copied.status.success(),
+        "{}",
+        String::from_utf8_lossy(&copied.stderr)
+    );
+    assert!(path.exists());
+    source.finish().await;
+}
+
+#[tokio::test]
 async fn cli_reads_urls_from_environment_and_refuses_passwords_in_arguments() {
     let _turn = TURNS.lock().await;
     let source = NativeDatabase::new().await;

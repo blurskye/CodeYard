@@ -835,8 +835,8 @@ mod tests {
         }
         for (table, _) in TABLES {
             assert!(
-                postgres.contains_key(*table),
-                "{table} is not in the schema"
+                postgres.contains_key(*table) && sqlite.contains_key(*table),
+                "{table} must be in both baseline catalogues for database copy"
             );
         }
     }

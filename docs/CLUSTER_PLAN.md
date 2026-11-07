@@ -426,7 +426,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       repository_security_replies (report_id>repository_security_reports); team_ancestors
       (team_id>teams); team_invitations (team_id>teams); team_memberships (team_id>teams);
       webhook_deliveries (webhook_id>webhooks).
-    - **Cell (never moves), 42:** actions_oidc_key; actions_settings; anonymous_sessions;
+    - **Cell (never moves), 43:** account_moves; actions_oidc_key; actions_settings; anonymous_sessions;
       auth_login_limits; cell_outbox; cell_prefixes; cell_region_policy; cell_request_counts;
       cluster_leases; cluster_scaling_policies; cluster_ssh_host_key; download_rate_limit;
       email_outbox; email_settings; file_reason_limits; foreign_credentials; github_api_limits;
@@ -519,8 +519,15 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     variable is renamed, and the test script parses the baseline before building.
     Running CI now drains before freezing; a directory-outage retry test checks that
     subsequent target writes are not recopied. Workspace 637a0631, Clippy 398f8b18 and
-    WASM 327a7219 pass. Runtime f24d8173 passes the PostgreSQL baseline parse and is
-    running the combined move, database, cluster and selected-library targets.
+    WASM 327a7219 pass. Runtime f24d8173 passes the PostgreSQL baseline parse and all
+    eight move tests: CLI rollback/retry and directory outage with preserved target writes,
+    Git clone and stable issue IDs, HTTP freeze/cancel, a thousand-member org and revoked
+    access, receiving-copy retry, a racing writer, automatic freeze expiry and CI drain/history.
+    It also passes all 239 cluster tests and 142 selected library tests, without skips.
+    Database: 177 pass, nine whole-database copy tests fail because the inherited change
+    omitted `account_moves` from SQLite's catalogue. The parity table and an unfinished-
+    move refusal before whole-database copy are written, with a CLI regression. Workspace
+    b010d72c, Clippy c819144f and WASM bb590c68 pass; runtime 5b4e1a29 is the combined retry.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

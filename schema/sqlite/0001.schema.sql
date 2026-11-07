@@ -53,6 +53,18 @@ CREATE INDEX cell_outbox_pending ON cell_outbox(next_attempt_at,id) WHERE delive
 CREATE UNIQUE INDEX cell_outbox_search_pending ON cell_outbox(root_id,payload)
     WHERE topic='search' AND delivered_at IS NULL;
 
+-- Moves run only on PostgreSQL. Keep the catalogue identical for whole-database copy;
+-- copying an installation with an unfinished move is refused before opening its target.
+CREATE TABLE account_moves (
+    account_kind TEXT NOT NULL CHECK(account_kind IN ('user','organization')),
+    account_id INTEGER NOT NULL CHECK(typeof(account_id)='integer' AND account_id>0),
+    target_cell INTEGER NOT NULL CHECK(typeof(target_cell)='integer' AND target_cell BETWEEN 0 AND 65535),
+    state TEXT NOT NULL CHECK(state IN ('pending','frozen','switched','receiving')),
+    started_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
+    expires_at TEXT NOT NULL,
+    PRIMARY KEY(account_kind,account_id)
+);
+
 -- Regional presence runs on PostgreSQL cells only. SQLite keeps these tables empty so both
 -- baselines list the same tables for `database copy`.
 CREATE TABLE cell_request_counts (

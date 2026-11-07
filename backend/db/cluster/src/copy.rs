@@ -99,6 +99,9 @@ pub async fn copy_database(from: &str, to: &str) -> Result<Vec<TableCount>> {
     let source_pool = codeyard_db_core::connection::open_source(from).await?;
     let mut source = snapshot(&source_pool).await?;
     let source_catalog = catalog(&mut source).await?;
+    if scalar(&mut source, "SELECT COUNT(*) FROM account_moves").await? != 0 {
+        bail!("finish or cancel every account move before copying the installation; nothing was copied");
+    }
     match &mut source {
         Tx::Sqlite(tx) => sqlite::check_text_without_nul(tx, &source_catalog.tables).await?,
         Tx::Postgres(tx) => postgres::require_local_repositories(tx).await?,
