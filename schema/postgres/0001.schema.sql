@@ -4515,3 +4515,22 @@ CREATE TABLE remote_pull_requests (
 );
 CREATE INDEX remote_pull_requests_head ON remote_pull_requests(head_repo_id,head_branch,base_repo_id,number);
 CREATE INDEX remote_pull_requests_publisher ON remote_pull_requests(publisher_id);
+
+-- Delivered notices remain the durable recipient inventory. Reclaiming them invalidates
+-- an in-flight lease, so an older delivery cannot acknowledge a visibility change.
+CREATE INDEX cell_outbox_notice_repository ON cell_outbox(root_id) WHERE topic='notice';
+CREATE FUNCTION refresh_remote_notices() RETURNS TRIGGER AS $$
+DECLARE repository BIGINT;
+BEGIN
+    IF TG_TABLE_NAME='repositories' THEN repository := OLD.id;
+    ELSE repository := OLD.repo_id;
+    END IF;
+    UPDATE cell_outbox SET delivered_at=NULL,next_attempt_at=clock_timestamp(),attempts=attempts+1
+      WHERE topic='notice' AND root_kind='repository' AND root_id=repository;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER refresh_remote_notice_visibility AFTER UPDATE OF is_private,is_internal OR DELETE ON repositories
+    FOR EACH ROW EXECUTE FUNCTION refresh_remote_notices();
+CREATE TRIGGER refresh_remote_notice_membership AFTER UPDATE OR DELETE ON repo_access
+    FOR EACH ROW EXECUTE FUNCTION refresh_remote_notices();

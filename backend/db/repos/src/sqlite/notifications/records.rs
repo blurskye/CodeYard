@@ -70,7 +70,21 @@ pub async fn create_notification(
             .bind(scope)
             .fetch_one(&mut *tx)
             .await?;
-            anyhow::ensure!(readable, NotificationSuppressed);
+            let stub: bool = sqlx::query_scalar("SELECT is_stub FROM repositories WHERE id=?1")
+                .bind(scope)
+                .fetch_optional(&mut *tx)
+                .await?
+                .unwrap_or(false);
+            anyhow::ensure!(
+                readable
+                    && (!stub
+                        || codeyard_db_core::cells::notices::readable(
+                            pool.foreign_authorization().as_ref(),
+                            scope
+                        )
+                        .await),
+                NotificationSuppressed
+            );
         }
         // An ignore saved after the caller looked is honoured here, under the write lock.
         let ignoring: bool = sqlx::query_scalar(
@@ -197,15 +211,14 @@ pub async fn received(pool: &SqlitePool, user_id: i64, cell: i32, event: i64) ->
 /// decided it. The owner must exist and be well formed, even for a public repository. Then the
 /// recipient needs Read, or is a site admin over a personal repository. Canonical Read includes
 /// archived and suspended-governance reads, as `USER_REPO_ACCESS_SQL` computes them.
-/// A public stub names another cell's repository, which decided Read before it sent the
-/// notice, so it is readable to any active account here.
+/// Stub matches are candidates only; reads also ask their live home.
 fn scope_readable_condition() -> String {
     format!(
         "((r.owner_kind='user' AND r.owner_user_id IS NOT NULL AND r.owner_org_id IS NULL
             AND EXISTS (SELECT 1 FROM users ow WHERE ow.id=r.owner_user_id))
           OR (r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id IS NOT NULL
             AND EXISTS (SELECT 1 FROM organizations og WHERE og.id=r.owner_org_id)))
-         AND (({USER_REPO_ACCESS_SQL}) >= 1 OR (r.owner_kind='user' AND u.is_admin)
+         AND ((NOT r.is_stub AND (({USER_REPO_ACCESS_SQL}) >= 1 OR (r.owner_kind='user' AND u.is_admin)))
            OR (r.is_stub AND NOT r.is_private AND NOT r.is_internal AND NOT r.is_gist
              AND NOT u.is_banned AND NOT u.must_change_password))"
     )
@@ -214,13 +227,15 @@ fn scope_readable_condition() -> String {
 /// Decides every repository the recipient's notifications point at, in one statement. A
 /// repository that is gone is unreadable, because the scope outlives the repository.
 async fn notification_scopes(
+    pool: &SqlitePool,
     connection: &mut sqlx::SqliteConnection,
     user_id: i64,
 ) -> Result<NotificationScopes> {
-    decide_scopes(connection, user_id, false, None).await
+    decide_scopes(pool, connection, user_id, false, None).await
 }
 
 async fn decide_scopes(
+    pool: &SqlitePool,
     connection: &mut sqlx::SqliteConnection,
     user_id: i64,
     unread_only: bool,
@@ -241,10 +256,31 @@ async fn decide_scopes(
     .bind(notification_id)
     .fetch_all(&mut *connection)
     .await?;
+    let remote_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut readable = std::collections::BTreeMap::new();
+    for (id, mut allowed) in decided {
+        if allowed {
+            let stub: bool = sqlx::query_scalar("SELECT is_stub FROM repositories WHERE id=?1")
+                .bind(id)
+                .fetch_one(&mut *connection)
+                .await?;
+            if stub {
+                allowed = codeyard_db_core::cells::notices::readable_until(
+                    pool.foreign_authorization().as_ref(),
+                    id,
+                    remote_deadline,
+                )
+                .await;
+            }
+        }
+        readable.insert(id, allowed);
+    }
     Ok(NotificationScopes {
+        home: pool.foreign_authorization(),
+        remote_deadline,
         classic_token: false,
         high_water: notification_high_water(connection, user_id).await?,
-        readable: decided.into_iter().collect(),
+        readable,
     })
 }
 
@@ -326,7 +362,7 @@ pub async fn list_notifications_for_user(
         tx.commit().await?;
         return Ok(Vec::new());
     }
-    let scopes = notification_scopes(&mut tx, user_id).await?;
+    let scopes = notification_scopes(pool, &mut tx, user_id).await?;
     let (mut notifications, _) = notification_list(
         &mut tx,
         user_id,
@@ -528,7 +564,7 @@ async fn readable_repository_names(
 pub async fn count_unread_notifications(pool: &SqlitePool, user_id: i64) -> Result<i64> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let count = if notification_recipient(&mut tx, user_id).await? {
-        let scopes = notification_scopes(&mut tx, user_id).await?;
+        let scopes = notification_scopes(pool, &mut tx, user_id).await?;
         notification_unread_count(&mut tx, user_id, &scopes).await?
     } else {
         0
@@ -537,20 +573,25 @@ pub async fn count_unread_notifications(pool: &SqlitePool, user_id: i64) -> Resu
     Ok(count)
 }
 
-/// The header count authorizes only scopes that still have unread inbox notifications.
+/// The native badge remains lock-free. Foreign candidates need live source checks too.
 pub async fn count_header_unread(pool: &SqlitePool, user_id: i64) -> Result<i64> {
     let readable = scope_readable_condition();
-    Ok(sqlx::query_scalar(&format!(
-        "SELECT COUNT(*) FROM notifications
-         WHERE user_id=?1 AND read_at IS NULL AND done_at IS NULL
-           AND EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)
-           AND (scope_repository_id=0 OR scope_repository_id IN (
-               SELECT r.id FROM repositories r JOIN users u ON u.id=?1
-               WHERE r.id IN (SELECT scope_repository_id FROM notifications
-                              WHERE user_id=?1 AND read_at IS NULL AND done_at IS NULL
-                                AND scope_repository_id>0)
-                 AND {readable}))"
-    )).bind(user_id).fetch_one(pool).await?)
+    let native: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM notifications WHERE user_id=?1 AND read_at IS NULL AND done_at IS NULL
+         AND EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)
+         AND (scope_repository_id=0 OR scope_repository_id IN (
+             SELECT r.id FROM repositories r JOIN users u ON u.id=?1
+             WHERE NOT r.is_stub AND {readable}))"
+    ))
+    .bind(user_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(native
+        + crate::notifications::records::foreign_unread(
+            &codeyard_db_core::DbPool::Sqlite(pool.clone()),
+            user_id,
+        )
+        .await?)
 }
 
 async fn fork_readable(
@@ -569,7 +610,7 @@ async fn fork_readable(
         return Ok(false);
     };
     Ok(sqlx::query_scalar(&format!(
-        "SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",
+        "SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT r.is_stub AND {})",
         scope_readable_condition()
     ))
     .bind(user)
@@ -611,13 +652,34 @@ pub async fn get_notification(
     user_id: i64,
     notification_id: i64,
 ) -> Result<Option<Notification>> {
-    Ok(
-        sqlx::query_as("SELECT * FROM notifications WHERE id=?1 AND user_id=?2")
-            .bind(notification_id)
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await?,
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !notification_recipient(&mut tx, user_id).await? {
+        return Ok(None);
+    }
+    let scopes = notification_scopes(pool, &mut tx, user_id).await?;
+    let scope: Option<i64> = sqlx::query_scalar(
+        "SELECT scope_repository_id FROM notifications WHERE id=?1 AND user_id=?2",
     )
+    .bind(notification_id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(scope) = scope else {
+        return Ok(None);
+    };
+    if !scope_readable(&scopes, scope) {
+        return Ok(None);
+    }
+    let row = sqlx::query_as(
+        "SELECT * FROM notifications WHERE id=?1 AND user_id=?2 AND scope_repository_id=?3",
+    )
+    .bind(notification_id)
+    .bind(user_id)
+    .bind(scope)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(row)
 }
 
 pub async fn notification_email_allowed(pool: &SqlitePool, notification_id: i64) -> Result<bool> {
@@ -638,6 +700,17 @@ pub async fn notification_email_allowed(pool: &SqlitePool, notification_id: i64)
     }
     if scope == 0 {
         return Ok(true);
+    }
+    let stub: bool = sqlx::query_scalar("SELECT is_stub FROM repositories WHERE id=?1")
+        .bind(scope)
+        .fetch_optional(&mut *connection)
+        .await?
+        .unwrap_or(false);
+    if stub
+        && !codeyard_db_core::cells::notices::readable(pool.foreign_authorization().as_ref(), scope)
+            .await
+    {
+        return Ok(false);
     }
     let readable = scope_readable_condition();
     Ok(sqlx::query_scalar(&format!(
@@ -665,7 +738,7 @@ pub async fn notification_delivery(
     let Some(expiry) = expiry else {
         return Ok(None);
     };
-    let scopes = decide_scopes(&mut tx, user_id, true, notification_id).await?;
+    let scopes = decide_scopes(pool, &mut tx, user_id, true, notification_id).await?;
     let mut notification = None;
     if let Some(id) = notification_id {
         let scope: Option<i64> = sqlx::query_scalar(
@@ -710,7 +783,7 @@ pub async fn mark_notification_read(
         tx.commit().await?;
         return Ok(None);
     }
-    let scopes = notification_scopes(&mut tx, user_id).await?;
+    let scopes = notification_scopes(pool, &mut tx, user_id).await?;
     let (notification, _) = notification_read(&mut tx, user_id, &scopes, notification_id).await?;
     tx.commit().await?;
     Ok(notification)
@@ -784,7 +857,7 @@ pub async fn mark_all_notifications_read(pool: &SqlitePool, user_id: i64) -> Res
         tx.commit().await?;
         return Ok(0);
     }
-    let scopes = notification_scopes(&mut tx, user_id).await?;
+    let scopes = notification_scopes(pool, &mut tx, user_id).await?;
     let count = notification_read_all(&mut tx, user_id, &scopes).await?;
     tx.commit().await?;
     Ok(count)
@@ -881,7 +954,7 @@ pub async fn notification_inbox_with_credential(
         tx.rollback().await?;
         return Ok(None);
     };
-    let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    let mut scopes = notification_scopes(pool, &mut tx, user_id).await?;
     if let NotificationCredential::Token(token) = credential {
         scopes.classic_token = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=?1) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=?1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=?1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=?1)")
             .bind(token).fetch_one(&mut *tx).await?;

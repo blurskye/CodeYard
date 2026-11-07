@@ -381,6 +381,9 @@ pub trait Home: Send + Sync {
         Box::pin(async { anyhow::bail!("Remote resource reads are unavailable") })
     }
 
+    fn notice_public(&self, _repository: i64) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async { anyhow::bail!("Notice visibility is unavailable") })
+    }
     fn send_notice<'a>(&'a self, _event: &'a super::notices::Event) -> BoxFuture<'a, Result<()>> {
         Box::pin(async { anyhow::bail!("Notice delivery is unavailable") })
     }

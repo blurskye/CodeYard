@@ -40,7 +40,13 @@ pub async fn create_notification(
             .and_then(serde_json::Value::as_i64)
             .ok_or(NotificationSuppressed)?;
         anyhow::ensure!(
-            lock_notification_scope_readable(&mut tx, input.user_id, fork).await?,
+            lock_notification_scope_readable(
+                pool.foreign_authorization().as_ref(),
+                &mut tx,
+                input.user_id,
+                fork
+            )
+            .await?,
             NotificationSuppressed
         );
     }
@@ -80,7 +86,13 @@ pub async fn create_notification(
         };
         for scope in [Some(repo), fork].into_iter().flatten() {
             anyhow::ensure!(
-                lock_notification_scope_readable(&mut tx, input.user_id, scope).await?,
+                lock_notification_scope_readable(
+                    pool.foreign_authorization().as_ref(),
+                    &mut tx,
+                    input.user_id,
+                    scope
+                )
+                .await?,
                 NotificationSuppressed
             );
         }
@@ -208,6 +220,7 @@ async fn notification_recipient(
 /// commits meanwhile waits for this read. The original positive scope survives
 /// repository deletion and must still resolve to current Read.
 async fn lock_notification_scope_readable(
+    home: Option<&codeyard_db_core::cells::authorization::Provider>,
     connection: &mut sqlx::PgConnection,
     user_id: i64,
     scope_repository_id: i64,
@@ -215,8 +228,7 @@ async fn lock_notification_scope_readable(
     if scope_repository_id == 0 {
         return Ok(true);
     }
-    // A public stub names another cell's repository, which decided Read before it sent the
-    // notice. The caller holds the recipient's account lock.
+    // The stub only narrows the live source's answer; it cannot grant access.
     let stub: Option<bool> = sqlx::query_scalar(
         "SELECT NOT r.is_private AND NOT r.is_internal AND NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password
          FROM repositories r JOIN users u ON u.id=$2 WHERE r.id=$1 AND r.is_stub FOR SHARE OF r",
@@ -226,7 +238,9 @@ async fn lock_notification_scope_readable(
     .fetch_optional(&mut *connection)
     .await?;
     if let Some(readable) = stub {
-        return Ok(readable);
+        return Ok(
+            readable && codeyard_db_core::cells::notices::readable(home, scope_repository_id).await
+        );
     }
     let Some(authority) =
         codeyard_db_core::queries::postgres::repositories::access::lock_user_repo_access_in_transaction(
@@ -257,8 +271,13 @@ async fn scope_readable(
     if let Some(readable) = scopes.readable.get(&scope_repository_id) {
         return Ok(*readable);
     }
-    let mut readable =
-        lock_notification_scope_readable(connection, user_id, scope_repository_id).await?;
+    let mut readable = lock_notification_scope_readable(
+        scopes.home.as_ref(),
+        connection,
+        user_id,
+        scope_repository_id,
+    )
+    .await?;
     if readable && scopes.classic_token {
         readable = !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM repositories r JOIN organization_token_policies p ON p.org_id=r.owner_org_id WHERE r.id=$1 AND NOT p.classic_allowed)")
             .bind(scope_repository_id).fetch_one(&mut *connection).await?;
@@ -268,10 +287,13 @@ async fn scope_readable(
 }
 
 async fn notification_scopes(
+    pool: &PgPool,
     connection: &mut sqlx::PgConnection,
     user_id: i64,
 ) -> Result<NotificationScopes> {
     Ok(NotificationScopes {
+        home: pool.foreign_authorization(),
+        remote_deadline: tokio::time::Instant::now() + std::time::Duration::from_secs(2),
         classic_token: false,
         high_water: notification_high_water(connection, user_id).await?,
         readable: std::collections::BTreeMap::new(),
@@ -341,7 +363,7 @@ pub async fn list_notifications_for_user(
         tx.commit().await?;
         return Ok(Vec::new());
     };
-    let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    let mut scopes = notification_scopes(pool, &mut tx, user_id).await?;
     let (mut notifications, _) = notification_list(
         &mut tx,
         user_id,
@@ -518,18 +540,28 @@ async fn decide_scopes(
         "SELECT repo_id FROM repo_access WHERE user_id=$1 AND repo_id=ANY($2) ORDER BY repo_id FOR SHARE",
     ).bind(user_id).bind(&retained).fetch_all(&mut *connection).await?;
     let readable = scope_readable_condition();
-    let decisions: Vec<(i64, bool)> = sqlx::query_as(&format!(
-        "SELECT r.id, ({readable}) AND (NOT $3 OR NOT EXISTS(SELECT 1 FROM organization_token_policies p WHERE p.org_id=r.owner_org_id AND NOT p.classic_allowed)) FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=ANY($2)"
+    let decisions: Vec<(i64, bool, bool)> = sqlx::query_as(&format!(
+        "SELECT r.id, r.is_stub, ({readable}) AND (NOT $3 OR NOT EXISTS(SELECT 1 FROM organization_token_policies p WHERE p.org_id=r.owner_org_id AND NOT p.classic_allowed)) FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=ANY($2)"
     ))
     .bind(user_id)
     .bind(retained)
     .bind(scopes.classic_token)
-    .fetch_all(connection)
+    .fetch_all(&mut *connection)
     .await?;
     for id in ids {
         scopes.readable.insert(id, false);
     }
-    scopes.readable.extend(decisions);
+    for (id, stub, mut allowed) in decisions {
+        if allowed && stub {
+            allowed = codeyard_db_core::cells::notices::readable_until(
+                scopes.home.as_ref(),
+                id,
+                scopes.remote_deadline,
+            )
+            .await;
+        }
+        scopes.readable.insert(id, allowed);
+    }
     Ok(())
 }
 
@@ -642,7 +674,7 @@ pub async fn count_unread_notifications(pool: &PgPool, user_id: i64) -> Result<i
     let mut tx = pool.begin().await?;
     let count = match notification_recipient(&mut tx, user_id).await? {
         Some(_) => {
-            let mut scopes = notification_scopes(&mut tx, user_id).await?;
+            let mut scopes = notification_scopes(pool, &mut tx, user_id).await?;
             notification_unread_count(&mut tx, user_id, &mut scopes).await?
         }
         None => 0,
@@ -654,40 +686,38 @@ pub async fn count_unread_notifications(pool: &PgPool, user_id: i64) -> Result<i
 /// Whether the recipient can read the repository a notification names, as the list decides it:
 /// the owner must exist and be well formed, and then the recipient needs Read or is a site admin
 /// over a personal repository. See the SQLite module for why this is not `readable_condition`.
-/// A public stub names another cell's repository, which decided Read before it sent the
-/// notice, so it is readable to any active account here.
+/// Stub matches are candidates only; `decide_scopes` also asks their live home.
 fn scope_readable_condition() -> String {
     format!(
         "((r.owner_kind='user' AND r.owner_user_id IS NOT NULL AND r.owner_org_id IS NULL
             AND EXISTS (SELECT 1 FROM users ow WHERE ow.id=r.owner_user_id))
           OR (r.owner_kind='org' AND r.owner_user_id IS NULL AND r.owner_org_id IS NOT NULL
             AND EXISTS (SELECT 1 FROM organizations og WHERE og.id=r.owner_org_id)))
-         AND (({USER_REPO_ACCESS_SQL}) >= 1 OR (r.owner_kind='user' AND u.is_admin)
+         AND ((NOT r.is_stub AND (({USER_REPO_ACCESS_SQL}) >= 1 OR (r.owner_kind='user' AND u.is_admin)))
            OR (r.is_stub AND NOT r.is_private AND NOT r.is_internal AND NOT r.is_gist
              AND NOT u.is_banned AND NOT u.must_change_password))"
     )
 }
 
-/// The unread count the page header shows: unread inbox notifications the recipient can read.
-/// It grants nothing and only displays a number, so one statement decides every repository at
-/// once and takes no row locks. The list takes them, because its rows are returned.
+/// The native badge remains lock-free. Foreign candidates need live source checks too.
 pub async fn count_header_unread(pool: &PgPool, user_id: i64) -> Result<i64> {
     let readable = scope_readable_condition();
-    Ok(sqlx::query_scalar::<_, i64>(&format!(
-        "SELECT COUNT(*) FROM notifications
-         WHERE user_id=$1 AND read_at IS NULL AND done_at IS NULL
-           AND EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)
-           AND (scope_repository_id=0 OR scope_repository_id IN (
-               SELECT r.id FROM repositories r
-               JOIN users u ON u.id=$1 AND NOT u.is_banned AND NOT u.must_change_password
-               WHERE r.id IN (SELECT scope_repository_id FROM notifications
-                              WHERE user_id=$1 AND read_at IS NULL AND done_at IS NULL
-                                AND scope_repository_id>0)
-                 AND {readable}))"
+    let native: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM notifications WHERE user_id=$1 AND read_at IS NULL AND done_at IS NULL
+         AND EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)
+         AND (scope_repository_id=0 OR scope_repository_id IN (
+             SELECT r.id FROM repositories r JOIN users u ON u.id=$1
+             WHERE NOT r.is_stub AND {readable}))"
     ))
     .bind(user_id)
     .fetch_one(pool)
-    .await?)
+    .await?;
+    Ok(native
+        + crate::notifications::records::foreign_unread(
+            &codeyard_db_core::DbPool::Postgres(pool.clone()),
+            user_id,
+        )
+        .await?)
 }
 
 pub(super) async fn refresh_links(
@@ -705,7 +735,8 @@ pub(super) async fn refresh_links(
                 .and_then(serde_json::Value::as_i64);
             let readable = match fork {
                 Some(fork) => {
-                    lock_notification_scope_readable(connection, notification.user_id, fork).await?
+                    lock_notification_scope_readable(None, connection, notification.user_id, fork)
+                        .await?
                 }
                 None => false,
             };
@@ -728,13 +759,40 @@ pub async fn get_notification(
     user_id: i64,
     notification_id: i64,
 ) -> Result<Option<Notification>> {
-    Ok(
-        sqlx::query_as("SELECT * FROM notifications WHERE id=$1 AND user_id=$2")
-            .bind(notification_id)
-            .bind(user_id)
-            .fetch_optional(pool)
-            .await?,
+    let mut tx = pool.begin().await?;
+    if notification_recipient(&mut tx, user_id).await?.is_none() {
+        return Ok(None);
+    }
+    let scope: Option<i64> = sqlx::query_scalar(
+        "SELECT scope_repository_id FROM notifications WHERE id=$1 AND user_id=$2",
     )
+    .bind(notification_id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(scope) = scope else {
+        return Ok(None);
+    };
+    if !lock_notification_scope_readable(
+        pool.foreign_authorization().as_ref(),
+        &mut tx,
+        user_id,
+        scope,
+    )
+    .await?
+    {
+        return Ok(None);
+    }
+    let row = sqlx::query_as(
+        "SELECT * FROM notifications WHERE id=$1 AND user_id=$2 AND scope_repository_id=$3",
+    )
+    .bind(notification_id)
+    .bind(user_id)
+    .bind(scope)
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(row)
 }
 
 pub async fn notification_email_allowed(pool: &PgPool, notification_id: i64) -> Result<bool> {
@@ -756,13 +814,28 @@ pub async fn notification_email_allowed(pool: &PgPool, notification_id: i64) -> 
             .get("fork_repository_id")
             .and_then(serde_json::Value::as_i64)
         {
-            Some(fork) => lock_notification_scope_readable(&mut tx, user_id, fork).await?,
+            Some(fork) => {
+                lock_notification_scope_readable(
+                    pool.foreign_authorization().as_ref(),
+                    &mut tx,
+                    user_id,
+                    fork,
+                )
+                .await?
+            }
             None => false,
         }
     } else {
         true
     };
-    let allowed = fork_allowed && lock_notification_scope_readable(&mut tx, user_id, scope).await?;
+    let allowed = fork_allowed
+        && lock_notification_scope_readable(
+            pool.foreign_authorization().as_ref(),
+            &mut tx,
+            user_id,
+            scope,
+        )
+        .await?;
     tx.commit().await?;
     Ok(allowed)
 }
@@ -783,7 +856,7 @@ pub async fn notification_delivery(
     let Some(expiry) = expiry else {
         return Ok(None);
     };
-    let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    let mut scopes = notification_scopes(pool, &mut tx, user_id).await?;
     let mut notification = None;
     if let Some(id) = notification_id {
         let scope: Option<i64> = sqlx::query_scalar(
@@ -828,7 +901,7 @@ pub async fn mark_notification_read(
         tx.commit().await?;
         return Ok(None);
     };
-    let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    let mut scopes = notification_scopes(pool, &mut tx, user_id).await?;
     let (notification, _) =
         notification_read(&mut tx, user_id, &mut scopes, notification_id).await?;
     tx.commit().await?;
@@ -933,7 +1006,7 @@ pub async fn mark_all_notifications_read(pool: &PgPool, user_id: i64) -> Result<
         tx.commit().await?;
         return Ok(0);
     };
-    let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    let mut scopes = notification_scopes(pool, &mut tx, user_id).await?;
     let count = notification_read_all(&mut tx, user_id, &mut scopes).await?;
     tx.commit().await?;
     Ok(count)
@@ -1038,7 +1111,7 @@ async fn notification_inbox_once(
         tx.rollback().await?;
         return Ok(None);
     };
-    let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    let mut scopes = notification_scopes(pool, &mut tx, user_id).await?;
     if let NotificationCredential::Token(token) = credential {
         scopes.classic_token = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)")
             .bind(token).fetch_one(&mut *tx).await?;

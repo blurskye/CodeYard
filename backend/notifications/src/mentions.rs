@@ -230,6 +230,10 @@ pub async fn receive(
     let source = admission.check(event).await?;
     event.validate(source)?;
     let notice = &event.notice;
+    if event.withdrawn {
+        return codeyard_db_core::cells::notices::withdraw(pool, source, notice.repository.id)
+            .await;
+    }
     let Some(recipient) =
         codeyard_db_identity::users::accounts::get_user_by_id(pool, notice.user_id).await?
     else {

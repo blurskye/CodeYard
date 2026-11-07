@@ -1500,6 +1500,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     let replay = codeyard_db_core::cells::notices::Event {
         id: notices[0].0,
         notice: serde_json::from_str(&notices[0].2).unwrap(),
+        withdrawn: false,
     };
     let sender = zero.pool.foreign_authorization().unwrap();
     sender.send_notice(&replay).await.unwrap();
@@ -1524,7 +1525,60 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+    // The delivered public stub is still stale: reads must ask the live source before
+    // returning a list, thread, badge, stream payload or email, even before outbox replay.
+    assert!(inbox().await.is_empty());
+    let thread = client
+        .get(format!(
+            "{}/api/v3/notifications/threads/{}",
+            bob_http.url(),
+            threads[0]["id"].as_str().unwrap()
+        ))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(thread.status(), 404);
+    assert_eq!(
+        codeyard_db_repos::notifications::records::count_header_unread(&one.pool, user.id)
+            .await
+            .unwrap(),
+        0
+    );
+    let notification: i64 =
+        sqlx::query_scalar("SELECT id FROM notifications WHERE user_id=$1 AND kind='mention'")
+            .bind(user.id)
+            .fetch_one(&one.raw)
+            .await
+            .unwrap();
+    assert!(
+        !codeyard_db_repos::notifications::records::notification_email_allowed(
+            &one.pool,
+            notification
+        )
+        .await
+        .unwrap()
+    );
+    assert!(codeyard_db_repos::notifications::records::get_notification(
+        &one.pool,
+        user.id,
+        notification
+    )
+    .await
+    .unwrap()
+    .is_none());
     drain(&zero.pool).await;
+    assert!(inbox().await.is_empty());
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT is_private FROM repositories WHERE id=$1 AND is_stub"
+    )
+    .bind(open.id)
+    .fetch_one(&one.raw)
+    .await
+    .unwrap());
+    // A delayed duplicate must not recreate the inbox entry or undo its withdrawal.
+    sender.send_notice(&replay).await.unwrap();
+    assert!(inbox().await.is_empty());
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM cell_outbox WHERE topic='notice' AND delivered_at IS NULL"
@@ -1535,6 +1589,36 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         0
     );
     assert_eq!(delivered().await, (1, 1));
+    let deleted = codeyard_repos_core::repositories::lifecycle::provision(
+        (&zero.pool, None),
+        root.path(),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice.id),
+        "deleted-notice",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    mention("deleted-notice", "Mention before deletion").await;
+    drain(&zero.pool).await;
+    assert_eq!(inbox().await.len(), 1);
+    let response = client
+        .delete(format!("{}/api/v3/repos/alice/deleted-notice", http.url()))
+        .bearer_auth(&alice_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    assert!(inbox().await.is_empty());
+    drain(&zero.pool).await;
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT is_private FROM repositories WHERE id=$1 AND is_stub"
+    )
+    .bind(deleted.id)
+    .fetch_one(&one.raw)
+    .await
+    .unwrap());
     let source_by_id = zero
         .pool
         .foreign_authorization()

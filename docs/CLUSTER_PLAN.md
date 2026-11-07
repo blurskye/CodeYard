@@ -454,6 +454,12 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     a freeze that also stops the source cell's own background writers, not only routers.
     Each is a design decision for the owner before the move is built.
 
+    Stage 7 side lane: notice withdrawal and live source checks are written, unchecked.
+    Both baseline schemas add separate notice-refresh trigger/index blocks (no FK edits).
+    Both-engine HTTP/stub outage tests and two-cell HTTP privacy/deletion tests are added;
+    the public gh cells script also checks privacy after delivery. Heartbeat credential
+    reads and the optional content cache are not started.
+
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
     multi-pack index, a bitmap (not for pool forks) and a split commit-graph instead of
@@ -465,9 +471,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     package-collection leases and migrations past a transaction-pooling PgBouncer, and the
     PgBouncer e2e round sets it. Not written: `tsvector` ranking (it would change matching
     from substrings to words, an owner choice); keyset paging (the GitHub API pages by
-    number, and OFFSET is already capped at 1,000); the privacy gap where a delivered
-    cross-cell notice stays visible after its repository turns private (the recipient's
-    stub is never refreshed); read routing from the session's last write position (token
+    number, and OFFSET is already capped at 1,000); acceptance of the notice privacy fix
+    above; read routing from the session's last write position (token
     clients carry no position, so a primary-free check needs shared state such as the
     optional cache); item 4, the heartbeat-proved credential read; item 5, the cache.
     The e2e run (job 34215ceffd2d4150b4cc419834481210) stopped at its 140-minute cap in

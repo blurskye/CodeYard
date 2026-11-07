@@ -75,6 +75,9 @@ impl Notice {
 pub struct Event {
     pub id: i64,
     pub notice: Notice,
+    /// Withdrawal only narrows visibility; it never recreates a delivered notice.
+    #[serde(default)]
+    pub withdrawn: bool,
 }
 impl Event {
     pub fn validate(&self, home: Prefix) -> Result<()> {
@@ -142,6 +145,75 @@ pub async fn retain(pool: &DbPool, home: Prefix, notice: &Notice) -> Result<Opti
         }
     };
     Ok(known)
+}
+
+/// A stub is metadata, never proof that the source is still public. Missing providers,
+/// timeouts and unavailable homes fail closed, including email and streaming delivery.
+pub async fn readable(provider: Option<&super::authorization::Provider>, repository: i64) -> bool {
+    readable_until(
+        provider,
+        repository,
+        tokio::time::Instant::now() + std::time::Duration::from_secs(2),
+    )
+    .await
+}
+
+pub async fn readable_until(
+    provider: Option<&super::authorization::Provider>,
+    repository: i64,
+    deadline: tokio::time::Instant,
+) -> bool {
+    let Some(provider) = provider else {
+        return false;
+    };
+    if tokio::time::Instant::now() >= deadline {
+        return false;
+    }
+    tokio::time::timeout_at(deadline, provider.notice_public(repository))
+        .await
+        .is_ok_and(|result| result.unwrap_or(false))
+}
+
+pub async fn public(pool: &DbPool, repository: i64) -> Result<bool> {
+    const SQL: &str = "SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND NOT is_stub AND NOT is_private AND NOT is_internal AND NOT is_gist)";
+    Ok(match pool {
+        DbPool::Postgres(pool) => {
+            sqlx::query_scalar(SQL)
+                .bind(repository)
+                .fetch_one(pool)
+                .await?
+        }
+        DbPool::Sqlite(pool) => {
+            sqlx::query_scalar(SQL)
+                .bind(repository)
+                .fetch_one(pool)
+                .await?
+        }
+    })
+}
+
+/// A withdrawal is monotone and idempotent. Retain the scope row so deletion cannot turn
+/// a repository notice into an unscoped account notice.
+pub async fn withdraw(pool: &DbPool, home: Prefix, repository: i64) -> Result<()> {
+    const SQL: &str =
+        "UPDATE repositories SET is_private=TRUE WHERE id=$1 AND is_stub AND home_cell=$2";
+    match pool {
+        DbPool::Postgres(pool) => {
+            sqlx::query(SQL)
+                .bind(repository)
+                .bind(i32::from(home.get()))
+                .execute(pool)
+                .await?;
+        }
+        DbPool::Sqlite(pool) => {
+            sqlx::query(SQL)
+                .bind(repository)
+                .bind(i32::from(home.get()))
+                .execute(pool)
+                .await?;
+        }
+    }
+    Ok(())
 }
 
 /// Checks the issuing cell against the directory's current homes of the repository and the

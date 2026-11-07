@@ -800,6 +800,9 @@ def acceptance(deployment):
                 assert time.monotonic() < deadline, "the mention did not reach the home inbox within 60 seconds"
                 threading.Event().wait(0.5)
             assert len(mentions) == 1 and mentions[0]["subject"]["title"] == "Cross-cell mention", mentions
+            client.api("repos/alice/open", "--method", "PATCH", "-F", "private=true")
+            assert not any(thread["repository"]["full_name"] == "alice/open"
+                           for thread in client.api("notifications", who="bob")), "a private repository leaked its delivered notice"
         client.gh("issue", "create", "-R", "alice/shared", "--title", "Router issue", "--body", "cross cell", who="bob")
         assert any(issue["title"] == "Router issue" for issue in client.data("issue", "list", "-R", "alice/shared", "--json", "title"))
         query = '{ zero:repository(owner:"alice",name:"shared"){ id name } one:repository(owner:"bob",name:"other"){ id name } }'
