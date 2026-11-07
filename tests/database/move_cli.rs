@@ -1,15 +1,17 @@
 //! The operator move runs against two real cells and a pinned directory, then Git and
-//! HTTP reads preserved issue/pull numbers, CI history and package metadata at the destination.
+//! HTTP reads preserved issue/pull numbers, CI history and shared-store package bytes at the destination.
 use crate::support::native_database::PostgresDatabase;
 use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
+use base64::{engine::general_purpose::STANDARD, Engine};
 use codeyard_model::cells::{Cell, Key, KeyKind, Object, ObjectKind, State};
 use codeyard_support::{
     cells::Prefix,
     node_identity::{self, NodeKey},
 };
+use sha2::{Digest, Sha512};
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
 
@@ -125,13 +127,96 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
     .id;
     sqlx::query("UPDATE ci_runs SET status='success',started_at=clock_timestamp(),completed_at=clock_timestamp() WHERE id=$1")
         .bind(ci).execute(&source.raw).await.unwrap();
-    // Metadata shares the account move, even when the package points at a repository.
-    // Object bytes are not exercised here: cross-region copying is separate acceptance.
+    // Both cells use one store, as with a regional S3 bucket. This exercises shared
+    // bytes and their copied references, not cross-region copying or S3 transport.
+    let store = Arc::new(
+        codeyard_storage::ObjectStore::open(root.path(), None)
+            .await
+            .unwrap(),
+    );
+    store.prepare().await.unwrap();
+    let package_json = br#"{"name":"@alice/move-package","version":"1.0.0"}"#;
+    let mut archive = tar::Builder::new(flate2::write::GzEncoder::new(
+        Vec::new(),
+        flate2::Compression::default(),
+    ));
+    let mut header = tar::Header::new_gnu();
+    header.set_size(package_json.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    archive
+        .append_data(&mut header, "package/package.json", package_json.as_slice())
+        .unwrap();
+    let package_bytes = archive.into_inner().unwrap().finish().unwrap();
+    let digest = codeyard_app::packages::digest(&package_bytes);
+    let integrity = format!("sha512-{}", STANDARD.encode(Sha512::digest(&package_bytes)));
+    let key = codeyard_db_repos::packages::object_key(&digest);
+    store
+        .put_bytes(
+            &codeyard_storage::Upload {
+                key: &key,
+                bytes: package_bytes.len() as i64,
+                content_type: "application/octet-stream",
+                sha256_hex: &digest[7..],
+            },
+            package_bytes.clone(),
+            Arc::new(store.try_acquire_io().unwrap()),
+        )
+        .await
+        .unwrap();
     let package: i64 = sqlx::query_scalar("INSERT INTO packages(owner_kind,owner_user_id,name,package_type,visibility,repo_id,created_at,updated_at) VALUES('user',$1,'move-package','npm','public',$2,0,0) RETURNING id")
         .bind(alice.id).bind(repo.id).fetch_one(&source.raw).await.unwrap();
-    let version: i64 = sqlx::query_scalar("INSERT INTO package_versions(package_id,name,digest,media_type,manifest,created_at,updated_at) VALUES($1,'1.0.0',$2,'application/json','{}',0,0) RETURNING id")
-        .bind(package).bind(format!("sha256:{}", "a".repeat(64)))
+    let version: i64 = sqlx::query_scalar("INSERT INTO package_versions(package_id,name,digest,media_type,manifest,created_at,updated_at) VALUES($1,'1.0.0',$2,'application/json',$3,0,0) RETURNING id")
+        .bind(package).bind(&digest)
+        .bind(serde_json::json!({"name":"@alice/move-package","version":"1.0.0","dist":{"integrity":integrity}}).to_string())
         .fetch_one(&source.raw).await.unwrap();
+    sqlx::query("INSERT INTO package_blobs(digest,size,ready,expires_at) VALUES($1,$2,true,0)")
+        .bind(&digest)
+        .bind(package_bytes.len() as i64)
+        .execute(&source.raw)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO package_version_blobs(version_id,digest) VALUES($1,$2)")
+        .bind(version)
+        .bind(&digest)
+        .execute(&source.raw)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO package_tags(package_id,tag,version_id) VALUES($1,'latest',$2)")
+        .bind(package)
+        .bind(version)
+        .execute(&source.raw)
+        .await
+        .unwrap();
+    codeyard_db_cluster::node_config::upsert_node_configuration(&source.pool, "public", true)
+        .await
+        .unwrap();
+    let source_app = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
+        source.pool.clone(),
+        source_root.clone(),
+        store.clone(),
+        None,
+        Default::default(),
+        None,
+    ));
+    let package_path = "/api/packages/alice/npm/@alice/move-package/-/move-package-1.0.0.tgz";
+    let response = source_app
+        .oneshot(
+            Request::builder()
+                .uri(package_path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap()
+            .as_ref(),
+        package_bytes
+    );
     let issue_node = codeyard_model::node_id::scoped("I", repo.id, issue).unwrap();
     let pull_node = codeyard_model::node_id::scoped("PR", repo.id, pull).unwrap();
     let objects = [
@@ -473,11 +558,6 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
     codeyard_db_cluster::node_config::upsert_node_configuration(&target.pool, "public", true)
         .await
         .unwrap();
-    let store = Arc::new(
-        codeyard_storage::ObjectStore::open(root.path(), None)
-            .await
-            .unwrap(),
-    );
     let app = codeyard_api_rest::create_router(codeyard_app::app::AppState::new(
         target.pool.clone(),
         target_root,
@@ -534,12 +614,74 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids()
             assert_eq!(&body[field], value, "{path}: {body}");
         }
     }
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/api/packages/alice/npm/@alice/move-package")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let metadata: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
+    assert_eq!(metadata["dist-tags"]["latest"], "1.0.0");
+    assert_eq!(
+        metadata["versions"]["1.0.0"]["dist"]["integrity"],
+        integrity
+    );
+    let url = url::Url::parse(
+        metadata["versions"]["1.0.0"]["dist"]["tarball"]
+            .as_str()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        url.path(),
+        package_path,
+        "the pre-move package URL remains valid"
+    );
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri(package_path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let downloaded = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+    assert_eq!(downloaded.as_ref(), package_bytes);
+    assert_eq!(codeyard_app::packages::digest(&downloaded), digest);
+    // Copied blob metadata is not permission: the destination's current visibility
+    // must still govern downloads using the old URL.
+    sqlx::query("UPDATE packages SET visibility='private' WHERE id=$1")
+        .bind(package)
+        .execute(&target.raw)
+        .await
+        .unwrap();
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri(package_path)
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
     for table in [
         "issues",
         "pull_requests",
         "ci_runs",
         "packages",
         "package_versions",
+        "package_version_blobs",
+        "package_tags",
     ] {
         let remaining: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
             .fetch_one(&source.raw)
