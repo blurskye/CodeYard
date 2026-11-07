@@ -712,14 +712,18 @@ def acceptance(deployment):
             while client.api("user/starred", who="bob"):
                 assert time.monotonic() < deadline, "the home star pointer did not receive removal"
                 threading.Event().wait(0.1)
-            # Keep the destination down through the committed star and kill its source before retry.
+            # A foreign credential needs its live home: while it is down the star is refused.
             deployment.stop("one")
+            refused = client.gh("api", "user/starred/alice/shared", "--method", "PUT", who="bob", ok=(1,))
+            assert "HTTP 503" in refused.stderr, refused.stderr[-2000:]
+            assert client.api("repos/alice/shared")["stargazers_count"] == 0
+            deployment.start("one", "serve")
+            deployment.wait("one", deployment.native[1][0])
+            # Kill the source right after the committed star, before its delivery is certain.
             client.gh("api", "user/starred/alice/shared", "--method", "PUT", who="bob")
             deployment.crash("zero")
             deployment.start("zero", "serve")
-            deployment.start("one", "serve")
             deployment.wait("zero", deployment.native[0][0])
-            deployment.wait("one", deployment.native[1][0])
             deadline = time.monotonic() + 60
             while not client.api("user/starred", who="bob"):
                 assert time.monotonic() < deadline, "the committed star outbox did not recover after SIGKILL"
