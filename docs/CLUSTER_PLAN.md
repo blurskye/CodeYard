@@ -505,7 +505,11 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     9d9f17aef51a444c9b0bcdb1dbb8064b and WASM f6f0292a9ae34b72be8411e7e376a59e
     pass. Replacement fixtures cover separate operations, stale/revoked snapshots,
     PostgreSQL lock expiry and HTTP home loss; runtime is next. Home reads currently
-    use the primary, not an identity replica. The optional content cache is not started.
+    use the primary, not an identity replica. Runtime 280f2198cf0543ff861b236ead01ffe7
+    is running. While it runs, the optional content-cache source is written in
+    `backend/cache`: local LRU, Redis standalone/Cluster, slot batches, deadlines,
+    breaker and bounded single-flight; Markdown integration authorizes before lookup.
+    Cache source is unchecked, and remote contracts need external Valkey endpoints.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

@@ -2,6 +2,15 @@ version: "3.9"
 name: codeyard
 
 services:
+  # Optional disposable content cache. Start explicitly with --profile cache.
+  valkey:
+    image: docker.io/valkey/valkey:8.1.3-alpine
+    profiles: ["cache"]
+    restart: unless-stopped
+    command: ["valkey-server", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru", "--save", "", "--appendonly", "no"]
+    expose: ["6379"]
+    networks: ["backend"]
+
   postgres:
     image: docker.io/library/postgres:18-alpine
     restart: unless-stopped
@@ -54,6 +63,9 @@ services:
     stop_grace_period: 100s
     environment:
       DATABASE_URL: ${DATABASE_URL:?Set the PostgreSQL URL using percent-encoded credentials and hostname postgres}
+      CACHE_MODE: ${CACHE_MODE:-local}
+      CACHE_URLS: ${CACHE_URLS:-}
+      CACHE_DEPLOYMENT: ${CACHE_DEPLOYMENT:-default}
       S3_ENDPOINT: http://rustfs-service:9000
       S3_PUBLIC_ENDPOINT: ${S3_PUBLIC_ENDPOINT:?Set a browser-reachable object-storage origin outside the session cookie scope}
       S3_ACCESS_KEY: ${S3_ACCESS_KEY}

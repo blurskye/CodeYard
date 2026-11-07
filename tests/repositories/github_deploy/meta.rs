@@ -190,7 +190,7 @@ async fn contract(pg: bool) {
     .await;
     assert!(svg.starts_with("<svg"));
     assert!(svg.contains('🚀'));
-    codeyard_repos_core::repositories::lifecycle::provision(
+    let private_repo = codeyard_repos_core::repositories::lifecycle::provision(
         (f.pool(), None),
         root.path(),
         codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice),
@@ -250,6 +250,67 @@ async fn contract(pg: bool) {
         "/api/v3/markdown",
         None,
         json!({"text":"#1","context":"alice/private","mode":"gfm"}),
+        404,
+    )
+    .await;
+    // A warm rendering is disposable content, not permission to render its context.
+    let bob = f.actor("markdown-reader").await;
+    let bob_session = Client::login(&router, f.pool(), bob).await;
+    let bob_token = tokens::create(
+        f.pool(),
+        bob,
+        Some(&bob_session.session),
+        TokenInput {
+            name: "markdown",
+            scope: "read",
+            expires_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    let bob_token = format!("Bearer {}", bob_token.value);
+    codeyard_db_repos::repositories::access::grant_repo_access(
+        f.pool(),
+        bob,
+        private_repo.id,
+        codeyard_db_core::models::AccessLevel::Read,
+    )
+    .await
+    .unwrap();
+    let input =
+        r##"{"text":"#1 <script>hostile</script>","context":"alice/private","mode":"gfm"}"##;
+    let (_, first) = text(
+        &router,
+        "POST",
+        "/api/v3/markdown",
+        Some(&bob_token),
+        "application/json",
+        input,
+    )
+    .await;
+    let (_, cached) = text(
+        &router,
+        "POST",
+        "/api/v3/markdown",
+        Some(&bob_token),
+        "application/json",
+        input,
+    )
+    .await;
+    assert_eq!(first, cached);
+    assert!(!cached.contains("<script>"));
+    f.execute(
+        "DELETE FROM repo_access WHERE repo_id=$1 AND user_id=$2",
+        &[private_repo.id, bob],
+    )
+    .await;
+    checked(
+        &router,
+        "markdown/render",
+        "POST",
+        "/api/v3/markdown",
+        Some(&bob_token),
+        serde_json::from_str(input).unwrap(),
         404,
     )
     .await;
