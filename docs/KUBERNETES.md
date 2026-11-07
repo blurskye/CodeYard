@@ -115,10 +115,28 @@ nodes, two web pods, an SSH pod, three storage pods and a Traefik ingress on
 `kubectl port-forward`. Generated keys and passwords live only in cluster Secrets.
 
 `test` signs in through `/setup`, creates a token, a repository, pushes over HTTP and SSH,
-and opens an issue. The failure steps keep one issue write a second and anonymous page
-reads running, then check that every acknowledged issue is still there.
+and opens an issue. The failure steps keep one issue write a second (REST API) and issue-page
+reads as the signed-in owner running, then check that every acknowledged issue is still
+there. The run revokes the test account's tokens when it ends.
 
-MEASURED
+Measured on 2026-11-08 on seven k3s 1.35 nodes (4 vCPU, 8 GB, `local-path` volumes) with
+CloudNativePG 1.30.1 and PostgreSQL 18.6:
+
+| Step | Cluster event | Writes | Page reads | Acknowledged issues lost | Web restarts |
+|---|---|---|---|---|---|
+| Crash the primary pod (1 s grace) | standby promoted after 21 s | back after 27 s, 17 of 39 failed | back after 27 s | 0 | 0 |
+| Cordon and drain its node | switchover after 4 s, drain done in 30 s | back after 9 s, 4 of 31 failed | back after 9 s | 0 | 0 |
+| Rolling restart of web | 23 s | 0 of 28 failed | 0 of 161 failed | 0 | 0 |
+| Scale web from 2 to 4 under load | 4 ready after 12 s | 0 of 42 failed | 0 of 448 failed | 0 | 0 |
+
+The web pods reconnect through PgBouncer without restarting. Page reads stop together with
+writes: sessions live on the primary, and the replica URL is used only for replicas that
+have replayed the primary's current WAL position, which needs the primary. A plain
+`kubectl delete pod` of the primary is slower to fail over than a crash: PostgreSQL keeps
+serving PgBouncer's open sessions through the operator's three-minute smart shutdown. The
+chart sets PgBouncer's `server_login_retry` to one second; with the default 15 seconds the
+crash gap was 49 seconds. Read latency in the scale step is limited by the test machine's
+link, so it does not show the extra replicas.
 
 ## Scale
 
@@ -168,9 +186,12 @@ uses `OnDelete`; replace its pods deliberately, retaining PVCs. External Secret 
 need an explicit pod restart. Do not delete storage PVCs on uninstall.
 
 Web/storage probes use `/ready`; SSH currently has TCP probes only and database-free
-runners have no health listener/probes. SIGTERM performs the bounded server shutdown;
-100 seconds is allowed; use the nodes page or drain API before removing pods. Disruption budgets do not
-guarantee Git durability. Runner/KEDA scale-down can interrupt active jobs during
+runners have no health listener/probes. Core pods wait five seconds (preStop) so Services
+drop them, then SIGTERM runs the bounded server shutdown, which may take up to 100 seconds;
+use the nodes page or drain API before removing pods. Core pods keep `/tmp` in memory
+because the server refuses Git push sockets and the SSH host key under a non-sticky
+world-writable directory, so `tmpSizeLimit` counts toward their memory. Disruption budgets
+do not guarantee Git durability. Runner/KEDA scale-down can interrupt active jobs during
 shutdown; it is not idle-only draining. Storage must **never**
 autoscale down: first move and verify every primary and replica assignment elsewhere.
 Provisioning, scaling policies and rebalancing are written but await verification.

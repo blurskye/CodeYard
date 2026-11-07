@@ -20,6 +20,7 @@ import collections
 import contextlib
 import json
 import os
+import re
 import secrets
 import socket
 import subprocess
@@ -371,6 +372,19 @@ class Forge:
         jar = json.loads((self.work / "jar.json").read_text())
         self.cookie = "; ".join(f"{name}={value}" for name, value in jar.items())
 
+    def revoke_tokens(self):
+        """Revoke every token of the test account, including ones left by earlier runs."""
+        for _ in range(20):
+            status, html = http("GET", f"{self.base}/settings?tab=tokens",
+                                headers={"Accept": "text/html", "Cookie": self.cookie})
+            expect(status == 200, f"tokens page answered {status}")
+            actions = sorted(set(re.findall(r"/settings/tokens/[0-9]+/delete", html.decode())))
+            if not actions:
+                return
+            for action in actions:
+                self.forms("form", "/settings?tab=tokens", "--action", action, "--set", "confirm=yes")
+        expect(False, "tokens are still listed after 20 rounds of revoking")
+
     def page(self, path, timeout=10):
         """An HTML page as the signed-in owner: the node is private, so pages need a session."""
         return http("GET", self.base + path, headers={"Accept": "text/html", "Cookie": self.cookie}, timeout=timeout)[0]
@@ -688,9 +702,12 @@ def cmd_test(names):
         forge.sign_in()
         if "basic" not in names:
             names.insert(0, "basic")
-        for name in names:
-            log(f"step {name}")
-            STEPS[name](forge)
+        try:
+            for name in names:
+                log(f"step {name}")
+                STEPS[name](forge)
+        finally:
+            forge.revoke_tokens()
 
 
 def cmd_down():
