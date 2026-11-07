@@ -62,7 +62,8 @@ impl GitTasks {
         if tasks.len() >= 2 * codeyard_git::repository::process::session_capacity() {
             return false;
         }
-        tasks.spawn(task);
+        // The task keeps the starting operation's foreign proofs, as other follow-up work does.
+        tasks.spawn(codeyard_db_core::cells::authorization::inherit(task));
         true
     }
 

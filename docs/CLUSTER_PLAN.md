@@ -472,7 +472,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       isolated operations, home loss and PostgreSQL lock-wait expiry. A native database
       operation that outlives its proof first asks the home once more; a refusal stays
       denied and the response is 503. Spawned follow-up work keeps the operation's proofs
-      with their original deadlines.
+      with their original deadlines. A foreign request whose home is down answers 503,
+      so the cells acceptance run expects a refused star there instead of a queued one.
     - `backend/cache` owns the bounded local LRU, optional Redis standalone/Cluster,
       slot batches, deadlines, breaker and single-flight. Markdown authorizes before
       lookup; no access decision uses the cache. Compose Valkey is off by default.
