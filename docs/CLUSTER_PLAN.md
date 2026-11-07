@@ -560,7 +560,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     The next CLI fixture copies package blob references and checks the unchanged npm
     URL, exact archive bytes, integrity metadata and live private-download denial using
     one shared test store. It does not exercise S3 transport, cross-region byte copying
-    or shared-store garbage collection; source checks and runtime are pending.
+    or shared-store garbage collection. Workspace 1ba0b685, Clippy 53a18036 and
+    WASM 707952ea pass. Runtime waits for the isolated cluster retry f75361c6.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
