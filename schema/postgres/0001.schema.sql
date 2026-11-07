@@ -4635,7 +4635,7 @@ CREATE TABLE account_moves (
     account_kind TEXT NOT NULL CHECK(account_kind IN ('user','organization')),
     account_id BIGINT NOT NULL CHECK(account_id>0),
     target_cell INTEGER NOT NULL CHECK(target_cell BETWEEN 0 AND 65535),
-    state TEXT NOT NULL CHECK(state IN ('pending','frozen','switched')),
+    state TEXT NOT NULL CHECK(state IN ('pending','frozen','switched','receiving')),
     started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     expires_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY(account_kind,account_id)
@@ -4707,7 +4707,7 @@ BEGIN
             CONTINUE WHEN account.id IS NULL;
             SELECT m.state,m.expires_at INTO freeze FROM account_moves m
                 WHERE m.account_kind=account.kind AND m.account_id=account.id FOR KEY SHARE;
-            IF FOUND AND (freeze.state='switched'
+            IF FOUND AND (freeze.state IN ('switched','receiving')
                 OR (freeze.state='frozen' AND freeze.expires_at>clock_timestamp())) THEN
                 RAISE EXCEPTION 'This account is moving to another cell; try again in a few minutes'
                     USING ERRCODE='55000', CONSTRAINT='account_moving';

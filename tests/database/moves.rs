@@ -151,7 +151,12 @@ async fn a_user_moves_with_its_repositories_and_a_racing_writer_lands_before_the
         .await
         .unwrap();
     assert_eq!(again.rows, copied.rows);
+    refused_as_moving(comment(target, first, alice).await.unwrap_err());
+    assert!(moves::activate(source, target, account).await.is_err());
     moves::switch(source, account).await.unwrap();
+    moves::activate(source, target, account).await.unwrap();
+    moves::activate(source, target, account).await.unwrap();
+    assert!(moves::discard(target, account, 1).await.is_err());
     refused_as_moving(comment(source, first, bob).await.unwrap_err());
     moves::release(source, account).await.unwrap();
     moves::release(source, account).await.unwrap();
@@ -320,6 +325,7 @@ async fn a_member_removed_during_an_organization_move_stays_removed() {
         .await
         .unwrap();
     moves::switch(source, account).await.unwrap();
+    moves::activate(source, target, account).await.unwrap();
     moves::release(source, account).await.unwrap();
 
     let members = "SELECT count(*) FROM org_memberships WHERE org_id=$1";

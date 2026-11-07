@@ -8,6 +8,7 @@ mod dependency_security;
 mod directory;
 mod foreign_authorization;
 mod migrations;
+mod move_http;
 mod moves;
 mod native;
 mod ops;

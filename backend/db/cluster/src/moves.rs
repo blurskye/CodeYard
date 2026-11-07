@@ -266,7 +266,8 @@ struct ForeignKey {
 }
 
 async fn foreign_keys(tx: &mut Tx) -> Result<Vec<ForeignKey>> {
-    let rows: Vec<(String, String, Vec<String>, Vec<String>, String)> = sqlx::query_as(
+    type ForeignKeyRow = (String, String, Vec<String>, Vec<String>, String);
+    let rows: Vec<ForeignKeyRow> = sqlx::query_as(
         "SELECT c.relname::text,p.relname::text, \
          ARRAY(SELECT a.attname::text FROM unnest(con.conkey) WITH ORDINALITY k(n,i) JOIN pg_attribute a ON a.attrelid=con.conrelid AND a.attnum=k.n ORDER BY k.i), \
          ARRAY(SELECT a.attname::text FROM unnest(con.confkey) WITH ORDINALITY k(n,i) JOIN pg_attribute a ON a.attrelid=con.confrelid AND a.attnum=k.n ORDER BY k.i), \
@@ -567,6 +568,22 @@ pub async fn copy(
     target_cell: i32,
     paths: &BTreeMap<i64, String>,
 ) -> Result<Copied> {
+    // Retain the move row independently of the read snapshot. Cancelling or renewing the
+    // freeze must not race a copy made under the previous freeze. Writers may still take
+    // KEY SHARE and see its expiry; the final deadline check rejects an expired snapshot.
+    let mut control = source.begin().await?;
+    set_lock_timeout(&mut control, Duration::from_secs(15)).await?;
+    let current: Option<String> = sqlx::query_scalar(
+        "SELECT state FROM account_moves WHERE account_kind=$1 AND account_id=$2 FOR SHARE",
+    )
+    .bind(account.kind.as_str())
+    .bind(account.id)
+    .fetch_optional(&mut *control)
+    .await?;
+    ensure!(
+        current.as_deref() == Some("frozen"),
+        "The account is not frozen"
+    );
     let mut from = source.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *from)
@@ -613,6 +630,30 @@ pub async fn copy(
     .bind(account.id)
     .fetch_one(&mut *to)
     .await?;
+    // A committed copy is not a second writable home. Its guard survives process loss
+    // and has no expiry; only a switched source can activate it. A retry may replace only
+    // our own receiving copy, never an already active account in the destination.
+    let receiving: Option<(String, i32)> = sqlx::query_as(
+        "SELECT state,target_cell FROM account_moves WHERE account_kind=$1 AND account_id=$2 FOR UPDATE",
+    )
+    .bind(account.kind.as_str())
+    .bind(account.id)
+    .fetch_optional(&mut *to)
+    .await?;
+    if let Some((state, from_cell)) = receiving {
+        ensure!(
+            state == "receiving" && from_cell == source_cell,
+            "Another move owns the target account"
+        );
+    } else {
+        ensure!(!earlier, "The target account is already active");
+        sqlx::query("INSERT INTO account_moves(account_kind,account_id,target_cell,state,expires_at) VALUES($1,$2,$3,'receiving',clock_timestamp())")
+            .bind(account.kind.as_str())
+            .bind(account.id)
+            .bind(source_cell)
+            .execute(&mut *to)
+            .await?;
+    }
     if earlier {
         clear(&mut to, tables, account, source_cell).await?;
     }
@@ -803,7 +844,7 @@ pub async fn copy(
             .execute(&mut *to)
             .await?;
     }
-    drop(from);
+    from.commit().await?;
     // The copy is only good while no write reached the source since the snapshot.
     let still: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM account_moves WHERE account_kind=$1 AND account_id=$2 AND state='frozen' AND expires_at>clock_timestamp()+make_interval(secs=>$3))")
         .bind(account.kind.as_str())
@@ -816,7 +857,60 @@ pub async fn copy(
         "The freeze ran out during the copy; run the move again with a longer freeze"
     );
     to.commit().await?;
+    control.commit().await?;
     Ok(copied)
+}
+
+/// Enables the copied account only after the source durably refuses further writes.
+/// Repeating activation after a lost reply is safe; an active target is never recopied.
+pub async fn activate(source: &PgPool, target: &PgPool, account: Account) -> Result<()> {
+    let mut from = source.begin().await?;
+    set_lock_timeout(&mut from, Duration::from_secs(15)).await?;
+    let switched: Option<(String, i32)> = sqlx::query_as(
+        "SELECT state,target_cell FROM account_moves WHERE account_kind=$1 AND account_id=$2 FOR SHARE",
+    )
+    .bind(account.kind.as_str())
+    .bind(account.id)
+    .fetch_optional(&mut *from)
+    .await?;
+    let mut to = target.begin().await?;
+    set_lock_timeout(&mut to, Duration::from_secs(15)).await?;
+    let target_cell = cell_id(&mut to).await?;
+    ensure!(
+        matches!(switched, Some((ref state, cell)) if state == "switched" && cell == target_cell),
+        "The source has not switched to this cell"
+    );
+    let source_cell = cell_id(&mut from).await?;
+    let receiving: Option<(String, i32)> = sqlx::query_as(
+        "SELECT state,target_cell FROM account_moves WHERE account_kind=$1 AND account_id=$2 FOR UPDATE",
+    )
+    .bind(account.kind.as_str())
+    .bind(account.id)
+    .fetch_optional(&mut *to)
+    .await?;
+    ensure!(
+        receiving
+            .as_ref()
+            .is_none_or(|(state, cell)| state == "receiving" && *cell == source_cell),
+        "Another move owns the target account"
+    );
+    let native: bool = sqlx::query_scalar(&format!(
+        "SELECT EXISTS(SELECT 1 FROM {} WHERE id=$1 AND NOT is_stub AND home_cell=$2)",
+        account.table()
+    ))
+    .bind(account.id)
+    .bind(target_cell)
+    .fetch_one(&mut *to)
+    .await?;
+    ensure!(native, "The target copy is missing");
+    sqlx::query("DELETE FROM account_moves WHERE account_kind=$1 AND account_id=$2")
+        .bind(account.kind.as_str())
+        .bind(account.id)
+        .execute(&mut *to)
+        .await?;
+    to.commit().await?;
+    from.commit().await?;
+    Ok(())
 }
 
 /// Marks the move switched: the source refuses the account's writes from now on, until
@@ -839,7 +933,7 @@ pub async fn switch(pool: &PgPool, account: Account) -> Result<()> {
 /// when there was nothing to cancel.
 pub async fn cancel(pool: &PgPool, account: Account) -> Result<bool> {
     Ok(sqlx::query(
-        "DELETE FROM account_moves WHERE account_kind=$1 AND account_id=$2 AND state<>'switched'",
+        "DELETE FROM account_moves WHERE account_kind=$1 AND account_id=$2 AND state IN ('pending','frozen')",
     )
     .bind(account.kind.as_str())
     .bind(account.id)
@@ -867,11 +961,35 @@ pub async fn discard(target: &PgPool, account: Account, source_cell: i32) -> Res
     .bind(account.id)
     .fetch_one(&mut *tx)
     .await?;
+    let receiving: Option<(String, i32)> = sqlx::query_as(
+        "SELECT state,target_cell FROM account_moves WHERE account_kind=$1 AND account_id=$2 FOR UPDATE",
+    )
+    .bind(account.kind.as_str())
+    .bind(account.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    ensure!(
+        receiving
+            .as_ref()
+            .is_none_or(|(state, cell)| state == "receiving" && *cell == source_cell),
+        "Another move owns the target account"
+    );
+    ensure!(
+        !copied || receiving.is_some(),
+        "An active target cannot be discarded"
+    );
     if copied {
         let mut catalog = pg::catalog(&mut tx).await?;
         catalog.tables.sort_by(|a, b| a.name.cmp(&b.name));
         clear(&mut tx, &catalog.tables, account, source_cell).await?;
     }
+    sqlx::query(
+        "DELETE FROM account_moves WHERE account_kind=$1 AND account_id=$2 AND state='receiving'",
+    )
+    .bind(account.kind.as_str())
+    .bind(account.id)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(())
 }

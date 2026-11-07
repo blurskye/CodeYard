@@ -604,6 +604,15 @@ async fn move_account(
     let DbPool::Postgres(source) = pool else {
         anyhow::bail!("Account moves need PostgreSQL in both cells");
     };
+    // Reuse the dedicated session lease: two operators must not cancel, recopy or
+    // release the same source concurrently. Serving nodes retain their own identities.
+    let _coordinator = codeyard_db_cluster::cluster::serving_lock(pool, "account-move").await?;
+    let source_root = tokio::fs::canonicalize(repos_path).await?;
+    let target_root = tokio::fs::canonicalize(&arguments.target_repositories).await?;
+    anyhow::ensure!(
+        source_root != target_root,
+        "The source and target repository roots must differ"
+    );
     let kind = ObjectKind::parse(&arguments.kind)
         .ok_or_else(|| anyhow::anyhow!("Invalid account kind"))?;
     let lookup = match kind {
@@ -648,6 +657,21 @@ async fn move_account(
                 wait,
             )
             .await?;
+            // Drain publishers that entered before the freeze and retain their existing
+            // interprocess leases until the switch. A ref comparison alone has a gap in
+            // which an already admitted push could publish after the comparison.
+            let mut publishers = Vec::with_capacity(repositories.len());
+            for repository in &repositories {
+                let (from, _) =
+                    repository_paths(repos_path, &arguments.target_repositories, repository)?;
+                publishers.push(
+                    tokio::time::timeout(wait, codeyard_git::repository::locks::publication(&from))
+                        .await
+                        .map_err(|_| {
+                            anyhow::anyhow!("A Git publisher is still running; retry the move")
+                        })??,
+                );
+            }
             let mut paths = std::collections::BTreeMap::new();
             for repository in &repositories {
                 let (from, to) =
@@ -682,6 +706,7 @@ async fn move_account(
             }
         }
     }
+    moves::activate(source, &target, account).await?;
     let objects =
         std::iter::once(Object { kind, id }).chain(repositories.iter().map(|repository| Object {
             kind: ObjectKind::Repository,
