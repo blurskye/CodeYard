@@ -488,8 +488,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Foreign proofs now reject expiry after PostgreSQL user-row lock waits and after
     repository/policy reads. Workspace fccfcb3a68684eec9227aded28d5586d, Clippy
     65a4644af98741149d6cd19687ebeef8 and WASM e8886cf24abb453b8147cc7e87430afa pass;
-    runtime 988f12f45c6f46e68acbd6e1d6c24f40 runs the real lock-wait regression,
-    both-engine authorization contracts, core library and cluster tests.
+    runtime 988f12f45c6f46e68acbd6e1d6c24f40 passes all 27 core library tests,
+    both-engine authorization contracts (including the real PostgreSQL lock wait)
+    and all 239 cluster tests, with no ignored tests.
     This still uses the old cache deadline, not a heartbeat snapshot. Removing the old
     `foreign_credentials` table and adding a cell-local identity-heartbeat table also
     requires updating `cells/ownership.rs`: its exhaustive test rejects both missing
@@ -520,8 +521,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     The PgBouncer, replica, cluster, quorum and cells rounds have not run since.
 
     Owner follow-ups, outside this acceptance work:
-    committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
-    scheduled bounded expired directory-claim collection.
+    committed range renewal; scheduled bounded expired directory-claim collection.
 
 ## Decisions that settle the open questions
 
