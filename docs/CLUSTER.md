@@ -787,7 +787,9 @@ notices.
 
 Enrolled cells share one search index for `search/repositories`, `issues` and `code`. It
 lives in the directory database, and each cell writes only the repositories homed in it.
-Run a second `cell directory serve --address <search address>` on the same directory
+The directory's migration installs the `pg_trgm` extension in `public`, so the
+PostgreSQL server needs its contrib package and the directory role needs `CREATE` on the
+database and on `public`. Run a second `cell directory serve --address <search address>` on the same directory
 database and give cells `SEARCH_ADDRESS` and `SEARCH_PUBLIC_KEY`. These default to the
 directory settings. Changes reach the index through `cell_outbox` within a minute. When
 the index is down, pages keep working and search answers 503. To rebuild it, run

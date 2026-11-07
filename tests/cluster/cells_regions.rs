@@ -95,10 +95,13 @@ fn router(
 
 /// Which web node answered, as "<node> <method> <path>".
 async fn answered(request: reqwest::RequestBuilder) -> String {
-    let response = request.send().await.unwrap();
+    let (client, request) = request.build_split();
+    let request = request.unwrap();
+    let target = format!("{} {}", request.method(), request.url());
+    let response = client.execute(request).await.unwrap();
     let status = response.status();
     let body = response.text().await.unwrap();
-    assert_eq!(status, 200, "{body}");
+    assert_eq!(status, 200, "{target}: {body}");
     body
 }
 
@@ -117,6 +120,28 @@ async fn regions_place_signups_keep_homes_and_serve_present_organizations_nearby
     let mut zero_b = web_node("zero-b").await;
     let one = web_node("one").await;
     let [zero_key, one_key, router_key, directory_key] = [(); 4].map(|()| NodeKey::generate());
+    // Routers start before the cells register: signup placement only takes a cell whose
+    // record is fresh, and building a router can take a while on a loaded runner.
+    directory
+        .set_router_key(&router_key.public_hex(), true)
+        .await
+        .unwrap();
+    let listener = directory::Listener::bind(
+        directory.clone(),
+        &directory_key,
+        "127.0.0.1:0".parse().unwrap(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    let a = Server::start(router("a", &router_key, &listener, &directory_key)).await;
+    let b = Server::start(router("b", &router_key, &listener, &directory_key)).await;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(15))
+        .build()
+        .unwrap();
+    let get = |router: &Server, path: &str| client.get(format!("{}{path}", router.url()));
+    let post = |router: &Server, path: &str| client.post(format!("{}{path}", router.url()));
     let nearby = vec![ReadRegion {
         region: "b".into(),
         web_urls: vec![zero_b.url()],
@@ -172,26 +197,6 @@ async fn regions_place_signups_keep_homes_and_serve_present_organizations_nearby
             .await
             .unwrap();
     }
-    directory
-        .set_router_key(&router_key.public_hex(), true)
-        .await
-        .unwrap();
-    let listener = directory::Listener::bind(
-        directory.clone(),
-        &directory_key,
-        "127.0.0.1:0".parse().unwrap(),
-        Default::default(),
-    )
-    .await
-    .unwrap();
-    let a = Server::start(router("a", &router_key, &listener, &directory_key)).await;
-    let b = Server::start(router("b", &router_key, &listener, &directory_key)).await;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .unwrap();
-    let get = |router: &Server, path: &str| client.get(format!("{}{path}", router.url()));
-    let post = |router: &Server, path: &str| client.post(format!("{}{path}", router.url()));
 
     // Signups go to an open cell in the router's own region.
     let signup = || "mode=signup&username=carol";
