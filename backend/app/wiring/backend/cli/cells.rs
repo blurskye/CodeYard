@@ -625,13 +625,16 @@ async fn move_account(
         .await?
         .ok_or_else(|| anyhow::anyhow!("No such account in this cell"))?;
     let account = moves::Account::new(kind, id)?;
-    let DbPool::Postgres(target) =
-        codeyard_db_core::connection::open_source(&arguments.target_database).await?
-    else {
+    let target_pool = codeyard_db_core::connection::open_source(&arguments.target_database).await?;
+    let DbPool::Postgres(target) = &target_pool else {
         anyhow::bail!("Account moves need PostgreSQL in both cells");
     };
+    // The same lease excludes incoming and outgoing moves. Acquisition is nonblocking,
+    // so two opposite moves cannot deadlock while each holds its source lease.
+    let _destination =
+        codeyard_db_cluster::cluster::serving_lock(&target_pool, "account-move").await?;
     let source_cell = moves::cell(source).await?;
-    let target_cell = moves::cell(&target).await?;
+    let target_cell = moves::cell(target).await?;
     let to = Prefix::new(u16::try_from(target_cell)?);
     let address = std::env::var("DIRECTORY_ADDRESS")
         .ok()
@@ -649,6 +652,10 @@ async fn move_account(
     let repositories = moves::repositories(source, account).await?;
     let mut copied = None;
     if reached != moves::State::Switched {
+        if let Err(error) = moves::check_target(target, account, source_cell).await {
+            moves::cancel(source, account).await?;
+            return Err(error);
+        }
         let result = async {
             moves::freeze(
                 source,
@@ -684,7 +691,7 @@ async fn move_account(
                 .await?;
                 paths.insert(repository.id, to.to_string_lossy().into_owned());
             }
-            let result = moves::copy(source, &target, account, target_cell, &paths).await?;
+            let result = moves::copy(source, target, account, target_cell, &paths).await?;
             // A push that was already running may have landed after the Git copy.
             for repository in &repositories {
                 let (from, to) =
@@ -700,13 +707,13 @@ async fn move_account(
             Err(error) => {
                 // Writes resume here, and the copy leaves the target.
                 if moves::cancel(source, account).await? {
-                    moves::discard(&target, account, source_cell).await?;
+                    moves::discard(target, account, source_cell).await?;
                 }
                 return Err(error);
             }
         }
     }
-    moves::activate(source, &target, account).await?;
+    moves::activate(source, target, account).await?;
     let objects =
         std::iter::once(Object { kind, id }).chain(repositories.iter().map(|repository| Object {
             kind: ObjectKind::Repository,

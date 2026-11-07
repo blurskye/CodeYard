@@ -583,6 +583,28 @@ async fn add_stubs(from: &mut Tx, to: &mut Tx, target: i32, needed: &mut Needed)
     Ok(added)
 }
 
+/// Refuses an active destination before the CLI touches its Git directories. The caller
+/// holds the destination cell's move lease until it finishes; `copy` repeats this check
+/// under row locks before loading data.
+pub async fn check_target(target: &PgPool, account: Account, source_cell: i32) -> Result<()> {
+    let allowed: bool = sqlx::query_scalar(&format!(
+        "SELECT NOT EXISTS(SELECT 1 FROM {table} WHERE id=$2 AND NOT is_stub) \
+         AND NOT EXISTS(SELECT 1 FROM account_moves WHERE account_kind=$1 AND account_id=$2) \
+         OR EXISTS(SELECT 1 FROM account_moves WHERE account_kind=$1 AND account_id=$2 AND state='receiving' AND target_cell=$3)",
+        table = account.table()
+    ))
+    .bind(account.kind.as_str())
+    .bind(account.id)
+    .bind(source_cell)
+    .fetch_one(target)
+    .await?;
+    ensure!(
+        allowed,
+        "The target account is already active or belongs to another move"
+    );
+    Ok(())
+}
+
 /// Loads the account into the target cell in one transaction while the source is frozen:
 /// its own rows (the account and repository rows over any stubs), stubs for the accounts
 /// and repositories they reference, and the shared rows they need. `paths` gives each

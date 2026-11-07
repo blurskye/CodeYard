@@ -158,6 +158,8 @@ COPY_TO_DATABASE_URL=postgres://user:password@host:5432/name \
 ```
 
 The copy reads the source in one snapshot and writes the destination in one transaction.
+Finish or cancel every account move first: an unfinished move refuses the copy before
+its destination is opened, so a frozen receiving copy cannot become writable on SQLite.
 The destination is migrated first and must be empty; the default file limits that the
 migrations insert are replaced by the source's. The database role that runs the copy must
 own the destination's tables, which the role that ran the migrations does; superuser is

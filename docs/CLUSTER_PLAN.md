@@ -528,6 +528,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     omitted `account_moves` from SQLite's catalogue. The parity table and an unfinished-
     move refusal before whole-database copy are written, with a CLI regression. Workspace
     b010d72c, Clippy c819144f and WASM bb590c68 pass; runtime 5b4e1a29 is the combined retry.
+    The next move-retry batch takes the existing move lease at both cells and refuses an
+    active target before touching its Git, not just during row loading. CLI regressions
+    cover a busy destination and preservation of a destination-only commit. Source checks
+    and runtime are pending.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

@@ -160,6 +160,23 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_issue_ids() {
             .kill_on_drop(true);
         command
     };
+    // An incoming move must share the destination's move slot with an outgoing one.
+    let destination_lease =
+        codeyard_db_cluster::cluster::serving_lock(&target.pool, "account-move")
+            .await
+            .unwrap();
+    let busy = tokio::time::timeout(Duration::from_secs(30), run().output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!busy.status.success());
+    assert!(
+        String::from_utf8_lossy(&busy.stderr).contains("another server"),
+        "{}",
+        String::from_utf8_lossy(&busy.stderr)
+    );
+    assert!(std::fs::read_dir(&target_root).unwrap().next().is_none());
+    destination_lease.release().await;
     let failed = tokio::time::timeout(Duration::from_secs(90), run().output())
         .await
         .unwrap()
@@ -191,6 +208,69 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_issue_ids() {
         .await
         .unwrap();
     assert_eq!(count, 0, "a failed load rolls back all target rows");
+    // A retry must refuse a destination that became active before touching its Git,
+    // not merely discover that conflict when it eventually loads the database rows.
+    let destination = target_root.join(disk.file_name().unwrap());
+    sqlx::query("INSERT INTO users(id,username,home_cell) VALUES($1,'alice',2)")
+        .bind(alice.id)
+        .execute(&target.raw)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO repositories(id,owner_kind,owner_user_id,name,disk_path,home_cell) VALUES($1,'user',$2,'project',$3,2)")
+        .bind(repo.id).bind(alice.id).bind(destination.to_str().unwrap())
+        .execute(&target.raw).await.unwrap();
+    let active_git = git2::Repository::open_bare(&destination).unwrap();
+    let parent = active_git.find_commit(oid).unwrap();
+    let signature = git2::Signature::now("Alice", "alice@example.test").unwrap();
+    let active_oid = active_git
+        .commit(
+            Some("refs/heads/main"),
+            &signature,
+            &signature,
+            "Destination-only write",
+            &parent.tree().unwrap(),
+            &[&parent],
+        )
+        .unwrap();
+    drop(parent);
+    drop(active_git);
+    let active = tokio::time::timeout(Duration::from_secs(30), run().output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!active.status.success());
+    assert!(
+        String::from_utf8_lossy(&active.stderr).contains("target account is already active"),
+        "{}",
+        String::from_utf8_lossy(&active.stderr)
+    );
+    assert_eq!(
+        git2::Repository::open_bare(&destination)
+            .unwrap()
+            .head()
+            .unwrap()
+            .target(),
+        Some(active_oid)
+    );
+    let move_count: i64 = sqlx::query_scalar("SELECT count(*) FROM account_moves")
+        .fetch_one(&source.raw)
+        .await
+        .unwrap();
+    assert_eq!(
+        move_count, 0,
+        "destination refusal must unfreeze the source"
+    );
+    sqlx::query("DELETE FROM repositories WHERE id=$1")
+        .bind(repo.id)
+        .execute(&target.raw)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM users WHERE id=$1")
+        .bind(alice.id)
+        .execute(&target.raw)
+        .await
+        .unwrap();
+    std::fs::remove_dir_all(&destination).unwrap();
     sqlx::query("UPDATE issues SET title='Preserved issue after retry' WHERE id=$1")
         .bind(issue)
         .execute(&source.raw)
