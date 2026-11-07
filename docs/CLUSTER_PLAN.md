@@ -525,8 +525,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     private deadline accessor, now exposed for bounded browser projections; WASM
     7efda07fa42a4b4aafcda081ff3c0fe7 passes. The combined recheck is workspace
     edd212b7024740a082cd9f423bdf267b, Clippy 495cd4061db140f5b91f553c8385de8c
-    and WASM 01b42d03e14f4a67bbb527388b795510. The prepared cache runtime also
-    retries the failed identity targets and checks the new browser expiry assertion.
+    and WASM 01b42d03e14f4a67bbb527388b795510; all three pass. Combined runtime
+    ea8c74f4b1794a86a4359d7def525470 runs cache libraries/HTTP contracts, retries
+    the failed identity targets and checks the new browser expiry assertion.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
