@@ -1515,6 +1515,15 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         assert!(sender.send_notice(&hostile).await.is_err());
     }
     assert_eq!(delivered().await, (1, 1));
+    // Keep a direct grant through the privacy change, then revoke it over HTTP below.
+    codeyard_db_repos::repositories::access::grant_repo_access(
+        &zero.pool,
+        user.id,
+        open.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     // A repository that turns private before delivery sends nothing.
     mention("open", "Mention before privacy").await;
     let response = client
@@ -1588,6 +1597,32 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .unwrap(),
         0
     );
+    assert_eq!(delivered().await, (1, 1));
+    // Revoking a member reclaims even already-delivered notice events. The recipient
+    // cannot regain the notice while this second withdrawal waits in the outbox.
+    let response = client
+        .delete(format!(
+            "{}/api/v3/repos/alice/open/collaborators/bob",
+            http.url()
+        ))
+        .bearer_auth(&alice_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM cell_outbox WHERE topic='notice' AND root_id=$1 AND delivered_at IS NULL"
+        )
+        .bind(open.id)
+        .fetch_one(&zero.raw)
+        .await
+        .unwrap(),
+        2
+    );
+    assert!(inbox().await.is_empty());
+    drain(&zero.pool).await;
+    assert!(inbox().await.is_empty());
     assert_eq!(delivered().await, (1, 1));
     let deleted = codeyard_repos_core::repositories::lifecycle::provision(
         (&zero.pool, None),

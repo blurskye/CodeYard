@@ -36,6 +36,22 @@ impl Policy {
         })
     }
 
+    /// Configuration is read once by the identity reader, not per credential.
+    pub fn from_env() -> Result<Self> {
+        fn milliseconds(name: &str, default: u64) -> Result<Duration> {
+            let value = match std::env::var(name) {
+                Ok(value) => value.parse::<u64>()?,
+                Err(std::env::VarError::NotPresent) => default,
+                Err(error) => return Err(error.into()),
+            };
+            Ok(Duration::from_millis(value))
+        }
+        Self::new(
+            milliseconds("IDENTITY_MAXIMUM_AGE_MS", 2000)?,
+            milliseconds("IDENTITY_CLOCK_ERROR_MS", 250)?,
+        )
+    }
+
     pub fn maximum_age(self) -> Duration {
         self.maximum_age
     }

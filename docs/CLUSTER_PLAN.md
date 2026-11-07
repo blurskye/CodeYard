@@ -457,14 +457,22 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 7 side lane: notice withdrawal and live source checks pass workspace
     5773433098f74a23b60d3bb760b2234e and WASM 5b56e1e158f34324ba1cd9571c6b3ddd;
     Clippy fdec851f92ed4b8ea4f5207c1e523c40 also passes. Runtime
-    81357bd2c79f464382707c2c7ac47704 built the native helper binaries and is compiling
-    the test targets; no test result is claimed yet. `s7-notices-test.sh` owns its focused targets and cells round.
+    81357bd2c79f464382707c2c7ac47704 passes 80 selected library tests, both-engine
+    stub HTTP tests (2), all 239 cluster tests and 47 notification collaboration tests.
+    Notification polling passes 4 and fails the PostgreSQL 100-client two-second
+    delivery bound; the public cells round is still pending. No assertion is relaxed.
+    `s7-notices-test.sh` owns its focused targets and cells round. A further two-cell
+    HTTP member-revocation/outbox-reclaim assertion is checking in workspace
+    5a7b4a57e8764a9994d446d064a9fe83, Clippy bdc1355fc4ef42cf926c94010991881a
+    and WASM 045556818d024ac59e14f1530301606b; its runtime is not yet run.
     Both baseline schemas add separate notice-refresh trigger/index blocks (no FK edits).
     Both-engine HTTP/stub outage tests and two-cell HTTP privacy/deletion tests are added;
     the public gh cells script also checks privacy after delivery. Heartbeat credential
     work has an unchecked deadline helper and five deterministic unit tests in
     `authorization/freshness.rs`: the clock allowance is inside the age bound, and wall
-    and monotonic deadlines survive waits without renewal. It is not wired into readers;
+    and monotonic deadlines survive waits without renewal. Its policy parser accepts
+    `IDENTITY_MAXIMUM_AGE_MS` (2000) and `IDENTITY_CLOCK_ERROR_MS` (250), but no running
+    reader consumes that configuration yet. It is not wired into readers;
     the old foreign cache remains until the snapshot/RPC/transaction replacement is complete.
     The optional content cache is not started.
 
