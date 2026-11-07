@@ -448,6 +448,72 @@ async fn deadline(pool: &DbPool) {
     );
 }
 
+async fn set_owner_move(pool: &DbPool, owner: i64, state: &str, seconds: i64) {
+    match pool {
+        DbPool::Postgres(raw) => {
+            sqlx::query("INSERT INTO account_moves(account_kind,account_id,target_cell,state,expires_at)
+                VALUES('user',$1,2,$2,clock_timestamp()+make_interval(secs=>$3))
+                ON CONFLICT(account_kind,account_id) DO UPDATE SET state=excluded.state,expires_at=excluded.expires_at")
+                .bind(owner).bind(state).bind(seconds as f64).execute(raw).await.unwrap();
+        }
+        DbPool::Sqlite(raw) => {
+            sqlx::query("INSERT INTO account_moves(account_kind,account_id,target_cell,state,expires_at)
+                VALUES('user',$1,2,$2,strftime('%Y-%m-%dT%H:%M:%f000Z','now',$3 || ' seconds'))
+                ON CONFLICT(account_kind,account_id) DO UPDATE SET state=excluded.state,expires_at=excluded.expires_at")
+                .bind(owner).bind(state).bind(format!("{seconds:+}")).execute(raw).await.unwrap();
+        }
+    }
+}
+
+/// A frozen or departed owner stops quorum writes: a pending write aborts at its decision
+/// and no new write begins. An expired freeze and a receiving copy do not refuse writes.
+async fn moving_owner(pool: &DbPool) {
+    let f = setup(pool, 3, "majority").await;
+    let id = begin(pool, &f).await;
+    votes(pool, &f, &id).await;
+    set_owner_move(pool, f.owner, "frozen", 3600).await;
+    let decided = codeyard_db_cluster::cluster::writes::decide_write(pool, &id, f.primary, 1, true)
+        .await
+        .unwrap();
+    assert_eq!(decided.decision, "abort");
+    assert!(
+        codeyard_db_cluster::cluster::writes::finish_write(pool, &id, 1)
+            .await
+            .unwrap()
+    );
+    for (state, seconds) in [("frozen", 3600), ("switched", 3600), ("released", -60)] {
+        set_owner_move(pool, f.owner, state, seconds).await;
+        let refused = codeyard_db_cluster::cluster::writes::begin_write(
+            pool,
+            f.repo,
+            f.primary,
+            1,
+            &Uuid::new_v4().to_string(),
+            &[change()],
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            refused.to_string().contains("moving"),
+            "{state}: {refused:#}"
+        );
+    }
+    for state in ["frozen", "receiving"] {
+        set_owner_move(pool, f.owner, state, -60).await;
+        let id = begin(pool, &f).await;
+        let decided =
+            codeyard_db_cluster::cluster::writes::decide_write(pool, &id, f.primary, 1, false)
+                .await
+                .unwrap();
+        assert_eq!(decided.decision, "abort");
+        assert!(
+            codeyard_db_cluster::cluster::writes::finish_write(pool, &id, 1)
+                .await
+                .unwrap()
+        );
+    }
+}
+
 async fn decision_race(pool: &DbPool) {
     let f = setup(pool, 2, "majority").await;
     let id = begin(pool, &f).await;
@@ -1787,6 +1853,7 @@ engine_pair!(
     coordinator_duplicate_begin
 );
 engine_pair!(sqlite_two_of_two, postgres_two_of_two, two_voters);
+engine_pair!(sqlite_moving_owner, postgres_moving_owner, moving_owner);
 engine_pair!(
     sqlite_legacy_publishers_refused,
     postgres_legacy_publishers_refused,

@@ -32,6 +32,23 @@ async fn lock_control(conn: &mut SqliteConnection, repo: i64) -> Result<Control>
     Ok(sqlx::query_as(CONTROL).bind(repo).fetch_one(conn).await?)
 }
 
+/// Whether the repository or its owner is frozen or has left for another cell. Moves run
+/// only on PostgreSQL, but both engines refuse the same states.
+async fn moving(conn: &mut SqliteConnection, repo: i64) -> Result<bool> {
+    let rows: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT m.state,julianday(m.expires_at)>julianday('now') FROM account_moves m JOIN repositories r ON r.id=$1
+        WHERE (m.account_kind='repository' AND m.account_id=r.id)
+           OR (m.account_kind=CASE WHEN r.owner_kind='org' THEN 'organization' ELSE 'user' END
+               AND m.account_id=CASE WHEN r.owner_kind='org' THEN r.owner_org_id ELSE r.owner_user_id END)",
+    )
+    .bind(repo)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .iter()
+        .any(|(state, unexpired)| crate::cluster::writes::move_blocks_writes(state, *unexpired)))
+}
+
 async fn active_node(conn: &mut SqliteConnection, node: i64) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>("SELECT id FROM nodes WHERE id=$1 AND status='active' AND EXISTS(SELECT 1 FROM json_each(roles) WHERE value='storage')")
         .bind(node).fetch_optional(conn).await?.is_some())
@@ -195,6 +212,10 @@ pub async fn begin_write(
     crate::cluster::writes::validate_id(id)?;
     crate::cluster::writes::validate_changes(refs)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    ensure!(
+        !moving(&mut tx, repo).await?,
+        crate::cluster::writes::MOVING
+    );
     let control = lock_control(&mut tx, repo).await?;
     ensure!(
         control.primary_id == primary && control.term == term && control.serving,
@@ -273,6 +294,7 @@ pub async fn decide_write(
     let mut can_commit = commit
         && control.serving
         && control.committed_version == write.base_version
+        && !moving(&mut tx, write.repository_id).await?
         && active_node(&mut tx, primary).await?;
     if can_commit {
         let votes: Vec<i64> = sqlx::query_scalar("SELECT v.node_id FROM repository_write_votes v

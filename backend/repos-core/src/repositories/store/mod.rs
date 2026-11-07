@@ -2849,6 +2849,22 @@ impl RepoStore {
         }
     }
 
+    /// Publishes a repository copied by an account move on its storage node.
+    pub async fn publish_move(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        head: &str,
+        refs: &std::collections::BTreeMap<String, String>,
+        input: &mut (dyn tokio::io::AsyncRead + Unpin + Send),
+    ) -> Result<(), RepoError> {
+        match &self.0 {
+            Backend::Local(local) => local.publish_move(pool, head, refs, input).await,
+            Backend::Remote(_) => Err(crate::wire::invalid(
+                "a moved repository is published on its storage node",
+            )),
+        }
+    }
+
     /// Offline restore installs the database's canonical refs on an unbound local mirror.
     pub async fn restore_refs(
         &self,

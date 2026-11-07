@@ -39,6 +39,24 @@ async fn lock_control(conn: &mut PgConnection, repo: i64) -> Result<Control> {
         .await?)
 }
 
+/// Whether the repository or its owner is frozen or has left for another cell. The share
+/// lock makes a freeze wait for a decision already in progress.
+async fn moving(conn: &mut PgConnection, repo: i64) -> Result<bool> {
+    let rows: Vec<(String, bool)> = sqlx::query_as(
+        "SELECT m.state,m.expires_at>clock_timestamp() FROM account_moves m JOIN repositories r ON r.id=$1
+        WHERE (m.account_kind='repository' AND m.account_id=r.id)
+           OR (m.account_kind=CASE WHEN r.owner_kind='org' THEN 'organization' ELSE 'user' END
+               AND m.account_id=CASE WHEN r.owner_kind='org' THEN r.owner_org_id ELSE r.owner_user_id END)
+        ORDER BY m.account_kind FOR KEY SHARE OF m",
+    )
+    .bind(repo)
+    .fetch_all(conn)
+    .await?;
+    Ok(rows
+        .iter()
+        .any(|(state, unexpired)| crate::cluster::writes::move_blocks_writes(state, *unexpired)))
+}
+
 async fn active_node(conn: &mut PgConnection, node: i64) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>(
         "SELECT id FROM nodes WHERE id=$1 AND status='active' AND 'storage'=ANY(roles) FOR SHARE",
@@ -203,6 +221,10 @@ pub async fn begin_write(
     crate::cluster::writes::validate_id(id)?;
     crate::cluster::writes::validate_changes(refs)?;
     let mut tx = pool.begin().await?;
+    ensure!(
+        !moving(&mut tx, repo).await?,
+        crate::cluster::writes::MOVING
+    );
     let control = lock_control(&mut tx, repo).await?;
     ensure!(
         control.primary_id == primary && control.term == term && control.serving,
@@ -266,6 +288,16 @@ pub async fn decide_write(
 ) -> Result<WriteRecord> {
     crate::cluster::writes::validate_id(id)?;
     let mut tx = pool.begin().await?;
+    // The move row before the repository row, the order a move's release takes them in.
+    let repo: Option<i64> =
+        sqlx::query_scalar("SELECT repository_id FROM repository_writes WHERE id=$1")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let moving = match repo {
+        Some(repo) => moving(&mut tx, repo).await?,
+        None => false,
+    };
     let control = write_control(&mut tx, id).await?;
     let write = record(&mut tx, id).await?.context("write disappeared")?;
     ensure!(
@@ -281,6 +313,7 @@ pub async fn decide_write(
     let mut can_commit = commit
         && control.serving
         && control.committed_version == write.base_version
+        && !moving
         && active_node(&mut tx, primary).await?;
     if can_commit {
         let votes: Vec<i64> = sqlx::query_scalar("SELECT v.node_id FROM repository_write_votes v

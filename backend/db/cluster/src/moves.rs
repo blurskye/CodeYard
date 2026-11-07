@@ -367,14 +367,16 @@ pub async fn freeze(pool: &PgPool, account: Account, hold: Duration, wait: Durat
     .await
 }
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
 pub struct Repository {
     pub id: i64,
     pub disk_path: String,
+    /// The cluster storage node that holds the repository, or none for a local directory.
+    #[serde(default)]
+    pub storage_node_id: Option<i64>,
 }
 
-/// The account's repositories in this cell. Repositories placed on cluster storage nodes
-/// cannot move yet.
+/// The account's repositories in this cell, with the storage node that holds each one.
 pub async fn repositories(pool: &PgPool, account: Account) -> Result<Vec<Repository>> {
     let released: Option<String> = sqlx::query_scalar(
         "SELECT repository_paths::text FROM account_moves WHERE account_kind=$1 AND account_id=$2 AND state='released'",
@@ -386,8 +388,8 @@ pub async fn repositories(pool: &PgPool, account: Account) -> Result<Vec<Reposit
     if let Some(paths) = released {
         return Ok(serde_json::from_str(&paths)?);
     }
-    let rows: Vec<(i64, String, bool)> = sqlx::query_as(&format!(
-        "SELECT id,disk_path,storage_node_id IS NOT NULL FROM repositories WHERE NOT is_stub AND {} ORDER BY id LIMIT {}",
+    let rows: Vec<(i64, String, Option<i64>)> = sqlx::query_as(&format!(
+        "SELECT id,disk_path,storage_node_id FROM repositories WHERE NOT is_stub AND {} ORDER BY id LIMIT {}",
         account.repositories(),
         MAX_REPOSITORIES + 1
     ))
@@ -398,13 +400,13 @@ pub async fn repositories(pool: &PgPool, account: Account) -> Result<Vec<Reposit
         rows.len() <= MAX_REPOSITORIES,
         "The account has too many repositories to move in one operation"
     );
-    ensure!(
-        rows.iter().all(|(_, _, placed)| !placed),
-        "The account has repositories on cluster storage nodes; accounts with placed repositories cannot move yet"
-    );
     Ok(rows
         .into_iter()
-        .map(|(id, disk_path, _)| Repository { id, disk_path })
+        .map(|(id, disk_path, storage_node_id)| Repository {
+            id,
+            disk_path,
+            storage_node_id,
+        })
         .collect())
 }
 
@@ -751,6 +753,66 @@ pub async fn check_target(target: &PgPool, account: Account, source_cell: i32) -
         "The target account is already active or belongs to another move"
     );
     Ok(())
+}
+
+/// The storage node that holds an earlier run's copy of these repositories in this cell.
+pub async fn placed_node(pool: &PgPool, repositories: &[i64]) -> Result<Option<i64>> {
+    Ok(sqlx::query_scalar::<_, i64>(
+        "SELECT storage_node_id FROM repositories WHERE id=ANY($1) AND NOT is_stub AND storage_node_id IS NOT NULL ORDER BY id LIMIT 1",
+    )
+    .bind(repositories)
+    .fetch_optional(pool)
+    .await?)
+}
+
+/// Gives the account's copied repositories to a storage node of a target cell that writes
+/// through a quorum. Each starts empty there and is published through the quorum, which
+/// requires write version zero. A repeated run may place them again on the same node.
+pub async fn place_repositories(
+    target: &PgPool,
+    account: Account,
+    source_cell: i32,
+    node: i64,
+) -> Result<()> {
+    let mut tx = target.begin().await?;
+    sqlx::query("SET LOCAL codeyard.move = 'load'")
+        .execute(&mut *tx)
+        .await?;
+    let receiving: Option<i32> = sqlx::query_scalar(
+        "SELECT target_cell FROM account_moves WHERE account_kind=$1 AND account_id=$2 AND state='receiving' FOR UPDATE",
+    )
+    .bind(account.kind.as_str())
+    .bind(account.id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    ensure!(
+        receiving == Some(source_cell),
+        "The target cell is not receiving the account"
+    );
+    sqlx::query(&format!(
+        "UPDATE repositories SET storage_node_id=$2,write_version=0 WHERE NOT is_stub AND storage_node_id IS DISTINCT FROM $2 AND {}",
+        account.repositories()
+    ))
+    .bind(account.id)
+    .bind(node)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Whether this cell is receiving `repository` in a move that has not activated yet: the
+/// target storage node may then publish the copied refs, and nothing else may.
+pub async fn receiving(pool: &PgPool, repository: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM account_moves m JOIN repositories r ON r.id=$1 AND NOT r.is_stub
+        WHERE m.state='receiving' AND ((m.account_kind='repository' AND m.account_id=r.id)
+           OR (m.account_kind=CASE WHEN r.owner_kind='org' THEN 'organization' ELSE 'user' END
+               AND m.account_id=CASE WHEN r.owner_kind='org' THEN r.owner_org_id ELSE r.owner_user_id END)))",
+    )
+    .bind(repository)
+    .fetch_one(pool)
+    .await?)
 }
 
 /// Loads the account into the target cell in one transaction while the source is frozen:
@@ -1314,8 +1376,8 @@ pub async fn release(pool: &PgPool, account: Account, transfer: Option<&Transfer
     }
     // Keep source paths in the same transaction that clears the rows. The CLI can
     // then resume filesystem cleanup after release, even though the stubs have no path.
-    let paths: Vec<(i64, String)> = sqlx::query_as(&format!(
-        "SELECT id,disk_path FROM repositories WHERE NOT is_stub AND {} ORDER BY id LIMIT {}",
+    let paths: Vec<(i64, String, Option<i64>)> = sqlx::query_as(&format!(
+        "SELECT id,disk_path,storage_node_id FROM repositories WHERE NOT is_stub AND {} ORDER BY id LIMIT {}",
         account.repositories(),
         MAX_REPOSITORIES + 1
     ))
@@ -1328,7 +1390,11 @@ pub async fn release(pool: &PgPool, account: Account, transfer: Option<&Transfer
     );
     let paths: Vec<Repository> = paths
         .into_iter()
-        .map(|(id, disk_path)| Repository { id, disk_path })
+        .map(|(id, disk_path, storage_node_id)| Repository {
+            id,
+            disk_path,
+            storage_node_id,
+        })
         .collect();
     sqlx::query("UPDATE account_moves SET state='released',repository_paths=$3::jsonb WHERE account_kind=$1 AND account_id=$2")
         .bind(account.kind.as_str())
@@ -1451,6 +1517,25 @@ async fn clear(
         sqlx::query(&format!(
             "DELETE FROM {} t0 WHERE {condition}",
             quote(table)
+        ))
+        .bind(account.id)
+        .execute(&mut **tx)
+        .await?;
+    }
+    // Cluster rows are not owned rows. Without them the storage nodes no longer need
+    // the stubs' Git copies and retire them, as after a deletion.
+    for table in [
+        "repository_writes",
+        "repository_voters",
+        "repository_write_control",
+        "repository_committed_refs",
+        "repository_replicas",
+        "repository_moves",
+        "node_drain_repositories",
+    ] {
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE repository_id IN (SELECT id FROM repositories WHERE NOT is_stub AND {})",
+            account.repositories()
         ))
         .bind(account.id)
         .execute(&mut **tx)

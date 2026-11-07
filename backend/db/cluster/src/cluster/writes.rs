@@ -21,6 +21,16 @@ pub(crate) const MAX_FAMILY: usize = 10_000;
 pub(crate) const MAX_REFS: usize = codeyard_git::repository::MAX_MIRROR_REFS;
 const MAX_REF_BYTES: usize = codeyard_git::repository::MAX_MIRROR_REF_BYTES;
 
+pub(crate) const MOVING: &str =
+    "This account is moving to another cell; try again in a few minutes";
+
+/// Whether a move row in this state refuses quorum writes. Quorum tables have no move
+/// guard trigger, so begin and decide check the owner's move inside their transaction.
+/// A receiving copy is the move's own publication and is not refused.
+pub(crate) fn move_blocks_writes(state: &str, unexpired: bool) -> bool {
+    matches!(state, "switched" | "released") || (state == "frozen" && unexpired)
+}
+
 native_operation!(crate::postgres::cluster::writes::write_settings,
     crate::sqlite::cluster::writes::write_settings,
     fn write_settings(pool: &DbPool) -> Result<WriteSettings>);

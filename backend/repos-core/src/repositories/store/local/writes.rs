@@ -520,3 +520,123 @@ impl LocalStore {
         Ok(())
     }
 }
+
+impl LocalStore {
+    /// Publishes a repository that an account move copied from another cell. The pack on
+    /// `input` is indexed first; every ref and HEAD then change in one quorum write, which
+    /// is allowed only while this cell is receiving the repository. A repeated call after a
+    /// crash publishes only what is still missing.
+    pub(crate) async fn publish_move(
+        &self,
+        pool: &codeyard_db_core::DbPool,
+        head: &str,
+        refs: &std::collections::BTreeMap<String, String>,
+        input: &mut (dyn tokio::io::AsyncRead + Unpin + Send),
+    ) -> Result<(), RepoError> {
+        use codeyard_db_cluster::cluster::writes as journal;
+        use tokio::io::AsyncWriteExt;
+        let codeyard_db_core::DbPool::Postgres(postgres) = pool else {
+            return Err(RepoError::write_denied());
+        };
+        if refs.len() > git::repository::MAX_MIRROR_REFS
+            || !head.starts_with("refs/heads/")
+            || !git2::Reference::is_valid_name(head)
+            || refs.iter().any(|(name, target)| {
+                !name.starts_with("refs/")
+                    || !git2::Reference::is_valid_name(name)
+                    || !codeyard_git::is_full_commit_id(target)
+            })
+        {
+            return Err(crate::wire::invalid("invalid moved refs"));
+        }
+        let repository = self
+            .context
+            .as_ref()
+            .map(|(_, id)| *id)
+            .ok_or_else(RepoError::write_denied)?;
+        if self.quorum_context(pool, repository).await?.is_none() {
+            return Err(RepoError::write_denied());
+        }
+        let limits = crate::git_transport::WriteLimits::load(pool)
+            .await
+            .map_err(RepoError::from)?;
+        let pack = tempfile::NamedTempFile::new()
+            .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
+        let mut output = tokio::fs::File::from_std(
+            pack.reopen()
+                .map_err(|error| RepoError::from(anyhow::Error::from(error)))?,
+        );
+        let received = tokio::time::timeout(limits.timeout, async {
+            let mut bounded =
+                crate::git_transport::LimitedWriter::new(&mut output, limits.pack_bytes);
+            let bytes = tokio::io::copy(input, &mut bounded).await?;
+            bounded.flush().await?;
+            Ok::<_, std::io::Error>(bytes)
+        })
+        .await
+        .map_err(|_| unavailable("The moved pack did not arrive in time"))?
+        .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
+        drop(output);
+        // Only objects arrive before the publication. A repeated call may need none.
+        if received > 0 {
+            self.index_pack(pack.path(), true).await?;
+        }
+        let publication = git::locks::publication(self.path())
+            .await
+            .map_err(RepoError::from)?;
+        let view = journal::recovery_view(pool, repository)
+            .await
+            .map_err(RepoError::from)?;
+        let mut current = std::collections::BTreeMap::new();
+        let mut old_head = None;
+        for value in view.refs {
+            if value.name == "HEAD" {
+                old_head = Some(value.target);
+            } else {
+                current.insert(value.name, value.target);
+            }
+        }
+        let mut changes: Vec<WriteRef> = refs
+            .iter()
+            .filter(|(name, target)| current.get(*name) != Some(*target))
+            .map(|(name, target)| {
+                oid_change(name, current.get(name).map(String::as_str), Some(target))
+            })
+            .collect();
+        changes.extend(
+            current
+                .iter()
+                .filter(|(name, _)| !refs.contains_key(*name))
+                .map(|(name, old)| oid_change(name, Some(old), None)),
+        );
+        if old_head.as_deref() != Some(head) {
+            changes.push(WriteRef {
+                name: "HEAD".into(),
+                kind: "symbolic".into(),
+                old_target: old_head,
+                new_target: Some(head.to_owned()),
+            });
+        }
+        let published = Box::pin(publication.scope(self.publish_quorum_refs(
+            pool,
+            repository,
+            &changes,
+            async {
+                // Checked again at the decision: a cancelled move may not publish.
+                if codeyard_db_cluster::moves::receiving(postgres, repository)
+                    .await
+                    .map_err(|_| RepoError::authority_unavailable())?
+                {
+                    Ok(())
+                } else {
+                    Err(RepoError::write_denied())
+                }
+            },
+        )))
+        .await?;
+        if !published {
+            return Err(RepoError::write_denied());
+        }
+        Ok(())
+    }
+}

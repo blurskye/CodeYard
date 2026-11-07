@@ -623,6 +623,13 @@ pub enum Operation {
         #[serde(default)]
         have: Vec<String>,
     },
+    /// An operator's account move sends a repository it copied from another cell to the
+    /// target storage node: a pack on the input stream, then every ref and HEAD
+    /// published through the write quorum. Only a repository this cell is receiving.
+    PublishMove {
+        head: String,
+        refs: std::collections::BTreeMap<String, String>,
+    },
 }
 
 impl Operation {
@@ -743,7 +750,8 @@ impl Operation {
             | Self::ReplicaPack { .. }
             | Self::PrepareWrite { .. }
             | Self::ApplyWrite { .. }
-            | Self::WritePack { .. } => false,
+            | Self::WritePack { .. }
+            | Self::PublishMove { .. } => false,
         }
     }
 }

@@ -152,6 +152,7 @@ pub fn authorize_operation(
         Operation::PrepareWrite { .. } => ("PrepareWrite", false),
         Operation::ApplyWrite { .. } => ("ApplyWrite", false),
         Operation::WritePack { .. } => ("WritePack", false),
+        Operation::PublishMove { .. } => ("PublishMove", false),
     };
     // A copy holder asks only for packs of its own copies; authorize_request checks the copy.
     if matches!(
@@ -642,6 +643,19 @@ impl RpcHandler {
             .await
             .map_err(RepoError::from)?
             .ok_or_else(unavailable)?;
+        }
+        if matches!(request.operation, Operation::PublishMove { .. }) {
+            // Only an operator's move publishes here, and only into a repository this
+            // cell is receiving. The store checks again when the write commits.
+            let codeyard_db_core::DbPool::Postgres(postgres) = pool else {
+                return Err(unavailable());
+            };
+            if !codeyard_db_cluster::moves::receiving(postgres, repo_id.ok_or_else(unavailable)?)
+                .await
+                .map_err(|_| unavailable())?
+            {
+                return Err(invalid("this cell is not receiving the repository"));
+            }
         }
         if let Operation::GitSession(session) = &request.operation {
             let repo = codeyard_db_repos::repositories::records::get_repository_by_id(
@@ -1807,7 +1821,8 @@ impl RpcHandler {
             }
             Operation::ForkPack { .. }
             | Operation::ReplicaPack { .. }
-            | Operation::WritePack { .. } => {
+            | Operation::WritePack { .. }
+            | Operation::PublishMove { .. } => {
                 return Err(invalid("replica pack requires streaming").into())
             }
         };

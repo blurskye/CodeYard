@@ -323,6 +323,16 @@ impl RpcHandler {
                     }
                     .await
                 }
+                Operation::PublishMove { head, refs } => {
+                    async {
+                        use std::os::unix::process::ExitStatusExt;
+                        store
+                            .publish_move(self.context.database()?, &head, &refs, streams.input)
+                            .await?;
+                        Ok::<_, anyhow::Error>(std::process::ExitStatus::from_raw(0))
+                    }
+                    .await
+                }
                 _ => unreachable!("only streamed operations are served here"),
             };
             let status = if let Some(request) = fork_request {

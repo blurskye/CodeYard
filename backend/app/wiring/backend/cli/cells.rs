@@ -80,6 +80,10 @@ pub struct MoveArgs {
     /// The time limit for copying one repository with Git.
     #[arg(long, default_value_t = 1800, value_parser = clap::value_parser!(u64).range(1..=86400))]
     git_timeout_seconds: u64,
+    /// The state directory of a stopped web node of the target cell. A target that writes
+    /// through a quorum receives each repository on a storage node through this identity.
+    #[arg(long)]
+    target_state: Option<std::path::PathBuf>,
 }
 
 pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Path) -> Result<()> {
@@ -678,9 +682,30 @@ async fn move_account(
             })?
             .client(state)?;
     let wait = std::time::Duration::from_secs(arguments.wait_seconds);
-    // Reject unsupported placement or an oversized cleanup set before asking CI to
-    // drain. The frozen row copy later verifies that this repository set still matches.
+    let git_timeout = std::time::Duration::from_secs(arguments.git_timeout_seconds);
+    // Reject an oversized cleanup set before asking CI to drain. The frozen row copy later
+    // verifies that this repository set still matches.
     let repositories = moves::repositories(source, account).await?;
+    // Repositories on storage nodes are copied from their primaries with this cell's
+    // web node identity, as the other repository operator commands do.
+    let source_nodes = if repositories
+        .iter()
+        .any(|repository| repository.storage_node_id.is_some())
+    {
+        Some(
+            codeyard_cluster::client_context(pool, state, repos_path)
+                .await?
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Repositories on storage nodes need this cell's CLUSTER_* settings"
+                    )
+                })?,
+        )
+    } else {
+        None
+    };
+    let target_nodes =
+        target_placement(arguments, &target_pool, &target_root, &repositories).await?;
     let reached = moves::begin(source, account, target_cell, wait).await?;
     let mut copied = None;
     if matches!(reached, moves::State::Pending | moves::State::Frozen) {
@@ -698,9 +723,13 @@ async fn move_account(
             .await?;
             // Drain publishers that entered before the freeze and retain their existing
             // interprocess leases until the switch. A ref comparison alone has a gap in
-            // which an already admitted push could publish after the comparison.
+            // which an already admitted push could publish after the comparison. Storage
+            // nodes refuse new ref changes once frozen; the copy waits for running ones.
             let mut publishers = Vec::with_capacity(repositories.len());
-            for repository in &repositories {
+            for repository in repositories
+                .iter()
+                .filter(|repository| repository.storage_node_id.is_none())
+            {
                 let (from, _) =
                     repository_paths(repos_path, &arguments.target_repositories, repository)?;
                 publishers.push(
@@ -712,16 +741,44 @@ async fn move_account(
                 );
             }
             let mut paths = std::collections::BTreeMap::new();
+            let mut copies = std::collections::BTreeMap::new();
             for repository in &repositories {
-                let (from, to) =
-                    repository_paths(repos_path, &arguments.target_repositories, repository)?;
-                copy_repository(
-                    &from,
-                    &to,
-                    std::time::Duration::from_secs(arguments.git_timeout_seconds),
-                )
-                .await?;
+                let to = arguments
+                    .target_repositories
+                    .join(directory_name(repository)?);
+                let (mirror, refs) = match (&source_nodes, repository.storage_node_id) {
+                    (Some(context), Some(_)) => {
+                        // A repeated run continues from the copy an earlier run left.
+                        let staging = staging_path(&arguments.target_repositories, repository)?;
+                        let mirror = if target_nodes.is_none() && to.exists() {
+                            to.clone()
+                        } else {
+                            staging
+                        };
+                        let refs = copy_placed(context, pool, repository.id, &mirror, wait).await?;
+                        if target_nodes.is_none() && mirror != to {
+                            tokio::fs::rename(&mirror, &to).await?;
+                            (to.clone(), refs)
+                        } else {
+                            (mirror, refs)
+                        }
+                    }
+                    _ => {
+                        let (from, _) = repository_paths(
+                            repos_path,
+                            &arguments.target_repositories,
+                            repository,
+                        )?;
+                        if target_nodes.is_none() {
+                            copy_repository(&from, &to, git_timeout).await?;
+                        }
+                        // A quorum target receives its pack from the drained source itself.
+                        let refs = Refs::read(&from).await?;
+                        (from, refs)
+                    }
+                };
                 paths.insert(repository.id, to.to_string_lossy().into_owned());
+                copies.insert(repository.id, (mirror, refs));
             }
             let result = moves::copy(
                 source,
@@ -734,9 +791,41 @@ async fn move_account(
             .await?;
             // A push that was already running may have landed after the Git copy.
             for repository in &repositories {
-                let (from, to) =
-                    repository_paths(repos_path, &arguments.target_repositories, repository)?;
-                codeyard_git::repository::same_refs(&to, &from).await?;
+                let (mirror, refs) = &copies[&repository.id];
+                match (&source_nodes, repository.storage_node_id) {
+                    (Some(context), Some(_)) => {
+                        let again = copy_placed(context, pool, repository.id, mirror, wait).await?;
+                        anyhow::ensure!(
+                            &again == refs,
+                            "Repository {} changed while it was copied; retry the move",
+                            repository.id
+                        );
+                    }
+                    _ if target_nodes.is_none() => {
+                        let (from, to) = repository_paths(
+                            repos_path,
+                            &arguments.target_repositories,
+                            repository,
+                        )?;
+                        codeyard_git::repository::same_refs(&to, &from).await?;
+                    }
+                    _ => {}
+                }
+            }
+            if let Some((context, node)) = &target_nodes {
+                moves::place_repositories(target, account, source_cell, *node).await?;
+                for repository in &repositories {
+                    let (mirror, refs) = &copies[&repository.id];
+                    publish_placed(
+                        context,
+                        &target_pool,
+                        (repository.id, *node),
+                        (mirror, refs),
+                        &arguments.target_repositories,
+                        git_timeout,
+                    )
+                    .await?;
+                }
             }
             publish_credentials(&directory, id, &moves::credentials(source, account).await?)
                 .await?;
@@ -781,9 +870,17 @@ async fn move_account(
         moves::release(source, account, transfer.as_ref()).await?;
     }
     for repository in &repositories {
-        let (from, _) = repository_paths(repos_path, &arguments.target_repositories, repository)?;
-        if tokio::fs::try_exists(&from).await? {
-            tokio::fs::remove_dir_all(&from).await?;
+        // Storage nodes retire their copies once release removed the cluster rows.
+        if repository.storage_node_id.is_none() {
+            let (from, _) =
+                repository_paths(repos_path, &arguments.target_repositories, repository)?;
+            if tokio::fs::try_exists(&from).await? {
+                tokio::fs::remove_dir_all(&from).await?;
+            }
+        }
+        let staging = staging_path(&arguments.target_repositories, repository)?;
+        if tokio::fs::try_exists(&staging).await? {
+            tokio::fs::remove_dir_all(&staging).await?;
         }
     }
     moves::finish(source, account).await?;
@@ -844,6 +941,24 @@ async fn publish_credentials(
     Ok(())
 }
 
+/// The `<name>.git` directory name that a repository keeps in every cell.
+fn directory_name(repository: &codeyard_db_cluster::moves::Repository) -> Result<String> {
+    Path::new(&repository.disk_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| name.ends_with(".git") && !name.starts_with('.'))
+        .map(str::to_owned)
+        .ok_or_else(|| anyhow::anyhow!("Invalid repository path"))
+}
+
+/// Where a copy from a storage node is kept between runs, beside the target directory.
+fn staging_path(
+    target_root: &Path,
+    repository: &codeyard_db_cluster::moves::Repository,
+) -> Result<std::path::PathBuf> {
+    Ok(target_root.join(format!(".move-{}", directory_name(repository)?)))
+}
+
 /// A repository's Git directory in both cells: the same `<name>.git` under each root.
 fn repository_paths(
     source_root: &Path,
@@ -851,17 +966,298 @@ fn repository_paths(
     repository: &codeyard_db_cluster::moves::Repository,
 ) -> Result<(std::path::PathBuf, std::path::PathBuf)> {
     let from = std::path::PathBuf::from(&repository.disk_path);
-    let name = from
-        .file_name()
-        .and_then(|name| name.to_str())
-        .filter(|name| name.ends_with(".git") && !name.starts_with('.'))
-        .ok_or_else(|| anyhow::anyhow!("Invalid repository path"))?;
+    let name = directory_name(repository)?;
     anyhow::ensure!(
         from.parent() == Some(source_root),
         "Repository {} is not in this cell's repository directory",
         repository.id
     );
     Ok((from.clone(), target_root.join(name)))
+}
+
+/// Every ref of a repository copy and the branch HEAD names.
+#[derive(Debug, PartialEq)]
+struct Refs {
+    refs: std::collections::BTreeMap<String, String>,
+    head: Option<String>,
+}
+
+impl Refs {
+    async fn read(path: &Path) -> Result<Self> {
+        let store = codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
+            path.to_str()
+                .ok_or_else(|| anyhow::anyhow!("Invalid repository path"))?,
+        );
+        let refs = store.mirror_refs().await?.into_iter().collect();
+        let path = path.to_owned();
+        let head = tokio::task::spawn_blocking(move || -> Result<Option<String>> {
+            let repository = git2::Repository::open_bare(&path)?;
+            let head = repository.find_reference("HEAD")?;
+            Ok(head.symbolic_target().map(str::to_owned))
+        })
+        .await??;
+        Ok(Self { refs, head })
+    }
+
+    /// The same refs as a quorum's committed refs, HEAD included.
+    fn matches(&self, committed: &[codeyard_db_core::models::RefValue]) -> bool {
+        let mut refs = std::collections::BTreeMap::new();
+        let mut head = None;
+        for value in committed {
+            if value.name == "HEAD" {
+                head = Some(value.target.clone());
+            } else {
+                refs.insert(value.name.clone(), value.target.clone());
+            }
+        }
+        refs == self.refs && head == self.head
+    }
+}
+
+/// Copies a repository from its primary storage node into `mirror` with the replica
+/// transfer. Only the primary answers, at the current write term, and the copy is
+/// incremental, so a repeated run fetches only what it lacks. A quorum repository must
+/// have no write in progress, and the copy must hold exactly its committed refs.
+async fn copy_placed(
+    context: &codeyard_repos_core::context::NodeContext,
+    pool: &DbPool,
+    repository: i64,
+    mirror: &Path,
+    wait: std::time::Duration,
+) -> Result<Refs> {
+    use codeyard_db_cluster::cluster::writes as journal;
+    let deadline = tokio::time::Instant::now() + wait;
+    loop {
+        let attempt = async {
+            let row =
+                codeyard_db_repos::repositories::records::get_repository_by_id(pool, repository)
+                    .await?
+                    .ok_or_else(|| anyhow::anyhow!("Repository {repository} disappeared"))?;
+            let primary = row
+                .storage_node_id
+                .ok_or_else(|| anyhow::anyhow!("Repository {repository} left its storage node"))?;
+            let uuid = codeyard_repos_core::wire::repository_uuid(&row.disk_path)?;
+            let quorum = codeyard_db_cluster::cluster::writes::write_settings(pool)
+                .await?
+                .write_quorum
+                .is_some();
+            let view = if quorum {
+                let view = journal::recovery_view(pool, repository).await?;
+                anyhow::ensure!(
+                    view.serving
+                        && view.unfinished.is_none()
+                        && view.primary_id == primary
+                        && view.voters.iter().any(|voter| voter.node_id == primary
+                            && voter.term == view.term
+                            && voter.applied_version == view.committed_version),
+                    "A write to repository {repository} is still finishing"
+                );
+                Some(view)
+            } else {
+                None
+            };
+            codeyard_cluster::replicas::snapshot(context, primary, uuid, mirror, &[]).await?;
+            let refs = Refs::read(mirror).await?;
+            if let Some(view) = view {
+                anyhow::ensure!(
+                    refs.matches(&view.refs),
+                    "The copy of repository {repository} does not hold its committed refs"
+                );
+                let again = journal::recovery_view(pool, repository).await?;
+                anyhow::ensure!(
+                    again.term == view.term && again.committed_version == view.committed_version,
+                    "Repository {repository} changed while it was copied"
+                );
+            }
+            Ok::<_, anyhow::Error>(refs)
+        };
+        match attempt.await {
+            Ok(refs) => return Ok(refs),
+            Err(error) if tokio::time::Instant::now() < deadline => {
+                tracing::warn!(repository, %error, "retrying the copy of a placed repository");
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Whether the target cell writes through a quorum, and then its web identity for this
+/// command and the storage node that receives the account's repositories.
+async fn target_placement(
+    arguments: &MoveArgs,
+    target: &DbPool,
+    target_root: &Path,
+    repositories: &[codeyard_db_cluster::moves::Repository],
+) -> Result<Option<(codeyard_repos_core::context::NodeContext, i64)>> {
+    let DbPool::Postgres(postgres) = target else {
+        anyhow::bail!("Account moves need PostgreSQL in both cells");
+    };
+    if repositories.is_empty()
+        || !codeyard_db_cluster::cluster::cluster_enabled(target).await?
+        || codeyard_db_cluster::cluster::writes::write_settings(target)
+            .await?
+            .write_quorum
+            .is_none()
+    {
+        return Ok(None);
+    }
+    let state = arguments.target_state.as_deref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "The target cell writes through a quorum; pass --target-state with a stopped web node's state directory"
+        )
+    })?;
+    let context = codeyard_cluster::client_context(target, state, target_root)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("The target cell needs the CLUSTER_* settings"))?;
+    // A repeated run keeps the node an earlier run chose. One node keeps fork families together.
+    let ids: Vec<i64> = repositories
+        .iter()
+        .map(|repository| repository.id)
+        .collect();
+    let node = match codeyard_db_cluster::moves::placed_node(postgres, &ids).await? {
+        Some(node) => node,
+        None => {
+            let nodes = codeyard_db_cluster::cluster::list_nodes(target).await?;
+            codeyard_db_core::models::ClusterNode::ranked_storage(&nodes)
+                .first()
+                .map(|node| node.id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("The target cell has no storage node with free space")
+                })?
+        }
+    };
+    Ok(Some((context, node)))
+}
+
+/// Sends a copied repository to its storage node in a target cell that writes through a
+/// quorum: the node creates it empty, then takes the missing objects and publishes every
+/// ref in one quorum write. Afterwards the committed refs are compared ref by ref. The
+/// pack is written to a temporary file in `scratch` first.
+async fn publish_placed(
+    context: &codeyard_repos_core::context::NodeContext,
+    target: &DbPool,
+    (repository, node): (i64, i64),
+    (mirror, refs): (&Path, &Refs),
+    scratch: &Path,
+    timeout: std::time::Duration,
+) -> Result<()> {
+    use codeyard_db_cluster::cluster::writes as journal;
+    use codeyard_repos_core::wire::{Operation, Request};
+    use tokio::io::AsyncWriteExt;
+    let row = codeyard_db_repos::repositories::records::get_repository_by_id(target, repository)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!("The target cell lost repository {repository}"))?;
+    let uuid = codeyard_repos_core::wire::repository_uuid(&row.disk_path)?;
+    let head = refs
+        .head
+        .clone()
+        .unwrap_or_else(|| format!("refs/heads/{}", row.default_branch));
+    let have: Vec<String> = match journal::recovery_view(target, repository).await {
+        Ok(view) => {
+            anyhow::ensure!(
+                view.serving,
+                "The target copy of repository {repository} is not serving; retry the move"
+            );
+            view.refs
+                .into_iter()
+                .filter(|value| value.name != "HEAD")
+                .map(|value| value.target)
+                .collect()
+        }
+        Err(_) => {
+            let branch = head.strip_prefix("refs/heads/").ok_or_else(|| {
+                anyhow::anyhow!("HEAD of repository {repository} is not a branch")
+            })?;
+            let (reply, _) = context
+                .call(
+                    node,
+                    Request {
+                        repository: uuid,
+                        operation: Operation::Initialize {
+                            source: None,
+                            default_branch: branch.to_owned(),
+                        },
+                        actor: None,
+                        ci_run: None,
+                    },
+                    b"",
+                )
+                .await?;
+            reply.result.map_err(|failure| {
+                anyhow::anyhow!(
+                    "The target storage node could not create repository {repository}: {failure:?}"
+                )
+            })?;
+            Vec::new()
+        }
+    };
+    let store = codeyard_repos_core::repositories::store::RepoStore::from_disk_path(
+        mirror
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("Invalid repository path"))?,
+    );
+    let present = store.existing_commits(&have).await?;
+    let have: Vec<String> = have.into_iter().filter(|id| present.contains(id)).collect();
+    let targets: Vec<String> = refs.refs.values().cloned().collect();
+    let limits = codeyard_repos_core::git_transport::WriteLimits::load(target).await?;
+    let pack = tempfile::Builder::new()
+        .prefix(".move-pack-")
+        .tempfile_in(scratch)?;
+    if !targets.is_empty() {
+        let mut file = tokio::fs::File::from_std(pack.reopen()?);
+        let mut bounded =
+            codeyard_repos_core::git_transport::LimitedWriter::new(&mut file, limits.pack_bytes);
+        let status = tokio::time::timeout(
+            timeout,
+            store.replica_pack(
+                &targets,
+                &have,
+                codeyard_repos_core::store_types::GitStreams {
+                    input: &mut tokio::io::empty(),
+                    output: &mut bounded,
+                    errors: &mut tokio::io::sink(),
+                },
+            ),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Packing repository {repository} timed out"))??;
+        anyhow::ensure!(
+            status.success(),
+            "Git could not pack repository {repository}"
+        );
+        bounded.flush().await?;
+    }
+    let mut input = tokio::fs::File::open(pack.path()).await?;
+    let (_, status) = context
+        .git_session(
+            node,
+            Request {
+                repository: uuid,
+                operation: Operation::PublishMove {
+                    head,
+                    refs: refs.refs.clone(),
+                },
+                actor: None,
+                ci_run: None,
+            },
+            codeyard_repos_core::store_types::GitStreams {
+                input: &mut input,
+                output: &mut tokio::io::sink(),
+                errors: &mut tokio::io::sink(),
+            },
+        )
+        .await?;
+    anyhow::ensure!(
+        status.success(),
+        "The target storage node could not publish repository {repository}"
+    );
+    let view = journal::recovery_view(target, repository).await?;
+    anyhow::ensure!(
+        refs.matches(&view.refs),
+        "The target refs of repository {repository} do not match its source"
+    );
+    Ok(())
 }
 
 /// Copies one repository into the target root, or keeps an earlier copy that matches.
