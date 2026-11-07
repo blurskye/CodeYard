@@ -20,7 +20,9 @@ spec:
   clusterIP: None
   {{- else if eq $role "ssh" }}
   type: {{ $.Values.ssh.service.type }}
+  {{- if ne $.Values.ssh.service.type "ClusterIP" }}
   externalTrafficPolicy: {{ $.Values.ssh.service.externalTrafficPolicy }}
+  {{- end }}
   {{- if and (eq $.Values.ssh.service.type "LoadBalancer") $.Values.ssh.service.loadBalancerSourceRanges }}
   loadBalancerSourceRanges:
     {{- toYaml $.Values.ssh.service.loadBalancerSourceRanges | nindent 4 }}

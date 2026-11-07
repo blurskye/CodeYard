@@ -25,6 +25,11 @@ secrets:
   existingSecret: ""
   # External PostgreSQL URL; used only when existingSecret is empty.
   databaseUrl: ""
+  # Optional read-only replica URL (DATABASE_READ_URL); used only when existingSecret is empty.
+  databaseReadUrl: ""
+  # Optional unpooled read-write URL for migrations and session locks (DATABASE_DIRECT_URL).
+  # Required when databaseUrl goes through a transaction pooler; existing Secrets may set it too.
+  databaseDirectUrl: ""
   # Durable 64-hex key shared by core nodes; never regenerate on upgrade.
   masterKey: ""
   # S3 access key; used only when existingSecret is empty.
@@ -162,7 +167,7 @@ ssh:
   # Optional pod affinity.
   affinity: {}
   service:
-    # Public SSH exposure: LoadBalancer or NodePort.
+    # SSH exposure: LoadBalancer or NodePort; ClusterIP keeps it inside the cluster.
     type: LoadBalancer
     # Public SSH Service port, forwarded to container port 2222.
     port: 22
@@ -271,6 +276,42 @@ runner:
     authenticationRef: ""
     # Prometheus authentication modes used with authenticationRef (bearer, basic, tls).
     authModes: bearer
+postgres:
+  cnpg:
+    # Create a CloudNativePG Cluster and PgBouncer Pooler (needs the operator and its CRDs).
+    # Core pods then take DATABASE_URL (pooler), DATABASE_READ_URL (replicas) and
+    # DATABASE_DIRECT_URL (primary) from the operator's app Secret and CA; secrets.database*
+    # and those keys of an existing Secret are ignored.
+    enabled: false
+    # PostgreSQL pods: one primary, the rest hot standbys.
+    instances: 3
+    # Official CloudNativePG PostgreSQL image; pin a digest in production.
+    imageName: ghcr.io/cloudnative-pg/postgresql:18.6-minimal-trixie
+    # Standbys that must confirm each commit. Writes wait rather than continue without
+    # them, and failover promotes only a standby holding every confirmed commit.
+    synchronousStandbys: 1
+    storage:
+      # Data volume per instance.
+      size: 20Gi
+      # StorageClass name; null uses the default.
+      storageClass: null
+    # PostgreSQL settings, for example max_connections (each core pod opens up to
+    # config.databasePoolSize replica connections plus a few direct sessions).
+    parameters: {}
+    # Requests and limits for each PostgreSQL pod.
+    resources: {}
+    # CloudNativePG affinity; empty keeps its default of preferring one instance per node.
+    affinity: {}
+    pooler:
+      # PgBouncer pods in transaction mode in front of the primary.
+      instances: 2
+      # PgBouncer settings; the application needs prepared statements and ignores
+      # extra_float_digits and options at startup.
+      parameters:
+        max_client_conn: "1000"
+        default_pool_size: "20"
+        max_prepared_statements: "200"
+        ignore_startup_parameters: extra_float_digits,options
 ingress:
   # Enable HTTP routing through an installed ingress controller.
   enabled: false
