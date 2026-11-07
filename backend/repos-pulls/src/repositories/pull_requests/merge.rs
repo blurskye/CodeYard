@@ -1,4 +1,5 @@
 use codeyard_ci_engine::runs::CiRuns;
+use codeyard_db_core::cells::authorization::inherit;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::validate_merge_revision;
@@ -1379,9 +1380,9 @@ pub async fn publish_prepared_merge(
 ) -> Result<MergeResponse, OperationError> {
     // A dropped request must not cancel a publication halfway, so it runs on its own task.
     let (pool, ci, broadcaster) = (pool.clone(), ci.clone(), std::sync::Arc::clone(broadcaster));
-    tokio::spawn(
-        async move { publish_prepared_merge_owned(&pool, &ci, &broadcaster, prepared).await },
-    )
+    tokio::spawn(inherit(async move {
+        publish_prepared_merge_owned(&pool, &ci, &broadcaster, prepared).await
+    }))
     .await
     .map_err(|_| OperationError::Unavailable {
         code: "merge_interrupted",

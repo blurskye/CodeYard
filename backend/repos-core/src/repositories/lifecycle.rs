@@ -1,5 +1,6 @@
 //! Creating repositories: the authorized database row, then its Git storage.
 use chrono::Datelike;
+use codeyard_db_core::cells::authorization::inherit;
 use tracing::instrument::WithSubscriber;
 use tracing::Instrument;
 
@@ -468,7 +469,7 @@ async fn provision_stored(
     // Once the row is inserted, initialization or conservative cleanup must outlive the
     // caller. Otherwise cancellation leaves a discoverable but unusable reservation. The task
     // keeps the request's span and log subscriber, so its errors are logged with the request.
-    tokio::spawn(
+    tokio::spawn(inherit(
         async move {
             let creation_source = source.as_ref().map(|repository| {
                 if template {
@@ -507,7 +508,7 @@ async fn provision_stored(
         }
         .in_current_span()
         .with_current_subscriber(),
-    )
+    ))
     .await
     .map_err(|_| unavailable())?
 }
@@ -1382,7 +1383,7 @@ pub async fn generate(
     let description = description.map(str::to_owned);
     let properties = properties.to_vec();
     let authority = authority.cloned();
-    let task = tokio::spawn(async move {
+    let task = tokio::spawn(inherit(async move {
         provision_from(
             (&pool, context.as_ref()),
             &repos_path,
@@ -1402,7 +1403,7 @@ pub async fn generate(
             None,
         )
         .await
-    });
+    }));
     task.await.map_err(|_| StorageError {
         kind: LifecycleFailure::Unavailable,
         message: "Repository creation did not finish.",

@@ -13,6 +13,7 @@ use crate::store_types::GitStreams;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
+use codeyard_db_core::cells::authorization::inherit;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
 use codeyard_git::error::ErrorKind;
@@ -373,7 +374,7 @@ impl Gateway {
                 // can't abort a push halfway through its hooks.
                 let (relay, mut owned_stream) = UnixStream::pair()?;
                 let gateway = self.clone();
-                let task = tokio::spawn(async move {
+                let task = tokio::spawn(inherit(async move {
                     let result = gateway
                         .serve(
                             &mut owned_stream,
@@ -407,7 +408,7 @@ impl Gateway {
                         )
                         .await;
                     }
-                });
+                }));
                 let _cancel_on_shutdown = AbortSession(task.abort_handle());
                 // The session ends when its task drops its end of the pair, whatever the
                 // client is still sending. Writing to a finished session fails, and that

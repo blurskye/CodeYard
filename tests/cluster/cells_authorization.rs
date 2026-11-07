@@ -1048,7 +1048,16 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .send().await.unwrap();
     let status = created_pull.status();
     let created_pull: serde_json::Value = created_pull.json().await.unwrap();
-    assert_eq!(status, 201, "{created_pull}");
+    assert_eq!(
+        status,
+        201,
+        "{created_pull}\n{}",
+        log.text()
+            .lines()
+            .filter(|line| line.contains("WARN") || line.contains("ERROR"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
     assert_eq!(created_pull["head"]["repo"]["id"], fork_id);
     assert_eq!(created_pull["head"]["sha"], foreign_tip);
     let number = created_pull["number"].as_i64().unwrap() as i32;

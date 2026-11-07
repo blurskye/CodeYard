@@ -13,6 +13,7 @@ use crate::store_types::MergeRequest;
 use crate::store_types::RestackMove;
 use crate::store_types::MAX_ARCHIVE_RESPONSE_BYTES;
 use crate::store_types::MAX_BLOB_RESPONSE_BYTES;
+use codeyard_db_core::cells::authorization::inherit;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
@@ -3130,7 +3131,7 @@ impl LocalStore {
             dependency_publication.cloned(),
         );
         Box::pin(async move {
-            tokio::spawn(async move {
+            tokio::spawn(inherit(async move {
                 store
                     .publish_file_owned(
                         &pool,
@@ -3140,7 +3141,7 @@ impl LocalStore {
                         dependency_publication.as_ref(),
                     )
                     .await
-            })
+            }))
             .await
             .map_err(|_| RepoError::applied_followup_failed())?
         })
@@ -4504,7 +4505,7 @@ impl LocalStore {
     ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         let actor = authority.user_id;
         let (store, pool, new_owner) = (self.clone(), pool.clone(), new_owner.to_owned());
-        tokio::spawn(async move {
+        tokio::spawn(inherit(async move {
             let _lock = git::locks::lock(store.path()).await;
             let repository =
                 codeyard_identity::repository_access::check_admin(&pool, repo_id, actor)
@@ -4555,7 +4556,7 @@ impl LocalStore {
                 };
                 RepoError::new(kind, error.message)
             })
-        })
+        }))
         .await
         .map_err(|_| unavailable("Repository transfer failed"))?
     }
@@ -4575,7 +4576,7 @@ impl LocalStore {
         private_consent: bool,
     ) -> Result<(), RepoError> {
         let (store, pool) = (self.clone(), pool.clone());
-        tokio::spawn(async move {
+        tokio::spawn(inherit(async move {
             let _lock = git::locks::lock(store.path()).await;
             live_write(
                 &pool,
@@ -4597,7 +4598,7 @@ impl LocalStore {
             )
             .await
             .map_err(crate::repositories::dependencies::store_error)
-        })
+        }))
         .await
         .map_err(|_| unavailable("Dependency security configuration failed"))?
     }
@@ -4615,7 +4616,7 @@ impl LocalStore {
         use crate::repositories::releases::immutable::Mutation;
         mutation.validate()?;
         let (store, pool) = (self.clone(), pool.clone());
-        tokio::spawn(async move {
+        tokio::spawn(inherit(async move {
             let (tag, publishing) = match &mut mutation {
                 Mutation::Create { tag, fields, .. } => (tag.clone(), !fields.is_draft),
                 Mutation::Update { id, changes } => {
@@ -4768,7 +4769,7 @@ impl LocalStore {
                 };
                 RepoError::new(kind, error.to_string())
             })
-        })
+        }))
         .await
         .map_err(|_| unavailable("Release publication failed"))?
     }
@@ -4783,11 +4784,11 @@ impl LocalStore {
     ) -> Result<codeyard_db_core::models::Repository, RepoError> {
         // Publication and compensation finish even when the client disconnects.
         let (store, pool, name) = (self.clone(), pool.clone(), name.to_owned());
-        tokio::spawn(async move {
+        tokio::spawn(inherit(async move {
             store
                 .patch_repository_owned(&pool, repo_id, actor, &name, &changes)
                 .await
-        })
+        }))
         .await
         .map_err(|_| unavailable("Repository update failed"))?
     }

@@ -1,4 +1,4 @@
-//! Opt-in contracts for an externally owned Valkey 8.1.3. No server is started here.
+//! Opt-in contracts against real Valkey servers; `scripts/with-valkey.sh` starts them.
 use codeyard_cache::{Cache, Config, Family, Mode};
 use std::{sync::Arc, time::Duration};
 

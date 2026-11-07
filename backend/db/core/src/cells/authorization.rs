@@ -3,7 +3,7 @@
 pub mod freshness;
 pub mod heartbeat;
 mod scope;
-pub use scope::{ensure_current, scope};
+pub use scope::{ensure_current, inherit, scope};
 
 use crate::{models::User, DbPool};
 use anyhow::{ensure, Result};
@@ -450,10 +450,12 @@ pub async fn authorize(pool: &DbPool, proof: &Proof) -> Result<Option<Answer>> {
         "Identity proof expired"
     );
     scope::retain(scope::Verified {
+        proof: proof.clone(),
         answer: answer.clone(),
         kind: proof.kind(),
         hash: proof.hash(),
         deadline,
+        refused: false,
     })?;
     Ok(lookup(
         pool,
@@ -466,6 +468,25 @@ pub async fn authorize(pool: &DbPool, proof: &Proof) -> Result<Option<Answer>> {
     )
     .await?
     .map(|credential| credential.answer))
+}
+
+/// Called before each native database operation, outside its transaction. An operation
+/// that outlived its proof asks the home once more instead of reusing the old answer; the
+/// operation's own transaction still checks the new deadline.
+pub async fn refresh(pool: &DbPool) {
+    if scope::any_expired() {
+        ask_again(pool).await;
+    }
+}
+/// Boxed because admission itself runs native operations, which call `refresh`.
+fn ask_again(pool: &DbPool) -> BoxFuture<'_, ()> {
+    Box::pin(async move {
+        for old in scope::take_expired() {
+            if !matches!(authorize(pool, &old.proof).await, Ok(Some(_))) {
+                scope::restore(old);
+            }
+        }
+    })
 }
 
 /// Standalone admission for callers that retain the typed result themselves (Git/SSH).

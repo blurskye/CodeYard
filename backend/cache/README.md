@@ -36,10 +36,11 @@ and a 16-operation recompute limit per family are bounded and always enabled.
 
 Run unit tests with `cargo test -p codeyard-cache --lib`. The contracts in
 `tests/valkey.rs` use `CODEYARD_TEST_VALKEY_URL` and
-`CODEYARD_TEST_VALKEY_CLUSTER_URLS` for standalone and Cluster respectively (TLS/ACLs
-may be specified in those URLs). Each missing variable prints an explicit SKIP;
-that is not a remote-cache pass. The caller owns those disposable servers. The full
-application e2e remains the cache-absent acceptance run with `CACHE_MODE=local` and
-`CACHE_URLS` unset. Engine comparison, failover and TLS/ACL certification require an
-actual provisioned contract run; no benchmark or server certification is implied by
-unit tests.
+`CODEYARD_TEST_VALKEY_CLUSTER_URLS` for standalone and Cluster respectively. Each
+missing variable prints an explicit SKIP, which is not a pass.
+`scripts/with-valkey.sh cargo test -p codeyard-cache --test valkey` starts a disposable
+standalone server and a three-shard Cluster from the test shell and sets both. Their
+ACL user may only run GET, MGET, SET and DEL on `cy:*` keys plus the client's
+connection and topology commands, so any other command fails the contract. TLS is not
+covered by these servers. The full application e2e remains the cache-absent run with
+`CACHE_MODE=local` and `CACHE_URLS` unset.

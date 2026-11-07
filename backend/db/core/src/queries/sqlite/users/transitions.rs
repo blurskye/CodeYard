@@ -9,7 +9,7 @@ pub async fn live_session(
     if live {
         return Ok(true);
     }
-    // Native session rows cannot belong to stubs. Retain the cached home proof until commit.
+    // Native session rows cannot belong to stubs; a foreign session needs a current home proof.
     let hash = codeyard_support::token_hash::token_hash(session);
     Ok(crate::cells::authorization::sqlite(
         connection,

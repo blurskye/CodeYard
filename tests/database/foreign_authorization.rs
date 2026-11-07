@@ -193,7 +193,11 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
         .oneshot(request("POST", "/api/repos/local/private/issues", &csrf))
         .await
         .unwrap();
-    assert_eq!(response.status(), 201);
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+        .await
+        .unwrap();
+    assert_eq!(status, 201, "{}", String::from_utf8_lossy(&body));
     assert_eq!(
         database
             .scalar(
@@ -504,6 +508,81 @@ async fn snapshot_contract(database: &Database, user: i64) {
     assert!(home.authorize(&proof).await.unwrap().is_none());
 }
 
+/// An operation that outlives its proof asks the home again before its next database
+/// call, and a refusal stays denied. Spawned follow-up work keeps the operation's proofs.
+async fn renewal(pool: &DbPool, answer: Answer, user: i64) {
+    let provider = Arc::new(Provider {
+        answer: answer.clone(),
+        live: AtomicBool::new(true),
+        calls: AtomicUsize::new(0),
+    });
+    pool.set_foreign_authorization(provider.clone());
+    let proof = Proof::Token {
+        home: Prefix::new(1),
+        hash: "c".repeat(64),
+    };
+    let hash = proof.hash();
+    let credential = codeyard_db_core::queries::users::accounts::AccountCredential::ForeignToken(
+        answer.credential_id.unwrap(),
+        &hash,
+    );
+    let actor: codeyard_db_core::queries::credentials::Actor = (user, &credential).into();
+    authorization::scope(async {
+        authorization::authorize(pool, &proof)
+            .await
+            .unwrap()
+            .unwrap();
+        let id = answer.credential_id;
+        let visible = move |pool: DbPool, hash: String| async move {
+            let query = authorization::Query {
+                kind: "token",
+                id,
+                hash: Some(&hash),
+                write: false,
+            };
+            matches!(authorization::lookup(&pool, &query).await, Ok(Some(_)))
+        };
+        assert!(
+            tokio::spawn(authorization::inherit(visible(pool.clone(), hash.clone())))
+                .await
+                .unwrap(),
+            "spawned follow-up work keeps the operation's proof"
+        );
+        assert!(
+            !tokio::spawn(visible(pool.clone(), hash.clone()))
+                .await
+                .unwrap(),
+            "a task outside the operation has no proof"
+        );
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        assert!(authorization::ensure_current().is_err());
+        assert!(
+            codeyard_db_repos::graphql::admit_query(pool, &actor)
+                .await
+                .is_ok(),
+            "an expired proof is asked for again before the next operation"
+        );
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        authorization::ensure_current().unwrap();
+        provider.live.store(false, Ordering::SeqCst);
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        for _ in 0..2 {
+            assert!(
+                codeyard_db_repos::graphql::admit_query(pool, &actor)
+                    .await
+                    .is_err(),
+                "a revoked credential stops at the next operation"
+            );
+        }
+        assert_eq!(
+            provider.calls.load(Ordering::SeqCst),
+            3,
+            "a refusal is not asked again"
+        );
+        assert!(authorization::ensure_current().is_err());
+    })
+    .await;
+}
 async fn contract(pg: bool) {
     crate::support::fake_webui_bundle::install();
     let mut database = Database::empty(pg).await;
@@ -765,6 +844,7 @@ async fn contract(pg: bool) {
             .is_err(),
     };
     assert!(absent);
+    renewal(pool, provider.answer.clone(), remote.id).await;
     assert_eq!(count(pool, "personal_access_tokens").await, 0);
     assert_eq!(count(pool, "sessions").await, 0);
     database.finish().await;

@@ -1,6 +1,7 @@
 //! Direct branch merges use normal ref-admission policy, not pull-request approval authority.
 
 use codeyard_ci_engine::runs::CiRuns;
+use codeyard_db_core::cells::authorization::inherit;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
@@ -144,7 +145,7 @@ pub async fn merge_branch(
         authority,
     };
     let base = base.clone();
-    tokio::spawn(async move {
+    tokio::spawn(inherit(async move {
         // A failure after the ref moved still refreshes pull requests and queues workflows,
         // since a retry finds the branches already merged.
         let followup_failed = match repo_store(&repository, cluster.as_ref())
@@ -182,7 +183,7 @@ pub async fn merge_branch(
             return Err(RefError::AppliedFollowupFailed);
         }
         Ok(Some(commit))
-    })
+    }))
     .await
     .map_err(|_| RefError::Unavailable)?
 }

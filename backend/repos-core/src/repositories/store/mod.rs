@@ -24,6 +24,7 @@ use crate::store_types::MAX_ARCHIVE_RESPONSE_BYTES;
 use crate::store_types::MAX_COMMIT_OFFSET;
 use crate::store_types::MAX_COMMIT_PAGE_SIZE;
 use crate::wire::Operation;
+use codeyard_db_core::cells::authorization::inherit;
 use codeyard_db_core::models::Repository;
 use codeyard_git as git;
 use codeyard_git::error::invalid_ref;
@@ -422,9 +423,9 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => {
                 let (local, pool) = (local.clone(), pool.clone());
-                tokio::spawn(
-                    async move { local.import_git(&pool, repo_id, actor, import, &pack).await },
-                )
+                tokio::spawn(inherit(async move {
+                    local.import_git(&pool, repo_id, actor, import, &pack).await
+                }))
                 .await
                 .map_err(|_| RepoError::applied_followup_failed())?
             }
@@ -2389,11 +2390,11 @@ impl RepoStore {
                     prepared.clone(),
                     publication.clone(),
                 );
-                tokio::spawn(async move {
+                tokio::spawn(inherit(async move {
                     local
                         .publish_file(&pool, repo_id, actor, &prepared, Some(&publication))
                         .await
-                })
+                }))
                 .await
                 .map_err(|_| {
                     RepoError::new(

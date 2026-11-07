@@ -2,6 +2,7 @@
 
 use crate::services::RepositoryServices;
 use anyhow::Result;
+use codeyard_db_core::cells::authorization::inherit;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::queries::credentials::Actor;
 use codeyard_db_repos::repositories::creation::CreationAdmission;
@@ -25,9 +26,9 @@ pub async fn private_fork(
         actor.into(),
     );
     // Attachment and conservative cleanup must finish even if the initiating request goes away.
-    tokio::spawn(async move {
+    tokio::spawn(inherit(async move {
         private_fork_owned(&pool, context.as_ref(), &path, authority, &repo, &ghsa).await
-    })
+    }))
     .await
     .map_err(|_| {
         anyhow::anyhow!(

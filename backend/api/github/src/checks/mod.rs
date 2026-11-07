@@ -21,6 +21,7 @@ use codeyard_db_actions::checks::Preference;
 use codeyard_db_actions::checks::Run;
 use codeyard_db_actions::checks::RunPatch;
 use codeyard_db_actions::checks::Suite;
+use codeyard_db_core::cells::authorization::inherit;
 use codeyard_db_core::models::Repository;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
@@ -614,12 +615,12 @@ pub async fn request_action(
     .await
     .map_err(write_error)?;
     let (state, repo, owner) = (Arc::clone(state), repo.clone(), owner.to_owned());
-    tokio::spawn(async move {
+    tokio::spawn(inherit(async move {
         let doc = run_document(&state, &repo, &owner, &run).await?;
         let repository = repo.clone();
         codeyard_repos_core::webhooks::emit(&state.pool, &repo, "check_run", vec![actor], move |owner, people| json!({"action":"requested_action", "requested_action":{"identifier":identifier}, "check_run":doc, "repository":payloads::repository(&repository, owner), "sender":payloads::person(&people.get(actor))})).await;
         Ok(())
-    }).await.map_err(Error::unavailable)?
+    })).await.map_err(Error::unavailable)?
 }
 
 #[derive(Deserialize)]

@@ -32,7 +32,10 @@ pub(crate) fn operation_error(
         // revision, a refused stack); merges map their own 405 and 409 first.
         Invalid { message, .. } | Conflict { message, .. } => Error::invalid(message),
         TooLarge { message, .. } => Error::new(StatusCode::PAYLOAD_TOO_LARGE, message),
-        _ => Error::unavailable(()),
+        other => {
+            tracing::warn!(error = %other, "Pull request operation failed");
+            Error::unavailable(())
+        }
     }
 }
 

@@ -1,14 +1,18 @@
 //! Foreign proofs belong to one operation, never to a shared credential cache.
-use super::{freshness::Deadline, Answer, Query};
+use super::{freshness::Deadline, Answer, Proof, Query};
 use chrono::Utc;
 use std::{cell::RefCell, future::Future, time::Instant};
 
 #[derive(Clone)]
 pub(super) struct Verified {
+    /// The credential as presented, so an expired proof can be asked for again.
+    pub proof: Proof,
     pub answer: Answer,
     pub kind: &'static str,
     pub hash: String,
     pub deadline: Deadline,
+    /// The home was asked again after expiry and did not confirm; never ask twice.
+    pub refused: bool,
 }
 impl Verified {
     pub fn current(&self) -> bool {
@@ -25,6 +29,55 @@ tokio::task_local! {
 /// present the original credential again. Dropping the operation drops all proofs.
 pub async fn scope<T>(work: impl Future<Output = T>) -> T {
     PROOFS.scope(RefCell::new(Vec::new()), work).await
+}
+
+/// Follow-up work that an operation spawns (so a dropped client cannot cancel a write)
+/// keeps that operation's proofs with their original deadlines; nothing is extended.
+pub fn inherit<F: Future>(work: F) -> impl Future<Output = F::Output> {
+    let proofs = PROOFS
+        .try_with(|proofs| proofs.borrow().clone())
+        .unwrap_or_default();
+    PROOFS.scope(RefCell::new(proofs), work)
+}
+
+pub(super) fn any_expired() -> bool {
+    PROOFS
+        .try_with(|proofs| {
+            proofs
+                .borrow()
+                .iter()
+                .any(|proof| !proof.refused && !proof.current())
+        })
+        .unwrap_or(false)
+}
+
+/// Remove and return the expired proofs, so asking for them again cannot recurse.
+pub(super) fn take_expired() -> Vec<Verified> {
+    PROOFS
+        .try_with(|proofs| {
+            let mut proofs = proofs.borrow_mut();
+            let (expired, kept) = proofs
+                .drain(..)
+                .partition(|proof| !proof.refused && !proof.current());
+            *proofs = kept;
+            expired
+        })
+        .unwrap_or_default()
+}
+
+/// Keep a proof the home did not confirm again: its effects stay denied and the
+/// request's final check answers 503 instead of exposing the response.
+pub(super) fn restore(mut proof: Verified) {
+    proof.refused = true;
+    let _ = PROOFS.try_with(|proofs| {
+        let mut proofs = proofs.borrow_mut();
+        if !proofs
+            .iter()
+            .any(|old| old.kind == proof.kind && old.hash == proof.hash)
+        {
+            proofs.push(proof);
+        }
+    });
 }
 
 pub(super) fn forget(kind: &str, hash: &str) {
@@ -51,8 +104,11 @@ pub(super) fn retain(proof: Verified) -> anyhow::Result<()> {
     PROOFS
         .try_with(|proofs| {
             let mut proofs = proofs.borrow_mut();
-            proofs
-                .retain(|old| old.current() && !(old.kind == proof.kind && old.hash == proof.hash));
+            // A refused proof stays until the same credential is confirmed again.
+            proofs.retain(|old| {
+                (old.current() || old.refused)
+                    && !(old.kind == proof.kind && old.hash == proof.hash)
+            });
             anyhow::ensure!(
                 proofs.len() < 4,
                 "Too many identity proofs in one operation"
