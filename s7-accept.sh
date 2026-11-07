@@ -17,6 +17,9 @@ cargo test --locked -p codeyard -p codeyard-cache -p codeyard-app -p codeyard-ap
     -p codeyard-identity -p codeyard-cells-router -p codeyard-repos-core -p codeyard-ssh \
     --lib --test store --test database --test valkey --test repositories --test cluster \
     --no-run --message-format=json >"$artifacts" || exit 1
+# Unit tests of the receive path run Git hooks through the integrated binary.
+export GITSERV_TEST_OPENSSH_HELPER
+GITSERV_TEST_OPENSSH_HELPER=$(python3 -I scripts/cargo-executable.py codeyard <"$artifacts") || exit 1
 # kind, target name, package directory and executable of every test binary.
 python3 -I - "$artifacts" >"$list" <<'EOF'
 import json, os, sys
@@ -54,8 +57,6 @@ echo '=== test-no-redis'
 python3 scripts/test-no-redis.py || { echo '=== FAILED: test-no-redis'; status=1; }
 args=()
 tests lib '*'
-args=(foreign_collaborator_pushes_and_clones_through_public_ssh_then_loses_access)
-for _ in 1 2 3; do tests lib codeyard_ssh; done
 args=(foreign_publication)
 tests test store
 args=(foreign_authorization)
