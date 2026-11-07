@@ -1038,8 +1038,9 @@ Cross-cell mention notices carry public repository metadata only. Visibility, de
 direct membership changes reclaim their outbox deliveries to withdraw recipient stubs.
 Inbox projections also check the source's current public state over authenticated RPC;
 private, deleted or unavailable sources contribute no notice payload or unread badge.
-The stub alone never authorizes an inbox read. Source checks pass; runtime acceptance of
-this privacy change is pending in [Cluster readiness](CLUSTER_PLAN.md).
+The stub alone never authorizes an inbox read. Source checks, both-engine HTTP contracts,
+two-cell privacy/deletion/member-revocation checks and notification polling pass; see
+[Cluster readiness](CLUSTER_PLAN.md).
 
 | Feature | Where it lives | Fed by | Lag |
 |---|---|---|---|

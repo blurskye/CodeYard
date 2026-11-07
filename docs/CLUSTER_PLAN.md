@@ -472,9 +472,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     repositories on both engines. That and polling diagnostics pass workspace
     a419fe0ad7374ae7bd82e6137e89d58b, Clippy fdaec63b4bde452da44fd6ff71352c73
     and WASM d6679477a8f0495abe8eeef4dc753222.
-    Runtime retry cfc7a969e5824a269d9273e69619239c remains running after session restart;
-    partial logs still show helper compilation, not test results. No second test job is
-    submitted while it runs.
+    Runtime retry cfc7a969e5824a269d9273e69619239c passes: 54 library tests, both
+    stub HTTP contracts, all 239 cluster tests (including notice revocation), 47
+    notification collaboration tests and all 5 polling tests, with no ignored tests.
     `s7-notices-retry.sh` covers the changed targets without repeating unrelated e2e failures.
     Both baseline schemas add separate notice-refresh trigger/index blocks (no FK edits).
     Both-engine HTTP/stub outage tests and two-cell HTTP privacy/deletion tests are added;
