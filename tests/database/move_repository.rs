@@ -287,7 +287,7 @@ async fn a_repository_transfer_freezes_only_that_repository_and_drops_former_own
 }
 
 #[tokio::test]
-async fn cli_repository_transfer_survives_a_failed_load_and_a_lost_directory_reply() {
+async fn cli_repository_transfer_survives_a_failed_load_and_a_failed_directory_switch() {
     crate::support::fake_webui_bundle::install();
     let (mut source, mut target) = cells().await;
     let mut registry = PostgresDatabase::unmigrated().await;
@@ -306,23 +306,24 @@ async fn cli_repository_transfer_survives_a_failed_load_and_a_lost_directory_rep
     let source_key = node_identity::load_or_create(&state).unwrap();
     let target_key = NodeKey::generate();
     let server_key = NodeKey::generate();
+    let cell = |prefix: u16, key: &NodeKey, state: State| Cell {
+        id: Prefix::new(prefix),
+        name: format!("cell-{prefix}"),
+        region: "a".into(),
+        state,
+        web_urls: vec![format!("http://127.0.0.1:{}/", 3000 + prefix)],
+        ssh_addresses: vec![],
+        rpc_addresses: vec![],
+        node_keys: vec![key.public_hex()],
+        database_bytes: 0,
+        write_rate: 0,
+        maximum_database_bytes: 1000000,
+        maximum_write_rate: 100,
+        read_regions: vec![],
+    };
     for (prefix, key) in [(1, &source_key), (2, &target_key)] {
         directory
-            .register_cell(Cell {
-                id: Prefix::new(prefix),
-                name: format!("cell-{prefix}"),
-                region: "a".into(),
-                state: State::Open,
-                web_urls: vec![format!("http://127.0.0.1:{}/", 3000 + prefix)],
-                ssh_addresses: vec![],
-                rpc_addresses: vec![],
-                node_keys: vec![key.public_hex()],
-                database_bytes: 0,
-                write_rate: 0,
-                maximum_database_bytes: 1000000,
-                maximum_write_rate: 100,
-                read_regions: vec![],
-            })
+            .register_cell(cell(prefix, key, State::Open))
             .await
             .unwrap();
     }
@@ -474,8 +475,32 @@ async fn cli_repository_transfer_survives_a_failed_load_and_a_lost_directory_rep
         .execute(&target.raw)
         .await
         .unwrap();
-    // The directory reply is lost after the switch; the target already takes writes.
+    // While the directory cannot be reached the move does not start: it needs the
+    // directory to finish, so the source keeps serving.
     listener.stop().await;
+    let unreachable = tokio::time::timeout(Duration::from_secs(90), run().output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!unreachable.status.success());
+    let moving: i64 = sqlx::query_scalar("SELECT count(*) FROM account_moves")
+        .fetch_one(&source.raw)
+        .await
+        .unwrap();
+    assert_eq!(moving, 0, "{}", stderr(&unreachable));
+    let listener = codeyard_cells_router::directory::Listener::bind(
+        directory.clone(),
+        &server_key,
+        directory_address,
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    // The directory refuses the switch; the target already takes writes.
+    directory
+        .register_cell(cell(2, &target_key, State::Disabled))
+        .await
+        .unwrap();
     let interrupted = tokio::time::timeout(Duration::from_secs(90), run().output())
         .await
         .unwrap()
@@ -494,14 +519,10 @@ async fn cli_repository_transfer_survives_a_failed_load_and_a_lost_directory_rep
         .execute(&target.raw)
         .await
         .unwrap();
-    let listener = codeyard_cells_router::directory::Listener::bind(
-        directory.clone(),
-        &server_key,
-        directory_address,
-        Default::default(),
-    )
-    .await
-    .unwrap();
+    directory
+        .register_cell(cell(2, &target_key, State::Open))
+        .await
+        .unwrap();
     for attempt in ["finishes", "repeats"] {
         let output = tokio::time::timeout(Duration::from_secs(90), run().output())
             .await

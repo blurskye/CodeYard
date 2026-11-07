@@ -97,10 +97,19 @@ impl Stores {
             let root = tempfile::tempdir().unwrap();
             let path = term_path(root.path(), uuid, 1);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-            git2::build::RepoBuilder::new()
+            let clone = git2::build::RepoBuilder::new()
                 .bare(true)
                 .clone(seed.path().to_str().unwrap(), &path)
                 .unwrap();
+            // A voter holds exactly the committed refs, not the clone's remote-tracking refs.
+            let remotes: Vec<String> = clone
+                .references_glob("refs/remotes/*")
+                .unwrap()
+                .map(|reference| reference.unwrap().name().unwrap().to_owned())
+                .collect();
+            for name in remotes {
+                clone.find_reference(&name).unwrap().delete().unwrap();
+            }
             let key = replace_node_key(pool, *node).await;
             let context = NodeContext {
                 pool: Some(pool.clone()),

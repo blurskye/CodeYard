@@ -1493,8 +1493,8 @@ impl Refs {
         Ok(Self { refs, head })
     }
 
-    /// The same refs as a quorum's committed refs, HEAD included.
-    fn matches(&self, committed: &[codeyard_db_core::models::RefValue]) -> bool {
+    /// The first ref, HEAD included, that differs from a quorum's committed refs.
+    fn difference(&self, committed: &[codeyard_db_core::models::RefValue]) -> Option<String> {
         let mut refs = std::collections::BTreeMap::new();
         let mut head = None;
         for value in committed {
@@ -1504,7 +1504,13 @@ impl Refs {
                 refs.insert(value.name.clone(), value.target.clone());
             }
         }
-        refs == self.refs && head == self.head
+        if head != self.head {
+            return Some("HEAD".into());
+        }
+        refs.keys()
+            .chain(self.refs.keys())
+            .find(|name| refs.get(*name) != self.refs.get(*name))
+            .cloned()
     }
 }
 
@@ -1553,10 +1559,11 @@ async fn copy_placed(
             codeyard_cluster::replicas::snapshot(context, primary, uuid, mirror, &[]).await?;
             let refs = Refs::read(mirror).await?;
             if let Some(view) = view {
-                anyhow::ensure!(
-                    refs.matches(&view.refs),
-                    "The copy of repository {repository} does not hold its committed refs"
-                );
+                if let Some(name) = refs.difference(&view.refs) {
+                    anyhow::bail!(
+                        "The copy of repository {repository} differs from its committed refs at {name}"
+                    );
+                }
                 let again = journal::recovery_view(pool, repository).await?;
                 anyhow::ensure!(
                     again.term == view.term && again.committed_version == view.committed_version,
@@ -1747,10 +1754,11 @@ async fn publish_placed(
         "The target storage node could not publish repository {repository}"
     );
     let view = journal::recovery_view(target, repository).await?;
-    anyhow::ensure!(
-        refs.matches(&view.refs),
-        "The target refs of repository {repository} do not match its source"
-    );
+    if let Some(name) = refs.difference(&view.refs) {
+        anyhow::bail!(
+            "The target refs of repository {repository} differ from its source at {name}"
+        );
+    }
     Ok(())
 }
 

@@ -1006,6 +1006,10 @@ pub async fn copy(
         let Some(owned) = ownership::owned_rows(&key.child, account.kind) else {
             continue;
         };
+        // The copy clears the storage node; the source's node is not a target row.
+        if key.child == "repositories" && key.columns == ["storage_node_id"] {
+            continue;
+        }
         let columns = column_list("t0", &key.columns);
         let present = key
             .columns
