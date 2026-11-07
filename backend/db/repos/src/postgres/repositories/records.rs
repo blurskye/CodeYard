@@ -1021,66 +1021,25 @@ async fn transfer_repository_once(
     .await
     .map_err(name_conflict_error)?
     .ok_or_else(|| anyhow::anyhow!(Refusal::Denied))?;
-    // Direct personal grants cannot be managed in an organization. Drop them when ownership
-    // changes, and stop work admitted under the former owner's authority.
-    if changed && org.is_some() {
-        sqlx::query("DELETE FROM repo_access WHERE repo_id=$1")
-            .bind(repo_id)
-            .execute(&mut *tx)
-            .await?;
-    }
+    // Stop work admitted under the former owner's authority.
     if changed {
-        if let Some(owner) = user {
-            sqlx::query("DELETE FROM repo_access a WHERE a.repo_id=$1 AND EXISTS(SELECT 1 FROM user_blocks b WHERE (b.user_id=$2 AND b.blocked_id=a.user_id) OR (b.blocked_id=$2 AND b.user_id=a.user_id))")
-                .bind(repo_id).bind(owner).execute(&mut *tx).await?;
-        }
-        sqlx::query("DELETE FROM action_runner_group_repositories WHERE repo_id=$1")
-            .bind(repo_id)
-            .execute(&mut *tx)
-            .await?;
-        sqlx::query("UPDATE issue_suggestions SET state='invalidated',updated_at=clock_timestamp() WHERE state='pending' AND action='add_field' AND issue_id IN (SELECT id FROM issues WHERE repo_id=$1)")
-            .bind(repo_id).execute(&mut *tx).await?;
+        codeyard_db_core::queries::postgres::repositories::records::leave_former_owner(
+            &mut tx, repo_id, user,
+        )
+        .await?;
         crate::postgres::repositories::creation::grant_creator(
             &mut tx,
             RepositoryCreationOwner { actor_id, target },
             repo_id,
         )
         .await?;
-        sqlx::query("UPDATE pull_requests SET maintainer_can_modify=FALSE,maintainer_edit_granted_by_id=NULL,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE head_repo_id=$1 AND maintainer_can_modify")
-            .bind(repo_id).execute(&mut *tx).await?;
-        // Selected organization values must not silently regain access on a transfer back.
-        sqlx::query("DELETE FROM org_actions_value_repositories WHERE repo_id=$1")
-            .bind(repo_id)
-            .execute(&mut *tx)
-            .await?;
-        // Detach the former owner's policy without discarding already applied settings.
-        sqlx::query(
-            "UPDATE repository_security_settings SET configuration_id=NULL WHERE repo_id=$1",
-        )
-        .bind(repo_id)
-        .execute(&mut *tx)
-        .await?;
         codeyard_db_core::queries::postgres::code_security::apply_default(&mut tx, &result).await?;
-        sqlx::query("DELETE FROM secret_scanning_commits WHERE repo_id=$1")
-            .bind(repo_id)
-            .execute(&mut *tx)
-            .await?;
         sqlx::query("INSERT INTO secret_scanning_jobs(repo_id,scan_type,actor_id) SELECT $1,'backfill',$2 WHERE EXISTS(SELECT 1 FROM secret_scanning_settings WHERE repo_id=$1 AND enabled)")
             .bind(repo_id).bind(actor_id).execute(&mut *tx).await?;
         // Packages stay in their publishing namespace; the new owner must not inherit access.
         // A package that the private repository hid stays private once it is detached.
         sqlx::query("UPDATE packages SET repo_id=NULL,visibility=CASE WHEN (SELECT is_private FROM repositories WHERE id=$2) THEN 'private' ELSE visibility END,updated_at=$1 WHERE repo_id=$2")
             .bind(crate::packages::now())
-            .bind(repo_id)
-            .execute(&mut *tx)
-            .await?;
-        // Inventory describes the former namespace. Do not transfer it or reserve its deployment names.
-        sqlx::query("DELETE FROM artifact_metadata_records WHERE artifact_id IN (SELECT id FROM artifact_metadata WHERE repo_id=$1)")
-            .bind(repo_id).execute(&mut *tx).await?;
-        // Team grants belong to the former owner's teams and must not come back later.
-        sqlx::query("DELETE FROM pr_team_reviewers WHERE pull_request_id IN (SELECT id FROM pull_requests WHERE repo_id=$1)")
-            .bind(repo_id).execute(&mut *tx).await?;
-        sqlx::query("DELETE FROM team_repo_access WHERE repo_id=$1")
             .bind(repo_id)
             .execute(&mut *tx)
             .await?;

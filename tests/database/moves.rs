@@ -142,12 +142,12 @@ async fn a_user_moves_with_its_repositories_and_a_racing_writer_lands_before_the
     comment(source, unrelated, alice).await.unwrap();
 
     let paths = BTreeMap::from([(project, "/cells/two/project.git".to_owned())]);
-    let copied = moves::copy(source, target, account, 2, &paths)
+    let copied = moves::copy(source, target, account, 2, &paths, None)
         .await
         .unwrap();
     assert!(copied.rows >= 5 && copied.stubs >= 1, "{copied:?}");
     // The copy can run again before the switch; it replaces the first one.
-    let again = moves::copy(source, target, account, 2, &paths)
+    let again = moves::copy(source, target, account, 2, &paths, None)
         .await
         .unwrap();
     assert_eq!(again.rows, copied.rows);
@@ -156,10 +156,10 @@ async fn a_user_moves_with_its_repositories_and_a_racing_writer_lands_before_the
     moves::switch(source, account).await.unwrap();
     moves::activate(source, target, account).await.unwrap();
     moves::activate(source, target, account).await.unwrap();
-    assert!(moves::discard(target, account, 1).await.is_err());
+    assert!(moves::discard(target, account, 1, None).await.is_err());
     refused_as_moving(comment(source, first, bob).await.unwrap_err());
-    moves::release(source, account).await.unwrap();
-    moves::release(source, account).await.unwrap();
+    moves::release(source, account, None).await.unwrap();
+    moves::release(source, account, None).await.unwrap();
     assert_eq!(
         moves::begin(source, account, 2, WAIT).await.unwrap(),
         State::Released
@@ -268,11 +268,11 @@ async fn a_move_that_fails_halfway_leaves_the_source_serving_and_the_freeze_lift
     moves::begin(source, account, 2, WAIT).await.unwrap();
     moves::freeze(source, account, HOLD, WAIT).await.unwrap();
     let paths = BTreeMap::from([(project, "/cells/two/tools.git".to_owned())]);
-    assert!(moves::copy(source, target, account, 2, &paths)
+    assert!(moves::copy(source, target, account, 2, &paths, None)
         .await
         .is_err());
     assert!(moves::cancel(source, account).await.unwrap());
-    moves::discard(target, account, 1).await.unwrap();
+    moves::discard(target, account, 1, None).await.unwrap();
     comment(source, first, carol).await.unwrap();
     assert_eq!(
         count(
@@ -311,7 +311,7 @@ async fn a_committed_receiving_copy_stays_frozen_when_the_source_resumes_and_is_
     let paths = BTreeMap::from([(repo, "/cells/two/retry.git".to_owned())]);
     moves::begin(source, account, 2, WAIT).await.unwrap();
     moves::freeze(source, account, HOLD, WAIT).await.unwrap();
-    moves::copy(source, target, account, 2, &paths)
+    moves::copy(source, target, account, 2, &paths, None)
         .await
         .unwrap();
     // Model process loss after the target commit, followed by source cancellation.
@@ -322,7 +322,7 @@ async fn a_committed_receiving_copy_stays_frozen_when_the_source_resumes_and_is_
     refused_as_moving(comment(target, first, alice).await.unwrap_err());
     moves::begin(source, account, 2, WAIT).await.unwrap();
     moves::freeze(source, account, HOLD, WAIT).await.unwrap();
-    moves::copy(source, target, account, 2, &paths)
+    moves::copy(source, target, account, 2, &paths, None)
         .await
         .unwrap();
     assert_eq!(
@@ -336,7 +336,7 @@ async fn a_committed_receiving_copy_stays_frozen_when_the_source_resumes_and_is_
     );
     moves::switch(source, account).await.unwrap();
     moves::activate(source, target, account).await.unwrap();
-    moves::release(source, account).await.unwrap();
+    moves::release(source, account, None).await.unwrap();
     comment(target, first, alice).await.unwrap();
     one.finish().await;
     two.finish().await;
@@ -371,12 +371,12 @@ async fn running_ci_finishes_before_the_freeze_and_its_history_moves() {
         .bind(run).execute(source).await.unwrap();
     moves::freeze(source, account, HOLD, WAIT).await.unwrap();
     let paths = BTreeMap::from([(repo, "/cells/two/ci.git".to_owned())]);
-    moves::copy(source, target, account, 2, &paths)
+    moves::copy(source, target, account, 2, &paths, None)
         .await
         .unwrap();
     moves::switch(source, account).await.unwrap();
     moves::activate(source, target, account).await.unwrap();
-    moves::release(source, account).await.unwrap();
+    moves::release(source, account, None).await.unwrap();
     assert_eq!(count(target, "SELECT count(*) FROM ci_runs WHERE id=$1 AND status='cancelled' AND error_message='Cancelled for account move' AND completed_at IS NOT NULL", run).await, 1);
     one.finish().await;
     two.finish().await;
@@ -425,12 +425,12 @@ async fn a_member_removed_during_an_organization_move_stays_removed() {
             .unwrap_err(),
     );
     let paths = BTreeMap::from([(project, "/cells/two/site.git".to_owned())]);
-    moves::copy(source, target, account, 2, &paths)
+    moves::copy(source, target, account, 2, &paths, None)
         .await
         .unwrap();
     moves::switch(source, account).await.unwrap();
     moves::activate(source, target, account).await.unwrap();
-    moves::release(source, account).await.unwrap();
+    moves::release(source, account, None).await.unwrap();
 
     let members = "SELECT count(*) FROM org_memberships WHERE org_id=$1";
     assert_eq!(count(target, members, organization).await, 1);

@@ -569,6 +569,10 @@ pub const TABLES: &[(&str, Rule)] = &[
         Owned(&[Repository("repo_id")]),
     ),
     ("repository_pushes", Owned(&[Repository("repo_id")])),
+    (
+        "repository_redirects",
+        Owned(&[Owner("owner_kind", "owner_id")]),
+    ),
     ("repository_ref_activities", Owned(&[Repository("repo_id")])),
     ("repository_replicas", Cell),
     (
@@ -675,8 +679,9 @@ pub fn parent_key(table: &str) -> &'static str {
 }
 
 /// The condition that selects the rows of `table` (aliased `t0`) belonging to the account
-/// bound as `$1`, or `None` when the table's rows never move with an account. Repository
-/// stubs are never selected: their rows live in another cell.
+/// bound as `$1`, or `None` when the table's rows never move with an account. For
+/// `ObjectKind::Repository`, `$1` is a repository and only rows that hang below it are
+/// selected. Repository stubs are never selected: their rows live in another cell.
 pub fn owned_rows(table: &str, account: ObjectKind) -> Option<String> {
     match rule(table)? {
         Owned(references) => Some(condition(references, account, 0)),
@@ -687,16 +692,21 @@ pub fn owned_rows(table: &str, account: ObjectKind) -> Option<String> {
 fn condition(references: &[Reference], account: ObjectKind, depth: usize) -> String {
     let row = format!("t{depth}");
     let organization = account == ObjectKind::Organization;
+    let repository = account == ObjectKind::Repository;
     let mut arms = String::from("CASE");
     for reference in references {
         let column = reference.column();
         let test = match *reference {
+            User(_) | Organization(_) | Owner(..) if repository => "FALSE".to_owned(),
             User(column) if !organization => format!("{row}.{column}=$1"),
             Organization(column) if organization => format!("{row}.{column}=$1"),
             User(_) | Organization(_) => "FALSE".to_owned(),
             Owner(kind, column) => format!(
                 "({row}.{kind}='{}' AND {row}.{column}=$1)",
                 if organization { "org" } else { "user" }
+            ),
+            Repository(column) if repository => format!(
+                "{row}.{column} IN (SELECT r{depth}.id FROM repositories r{depth} WHERE NOT r{depth}.is_stub AND r{depth}.id=$1)"
             ),
             Repository(column) => format!(
                 "{row}.{column} IN (SELECT r{depth}.id FROM repositories r{depth} WHERE NOT r{depth}.is_stub AND r{depth}.{}=$1)",
@@ -724,9 +734,14 @@ fn condition(references: &[Reference], account: ObjectKind, depth: usize) -> Str
 /// reach. A path follows parent rows (`column@table.key>`) to an account column (`column:u`,
 /// `column:o`, `column:k.kind_column`) or a repository column (`column:r`).
 pub fn guard_paths(table: &str) -> Vec<String> {
-    // A repository's own row does not exist before its insert, so its guard reads the owner.
+    // A repository's own row does not exist before its insert, so its guard reads the owner,
+    // and the row itself for a repository that moves on its own.
     if table == "repositories" {
-        return vec!["owner_user_id:u".to_owned(), "owner_org_id:o".to_owned()];
+        return vec![
+            "owner_user_id:u".to_owned(),
+            "owner_org_id:o".to_owned(),
+            "id:r".to_owned(),
+        ];
     }
     let mut paths = Vec::new();
     if let Some(Owned(references)) = rule(table) {
@@ -891,6 +906,16 @@ mod tests {
         let organization = owned_rows("webhooks", ObjectKind::Organization).unwrap();
         assert!(organization.contains("WHEN t0.org_id IS NOT NULL THEN t0.org_id=$1"));
         assert!(organization.contains("r0.owner_org_id=$1"));
+        assert_eq!(
+            owned_rows("repositories", ObjectKind::Repository).unwrap(),
+            "CASE WHEN t0.id IS NOT NULL THEN t0.id IN (SELECT r0.id FROM repositories r0 WHERE NOT r0.is_stub AND r0.id=$1) ELSE FALSE END"
+        );
+        let repository = owned_rows("webhooks", ObjectKind::Repository).unwrap();
+        assert!(repository.contains("r0.id=$1") && repository.contains("THEN FALSE"));
+        assert_eq!(
+            owned_rows("repository_redirects", ObjectKind::Repository).unwrap(),
+            "CASE WHEN t0.owner_id IS NOT NULL THEN FALSE ELSE FALSE END"
+        );
         assert!(owned_rows("nodes", ObjectKind::User).is_none());
         assert!(owned_rows("files", ObjectKind::User).is_none());
         assert_eq!(

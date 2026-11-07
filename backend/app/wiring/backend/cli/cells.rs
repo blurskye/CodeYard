@@ -37,9 +37,10 @@ pub enum Command {
         #[arg(long)]
         prefix: Prefix,
     },
-    /// Move a user or organization, with its repositories, from this cell to another. It runs
-    /// beside the servers; writes to the account are refused while it moves. Run it again
-    /// after a failure to continue or restart the move.
+    /// Move a user or organization, with its repositories, from this cell to another, or
+    /// transfer one repository (`--name owner/name`) to a new owner in another cell. It runs
+    /// beside the servers; writes are refused while it moves. Run it again after a failure
+    /// to continue or restart the move.
     Move(MoveArgs),
     /// Queue a page of this cell's repositories, with their issues and pull requests, for the
     /// search index; the running servers deliver them. Use after the index was emptied.
@@ -53,10 +54,13 @@ pub enum Command {
 
 #[derive(Debug, clap::Args)]
 pub struct MoveArgs {
-    #[arg(long, value_parser = ["user", "organization"])]
+    #[arg(long, value_parser = ["user", "organization", "repository"])]
     kind: String,
     #[arg(long)]
     name: String,
+    /// The user or organization in the target cell that receives a repository.
+    #[arg(long)]
+    new_owner: Option<String>,
     /// The target cell's PostgreSQL URL.
     #[arg(long)]
     target_database: String,
@@ -615,12 +619,29 @@ async fn move_account(
     );
     let kind = ObjectKind::parse(&arguments.kind)
         .ok_or_else(|| anyhow::anyhow!("Invalid account kind"))?;
+    let (owner, name) = match kind {
+        ObjectKind::Repository => arguments
+            .name
+            .split_once('/')
+            .ok_or_else(|| anyhow::anyhow!("Name a repository as owner/name"))?,
+        _ => (arguments.name.as_str(), ""),
+    };
+    // A repository that a repeated run already released is found by its former name.
     let lookup = match kind {
         ObjectKind::Organization => "SELECT id FROM organizations WHERE lower(name)=lower($1)",
-        _ => "SELECT id FROM users WHERE lower(username)=lower($1)",
+        ObjectKind::User => "SELECT id FROM users WHERE lower(username)=lower($1)",
+        ObjectKind::Repository => "SELECT r.id FROM repositories r \
+            LEFT JOIN users u ON r.owner_kind='user' AND u.id=r.owner_user_id \
+            LEFT JOIN organizations o ON r.owner_kind='org' AND o.id=r.owner_org_id \
+            WHERE NOT r.is_stub AND lower(r.name)=lower($2) AND lower(COALESCE(u.username,o.name))=lower($1) \
+            UNION ALL SELECT d.repo_id FROM repository_redirects d WHERE d.name_key=lower($2) \
+            AND ((d.owner_kind='user' AND d.owner_id IN (SELECT id FROM users WHERE lower(username)=lower($1))) \
+            OR (d.owner_kind='org' AND d.owner_id IN (SELECT id FROM organizations WHERE lower(name)=lower($1)))) \
+            LIMIT 1",
     };
     let id: i64 = sqlx::query_scalar(lookup)
-        .bind(&arguments.name)
+        .bind(owner)
+        .bind(name)
         .fetch_optional(source)
         .await?
         .ok_or_else(|| anyhow::anyhow!("No such account in this cell"))?;
@@ -633,6 +654,15 @@ async fn move_account(
     // so two opposite moves cannot deadlock while each holds its source lease.
     let _destination =
         codeyard_db_cluster::cluster::serving_lock(&target_pool, "account-move").await?;
+    let transfer = match (kind, &arguments.new_owner) {
+        (ObjectKind::Repository, Some(owner)) => {
+            moves::transfer(source, target, account, owner).await?
+        }
+        (ObjectKind::Repository, None) => anyhow::bail!("A repository moves to a --new-owner"),
+        (_, Some(_)) => anyhow::bail!("Only a repository takes --new-owner"),
+        _ => None,
+    };
+    let former = transfer.as_ref().map(moves::Transfer::former);
     let source_cell = moves::cell(source).await?;
     let target_cell = moves::cell(target).await?;
     let to = Prefix::new(u16::try_from(target_cell)?);
@@ -693,7 +723,15 @@ async fn move_account(
                 .await?;
                 paths.insert(repository.id, to.to_string_lossy().into_owned());
             }
-            let result = moves::copy(source, target, account, target_cell, &paths).await?;
+            let result = moves::copy(
+                source,
+                target,
+                account,
+                target_cell,
+                &paths,
+                transfer.as_ref(),
+            )
+            .await?;
             // A push that was already running may have landed after the Git copy.
             for repository in &repositories {
                 let (from, to) =
@@ -709,7 +747,7 @@ async fn move_account(
             Err(error) => {
                 // Writes resume here, and the copy leaves the target.
                 if moves::cancel(source, account).await? {
-                    moves::discard(target, account, source_cell).await?;
+                    moves::discard(target, account, source_cell, former).await?;
                 }
                 return Err(error);
             }
@@ -717,12 +755,12 @@ async fn move_account(
     }
     if reached != moves::State::Released {
         moves::activate(source, target, account).await?;
-        let objects =
-            std::iter::once(Object { kind, id }).chain(repositories.iter().map(|repository| {
-                Object {
-                    kind: ObjectKind::Repository,
-                    id: repository.id,
-                }
+        let account_object = (kind != ObjectKind::Repository).then_some(Object { kind, id });
+        let objects = account_object
+            .into_iter()
+            .chain(repositories.iter().map(|repository| Object {
+                kind: ObjectKind::Repository,
+                id: repository.id,
             }));
         for object in objects {
             let reply = directory
@@ -738,7 +776,7 @@ async fn move_account(
             arguments.route_cache_seconds + 5,
         ))
         .await;
-        moves::release(source, account).await?;
+        moves::release(source, account, transfer.as_ref()).await?;
     }
     for repository in &repositories {
         let (from, _) = repository_paths(repos_path, &arguments.target_repositories, repository)?;
@@ -757,6 +795,7 @@ async fn move_account(
             "stubs": copied.as_ref().map(|copied| copied.stubs),
             "shared_rows": copied.as_ref().map(|copied| copied.shared),
             "counters_fixed": copied.as_ref().map(|copied| copied.counters_fixed),
+            "dropped_rows": copied.as_ref().map(|copied| copied.dropped),
         })
     );
     Ok(())

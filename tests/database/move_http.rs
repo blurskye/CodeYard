@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
 
-async fn request(
+pub(crate) async fn request(
     app: &Router,
     token: &str,
     method: &str,
@@ -41,7 +41,7 @@ async fn request(
     (status, serde_json::from_slice(&bytes).unwrap())
 }
 
-async fn token(database: &PostgresDatabase, user: i64) -> String {
+pub(crate) async fn token(database: &PostgresDatabase, user: i64) -> String {
     let session = codeyard_identity::sessions::fresh_id(&database.pool).unwrap();
     codeyard_db_identity::users::sessions::create_session(
         &database.pool,
@@ -76,7 +76,7 @@ async fn token(database: &PostgresDatabase, user: i64) -> String {
     token
 }
 
-async fn app(database: &PostgresDatabase, root: &std::path::Path) -> Router {
+pub(crate) async fn app(database: &PostgresDatabase, root: &std::path::Path) -> Router {
     codeyard_db_cluster::node_config::upsert_node_configuration(&database.pool, "public", true)
         .await
         .unwrap();
@@ -232,14 +232,14 @@ async fn an_organization_with_a_thousand_members_moves_without_restoring_a_revok
         .unwrap();
     let paths =
         std::collections::BTreeMap::from([(repository, git.to_string_lossy().into_owned())]);
-    moves::copy(&source.raw, &target.raw, account, 2, &paths)
+    moves::copy(&source.raw, &target.raw, account, 2, &paths, None)
         .await
         .unwrap();
     moves::switch(&source.raw, account).await.unwrap();
     moves::activate(&source.raw, &target.raw, account)
         .await
         .unwrap();
-    moves::release(&source.raw, account).await.unwrap();
+    moves::release(&source.raw, account, None).await.unwrap();
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM org_memberships WHERE org_id=$1")
         .bind(organization)
         .fetch_one(&target.raw)

@@ -56,7 +56,7 @@ CREATE UNIQUE INDEX cell_outbox_search_pending ON cell_outbox(root_id,payload)
 -- Moves run only on PostgreSQL. Keep the catalogue identical for whole-database copy;
 -- copying an installation with an unfinished move is refused before opening its target.
 CREATE TABLE account_moves (
-    account_kind TEXT NOT NULL CHECK(account_kind IN ('user','organization')),
+    account_kind TEXT NOT NULL CHECK(account_kind IN ('user','organization','repository')),
     account_id INTEGER NOT NULL CHECK(typeof(account_id)='integer' AND account_id>0),
     target_cell INTEGER NOT NULL CHECK(typeof(target_cell)='integer' AND target_cell BETWEEN 0 AND 65535),
     state TEXT NOT NULL CHECK(state IN ('pending','frozen','switched','receiving','released')),
@@ -3992,6 +3992,16 @@ CREATE TABLE issue_redirects (
     PRIMARY KEY(repo_id, number)
 );
 CREATE INDEX idx_issue_redirects_issue_root ON issue_redirects(issue_id, repo_id);
+
+-- Cross-cell repository moves run only on PostgreSQL; SQLite keeps this table empty.
+CREATE TABLE repository_redirects (
+    owner_kind TEXT NOT NULL CHECK(owner_kind IN ('user','org')),
+    owner_id INTEGER NOT NULL CHECK(typeof(owner_id)='integer' AND owner_id>0),
+    name_key TEXT NOT NULL CHECK(length(name_key) BETWEEN 1 AND 100 AND name_key=lower(name_key)),
+    repo_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    PRIMARY KEY(owner_kind,owner_id,name_key)
+);
+CREATE INDEX repository_redirects_repo ON repository_redirects(repo_id);
 
 CREATE TABLE issue_duplicates (
     issue_id INTEGER PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,

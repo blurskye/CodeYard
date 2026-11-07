@@ -13,8 +13,8 @@ cargo build --locked -p codeyard -p codeyard-actions --bin codeyard --bin codeya
 export GITSERV_TEST_OPENSSH_HELPER=$(python3 -I scripts/cargo-executable.py codeyard <"$artifacts")
 export CODEYARD_ACTIONS_BIN=$(python3 -I scripts/cargo-executable.py codeyard-actions <"$artifacts")
 status=0
-cargo test --locked -p codeyard --test database -- moves:: move_http:: move_cli:: --nocapture --test-threads=1 || status=1
+cargo test --locked -p codeyard --test database -- moves:: move_http:: move_cli:: move_repository:: --nocapture --test-threads=1 || status=1
 cargo test --locked -p codeyard-model -p codeyard-db-core -p codeyard-db-cluster -p codeyard-db-directory -p codeyard-cells-router -p codeyard-git --lib || status=1
-cargo test --locked -p codeyard --test database -- --skip moves:: --skip move_http:: --skip move_cli:: || status=1
+cargo test --locked -p codeyard --test database -- --skip moves:: --skip move_http:: --skip move_cli:: --skip move_repository:: || status=1
 cargo test --locked -p codeyard --test cluster || status=1
 exit "$status"

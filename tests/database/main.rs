@@ -10,6 +10,7 @@ mod foreign_authorization;
 mod migrations;
 mod move_cli;
 mod move_http;
+mod move_repository;
 mod moves;
 mod native;
 mod ops;

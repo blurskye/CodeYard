@@ -1,7 +1,8 @@
-//! Moving a user or organization, with its repositories, to another cell. Both cells run
-//! PostgreSQL. The steps are `begin`, `freeze`, `copy`, `switch` and `release`; the directory
-//! switch and the Git copy run between them (see `codeyard cell move`). Each step can run
-//! again after a crash, and a move that has not switched can be cancelled.
+//! Moving a user or organization, with its repositories, to another cell, or one repository
+//! to a new owner in another cell. Both cells run PostgreSQL. The steps are `begin`,
+//! `freeze`, `copy`, `switch` and `release`; the directory switch and the Git copy run
+//! between them (see `codeyard cell move`). Each step can run again after a crash, and a
+//! move that has not switched can be cancelled.
 use crate::copy::postgres as pg;
 use crate::copy::{quote, shape, Table, CHUNK_BYTES};
 use anyhow::{bail, ensure, Result};
@@ -29,10 +30,6 @@ pub struct Account {
 
 impl Account {
     pub fn new(kind: ObjectKind, id: i64) -> Result<Self> {
-        ensure!(
-            matches!(kind, ObjectKind::User | ObjectKind::Organization),
-            "Only users and organizations move between cells"
-        );
         ensure!(id > 0, "Invalid account id");
         Ok(Self { kind, id })
     }
@@ -45,15 +42,113 @@ impl Account {
     fn table(self) -> &'static str {
         match self.kind {
             ObjectKind::Organization => "organizations",
-            _ => "users",
+            ObjectKind::Repository => "repositories",
+            ObjectKind::User => "users",
         }
     }
-    fn owner_column(self) -> &'static str {
+    /// Selects the repositories that move, with the account bound as `$1`.
+    fn repositories(self) -> &'static str {
         match self.kind {
-            ObjectKind::Organization => "owner_org_id",
-            _ => "owner_user_id",
+            ObjectKind::Organization => "owner_org_id=$1",
+            ObjectKind::Repository => "id=$1",
+            ObjectKind::User => "owner_user_id=$1",
         }
     }
+    /// The `owner_kind`, `owner_user_id` and `owner_org_id` values of a repository it owns.
+    fn owner_values(self) -> [String; 3] {
+        match self.kind {
+            ObjectKind::Organization => ["'org'".into(), "NULL".into(), self.id.to_string()],
+            _ => ["'user'".into(), self.id.to_string(), "NULL".into()],
+        }
+    }
+}
+
+/// A repository moving to an owner who lives in the target cell. The source keeps a stub of
+/// the repository under that owner and redirects the former name to it.
+pub struct Transfer {
+    former: Account,
+    owner: Account,
+    name: String,
+    owner_row: String,
+}
+
+impl Transfer {
+    pub fn former(&self) -> Account {
+        self.former
+    }
+}
+
+/// Checks that `owner` lives in the target cell and has no repository of the same name, and
+/// reads what the source needs to keep. Returns `None` when the source already released the
+/// repository, so a repeated run only finishes the cleanup.
+pub async fn transfer(
+    source: &PgPool,
+    target: &PgPool,
+    repository: Account,
+    owner: &str,
+) -> Result<Option<Transfer>> {
+    ensure!(
+        repository.kind == ObjectKind::Repository,
+        "Only a repository changes owner"
+    );
+    let current: Option<(String, Option<i64>, Option<i64>, String, bool, bool)> = sqlx::query_as(
+        "SELECT owner_kind,owner_user_id,owner_org_id,name,is_stub,is_archived FROM repositories WHERE id=$1",
+    )
+    .bind(repository.id)
+    .fetch_optional(source)
+    .await?;
+    let Some((kind, user, organization, name, stub, archived)) = current else {
+        bail!("No such repository in this cell");
+    };
+    if stub {
+        return Ok(None);
+    }
+    ensure!(!archived, "An archived repository cannot change owner");
+    let former = match (kind.as_str(), user, organization) {
+        ("org", _, Some(id)) => Account::new(ObjectKind::Organization, id)?,
+        (_, Some(id), _) => Account::new(ObjectKind::User, id)?,
+        _ => bail!("The repository has no owner"),
+    };
+    let found: Option<(String, i64)> = sqlx::query_as(
+        "SELECT 'user',id FROM users WHERE lower(username)=lower($1) AND NOT is_stub \
+         UNION ALL SELECT 'organization',id FROM organizations WHERE lower(name)=lower($1) AND NOT is_stub",
+    )
+    .bind(owner)
+    .fetch_optional(target)
+    .await?;
+    let Some((kind, id)) = found else {
+        bail!("The new owner does not live in the target cell");
+    };
+    let owner = Account::new(
+        ObjectKind::parse(&kind).ok_or_else(|| anyhow::anyhow!("Invalid owner kind"))?,
+        id,
+    )?;
+    let taken: bool = sqlx::query_scalar(&format!(
+        "SELECT EXISTS(SELECT 1 FROM repositories WHERE {} AND lower(name)=lower($2) AND id<>$3)",
+        owner.repositories()
+    ))
+    .bind(owner.id)
+    .bind(&name)
+    .bind(repository.id)
+    .fetch_one(target)
+    .await?;
+    ensure!(
+        !taken,
+        "The new owner already has a repository named {name}"
+    );
+    let owner_row: String = sqlx::query_scalar(&format!(
+        "SELECT COALESCE(json_agg(to_jsonb(t)),'[]')::text FROM {} t WHERE id=$1",
+        owner.table()
+    ))
+    .bind(owner.id)
+    .fetch_one(target)
+    .await?;
+    Ok(Some(Transfer {
+        former,
+        owner,
+        name,
+        owner_row,
+    }))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -157,8 +252,8 @@ pub async fn begin(pool: &PgPool, account: Account, target: i32, wait: Duration)
             .execute(&mut *tx)
             .await?;
         sqlx::query(&format!(
-            "UPDATE ci_runs SET cancel_requested=TRUE WHERE status IN ('queued','running') AND repo_id IN (SELECT id FROM repositories WHERE NOT is_stub AND {}=$1)",
-            account.owner_column()
+            "UPDATE ci_runs SET cancel_requested=TRUE WHERE status IN ('queued','running') AND repo_id IN (SELECT id FROM repositories WHERE NOT is_stub AND {})",
+            account.repositories()
         ))
         .bind(account.id)
         .execute(&mut *tx)
@@ -203,8 +298,8 @@ pub async fn freeze(pool: &PgPool, account: Account, hold: Duration, wait: Durat
     // pointers. Freezing first would prevent its completion, then copy unfinished work
     // while that worker was still producing bytes in the source region.
     let running = format!(
-        "SELECT count(*) FROM ci_runs WHERE status='running' AND repo_id IN (SELECT id FROM repositories WHERE NOT is_stub AND {}=$1)",
-        account.owner_column()
+        "SELECT count(*) FROM ci_runs WHERE status='running' AND repo_id IN (SELECT id FROM repositories WHERE NOT is_stub AND {})",
+        account.repositories()
     );
     let running = running.as_str();
     wait_until(wait, "CI runs are still draining", move || async move {
@@ -250,8 +345,8 @@ pub async fn freeze(pool: &PgPool, account: Account, hold: Duration, wait: Durat
     }
     tx.commit().await?;
     let undelivered = format!(
-        "SELECT count(*) FROM cell_outbox WHERE delivered_at IS NULL AND ((root_kind=$1 AND root_id=$2) OR (root_kind='repository' AND root_id IN (SELECT id FROM repositories WHERE NOT is_stub AND {}=$2)))",
-        account.owner_column()
+        "SELECT count(*) FROM cell_outbox WHERE delivered_at IS NULL AND ((root_kind=$1 AND root_id=$2) OR (root_kind='repository' AND root_id IN (SELECT id FROM repositories WHERE NOT is_stub AND {})))",
+        account.repositories().replace("$1", "$2")
     );
     let undelivered = undelivered.as_str();
     wait_until(
@@ -289,8 +384,8 @@ pub async fn repositories(pool: &PgPool, account: Account) -> Result<Vec<Reposit
         return Ok(serde_json::from_str(&paths)?);
     }
     let rows: Vec<(i64, String, bool)> = sqlx::query_as(&format!(
-        "SELECT id,disk_path,storage_node_id IS NOT NULL FROM repositories WHERE NOT is_stub AND {}=$1 ORDER BY id LIMIT {}",
-        account.owner_column(),
+        "SELECT id,disk_path,storage_node_id IS NOT NULL FROM repositories WHERE NOT is_stub AND {} ORDER BY id LIMIT {}",
+        account.repositories(),
         MAX_REPOSITORIES + 1
     ))
     .bind(account.id)
@@ -316,6 +411,8 @@ pub struct Copied {
     pub stubs: u64,
     pub shared: u64,
     pub counters_fixed: u64,
+    /// Rows of a repository that changed owner and pointed at the former owner's records.
+    pub dropped: u64,
 }
 
 struct ForeignKey {
@@ -469,11 +566,14 @@ enum Binding<'a> {
 struct Needed {
     accounts: BTreeMap<&'static str, BTreeSet<i64>>,
     shared: Vec<(String, String, Vec<String>)>,
+    dropped: u64,
 }
 
 /// Sorts the keys one reference reaches outside the account: account and repository rows
 /// become stubs, shared rows are copied, and anything else must already be in the target.
-/// A reference that may be cleared on delete is cleared instead; others fail the move.
+/// A reference that may be cleared on delete is cleared instead. A repository that changes
+/// owner drops its other rows that point at the former owner's records (team grants, runner
+/// groups, organization values and properties), as a transfer does; others fail the move.
 async fn place(
     to: &mut Tx,
     tables: &[Table],
@@ -521,6 +621,17 @@ async fn place(
         .bind(&absent)
         .execute(&mut **to)
         .await?;
+    } else if let (ObjectKind::Repository, Some(owned)) = (account.kind, owned) {
+        needed.dropped += sqlx::query(&format!(
+            "DELETE FROM {} t0 WHERE ({owned}) AND {}=ANY($2::text[])",
+            quote(&key.child),
+            key_text("t0", &key.columns)
+        ))
+        .bind(account.id)
+        .bind(&absent)
+        .execute(&mut **to)
+        .await?
+        .rows_affected();
     } else {
         bail!(
             "{}.{} references {} rows that the target cell does not have",
@@ -650,7 +761,12 @@ pub async fn copy(
     account: Account,
     target_cell: i32,
     paths: &BTreeMap<i64, String>,
+    transfer: Option<&Transfer>,
 ) -> Result<Copied> {
+    ensure!(
+        (account.kind == ObjectKind::Repository) == transfer.is_some(),
+        "A repository moves only to a new owner"
+    );
     // Retain the move row independently of the read snapshot. Cancelling or renewing the
     // freeze must not race a copy made under the previous freeze. Writers may still take
     // KEY SHARE and see its expiry; the final deadline check rejects an expired snapshot.
@@ -738,7 +854,14 @@ pub async fn copy(
             .await?;
     }
     if earlier {
-        clear(&mut to, tables, account, source_cell).await?;
+        clear(
+            &mut to,
+            tables,
+            account,
+            source_cell,
+            transfer.map(|transfer| transfer.former),
+        )
+        .await?;
     }
 
     let mut copied = Copied::default();
@@ -757,6 +880,12 @@ pub async fn copy(
             let mut fixed = vec![("home_cell", target_cell.to_string())];
             if to_table.name == "repositories" {
                 fixed.push(("storage_node_id", "NULL".to_owned()));
+                if let Some(transfer) = transfer {
+                    let [kind, user, organization] = transfer.owner.owner_values();
+                    fixed.push(("owner_kind", kind));
+                    fixed.push(("owner_user_id", user));
+                    fixed.push(("owner_org_id", organization));
+                }
             }
             let updates = to_table
                 .columns
@@ -787,8 +916,8 @@ pub async fn copy(
         copied.rows += written;
     }
     let repositories: Vec<i64> = sqlx::query_scalar(&format!(
-        "SELECT id FROM repositories WHERE NOT is_stub AND {}=$1 ORDER BY id",
-        account.owner_column()
+        "SELECT id FROM repositories WHERE NOT is_stub AND {} ORDER BY id",
+        account.repositories()
     ))
     .bind(account.id)
     .fetch_all(&mut *to)
@@ -890,6 +1019,19 @@ pub async fn copy(
         }
     }
     copied.stubs = add_stubs(&mut from, &mut to, target_cell, &mut needed).await?;
+    copied.dropped = needed.dropped;
+    if let Some(transfer) = transfer {
+        let personal = (transfer.owner.kind == ObjectKind::User).then_some(transfer.owner.id);
+        codeyard_db_core::queries::postgres::repositories::records::leave_former_owner(
+            &mut to, account.id, personal,
+        )
+        .await?;
+        // Runners registered for the repository answered to the former owner and cell.
+        codeyard_db_core::queries::postgres::runners::remove_repository_runners(
+            &mut to, account.id,
+        )
+        .await?;
+    }
 
     // Running CI was drained before the freeze. Never claim that an execution stopped
     // merely because its copied row says so; its source worker might still be producing bytes.
@@ -1035,8 +1177,14 @@ pub async fn cancel(pool: &PgPool, account: Account) -> Result<bool> {
 }
 
 /// Removes a copy that never switched from the target, turning the account back into a
-/// stub of `source_cell` there. Call only after `cancel` succeeded.
-pub async fn discard(target: &PgPool, account: Account, source_cell: i32) -> Result<()> {
+/// stub of `source_cell` there; a repository gets its `former` owner back. Call only after
+/// `cancel` succeeded.
+pub async fn discard(
+    target: &PgPool,
+    account: Account,
+    source_cell: i32,
+    former: Option<Account>,
+) -> Result<()> {
     let mut tx = target.begin().await?;
     for statement in [
         "SET CONSTRAINTS ALL DEFERRED",
@@ -1072,7 +1220,7 @@ pub async fn discard(target: &PgPool, account: Account, source_cell: i32) -> Res
     if copied {
         let mut catalog = pg::catalog(&mut tx).await?;
         catalog.tables.sort_by(|a, b| a.name.cmp(&b.name));
-        clear(&mut tx, &catalog.tables, account, source_cell).await?;
+        clear(&mut tx, &catalog.tables, account, source_cell, former).await?;
     }
     sqlx::query(
         "DELETE FROM account_moves WHERE account_kind=$1 AND account_id=$2 AND state='receiving'",
@@ -1087,8 +1235,9 @@ pub async fn discard(target: &PgPool, account: Account, source_cell: i32) -> Res
 
 /// After the directory sends the account to the target, deletes its rows here and keeps
 /// the account and its repositories as stubs of the target. Refuses while rows of other
-/// accounts would be deleted with them.
-pub async fn release(pool: &PgPool, account: Account) -> Result<()> {
+/// accounts would be deleted with them. A transferred repository's stub belongs to its new
+/// owner, and its former name redirects to it.
+pub async fn release(pool: &PgPool, account: Account, transfer: Option<&Transfer>) -> Result<()> {
     let mut tx = pool.begin().await?;
     for statement in [
         "SET CONSTRAINTS ALL DEFERRED",
@@ -1125,6 +1274,14 @@ pub async fn release(pool: &PgPool, account: Account) -> Result<()> {
     );
     let mut catalog = pg::catalog(&mut tx).await?;
     catalog.tables.sort_by(|a, b| a.name.cmp(&b.name));
+    if transfer.is_some() {
+        // The former owner's inventory of the repository's artifacts stays behind, as in a
+        // transfer within the cell.
+        sqlx::query("DELETE FROM artifact_metadata_records WHERE artifact_id IN (SELECT id FROM artifact_metadata WHERE repo_id=$1)")
+            .bind(account.id)
+            .execute(&mut *tx)
+            .await?;
+    }
     for key in foreign_keys(&mut tx).await? {
         // Clearing a reference on delete is harmless; anything else would delete or block.
         if is_root(&key.parent) || matches!(key.on_delete.as_str(), "n" | "d") {
@@ -1155,8 +1312,8 @@ pub async fn release(pool: &PgPool, account: Account) -> Result<()> {
     // Keep source paths in the same transaction that clears the rows. The CLI can
     // then resume filesystem cleanup after release, even though the stubs have no path.
     let paths: Vec<(i64, String)> = sqlx::query_as(&format!(
-        "SELECT id,disk_path FROM repositories WHERE NOT is_stub AND {}=$1 ORDER BY id LIMIT {}",
-        account.owner_column(),
+        "SELECT id,disk_path FROM repositories WHERE NOT is_stub AND {} ORDER BY id LIMIT {}",
+        account.repositories(),
         MAX_REPOSITORIES + 1
     ))
     .bind(account.id)
@@ -1176,7 +1333,35 @@ pub async fn release(pool: &PgPool, account: Account) -> Result<()> {
         .bind(serde_json::to_string(&paths)?)
         .execute(&mut *tx)
         .await?;
-    clear(&mut tx, &catalog.tables, account, target).await?;
+    if let Some(transfer) = transfer {
+        sqlx::query(stub_insert(transfer.owner.table()))
+            .bind(&transfer.owner_row)
+            .execute(&mut *tx)
+            .await?;
+        // Packages stay in the former owner's namespace, as in a transfer within the cell.
+        sqlx::query("UPDATE packages SET repo_id=NULL,visibility=CASE WHEN (SELECT is_private FROM repositories WHERE id=$1) THEN 'private' ELSE visibility END,updated_at=extract(epoch FROM clock_timestamp())::bigint WHERE repo_id=$1")
+            .bind(account.id)
+            .execute(&mut *tx)
+            .await?;
+        let [kind, ..] = transfer.former.owner_values();
+        sqlx::query(&format!(
+            "INSERT INTO repository_redirects(owner_kind,owner_id,name_key,repo_id) VALUES({kind},$1,lower($2),$3) \
+             ON CONFLICT(owner_kind,owner_id,name_key) DO UPDATE SET repo_id=EXCLUDED.repo_id"
+        ))
+        .bind(transfer.former.id)
+        .bind(&transfer.name)
+        .bind(account.id)
+        .execute(&mut *tx)
+        .await?;
+    }
+    clear(
+        &mut tx,
+        &catalog.tables,
+        account,
+        target,
+        transfer.map(|transfer| transfer.owner),
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -1210,9 +1395,15 @@ fn depth(table: &str) -> usize {
 }
 
 /// Deletes the account's rows and turns the account and its repositories into stubs whose
-/// home is `home`. The caller set `codeyard.move`, so no side-effect trigger runs and no
-/// stored bytes are deleted.
-async fn clear(tx: &mut Tx, tables: &[Table], account: Account, home: i32) -> Result<()> {
+/// home is `home`; a moving repository's stub belongs to `owner`. The caller set
+/// `codeyard.move`, so no side-effect trigger runs and no stored bytes are deleted.
+async fn clear(
+    tx: &mut Tx,
+    tables: &[Table],
+    account: Account,
+    home: i32,
+    owner: Option<Account>,
+) -> Result<()> {
     let mut owned: Vec<(usize, &str, String)> = tables
         .iter()
         .filter(|table| !is_root(&table.name))
@@ -1231,9 +1422,15 @@ async fn clear(tx: &mut Tx, tables: &[Table], account: Account, home: i32) -> Re
         .execute(&mut **tx)
         .await?;
     }
+    let owner = owner
+        .map(|owner| {
+            let [kind, user, organization] = owner.owner_values();
+            format!(",owner_kind={kind},owner_user_id={user},owner_org_id={organization}")
+        })
+        .unwrap_or_default();
     sqlx::query(&format!(
-        "UPDATE repositories SET is_stub=TRUE,home_cell=$2,disk_path='',storage_node_id=NULL,size_bytes=0 WHERE NOT is_stub AND {}=$1",
-        account.owner_column()
+        "UPDATE repositories SET is_stub=TRUE,home_cell=$2,disk_path='',storage_node_id=NULL,size_bytes=0{owner} WHERE NOT is_stub AND {}",
+        account.repositories()
     ))
     .bind(account.id)
     .bind(home)
@@ -1241,7 +1438,8 @@ async fn clear(tx: &mut Tx, tables: &[Table], account: Account, home: i32) -> Re
     .await?;
     let root = match account.kind {
         ObjectKind::Organization => "UPDATE organizations SET is_stub=TRUE,home_cell=$2,billing_email=NULL,avatar_file_id=NULL WHERE id=$1",
-        _ => "UPDATE users SET is_stub=TRUE,home_cell=$2,password_hash=NULL,email=NULL,avatar_file_id=NULL,is_admin=FALSE,email_verified=FALSE WHERE id=$1",
+        ObjectKind::Repository => return Ok(()),
+        ObjectKind::User => "UPDATE users SET is_stub=TRUE,home_cell=$2,password_hash=NULL,email=NULL,avatar_file_id=NULL,is_admin=FALSE,email_verified=FALSE WHERE id=$1",
     };
     sqlx::query(root)
         .bind(account.id)

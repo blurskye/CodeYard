@@ -73,6 +73,42 @@ impl Source {
     }
 }
 
+/// The current owner and name of the public repository that moved to an owner in another
+/// cell from `owner`/`name`, so a request for the old name can be redirected. A repository
+/// created later under the old name ends the redirect. Private repositories are not
+/// redirected: this cell cannot check access in their new home.
+pub async fn redirect(
+    pool: &crate::DbPool,
+    owner: &str,
+    name: &str,
+) -> Result<Option<(String, String)>> {
+    const SQL: &str = "SELECT COALESCE(u.username,o.name),r.name FROM repository_redirects d \
+        JOIN repositories r ON r.id=d.repo_id \
+        LEFT JOIN users u ON r.owner_kind='user' AND u.id=r.owner_user_id \
+        LEFT JOIN organizations o ON r.owner_kind='org' AND o.id=r.owner_org_id \
+        WHERE d.name_key=lower($2) AND NOT r.is_private AND COALESCE(u.username,o.name) IS NOT NULL \
+        AND ((d.owner_kind='user' AND d.owner_id IN (SELECT id FROM users WHERE lower(username)=lower($1))) \
+        OR (d.owner_kind='org' AND d.owner_id IN (SELECT id FROM organizations WHERE lower(name)=lower($1)))) \
+        AND NOT EXISTS(SELECT 1 FROM repositories x WHERE lower(x.name)=d.name_key \
+        AND ((d.owner_kind='user' AND x.owner_user_id=d.owner_id) OR (d.owner_kind='org' AND x.owner_org_id=d.owner_id)))";
+    Ok(match pool {
+        crate::DbPool::Postgres(pool) => {
+            sqlx::query_as(SQL)
+                .bind(owner)
+                .bind(name)
+                .fetch_optional(pool)
+                .await?
+        }
+        crate::DbPool::Sqlite(pool) => {
+            sqlx::query_as(SQL)
+                .bind(owner)
+                .bind(name)
+                .fetch_optional(pool)
+                .await?
+        }
+    })
+}
+
 /// Repository and owner metadata another cell may store as stubs: no storage location, no
 /// owner credentials, and both homed in `home`.
 pub fn validate_public(repo: &Repository, owner: &Owner, home: Prefix) -> Result<()> {

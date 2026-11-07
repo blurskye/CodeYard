@@ -4257,6 +4257,17 @@ CREATE TABLE issue_redirects (
 );
 CREATE INDEX idx_issue_redirects_issue_root ON issue_redirects(issue_id, repo_id);
 
+-- The former owner and name of a repository that moved to an owner in another cell. A
+-- request for the old name that finds no repository is redirected to the current name.
+CREATE TABLE repository_redirects (
+    owner_kind TEXT NOT NULL CHECK(owner_kind IN ('user','org')),
+    owner_id BIGINT NOT NULL CHECK(owner_id>0),
+    name_key TEXT NOT NULL CHECK(length(name_key) BETWEEN 1 AND 100 AND name_key=lower(name_key)),
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    PRIMARY KEY(owner_kind,owner_id,name_key)
+);
+CREATE INDEX repository_redirects_repo ON repository_redirects(repo_id);
+
 CREATE TABLE issue_duplicates (
     issue_id BIGINT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     duplicate_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
@@ -4635,7 +4646,7 @@ CREATE INDEX remote_pull_requests_publisher ON remote_pull_requests(publisher_id
 -- release set `codeyard.move` for their transaction, which skips the guard and the triggers
 -- whose side effects belong to new rows (counters, search, pointers, history, cleanup).
 CREATE TABLE account_moves (
-    account_kind TEXT NOT NULL CHECK(account_kind IN ('user','organization')),
+    account_kind TEXT NOT NULL CHECK(account_kind IN ('user','organization','repository')),
     account_id BIGINT NOT NULL CHECK(account_id>0),
     target_cell INTEGER NOT NULL CHECK(target_cell BETWEEN 0 AND 65535),
     state TEXT NOT NULL CHECK(state IN ('pending','frozen','switched','receiving','released')),
@@ -4647,7 +4658,8 @@ CREATE TABLE account_moves (
 
 -- The account a row reaches along one path of its ownership rule (see guard_paths in
 -- backend/db/core/src/cells/ownership.rs), or nothing when a reference on the way is null.
-CREATE FUNCTION account_move_owner(path TEXT, row_data JSONB, OUT kind TEXT, OUT id BIGINT)
+-- A path through a repository also gives the repository, which can move on its own.
+CREATE FUNCTION account_move_owner(path TEXT, row_data JSONB, OUT kind TEXT, OUT id BIGINT, OUT repository BIGINT)
 LANGUAGE plpgsql STABLE AS $$
 DECLARE
     hop TEXT;
@@ -4679,6 +4691,7 @@ BEGIN
             id := value::BIGINT;
             RETURN;
         ELSE
+            repository := value::BIGINT;
             SELECT CASE WHEN r.owner_kind='org' THEN 'organization' ELSE 'user' END,
                 CASE WHEN r.owner_kind='org' THEN r.owner_org_id ELSE r.owner_user_id END
                 INTO kind,id FROM repositories r WHERE r.id=value::BIGINT;
@@ -4709,13 +4722,16 @@ BEGIN
             CONTINUE WHEN row_data->>((regexp_match(path,'^\w+'))[1]) IS NULL;
             SELECT * INTO account FROM account_move_owner(path,row_data);
             CONTINUE WHEN account.id IS NULL;
-            SELECT m.state,m.expires_at INTO moving FROM account_moves m
-                WHERE m.account_kind=account.kind AND m.account_id=account.id FOR KEY SHARE;
-            IF FOUND AND (moving.state IN ('switched','receiving','released')
-                OR (moving.state='frozen' AND moving.expires_at>clock_timestamp())) THEN
-                RAISE EXCEPTION 'This account is moving to another cell; try again in a few minutes'
-                    USING ERRCODE='55000', CONSTRAINT='account_moving';
-            END IF;
+            FOR moving IN SELECT m.state,m.expires_at FROM account_moves m
+                WHERE (m.account_kind=account.kind AND m.account_id=account.id)
+                    OR (m.account_kind='repository' AND m.account_id=account.repository)
+                ORDER BY m.account_kind FOR KEY SHARE LOOP
+                IF moving.state IN ('switched','receiving','released')
+                    OR (moving.state='frozen' AND moving.expires_at>clock_timestamp()) THEN
+                    RAISE EXCEPTION 'This account is moving to another cell; try again in a few minutes'
+                        USING ERRCODE='55000', CONSTRAINT='account_moving';
+                END IF;
+            END LOOP;
         END LOOP;
     END LOOP;
     RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
@@ -5100,7 +5116,9 @@ CREATE TRIGGER repo_languages_move_guard BEFORE INSERT OR UPDATE OR DELETE ON re
 CREATE TRIGGER repo_secrets_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repo_secrets
     FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
 CREATE TRIGGER repositories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repositories
-    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_user_id:u','owner_org_id:o');
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_user_id:u','owner_org_id:o','id:r');
+CREATE TRIGGER repository_redirects_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_redirects
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_id:k.owner_kind');
 CREATE TRIGGER repository_advisories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_advisories
     FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
 CREATE TRIGGER repository_autolinks_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_autolinks

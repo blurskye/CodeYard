@@ -41,6 +41,7 @@ pub(crate) mod organizations;
 pub(crate) mod packages;
 pub(crate) mod pictures;
 pub(crate) mod projects;
+mod repository_redirects;
 pub mod user;
 pub(crate) mod users;
 
@@ -88,6 +89,10 @@ pub fn create_router(state: AppState) -> Router {
         .allow_credentials(true);
 
     resources()
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            crate::repository_redirects::redirect,
+        ))
         // GitHub-style Maven URLs share the repository prefix; only repository-layout artifacts intercept it.
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
