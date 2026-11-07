@@ -11,6 +11,10 @@ use std::sync::Arc;
 pub const TOPIC: &str = "search";
 pub const MAXIMUM_READERS: usize = 10_000;
 pub const MAXIMUM_DOCUMENT_BYTES: usize = 262_144;
+/// The newest comments are indexed within a fixed row and text budget per issue or pull.
+pub const MAXIMUM_COMMENTS: i64 = 100;
+pub const MAXIMUM_COMMENT_CHARS: i64 = 1024;
+pub const MAXIMUM_COMMENT_BYTES: usize = 409_600 + 100;
 pub const MAXIMUM_FILE_BYTES: usize = 131_072;
 pub const MAXIMUM_FILES: usize = 2_000;
 pub const MAXIMUM_CHUNK_BYTES: usize = 2 * 1024 * 1024;
@@ -104,6 +108,9 @@ pub enum Batch {
         repository_id: i64,
         version: Version,
         document: Option<Value>,
+        /// Search-only text, never part of the returned GitHub document.
+        #[serde(default)]
+        comments: String,
     },
     /// The default branch's files, sent after the repository document of the same version.
     Code {
@@ -162,12 +169,17 @@ impl Batch {
                 repository_id,
                 version,
                 document,
+                comments,
                 ..
             } => {
                 valid_id(*id)?;
                 valid_id(*repository_id)?;
                 valid_id(version.event)?;
                 valid_document(document)?;
+                ensure!(
+                    comments.len() <= MAXIMUM_COMMENT_BYTES && !comments.contains('\0'),
+                    "Invalid search comments"
+                );
             }
             Self::Code {
                 repository_id,
@@ -400,7 +412,7 @@ pub struct Hit {
     /// The item's document; code hits carry their repository's document.
     pub document: Value,
     pub code: Option<Code>,
-    pub score: i64,
+    pub score: f64,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -491,6 +503,29 @@ pub async fn item_repository(pool: &PgPool, item: Item) -> Result<Option<i64>> {
         .bind(id)
         .fetch_optional(pool)
         .await?)
+}
+
+/// Bounded search-only comment text. Pending review comments are private to their author,
+/// not to the repository's readers, and must never enter the shared search document.
+pub async fn comment_text(pool: &PgPool, item: Item) -> Result<String> {
+    let (sql, id) = match item {
+        Item::Repository => return Ok(String::new()),
+        Item::Issue { id } => (
+            "SELECT left(body,$2) FROM issue_comments WHERE issue_id=$1 ORDER BY id DESC LIMIT $3",
+            id,
+        ),
+        Item::Pull { id } => (
+            "SELECT left(c.body,$2) FROM pr_comments c WHERE c.pull_request_id=$1 AND (c.review_id IS NULL OR EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=c.review_id AND v.state<>'pending')) ORDER BY c.id DESC LIMIT $3",
+            id,
+        ),
+    };
+    let rows: Vec<String> = sqlx::query_scalar(sql)
+        .bind(id)
+        .bind(MAXIMUM_COMMENT_CHARS as i32)
+        .bind(MAXIMUM_COMMENTS)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows.join("\n"))
 }
 
 /// Queues every native repository after `after`, with its issues and pull requests, so an

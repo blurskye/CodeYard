@@ -35,6 +35,7 @@ pub(super) async fn send(
     // An item that moved is written under the repository that holds it now.
     let holder = search::item_repository(native, item).await?;
     let mut document = None;
+    let mut comments = String::new();
     if let Some(repo) = match holder {
         Some(holder) => native_repository(state, holder).await?,
         None => None,
@@ -56,6 +57,9 @@ pub(super) async fn send(
         .map_err(|_| anyhow::anyhow!("Search document is unavailable"))?
         .pop()
         .map(fit);
+        if document.is_some() {
+            comments = search::comment_text(native, item).await?;
+        }
     }
     let batch = Batch::Issue {
         id,
@@ -63,6 +67,7 @@ pub(super) async fn send(
         repository_id: holder.unwrap_or(root),
         version,
         document,
+        comments,
     };
     index.index(&batch).await?;
     Ok(())

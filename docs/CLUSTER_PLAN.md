@@ -299,7 +299,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     an admin removes by hand can be added again by the next evaluation.
     Stage 4 notes: users, labels, topics, commits and GraphQL search stay local; star counts
     in the index wait for the repository's next change; an issue document keeps its old
-    `repository_url` after a rename until it changes; READMEs, comments and licenses are not
+    `repository_url` after a rename until it changes; READMEs and licenses are not
     indexed; internal repositories follow
     `is_private`; App, fine-grained, job and foreign-session credentials see no private hits
     from other cells; an org that refuses classic tokens hides its other-cell hits from every
@@ -457,14 +457,16 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
     multi-pack index, a bitmap (not for pool forks) and a split commit-graph instead of
-    `git gc` (`backend/git/src/maintenance.rs`). (3) Search matches substrings through
-    `pg_trgm` GIN indexes on names, descriptions, titles, bodies, paths and file text; file
-    text is stored once per content in `search_blobs`, keyed by a SHA-256 the directory
-    computes, and text no file uses is deleted; totals are counted up to the 1,000-result
-    window. (1, part) `DATABASE_DIRECT_URL` carries the serving, maintenance and
+    `git gc` (`backend/git/src/maintenance.rs`). (3) Shared PostgreSQL search uses `simple`
+    word vectors and GIN indexes for descriptions, issue/pull titles, bodies and comments,
+    ordered by rank then stable IDs (explicit sort is secondary). Names, paths and file text
+    retain `pg_trgm` substring matching; SQLite local search is unchanged. The newest 100
+    comments contribute at most 1,024 characters each; pending review comments are excluded.
+    Comment edits, deletion and review publication queue reindexing. Parsed input is bounded
+    by directory config; totals and pages stop at 1,000. File text stays deduplicated in
+    `search_blobs`. Ranking source and regression tests are written; checks/runtime pending. (1, part) `DATABASE_DIRECT_URL` carries the serving, maintenance and
     package-collection leases and migrations past a transaction-pooling PgBouncer, and the
-    PgBouncer e2e round sets it. Not written: `tsvector` ranking (it would change matching
-    from substrings to words, an owner choice); keyset paging (the GitHub API pages by
+    PgBouncer e2e round sets it. Not written: keyset paging (the GitHub API pages by
     number, and OFFSET is already capped at 1,000); the privacy gap where a delivered
     cross-cell notice stays visible after its repository turns private (the recipient's
     stub is never refreshed); read routing from the session's last write position (token

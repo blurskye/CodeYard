@@ -33,6 +33,8 @@ pub struct Config {
     pub migration_seconds: u64,
     pub claim_seconds: i64,
     pub stale_seconds: i64,
+    /// Total bytes of parsed search keys and values, also bounded by the wire validator.
+    pub search_query_bytes: usize,
 }
 impl Default for Config {
     fn default() -> Self {
@@ -41,6 +43,7 @@ impl Default for Config {
             migration_seconds: 180,
             claim_seconds: 300,
             stale_seconds: 30,
+            search_query_bytes: 8192,
         }
     }
 }
@@ -63,7 +66,8 @@ impl Directory {
             (1..=60).contains(&config.request_seconds)
                 && (30..=600).contains(&config.migration_seconds)
                 && (30..=3600).contains(&config.claim_seconds)
-                && (5..=300).contains(&config.stale_seconds),
+                && (5..=300).contains(&config.stale_seconds)
+                && (1..=8192).contains(&config.search_query_bytes),
             Refusal::Invalid
         );
         Ok(Self {
