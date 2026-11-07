@@ -50,7 +50,23 @@ pub enum Command {
         #[arg(long, default_value_t = 100, value_parser = clap::value_parser!(i64).range(1..=1000))]
         limit: i64,
     },
+    /// Keep a user in this cell: automatic region moves skip a pinned account. `--remove`
+    /// lets the region policy move it again.
+    Pin {
+        #[arg(long)]
+        name: String,
+        #[arg(long)]
+        remove: bool,
+    },
 }
+
+// Defaults of `cell move`, also used by automatic moves.
+const FREEZE_SECONDS: u64 = 600;
+const WAIT_SECONDS: u64 = 30;
+const ROUTE_CACHE_SECONDS: u64 = 60;
+const GIT_TIMEOUT_SECONDS: u64 = 1800;
+const OBJECT_PAGE_SIZE: i64 = 500;
+const OBJECT_TIMEOUT_SECONDS: u64 = 300;
 
 #[derive(Debug, clap::Args)]
 pub struct MoveArgs {
@@ -68,17 +84,17 @@ pub struct MoveArgs {
     #[arg(long)]
     target_repositories: std::path::PathBuf,
     /// How long writes stay refused before the move gives up by itself.
-    #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(60..=86400))]
+    #[arg(long, default_value_t = FREEZE_SECONDS, value_parser = clap::value_parser!(u64).range(60..=86400))]
     freeze_seconds: u64,
     /// How long to wait for older transactions and outgoing notices.
-    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    #[arg(long, default_value_t = WAIT_SECONDS, value_parser = clap::value_parser!(u64).range(1..=3600))]
     wait_seconds: u64,
     /// The routers' route cache lifetime; the source keeps refusing writes this long after
     /// the directory switch.
-    #[arg(long, default_value_t = 60, value_parser = clap::value_parser!(u64).range(0..=3600))]
+    #[arg(long, default_value_t = ROUTE_CACHE_SECONDS, value_parser = clap::value_parser!(u64).range(0..=3600))]
     route_cache_seconds: u64,
     /// The time limit for copying one repository with Git.
-    #[arg(long, default_value_t = 1800, value_parser = clap::value_parser!(u64).range(1..=86400))]
+    #[arg(long, default_value_t = GIT_TIMEOUT_SECONDS, value_parser = clap::value_parser!(u64).range(1..=86400))]
     git_timeout_seconds: u64,
     /// The state directory of a stopped web node of the target cell. A target that writes
     /// through a quorum receives each repository on a storage node through this identity.
@@ -87,16 +103,47 @@ pub struct MoveArgs {
     #[arg(long)]
     target_state: Option<std::path::PathBuf>,
     /// How many stored objects one page of the copy to another region lists.
-    #[arg(long, default_value_t = 500, value_parser = clap::value_parser!(i64).range(1..=10000))]
+    #[arg(long, default_value_t = OBJECT_PAGE_SIZE, value_parser = clap::value_parser!(i64).range(1..=10000))]
     object_page_size: i64,
     /// The time limit for copying one stored object to another region.
-    #[arg(long, default_value_t = 300, value_parser = clap::value_parser!(u64).range(1..=86400))]
+    #[arg(long, default_value_t = OBJECT_TIMEOUT_SECONDS, value_parser = clap::value_parser!(u64).range(1..=86400))]
     object_timeout_seconds: u64,
 }
 
 pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Path) -> Result<()> {
     if let Command::Move(arguments) = command {
-        return move_account(arguments, pool, state, repos_path).await;
+        let address = std::env::var("DIRECTORY_ADDRESS")
+            .ok()
+            .map(|value| value.parse())
+            .transpose()?;
+        let key = std::env::var("DIRECTORY_PUBLIC_KEY").ok();
+        let directory =
+            crate::backend::node::router::DirectorySettings::from_options(address, key.as_deref())?
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Account moves need DIRECTORY_ADDRESS and DIRECTORY_PUBLIC_KEY")
+                })?
+                .client(state)?;
+        let moved =
+            move_account(arguments, pool, (state, repos_path), &directory, None, None).await?;
+        if let Some(moved) = moved {
+            println!("{moved}");
+        }
+        return Ok(());
+    }
+    if let Command::Pin { name, remove } = command {
+        let DbPool::Postgres(pool) = pool else {
+            anyhow::bail!("Region moves need PostgreSQL");
+        };
+        codeyard_db_cluster::regions::pin_user(pool, name, !remove).await?;
+        println!(
+            "{}",
+            if *remove {
+                "User unpinned."
+            } else {
+                "User pinned."
+            }
+        );
+        return Ok(());
     }
     if let Command::SearchReindex { after, limit } = command {
         let (next, count) =
@@ -169,7 +216,7 @@ pub async fn run(command: &Command, pool: &DbPool, state: &Path, repos_path: &Pa
         }
         Command::Directory { .. } => anyhow::bail!("Directory commands use their own database"),
         Command::SearchReindex { .. } => unreachable!("reindexing runs beside the servers"),
-        Command::Move(_) => unreachable!("moves run beside the servers"),
+        Command::Move(_) | Command::Pin { .. } => unreachable!("moves run beside the servers"),
     };
     maintenance.release().await;
     result?;
@@ -606,15 +653,45 @@ async fn rollout(
     Ok(())
 }
 
-/// Native CLI constructors use the same pinned directory client as the server.
 /// The steps are in `codeyard_db_cluster::moves`; this adds the Git copy and the directory
-/// switch, and undoes an unswitched move when a step fails.
+/// switch, and undoes an unswitched move when a step fails. The CLI passes its own pinned
+/// directory client; a web node running an automatic move passes its client, its cluster
+/// identity and the planned move. None when the planned user was pinned or claimed since.
 async fn move_account(
     arguments: &MoveArgs,
     pool: &DbPool,
-    state: &Path,
-    repos_path: &Path,
-) -> Result<()> {
+    paths: (&Path, &Path),
+    directory: &codeyard_cells_router::directory::Client,
+    nodes: Option<codeyard_repos_core::context::NodeContext>,
+    planned: Option<&PlannedMove>,
+) -> Result<Option<serde_json::Value>> {
+    // Both cells' move leases end here, on every exit, so the next move can start at once.
+    let mut leases = Vec::with_capacity(2);
+    let result = move_leased(
+        arguments,
+        pool,
+        paths,
+        directory,
+        nodes,
+        planned,
+        &mut leases,
+    )
+    .await;
+    for lease in leases {
+        lease.release().await;
+    }
+    result
+}
+
+async fn move_leased(
+    arguments: &MoveArgs,
+    pool: &DbPool,
+    (state, repos_path): (&Path, &Path),
+    directory: &codeyard_cells_router::directory::Client,
+    nodes: Option<codeyard_repos_core::context::NodeContext>,
+    planned: Option<&PlannedMove>,
+    leases: &mut Vec<codeyard_db_cluster::cluster::ServingLock>,
+) -> Result<Option<serde_json::Value>> {
     use codeyard_db_cluster::moves;
     use codeyard_model::cells::{Object, ObjectKind};
     let DbPool::Postgres(source) = pool else {
@@ -622,7 +699,7 @@ async fn move_account(
     };
     // Reuse the dedicated session lease: two operators must not cancel, recopy or
     // release the same source concurrently. Serving nodes retain their own identities.
-    let _coordinator = codeyard_db_cluster::cluster::serving_lock(pool, "account-move").await?;
+    leases.push(codeyard_db_cluster::cluster::serving_lock(pool, "account-move").await?);
     let source_root = tokio::fs::canonicalize(repos_path).await?;
     let target_root = tokio::fs::canonicalize(&arguments.target_repositories).await?;
     anyhow::ensure!(
@@ -658,14 +735,20 @@ async fn move_account(
         .await?
         .ok_or_else(|| anyhow::anyhow!("No such account in this cell"))?;
     let account = moves::Account::new(kind, id)?;
+    if let Some(planned) = planned {
+        anyhow::ensure!(
+            id == planned.user,
+            "User {} was renamed since its move was planned",
+            planned.login
+        );
+    }
     let target_pool = codeyard_db_core::connection::open_source(&arguments.target_database).await?;
     let DbPool::Postgres(target) = &target_pool else {
         anyhow::bail!("Account moves need PostgreSQL in both cells");
     };
     // The same lease excludes incoming and outgoing moves. Acquisition is nonblocking,
     // so two opposite moves cannot deadlock while each holds its source lease.
-    let _destination =
-        codeyard_db_cluster::cluster::serving_lock(&target_pool, "account-move").await?;
+    leases.push(codeyard_db_cluster::cluster::serving_lock(&target_pool, "account-move").await?);
     let transfer = match (kind, &arguments.new_owner) {
         (ObjectKind::Repository, Some(owner)) => {
             moves::transfer(source, target, account, owner).await?
@@ -678,17 +761,13 @@ async fn move_account(
     let source_cell = moves::cell(source).await?;
     let target_cell = moves::cell(target).await?;
     let to = Prefix::new(u16::try_from(target_cell)?);
-    let address = std::env::var("DIRECTORY_ADDRESS")
-        .ok()
-        .map(|value| value.parse())
-        .transpose()?;
-    let key = std::env::var("DIRECTORY_PUBLIC_KEY").ok();
-    let directory =
-        crate::backend::node::router::DirectorySettings::from_options(address, key.as_deref())?
-            .ok_or_else(|| {
-                anyhow::anyhow!("Account moves need DIRECTORY_ADDRESS and DIRECTORY_PUBLIC_KEY")
-            })?
-            .client(state)?;
+    if let Some(planned) = planned {
+        anyhow::ensure!(
+            to.get() == planned.cell,
+            "The MOVE_TARGET_{}_DATABASE_URL database is cell {target_cell}",
+            planned.cell
+        );
+    }
     let wait = std::time::Duration::from_secs(arguments.wait_seconds);
     let git_timeout = std::time::Duration::from_secs(arguments.git_timeout_seconds);
     // Reject an oversized cleanup set before asking CI to drain. The frozen row copy later
@@ -696,27 +775,34 @@ async fn move_account(
     let repositories = moves::repositories(source, account).await?;
     // Repositories on storage nodes are copied from their primaries with this cell's
     // web node identity, as the other repository operator commands do.
-    let source_nodes = if repositories
-        .iter()
-        .any(|repository| repository.storage_node_id.is_some())
-    {
-        Some(
-            codeyard_cluster::client_context(pool, state, repos_path)
-                .await?
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Repositories on storage nodes need this cell's CLUSTER_* settings"
-                    )
-                })?,
-        )
-    } else {
-        None
+    let source_nodes = match nodes {
+        Some(context) => Some(context),
+        None if repositories
+            .iter()
+            .any(|repository| repository.storage_node_id.is_some()) =>
+        {
+            Some(
+                codeyard_cluster::client_context(pool, state, repos_path)
+                    .await?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "Repositories on storage nodes need this cell's CLUSTER_* settings"
+                        )
+                    })?,
+            )
+        }
+        None => None,
     };
     let target_nodes =
         target_placement(arguments, &target_pool, &target_root, &repositories).await?;
+    let target_s3 = match planned {
+        Some(planned) => planned.target.s3.clone(),
+        None => codeyard_storage::s3::S3Config::optional_from_env_prefix("TARGET_S3_")?,
+    };
     let stores = object_stores(
         arguments,
-        &directory,
+        directory,
+        target_s3,
         (source_cell, target_cell),
         (pool, &target_pool),
         (state, repos_path, &target_root),
@@ -726,6 +812,22 @@ async fn move_account(
         ),
     )
     .await?;
+    // Both cells' move leases are held and the settings checked; a new automatic move
+    // starts the user's cooldown here, unless it was pinned or claimed since the plan.
+    if let Some(PlannedMove {
+        user,
+        region,
+        cell,
+        cooldown_days: Some(days),
+        ..
+    }) = planned
+    {
+        if !codeyard_db_cluster::regions::claim_user_move(source, *user, *days, region, *cell)
+            .await?
+        {
+            return Ok(None);
+        }
+    }
     let reached = moves::begin(source, account, target_cell, wait).await?;
     let mut copied = None;
     if matches!(reached, moves::State::Pending | moves::State::Frozen) {
@@ -857,8 +959,7 @@ async fn move_account(
                 )
                 .await?;
             }
-            publish_credentials(&directory, id, &moves::credentials(source, account).await?)
-                .await?;
+            publish_credentials(directory, id, &moves::credentials(source, account).await?).await?;
             moves::switch(source, account).await?;
             Ok::<_, anyhow::Error>(result)
         }
@@ -918,20 +1019,214 @@ async fn move_account(
         }
     }
     moves::finish(source, account).await?;
-    println!(
-        "{}",
-        serde_json::json!({
-            "account": id,
-            "target_cell": target_cell,
-            "repositories": repositories.len(),
-            "rows": copied.as_ref().map(|copied| copied.rows),
-            "stubs": copied.as_ref().map(|copied| copied.stubs),
-            "shared_rows": copied.as_ref().map(|copied| copied.shared),
-            "counters_fixed": copied.as_ref().map(|copied| copied.counters_fixed),
-            "dropped_rows": copied.as_ref().map(|copied| copied.dropped),
-        })
-    );
-    Ok(())
+    Ok(Some(serde_json::json!({
+        "account": id,
+        "target_cell": target_cell,
+        "repositories": repositories.len(),
+        "rows": copied.as_ref().map(|copied| copied.rows),
+        "stubs": copied.as_ref().map(|copied| copied.stubs),
+        "shared_rows": copied.as_ref().map(|copied| copied.shared),
+        "counters_fixed": copied.as_ref().map(|copied| copied.counters_fixed),
+        "dropped_rows": copied.as_ref().map(|copied| copied.dropped),
+    })))
+}
+
+/// Another cell that automatic moves may send users to, from a web node's
+/// `MOVE_TARGET_<cell>_DATABASE_URL`, `_REPOSITORIES`, `_STATE`, `_ROUTE_CACHE_SECONDS` and
+/// `_S3_*` settings. They mean what the `cell move` options of the same names mean.
+#[derive(Clone)]
+pub struct MoveTarget {
+    pub database: String,
+    pub repositories: std::path::PathBuf,
+    pub state: Option<std::path::PathBuf>,
+    pub s3: Option<codeyard_storage::s3::S3Config>,
+    pub route_cache_seconds: u64,
+}
+
+impl MoveTarget {
+    /// Every configured target by cell number. A cell without settings receives no
+    /// automatic moves.
+    pub fn from_env() -> Result<std::collections::BTreeMap<u16, Self>> {
+        fn setting(name: &str) -> Result<Option<String>> {
+            match std::env::var(name) {
+                Ok(value) => Ok(Some(value)),
+                Err(std::env::VarError::NotPresent) => Ok(None),
+                Err(error) => Err(anyhow::anyhow!("{name}: {error}")),
+            }
+        }
+        let mut targets = std::collections::BTreeMap::new();
+        for (name, _) in std::env::vars_os() {
+            let Some(cell) = name.to_str().and_then(|name| {
+                name.strip_prefix("MOVE_TARGET_")?
+                    .strip_suffix("_DATABASE_URL")
+            }) else {
+                continue;
+            };
+            let prefix = format!("MOVE_TARGET_{cell}_");
+            let number = cell
+                .parse::<u16>()
+                .ok()
+                .filter(|number| number.to_string() == cell)
+                .ok_or_else(|| anyhow::anyhow!("{prefix}DATABASE_URL must name a cell number"))?;
+            let route_cache_seconds = match setting(&format!("{prefix}ROUTE_CACHE_SECONDS"))? {
+                Some(value) => value
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|seconds| *seconds <= 3600)
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("{prefix}ROUTE_CACHE_SECONDS must be 0 to 3600")
+                    })?,
+                None => ROUTE_CACHE_SECONDS,
+            };
+            let target = Self {
+                database: setting(&format!("{prefix}DATABASE_URL"))?.unwrap_or_default(),
+                repositories: setting(&format!("{prefix}REPOSITORIES"))?
+                    .ok_or_else(|| {
+                        anyhow::anyhow!("{prefix}DATABASE_URL needs {prefix}REPOSITORIES")
+                    })?
+                    .into(),
+                state: setting(&format!("{prefix}STATE"))?.map(Into::into),
+                s3: codeyard_storage::s3::S3Config::optional_from_env_prefix(&format!(
+                    "{prefix}S3_"
+                ))?,
+                route_cache_seconds,
+            };
+            targets.insert(number, target);
+        }
+        Ok(targets)
+    }
+}
+
+/// The next automatic move: a user the region policy sends to another region, or an
+/// automatic move that stopped before it finished.
+pub struct PlannedMove {
+    pub user: i64,
+    pub login: String,
+    pub region: String,
+    pub cell: u16,
+    /// The cooldown a new move starts; None continues an earlier move.
+    cooldown_days: Option<i32>,
+    target: MoveTarget,
+}
+
+/// Runs the automatic user moves of a web node's cell with the node's own directory client
+/// and cluster identity, since the CLI's would lock the node's state directory.
+pub struct UserMover {
+    pub pool: DbPool,
+    pub state: std::path::PathBuf,
+    pub repositories: std::path::PathBuf,
+    pub directory: codeyard_cells_router::directory::Client,
+    pub nodes: Option<codeyard_repos_core::context::NodeContext>,
+    pub targets: std::collections::BTreeMap<u16, MoveTarget>,
+}
+
+impl UserMover {
+    /// An unfinished automatic move first, else the first user whose counted requests came
+    /// mostly from another region, sent to that region's least full open cell. Paused plans
+    /// nothing; dry run audits and logs the move it would start and plans nothing. A region
+    /// past today's limit and a cell without settings are skipped.
+    pub async fn plan(
+        &self,
+        policy: &codeyard_support::cluster::RegionPolicy,
+    ) -> Result<Option<PlannedMove>> {
+        use codeyard_cells_router::directory::{Reply, Request};
+        use codeyard_db_cluster::regions;
+        let DbPool::Postgres(pool) = &self.pool else {
+            return Ok(None);
+        };
+        if policy.move_paused {
+            return Ok(None);
+        }
+        if !policy.move_dry_run {
+            for (user, login, cell) in regions::unfinished_user_moves(pool).await? {
+                let cell = u16::try_from(cell)?;
+                let Some(target) = self.targets.get(&cell) else {
+                    tracing::warn!(user = %login, cell, "continuing an automatic move needs MOVE_TARGET settings for its cell");
+                    continue;
+                };
+                return Ok(Some(PlannedMove {
+                    user,
+                    login,
+                    region: self.region(Prefix::new(cell)).await?,
+                    cell,
+                    cooldown_days: None,
+                    target: target.clone(),
+                }));
+            }
+        }
+        let home = self.region(self.pool.cell_prefix()).await?;
+        for candidate in regions::user_moves(pool, policy, &home).await? {
+            let Reply::Cell(Some(cell)) = self
+                .directory
+                .request(&Request::Choose {
+                    region: candidate.region.clone(),
+                })
+                .await?
+            else {
+                continue;
+            };
+            let cell = cell.id.get();
+            let Some(target) = self.targets.get(&cell) else {
+                tracing::warn!(user = %candidate.login, cell, "automatic moves to this cell need MOVE_TARGET settings");
+                continue;
+            };
+            if regions::user_moves_today(pool, policy.move_dry_run, &candidate.region).await?
+                >= i64::from(policy.move_daily_limit)
+            {
+                continue;
+            }
+            if policy.move_dry_run {
+                regions::audit_would_move(pool, candidate.user_id, &candidate.region, cell).await?;
+                tracing::info!(user = %candidate.login, region = %candidate.region, cell, "a user would move to another region");
+                return Ok(None);
+            }
+            return Ok(Some(PlannedMove {
+                user: candidate.user_id,
+                login: candidate.login,
+                region: candidate.region,
+                cell,
+                cooldown_days: Some(policy.move_cooldown_days),
+                target: target.clone(),
+            }));
+        }
+        Ok(None)
+    }
+
+    async fn region(&self, prefix: Prefix) -> Result<String> {
+        use codeyard_cells_router::directory::{Reply, Request};
+        match self.directory.request(&Request::Cell { prefix }).await? {
+            Reply::Cell(Some(cell)) => Ok(cell.region),
+            _ => anyhow::bail!("The directory does not list cell {prefix}"),
+        }
+    }
+
+    /// Runs a planned move as `cell move` would, with its default limits. None when the user
+    /// was pinned or claimed after the plan.
+    pub async fn run(&self, planned: &PlannedMove) -> Result<Option<serde_json::Value>> {
+        let arguments = MoveArgs {
+            kind: "user".to_owned(),
+            name: planned.login.clone(),
+            new_owner: None,
+            target_database: planned.target.database.clone(),
+            target_repositories: planned.target.repositories.clone(),
+            freeze_seconds: FREEZE_SECONDS,
+            wait_seconds: WAIT_SECONDS,
+            route_cache_seconds: planned.target.route_cache_seconds,
+            git_timeout_seconds: GIT_TIMEOUT_SECONDS,
+            target_state: planned.target.state.clone(),
+            object_page_size: OBJECT_PAGE_SIZE,
+            object_timeout_seconds: OBJECT_TIMEOUT_SECONDS,
+        };
+        Box::pin(move_account(
+            &arguments,
+            &self.pool,
+            (&self.state, &self.repositories),
+            &self.directory,
+            self.nodes.clone(),
+            Some(planned),
+        ))
+        .await
+    }
 }
 
 /// Tokens keep the prefix of the cell that issued them. The directory maps each moving
@@ -977,11 +1272,12 @@ async fn publish_credentials(
 
 /// The object stores of both cells when the account's bytes must follow it. Cells in one
 /// region share the region's store, so only a move to another region copies. The source
-/// store is opened as this cell's servers open it; the target store uses the TARGET_S3_*
-/// settings, else the target cluster's storage nodes or the files under `--target-state`.
+/// store is opened as this cell's servers open it; the target store uses `target_s3`, else
+/// the target cluster's storage nodes or the files under `--target-state`.
 async fn object_stores(
     arguments: &MoveArgs,
     directory: &codeyard_cells_router::directory::Client,
+    target_s3: Option<codeyard_storage::s3::S3Config>,
     cells: (i32, i32),
     pools: (&DbPool, &DbPool),
     (state, repos_path, target_root): (&Path, &Path, &Path),
@@ -1004,10 +1300,9 @@ async fn object_stores(
         return Ok(None);
     }
     let source_s3 = S3Config::optional_from_env()?;
-    let target_s3 = S3Config::optional_from_env_prefix("TARGET_S3_")?;
     anyhow::ensure!(
         source_s3.is_none() || target_s3.is_some(),
-        "A move from S3 to another region needs that region's TARGET_S3_* settings"
+        "A move from S3 to another region needs that region's S3 settings"
     );
     if let (Some(from), Some(to)) = (&source_s3, &target_s3) {
         anyhow::ensure!(
@@ -1028,7 +1323,7 @@ async fn object_stores(
             cell_store(pools.1, target_state, target_root, None, contexts.1).await?
         }
         (None, None) => anyhow::bail!(
-            "A move to another region needs the TARGET_S3_* settings or --target-state"
+            "A move to another region needs the target S3 settings or the target state directory"
         ),
     };
     Ok(Some((source, target)))

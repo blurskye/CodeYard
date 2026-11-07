@@ -204,7 +204,7 @@ pub(crate) async fn settings_post(
         }
         let number = |name| field(&form, name).parse::<i64>().ok();
         let policy = (|| {
-            Some(codeyard_support::cluster::PresencePolicy {
+            Some(codeyard_support::cluster::RegionPolicy {
                 window_days: i32::try_from(number("presence_window")?).ok()?,
                 share_percent: i32::try_from(number("presence_share")?).ok()?,
                 minimum_requests: number("presence_minimum")?,
@@ -213,6 +213,14 @@ pub(crate) async fn settings_post(
                 remove_days: i32::try_from(number("presence_remove_days")?).ok()?,
                 dry_run: form.contains_key("presence_dry_run"),
                 paused: form.contains_key("presence_paused"),
+                move_window_days: i32::try_from(number("move_window")?).ok()?,
+                move_share_percent: i32::try_from(number("move_share")?).ok()?,
+                move_minimum_requests: number("move_minimum")?,
+                move_held_days: i32::try_from(number("move_held")?).ok()?,
+                move_cooldown_days: i32::try_from(number("move_cooldown")?).ok()?,
+                move_daily_limit: i32::try_from(number("move_daily_limit")?).ok()?,
+                move_dry_run: form.contains_key("move_dry_run"),
+                move_paused: form.contains_key("move_paused"),
             })
         })();
         let Some(policy) = policy.filter(|policy| policy.validate().is_ok()) else {

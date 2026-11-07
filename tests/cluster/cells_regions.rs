@@ -379,7 +379,7 @@ async fn audits(pool: &codeyard_db_core::pool::PgPool, action: &str) -> i64 {
 #[tokio::test]
 async fn counted_member_requests_add_and_remove_organization_presence() {
     use codeyard_db_cluster::regions::{self, Change};
-    use codeyard_support::cluster::PresencePolicy;
+    use codeyard_support::cluster::RegionPolicy;
     crate::support::fake_webui_bundle::install();
     let registry = PostgresDatabase::unmigrated().await;
     let directory = Directory::connect(&registry.connection_url(), Default::default())
@@ -512,7 +512,7 @@ async fn counted_member_requests_add_and_remove_organization_presence() {
 
     // The default policy is paused and dry run. Saving needs an administrator.
     let mut policy = regions::policy(pool).await.unwrap();
-    assert_eq!(policy, PresencePolicy::default());
+    assert_eq!(policy, RegionPolicy::default());
     assert!(regions::save(pool, &alice.into(), &policy).await.is_err());
     assert!(regions::due(pool).await.unwrap().is_some());
     assert!(regions::due(pool).await.unwrap().is_none());

@@ -100,6 +100,9 @@ CREATE TABLE users (
     two_factor_enabled INTEGER NOT NULL DEFAULT 0 CHECK (two_factor_enabled IN (0,1)),
     -- Whether notifications are also sent by email, when the site has a mail server.
     email_notifications INTEGER NOT NULL DEFAULT 1 CHECK (email_notifications IN (0,1)),
+    -- Automatic region moves; SQLite cells never move accounts.
+    region_pinned INTEGER NOT NULL DEFAULT 0 CHECK (region_pinned IN (0,1)),
+    region_moved_at TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     CONSTRAINT users_stub_data CHECK (NOT is_stub OR (password_hash IS NULL AND email IS NULL AND avatar_file_id IS NULL AND NOT is_admin))

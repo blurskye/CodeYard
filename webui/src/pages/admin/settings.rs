@@ -12,7 +12,7 @@ pub struct AdminSettings {
     pub scaling: Vec<codeyard_support::cluster::ScalingPolicy>,
     /// Only a cell enrolled in a directory places organizations in other regions.
     #[serde(default)]
-    pub presence: Option<codeyard_support::cluster::PresencePolicy>,
+    pub presence: Option<codeyard_support::cluster::RegionPolicy>,
     /// `block` or `allow`.
     pub ai_crawlers: String,
     pub osv_base_url: String,
@@ -96,7 +96,7 @@ pub fn admin_settings_page(
             }
             if let Some(policy) = &model.presence {
                 section { class: "identity-admin-panel",
-                    h2 { "Organization regions" }
+                    h2 { "Regions" }
                     p { "An organization gains a region when its members' signed-in requests from there reach the share below over the window, on enough days in a row. Reads there use nearby copies; writes still go to this cell. Starts paused and in dry-run mode." }
                     form { method: "post", action: "/admin/settings",
                         {csrf(token)}
@@ -108,6 +108,16 @@ pub fn admin_settings_page(
                         label { "Days below to remove" input { r#type: "number", name: "presence_remove_days", min: "1", max: "30", value: policy.remove_days.to_string(), required: true } }
                         label { input { r#type: "checkbox", name: "presence_paused", checked: policy.paused } "Paused" }
                         label { input { r#type: "checkbox", name: "presence_dry_run", checked: policy.dry_run } "Dry run" }
+                        h3 { "User moves" }
+                        p { "A user account moves to a cell in another region when that region sends the share below of its own signed-in requests over the window, on enough days in a row. Pinned accounts never move. Starts paused and in dry-run mode." }
+                        label { "Window (days)" input { r#type: "number", name: "move_window", min: "1", max: "30", value: policy.move_window_days.to_string(), required: true } }
+                        label { "Share from one other region (percent)" input { r#type: "number", name: "move_share", min: "51", max: "100", value: policy.move_share_percent.to_string(), required: true } }
+                        label { "Minimum requests in the window" input { r#type: "number", name: "move_minimum", min: "1", max: "1000000000", value: policy.move_minimum_requests.to_string(), required: true } }
+                        label { "Days in a row to move" input { r#type: "number", name: "move_held", min: "1", max: "14", value: policy.move_held_days.to_string(), required: true } }
+                        label { "Days before an account moves again" input { r#type: "number", name: "move_cooldown", min: "1", max: "365", value: policy.move_cooldown_days.to_string(), required: true } }
+                        label { "Moves a day from this cell to one region" input { r#type: "number", name: "move_daily_limit", min: "1", max: "1000", value: policy.move_daily_limit.to_string(), required: true } }
+                        label { input { r#type: "checkbox", name: "move_paused", checked: policy.move_paused } "Paused" }
+                        label { input { r#type: "checkbox", name: "move_dry_run", checked: policy.move_dry_run } "Dry run" }
                         button { r#type: "submit", class: "btn", "Save region policy" }
                     }
                 }

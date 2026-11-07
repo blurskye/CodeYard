@@ -49,13 +49,17 @@ impl ScalingPolicy {
     }
 }
 
-/// When an organization gains or loses a presence region, from its members' authenticated
-/// requests that routers counted per region. Counts cover `window_days` ending on a day; a
-/// region is added when its share meets `share_percent` of at least `minimum_requests` on
-/// `held_days` days in a row, and removed after `remove_days` days below `remove_percent`.
+/// The site's region policy. An organization gains or loses a presence region from its
+/// members' authenticated requests that routers counted per region. Counts cover
+/// `window_days` ending on a day; a region is added when its share meets `share_percent` of
+/// at least `minimum_requests` on `held_days` days in a row, and removed after `remove_days`
+/// days below `remove_percent`. A user account moves to another region by the `move_`
+/// settings, which work the same way on the user's own requests; it then stays for
+/// `move_cooldown_days`, and at most `move_daily_limit` accounts a day move from this cell
+/// to one region. Settings missing from a stored policy take their defaults.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct PresencePolicy {
+#[serde(deny_unknown_fields, default)]
+pub struct RegionPolicy {
     pub window_days: i32,
     pub share_percent: i32,
     pub minimum_requests: i64,
@@ -64,9 +68,17 @@ pub struct PresencePolicy {
     pub remove_days: i32,
     pub dry_run: bool,
     pub paused: bool,
+    pub move_window_days: i32,
+    pub move_share_percent: i32,
+    pub move_minimum_requests: i64,
+    pub move_held_days: i32,
+    pub move_cooldown_days: i32,
+    pub move_daily_limit: i32,
+    pub move_dry_run: bool,
+    pub move_paused: bool,
 }
 
-impl Default for PresencePolicy {
+impl Default for RegionPolicy {
     /// Starts paused and in dry-run mode, as the scaling policies do.
     fn default() -> Self {
         Self {
@@ -78,12 +90,20 @@ impl Default for PresencePolicy {
             remove_days: 14,
             dry_run: true,
             paused: true,
+            move_window_days: 7,
+            move_share_percent: 70,
+            move_minimum_requests: 1000,
+            move_held_days: 3,
+            move_cooldown_days: 30,
+            move_daily_limit: 10,
+            move_dry_run: true,
+            move_paused: true,
         }
     }
 }
 
-impl PresencePolicy {
-    /// The window and the longest run of days fit in the 60 days of kept counts.
+impl RegionPolicy {
+    /// The windows and the longest runs of days fit in the 60 days of kept counts.
     pub fn validate(&self) -> Result<(), &'static str> {
         if !(1..=30).contains(&self.window_days)
             || !(1..=100).contains(&self.share_percent)
@@ -91,8 +111,14 @@ impl PresencePolicy {
             || !(1..=14).contains(&self.held_days)
             || !(0..self.share_percent).contains(&self.remove_percent)
             || !(1..=30).contains(&self.remove_days)
+            || !(1..=30).contains(&self.move_window_days)
+            || !(51..=100).contains(&self.move_share_percent)
+            || !(1..=1_000_000_000).contains(&self.move_minimum_requests)
+            || !(1..=14).contains(&self.move_held_days)
+            || !(1..=365).contains(&self.move_cooldown_days)
+            || !(1..=1000).contains(&self.move_daily_limit)
         {
-            return Err("Invalid presence policy.");
+            return Err("Invalid region policy.");
         }
         Ok(())
     }

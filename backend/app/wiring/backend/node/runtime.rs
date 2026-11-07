@@ -148,12 +148,19 @@ pub(crate) async fn shutdown_signal() -> Result<()> {
 /// and replica loop to stop. These share this one deadline.
 const SHUTDOWN_GRACE: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// The time limit of one automatic user move.
+const USER_MOVE_LIMIT: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+
 /// Writes counted regional requests once a minute, and a last time on stop, then asks
-/// whether this hour's presence evaluation is due. Only one web node of the cell gets it.
+/// whether this hour's region evaluation is due. Only one web node of the cell gets it: it
+/// updates organization presence and plans at most one automatic user move, which runs in
+/// its own task here. A stop aborts the move; the next evaluation continues it.
 async fn count_regions(
     pool: codeyard_db_core::pool::PgPool,
+    mover: Arc<crate::backend::cli::cells::UserMover>,
     mut stop: tokio::sync::watch::Receiver<bool>,
 ) {
+    let mut moving: Option<tokio::task::JoinHandle<()>> = None;
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -173,10 +180,30 @@ async fn count_regions(
         if stopping {
             break;
         }
+        // A move still running here holds the cell's move lease; the next one waits.
+        let idle = moving.as_ref().is_none_or(|task| task.is_finished());
         let evaluation = tokio::time::timeout(std::time::Duration::from_secs(600), async {
-            match codeyard_db_cluster::regions::due(&pool).await? {
-                Some(policy) => codeyard_db_cluster::regions::evaluate(&pool, &policy).await,
-                None => Ok(Vec::new()),
+            let Some(policy) = codeyard_db_cluster::regions::due(&pool).await? else {
+                return Ok(None);
+            };
+            match codeyard_db_cluster::regions::evaluate(&pool, &policy).await {
+                Ok(changes) => {
+                    for change in changes {
+                        info!(
+                            organization = change.organization,
+                            region = %change.region,
+                            present = change.present,
+                            applied = change.applied,
+                            "organization presence evaluated"
+                        );
+                    }
+                }
+                Err(error) => warn!(%error, "could not evaluate organization presence"),
+            }
+            if idle {
+                mover.plan(&policy).await
+            } else {
+                Ok(None)
             }
         });
         let evaluation = tokio::select! {
@@ -184,20 +211,34 @@ async fn count_regions(
             result = evaluation => result,
         };
         match evaluation {
-            Ok(Ok(changes)) => {
-                for change in changes {
-                    info!(
-                        organization = change.organization,
-                        region = %change.region,
-                        present = change.present,
-                        applied = change.applied,
-                        "organization presence evaluated"
-                    );
-                }
+            Ok(Ok(Some(planned))) => {
+                let mover = mover.clone();
+                moving = Some(tokio::spawn(async move {
+                    let user = planned.login.as_str();
+                    match tokio::time::timeout(USER_MOVE_LIMIT, mover.run(&planned)).await {
+                        Ok(Ok(Some(moved))) => info!(
+                            user,
+                            region = %planned.region,
+                            cell = planned.cell,
+                            %moved,
+                            "user moved to another region"
+                        ),
+                        Ok(Ok(None)) => info!(user, "user was pinned or claimed before its move"),
+                        Ok(Err(error)) => {
+                            warn!(user, %error, "could not move user to another region")
+                        }
+                        Err(_) => warn!(user, "moving user to another region timed out"),
+                    }
+                }));
             }
-            Ok(Err(error)) => warn!(%error, "could not evaluate organization presence"),
-            Err(_) => warn!("organization presence evaluation timed out"),
+            Ok(Ok(None)) => {}
+            Ok(Err(error)) => warn!(%error, "could not evaluate the region policy"),
+            Err(_) => warn!("region policy evaluation timed out"),
         }
+    }
+    if let Some(task) = moving {
+        task.abort();
+        let _ = task.await;
     }
 }
 
@@ -400,6 +441,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         anyhow::bail!(codeyard_model::node_roles::SINGLE_NODE_ROLES);
     }
     let s3 = S3Config::optional_from_env()?;
+    let move_targets = crate::backend::cli::cells::MoveTarget::from_env()?;
     let repos_path = if config.roles.contains(NodeRole::Storage) {
         prepare_repository_root(&config.repos_path)?
     } else {
@@ -636,6 +678,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     // Durable inventory jobs are claimed transactionally; every web node may drain the queue.
     let (stop_capacity, capacity_stop) = tokio::sync::watch::channel(false);
     let capacity = capacity_client
+        .clone()
         .filter(|_| config.roles.contains(NodeRole::Web))
         .map(|directory| {
             tokio::spawn(codeyard_cells_router::capacity::run(
@@ -656,13 +699,25 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         ))
     });
     // Directory-enrolled cells write the requests routers forwarded once a minute and
-    // evaluate organization presence once an hour on one web node.
+    // evaluate organization presence and user moves once an hour on one web node.
     let (stop_regions, regions_stop) = tokio::sync::watch::channel(false);
-    let regions = match &pool {
-        DbPool::Postgres(postgres)
+    let regions = match (&pool, capacity_client) {
+        (DbPool::Postgres(postgres), Some(directory))
             if config.roles.contains(NodeRole::Web) && pool.directory().is_some() =>
         {
-            Some(tokio::spawn(count_regions(postgres.clone(), regions_stop)))
+            let mover = crate::backend::cli::cells::UserMover {
+                pool: pool.clone(),
+                state: config.state_dir.clone(),
+                repositories: repos_path.clone(),
+                directory,
+                nodes: member.as_ref().map(|node| node.context.clone()),
+                targets: move_targets,
+            };
+            Some(tokio::spawn(count_regions(
+                postgres.clone(),
+                Arc::new(mover),
+                regions_stop,
+            )))
         }
         _ => None,
     };

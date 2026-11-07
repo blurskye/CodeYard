@@ -831,12 +831,23 @@ also be repeated safely. One move supports at most 10,000 repositories and 16 Mi
 retained cleanup paths. Source checks and the injected post-release cleanup failure,
 retry and repeated-command runtime checks pass.
 
+Repositories on cluster storage nodes move too: the command copies each from its
+placement primary with the source cell's `CLUSTER_*` settings, and a target in cluster
+mode receives them on one of its storage nodes through `--target-state`, the state
+directory of a stopped web node of the target cell.
+
+A move to a cell in another region also copies the account's stored files: avatars,
+release assets, Actions artifacts, CI logs, CodeQL databases and package blobs. It copies
+them a page at a time (`--object-page-size`, `--object-timeout-seconds`) into the target
+region's store, reads each back and checks its size and SHA-256 before the switch. Only
+after the switch are the source copies queued for deletion, after the 7-day restore
+window; package blobs are left to the source's package cleanup. The target store is S3
+from `TARGET_S3_*`, else the target cluster's storage nodes, else the files under
+`--target-state`. Run the command again after a failure; it skips what the target holds.
+
 Manual CLI failure/retry and HTTP checks pass for preserved issue/pull IDs and numbers,
-completed CI history and package/version metadata. This is not yet a generally usable
-move: existing credential prefixes do not follow the account, cluster-placed Git and
-cross-region object bytes are not handled, and package-byte and full routed-client
-acceptance is pending. Repository transfers and automatic region moves are not
-implemented. See [the acceptance status](CLUSTER_PLAN.md).
+completed CI history and package bytes. Markdown attachments and repository exports are
+not copied between regions. See [the acceptance status](CLUSTER_PLAN.md).
 
 ### Regions
 
@@ -859,13 +870,26 @@ changes.
 A cell can also set presence itself. Each router stamps `x-codeyard-region` on what it
 forwards; the cell keeps that header only from its `HTTP_TRUSTED_PROXY_IPS`, so list the
 routers there. Web nodes count authenticated requests per account, region and day in
-`cell_request_counts` (kept 60 days), and once an hour one of them checks the "Organization
-regions" policy in site settings. A region is added when the organization's members sent
+`cell_request_counts` (kept 60 days), and once an hour one of them checks the "Regions"
+policy in site settings. A region is added when the organization's members sent
 at least the set share of at least the minimum requests on the set number of days in a
 row, and removed after the set number of days below the removal share. The policy starts
 paused and in dry run; dry run only writes audit entries. Every change is audited, the
 home region is never added, an organization keeps at most 16 regions, and presence set
 by hand is never removed automatically. SSH requests are not counted.
+
+The same policy moves user accounts; organizations never move by themselves. A user whose
+own counted requests came mostly from one other region (by default 70% of at least 1,000
+over seven days, on three days in a row) moves to the least full open cell there, by the
+account move above, run on the web node that took the hourly check. Give the web nodes
+`MOVE_TARGET_<cell>_DATABASE_URL` and `MOVE_TARGET_<cell>_REPOSITORIES` for each cell
+they may move users to, plus `_STATE`, `_ROUTE_CACHE_SECONDS` or `_S3_*` as `cell move`
+would need them; a cell without them is skipped. One move runs at a time in each cell,
+one starts per hour, at most the daily limit start each day from this cell to one region,
+and a moved account stays put for the cooldown (30 days). `codeyard cell pin --name
+alice` keeps an account where it is; `--remove` undoes it. User moves start paused and in
+dry run, which only audits `regions.user_would_move`; a started move is audited as
+`regions.user_moved`. A stopped move continues at a later check.
 
 When a region is lost, restart its cells from their copies in the paired region, run
 `codeyard repo verify --repair` on each, and register each cell again with the paired

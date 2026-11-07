@@ -101,6 +101,10 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     email_notifications BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Automatic region moves: a pinned account never moves, and one that moved waits out
+    -- the policy's cooldown. Both travel with the account.
+    region_pinned BOOLEAN NOT NULL DEFAULT FALSE,
+    region_moved_at TIMESTAMPTZ,
     CONSTRAINT users_stub_data CHECK (NOT is_stub OR (password_hash IS NULL AND email IS NULL AND avatar_file_id IS NULL AND NOT is_admin))
 );
 
