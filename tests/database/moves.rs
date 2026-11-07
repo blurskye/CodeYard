@@ -323,6 +323,46 @@ async fn a_committed_receiving_copy_stays_frozen_when_the_source_resumes_and_is_
 }
 
 #[tokio::test]
+async fn running_ci_finishes_before_the_freeze_and_its_history_moves() {
+    let mut one = cell(1).await;
+    let mut two = cell(2).await;
+    let (source, target) = (&*one.raw, &*two.raw);
+    let alice = user(source, "alice", 1).await;
+    let repo = repository(source, "user", alice, "ci", 1).await;
+    let first = issue(source, repo, 1, alice).await;
+    let run: i64 = sqlx::query_scalar("INSERT INTO ci_runs(run_id,repo_id,mode,event,branch,workflow_path,status) VALUES($1,$2,'local','push','main','.github/workflows/ci.yml','running') RETURNING id")
+        .bind(uuid::Uuid::new_v4()).bind(repo).fetch_one(source).await.unwrap();
+    let account = Account::new(ObjectKind::User, alice).unwrap();
+    moves::begin(source, account, 2, WAIT).await.unwrap();
+    let cancelled: bool = sqlx::query_scalar("SELECT cancel_requested FROM ci_runs WHERE id=$1")
+        .bind(run)
+        .fetch_one(source)
+        .await
+        .unwrap();
+    assert!(cancelled);
+    assert!(
+        moves::freeze(source, account, HOLD, Duration::from_millis(200))
+            .await
+            .is_err()
+    );
+    // A refused drain has not frozen the account or blocked the worker's final update.
+    comment(source, first, alice).await.unwrap();
+    sqlx::query("UPDATE ci_runs SET status='cancelled',error_message='Cancelled for account move',completed_at=clock_timestamp() WHERE id=$1")
+        .bind(run).execute(source).await.unwrap();
+    moves::freeze(source, account, HOLD, WAIT).await.unwrap();
+    let paths = BTreeMap::from([(repo, "/cells/two/ci.git".to_owned())]);
+    moves::copy(source, target, account, 2, &paths)
+        .await
+        .unwrap();
+    moves::switch(source, account).await.unwrap();
+    moves::activate(source, target, account).await.unwrap();
+    moves::release(source, account).await.unwrap();
+    assert_eq!(count(target, "SELECT count(*) FROM ci_runs WHERE id=$1 AND status='cancelled' AND error_message='Cancelled for account move' AND completed_at IS NOT NULL", run).await, 1);
+    one.finish().await;
+    two.finish().await;
+}
+
+#[tokio::test]
 async fn a_member_removed_during_an_organization_move_stays_removed() {
     let mut one = cell(1).await;
     let mut two = cell(2).await;

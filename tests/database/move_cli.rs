@@ -68,6 +68,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_issue_ids() {
     )
     .await
     .unwrap();
+    let directory_address = listener.address;
     let alice = codeyard_db_identity::users::accounts::create_user(&source.pool, "alice", None)
         .await
         .unwrap();
@@ -154,7 +155,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_issue_ids() {
             .env("DATABASE_URL", source.connection_url())
             .env("GITSERV_STATE_DIR", &state)
             .env("REPOS_PATH", &source_root)
-            .env("DIRECTORY_ADDRESS", listener.address.to_string())
+            .env("DIRECTORY_ADDRESS", directory_address.to_string())
             .env("DIRECTORY_PUBLIC_KEY", server_key.public_hex())
             .kill_on_drop(true);
         command
@@ -199,6 +200,40 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_issue_ids() {
         .execute(&target.raw)
         .await
         .unwrap();
+    // The destination can already have accepted writes when the directory reply is
+    // lost. A retry must finish switching, never replace that active copy.
+    listener.stop().await;
+    let interrupted = tokio::time::timeout(Duration::from_secs(90), run().output())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!interrupted.status.success());
+    let phase: String = sqlx::query_scalar(
+        "SELECT state FROM account_moves WHERE account_kind='user' AND account_id=$1",
+    )
+    .bind(alice.id)
+    .fetch_one(&source.raw)
+    .await
+    .unwrap();
+    assert_eq!(
+        phase,
+        "switched",
+        "{}",
+        String::from_utf8_lossy(&interrupted.stderr)
+    );
+    sqlx::query("UPDATE issues SET title='Preserved issue after switch retry' WHERE id=$1")
+        .bind(issue)
+        .execute(&target.raw)
+        .await
+        .unwrap();
+    let listener = codeyard_cells_router::directory::Listener::bind(
+        directory.clone(),
+        &server_key,
+        directory_address,
+        Default::default(),
+    )
+    .await
+    .unwrap();
     let moved = tokio::time::timeout(Duration::from_secs(90), run().output())
         .await
         .unwrap()
@@ -275,7 +310,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_issue_ids() {
         serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.unwrap()).unwrap();
     assert_eq!(body["id"], issue);
     assert_eq!(body["number"], 7);
-    assert_eq!(body["title"], "Preserved issue after retry");
+    assert_eq!(body["title"], "Preserved issue after switch retry");
     listener.stop().await;
     directory.close().await;
     registry.finish().await;

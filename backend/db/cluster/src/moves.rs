@@ -181,6 +181,22 @@ where
 /// Refuses every write to the account's rows for `hold`, then waits for the account's
 /// undelivered cross-cell notices to go out. The freeze lifts by itself when `hold` passes.
 pub async fn freeze(pool: &PgPool, account: Account, hold: Duration, wait: Duration) -> Result<()> {
+    // A running worker must still be able to record its cancellation and final log
+    // pointers. Freezing first would prevent its completion, then copy unfinished work
+    // while that worker was still producing bytes in the source region.
+    let running = format!(
+        "SELECT count(*) FROM ci_runs WHERE status='running' AND repo_id IN (SELECT id FROM repositories WHERE NOT is_stub AND {}=$1)",
+        account.owner_column()
+    );
+    let running = running.as_str();
+    wait_until(wait, "CI runs are still draining", move || async move {
+        let count: i64 = sqlx::query_scalar(running)
+            .bind(account.id)
+            .fetch_one(pool)
+            .await?;
+        Ok(count == 0)
+    })
+    .await?;
     let mut tx = pool.begin().await?;
     set_lock_timeout(&mut tx, wait).await?;
     // FOR UPDATE waits for the writers holding the row FOR KEY SHARE; a plain update would not.
@@ -195,6 +211,17 @@ pub async fn freeze(pool: &PgPool, account: Account, hold: Duration, wait: Durat
         None => bail!("The move was not started"),
         Some(State::Switched) => return Ok(tx.commit().await?),
         Some(State::Pending | State::Frozen) => {
+            // The exclusive move-row lock has now drained every writer admitted since
+            // begin. A CI claim racing the first check either finished before this check
+            // or waits for the freeze and is refused by the same write guard.
+            let count: i64 = sqlx::query_scalar(running)
+                .bind(account.id)
+                .fetch_one(&mut *tx)
+                .await?;
+            ensure!(
+                count == 0,
+                "A CI run started while draining; retry the move"
+            );
             sqlx::query("UPDATE account_moves SET state='frozen',expires_at=clock_timestamp()+make_interval(secs=>$3) WHERE account_kind=$1 AND account_id=$2")
                 .bind(account.kind.as_str())
                 .bind(account.id)
@@ -559,7 +586,7 @@ async fn add_stubs(from: &mut Tx, to: &mut Tx, target: i32, needed: &mut Needed)
 /// Loads the account into the target cell in one transaction while the source is frozen:
 /// its own rows (the account and repository rows over any stubs), stubs for the accounts
 /// and repositories they reference, and the shared rows they need. `paths` gives each
-/// repository's Git directory in the target. Running CI is cancelled, counters are counted
+/// repository's Git directory in the target. Queued CI is cancelled, counters are counted
 /// again, and search is queued. A copy from an earlier run that never switched is replaced.
 pub async fn copy(
     source: &PgPool,
@@ -808,8 +835,16 @@ pub async fn copy(
     }
     copied.stubs = add_stubs(&mut from, &mut to, target_cell, &mut needed).await?;
 
-    // CI that was running stops here with a clear status; its runner belonged to the source.
-    sqlx::query("UPDATE ci_runs SET status='cancelled',error_message='Cancelled because the account moved to another cell',completed_at=COALESCE(completed_at,clock_timestamp()),worker=NULL,heartbeat_at=NULL WHERE repo_id=ANY($1) AND status IN ('queued','running')")
+    // Running CI was drained before the freeze. Never claim that an execution stopped
+    // merely because its copied row says so; its source worker might still be producing bytes.
+    let running: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM ci_runs WHERE repo_id=ANY($1) AND status='running')",
+    )
+    .bind(&repositories)
+    .fetch_one(&mut *to)
+    .await?;
+    ensure!(!running, "Running CI must drain before its rows can move");
+    sqlx::query("UPDATE ci_runs SET status='cancelled',error_message='Cancelled because the account moved to another cell',completed_at=COALESCE(completed_at,clock_timestamp()),worker=NULL,heartbeat_at=NULL WHERE repo_id=ANY($1) AND status='queued'")
         .bind(&repositories)
         .execute(&mut *to)
         .await?;

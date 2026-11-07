@@ -4690,7 +4690,7 @@ DECLARE
     row_data JSONB;
     path TEXT;
     account RECORD;
-    freeze RECORD;
+    moving RECORD;
 BEGIN
     IF current_setting('codeyard.move',true) IN ('load','release')
         OR NOT EXISTS(SELECT 1 FROM account_moves) THEN
@@ -4705,10 +4705,10 @@ BEGIN
             CONTINUE WHEN row_data->>((regexp_match(path,'^\w+'))[1]) IS NULL;
             SELECT * INTO account FROM account_move_owner(path,row_data);
             CONTINUE WHEN account.id IS NULL;
-            SELECT m.state,m.expires_at INTO freeze FROM account_moves m
+            SELECT m.state,m.expires_at INTO moving FROM account_moves m
                 WHERE m.account_kind=account.kind AND m.account_id=account.id FOR KEY SHARE;
-            IF FOUND AND (freeze.state IN ('switched','receiving')
-                OR (freeze.state='frozen' AND freeze.expires_at>clock_timestamp())) THEN
+            IF FOUND AND (moving.state IN ('switched','receiving')
+                OR (moving.state='frozen' AND moving.expires_at>clock_timestamp())) THEN
                 RAISE EXCEPTION 'This account is moving to another cell; try again in a few minutes'
                     USING ERRCODE='55000', CONSTRAINT='account_moving';
             END IF;

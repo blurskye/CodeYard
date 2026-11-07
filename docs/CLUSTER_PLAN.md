@@ -449,7 +449,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     inside a region copies no file bytes; a move between regions needs a bounded, resumable
     object copy (not written). Git moves with a fetch of every ref, compared ref by ref
     before the switch. (d) Drain before the switch: running CI is asked to stop at the
-    begin and cancelled with a clear status in the target, the account's outgoing notices
+    begin and must finish or record cancellation before freezing; queued runs are cancelled
+    with a clear status in the target. The account's outgoing notices
     must be delivered before the copy, runners register again. (e) An `account_moves` row
     per moving account; the `account_move_guard` trigger on every owned table refuses
     writes (SQLSTATE 55000) while the account is frozen or switched, inside the writing
@@ -512,6 +513,14 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     Receiving-copy retry and a thousand-member organization with revoked-member HTTP
     denial are also written; workspace 26494b58, Clippy 45e2db07 and WASM d048de00 pass.
     Manual-move acceptance remains incomplete; these tests await the next runtime job.
+    Runtime 981665a7 passed 142 selected library tests but the inherited baseline failed
+    PostgreSQL parsing in the move/database tests (67 other database passes, 119 failures).
+    It was cancelled during cluster compilation. The move guard's reserved `freeze`
+    variable is renamed, and the test script parses the baseline before building.
+    Running CI now drains before freezing; a directory-outage retry test checks that
+    subsequent target writes are not recopied. Workspace 637a0631, Clippy 398f8b18 and
+    WASM 327a7219 pass. Runtime f24d8173 passes the PostgreSQL baseline parse and is
+    running the combined move, database, cluster and selected-library targets.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
