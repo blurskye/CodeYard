@@ -2,20 +2,22 @@
 
 The chart at `deploy/helm/codeyard` runs web pods and a storage StatefulSet, with optional
 SSH and trusted-workflow runner Deployments. See [cluster limits](CLUSTER.md#limits)
-and the [readiness plan](CLUSTER_PLAN.md) for pending acceptance. The chart bundles
-neither PostgreSQL nor an object store.
+and the [readiness plan](CLUSTER_PLAN.md) for pending acceptance. The chart can create a
+[CloudNativePG](#postgresql-with-cloudnativepg) PostgreSQL cluster; it does not bundle an
+object store.
 
 ## Install
 
-Use Kubernetes 1.27+, Helm 3, a persistent-volume StorageClass, external PostgreSQL and
-S3-compatible storage. Publish the [Containerfile](../Containerfile) image to a reachable
+Use Kubernetes 1.27+, Helm 3, a persistent-volume StorageClass, PostgreSQL (external or
+CloudNativePG) and S3-compatible storage. Publish the [Containerfile](../Containerfile) image to a reachable
 registry; every role needs the same release, including role-aware storage `/ready` and
 `/metrics`. Allow pod-to-pod TCP 7445; keep it and storage HTTP port 3000 private.
 
 Create a Secret named `codeyard-config` in the installation namespace through your secret
 manager. Required keys are `DATABASE_URL` (PostgreSQL, percent-encoded credentials),
 `SECRETS_MASTER_KEY` (the installation's durable 64-hex key), `S3_ACCESS_KEY` and
-`S3_SECRET_KEY`. Optional keys are `ADMIN_SECRET` and `METRICS_TOKEN`; the latter is
+`S3_SECRET_KEY`. Optional keys are `DATABASE_READ_URL` (a replica for reads),
+`DATABASE_DIRECT_URL` (see [pooling](#pooling)), `ADMIN_SECRET` and `METRICS_TOKEN`; the latter is
 required for ServiceMonitor scrapes. Sessions live in PostgreSQL, so there is no separate
 session-signing key or sticky-session requirement. Never replace an existing master key.
 
@@ -58,6 +60,38 @@ helm upgrade --install codeyard deploy/helm/codeyard \
 
 Finish administration at `/setup`. Startup migrates PostgreSQL under the application's
 migration lock. Defaults run one web and one storage pod; optional features are off.
+
+## PostgreSQL with CloudNativePG
+
+Install the [CloudNativePG](https://cloudnative-pg.io) operator once per cluster, then set
+`postgres.cnpg.enabled: true`:
+
+```sh
+kubectl apply --server-side -f \
+  https://github.com/cloudnative-pg/cloudnative-pg/releases/download/v1.30.1/cnpg-1.30.1.yaml
+```
+
+The chart then creates a `Cluster` named `<release>-pg` (three PostgreSQL 18 instances
+by default, database and owner `codeyard`) and a PgBouncer `Pooler` named
+`<release>-pgbouncer`. Commits wait for one synchronous standby
+(`dataDurability: required`): if no standby is reachable, writes stop instead of risking
+loss, and only a standby holding every acknowledged commit may be promoted. Core pods get
+three URLs built from the operator's `<release>-pg-app` Secret, all checked against its CA
+(`sslmode=verify-ca`):
+
+| Variable | Service | Used for |
+|---|---|---|
+| `DATABASE_URL` | `<release>-pgbouncer` (transaction pooling) | normal queries |
+| `DATABASE_READ_URL` | `<release>-pg-ro` (replicas) | reads, once a replica has caught up |
+| `DATABASE_DIRECT_URL` | `<release>-pg-rw` (primary) | migrations and session locks |
+
+Database keys in `codeyard-config` are ignored in this mode. The operator owns
+promotion and failover, replacing and re-cloning instances, moving the primary off a
+node being drained, server and client certificates, the app password and PgBouncer.
+Backups are not configured: add the operator's Barman Cloud plugin (it needs cert-manager
+and an object store) before keeping real data. Set `postgres.cnpg.storage.storageClass`,
+`resources` and `affinity` for your nodes; with a node-local StorageClass such as
+`local-path`, keep one instance per node with required anti-affinity.
 
 ## Scale
 
@@ -115,8 +149,11 @@ autoscale down: first move and verify every primary and replica assignment elsew
 Provisioning, scaling policies and rebalancing are written but await verification.
 Safe online mixed-version upgrades and cluster-wide backup/restore remain incomplete. Replication still has the [asynchronous loss window](CLUSTER.md#replicas).
 
-`scripts/test-helm.sh` checks lint and default/all-feature/NodePort renders against strict
-native schemas, skipping missing CRD schemas. It never contacts a Kubernetes cluster.
+`scripts/test-helm.sh` checks lint and default, all-feature, NodePort and CloudNativePG
+renders against strict native schemas, skipping missing CRD schemas. It never contacts a
+Kubernetes cluster; `scripts/kube-ha.py` does (see [above](#test-on-a-cluster)).
+
+## Pooling
 
 Use transaction pooling in front of a complete cluster only with `DATABASE_DIRECT_URL`
 pointing past PgBouncer for the serving leases and migrations; otherwise use session
