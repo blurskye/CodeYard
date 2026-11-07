@@ -497,8 +497,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     accounts in different cells (item 6), the automatic region move, the cross-region
     object copy and moves of repositories placed on cluster storage nodes. The shared
     GitHub 503 response now gives retry guidance and Retry-After; the freeze/cancel HTTP
-    test asserts both, preserved reads and unauthenticated denial. This follow-up is
-    unchecked; native and Git retry responses remain unverified. Owner notes: tokens and
+    test asserts both, preserved reads and unauthenticated denial. This follow-up passes
+    workspace bedef29b, Clippy 6ac0b2bb and WASM 056f73ad; runtime 69ff2f67 is running.
+    Native and Git retry responses remain unverified. Owner notes: tokens and
     sessions keep their source-cell prefix, so the router sends them to the old cell until
     they are issued again; stubs in third cells keep the old home until their next refresh;
     a push already running when the freeze starts fails the move at the second ref check
@@ -538,6 +539,11 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     dbd30337, Clippy 90b6eacf and WASM 3c65a01e pass. Runtime 882eb0f2 passes the
     extended CLI test, all 195 database tests, 239 cluster tests and 142 selected library
     tests without skips. Repository transfer and automatic region moves remain unwritten.
+    The next CLI acceptance extension checks preserved pull numbers, issue/pull node IDs,
+    finished CI history and package/version metadata through HTTP after failure and retry,
+    plus removal of those source rows. Package bytes and routed credential continuity
+    remain separate, incomplete acceptance. This extension passes workspace d8cac32f,
+    Clippy 84e24a5d and WASM 8e8f7852; runtime waits for the current test job.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
@@ -566,6 +572,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     SQLite round then passes 55 checks with 6 skipped (job
     51adf28cea65421eb9fe79b685ad5f44; the builder has no delegated cgroup for CI runs).
     The PgBouncer, replica, cluster, quorum and cells rounds have not run since.
+    Each now has its own `scripts/test-cell-e2e-<round>.sh` entry point with a
+    25-minute timeout, ready to run after move acceptance.
 
     Owner follow-ups, outside this acceptance work:
     committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;

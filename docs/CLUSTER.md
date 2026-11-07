@@ -817,7 +817,9 @@ same move lease in both cells, excluding concurrent incoming or outgoing moves, 
 its repositories' existing Git publication leases. It refuses an active target before
 copying Git, so a retry cannot overwrite destination-only commits.
 
-Writes are frozen inside database transactions. The row copy commits in one target
+Writes are frozen inside database transactions. GitHub REST writes refused with 503
+include `Retry-After: 5` and tell clients to check the result before retrying; a temporary
+failure does not by itself prove a write rolled back. The row copy commits in one target
 transaction with deferred foreign keys; the receiving copy cannot accept writes until
 the source has switched. A failed load rolls back the target and unfreezes the source;
 a process loss before switching leaves the source freeze to expire (`--freeze-seconds`,

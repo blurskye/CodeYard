@@ -1,5 +1,5 @@
 //! The operator move runs against two real cells and a pinned directory, then Git and
-//! HTTP read the preserved repository and issue from the destination.
+//! HTTP reads preserved issue/pull numbers, CI history and package metadata at the destination.
 use crate::support::native_database::PostgresDatabase;
 use axum::{
     body::{to_bytes, Body},
@@ -14,7 +14,7 @@ use std::{sync::Arc, time::Duration};
 use tower::ServiceExt;
 
 #[tokio::test]
-async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_issue_ids() {
+async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_resource_ids() {
     crate::support::fake_webui_bundle::install();
     let mut source = PostgresDatabase::new().await;
     let mut target = PostgresDatabase::new().await;
@@ -100,6 +100,40 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_issue_ids() {
     .unwrap();
     let issue: i64 = sqlx::query_scalar("INSERT INTO issues(repo_id,number,author_id,title) VALUES($1,7,$2,'Preserved issue') RETURNING id")
         .bind(repo.id).bind(alice.id).fetch_one(&source.raw).await.unwrap();
+    let pull: i64 = sqlx::query_scalar("INSERT INTO pull_requests(repo_id,number,author_id,title,head_repo_id,head_branch,base_branch,head_sha,base_sha) VALUES($1,8,$2,'Preserved pull',$1,'main','main',$3,$3) RETURNING id")
+        .bind(repo.id).bind(alice.id).bind(oid.to_string()).fetch_one(&source.raw).await.unwrap();
+    let ci = codeyard_db_actions::ci::enqueue_ci_run(
+        &source.pool,
+        codeyard_db_actions::ci::NewCiRun {
+            repo_id: repo.id,
+            triggered_by_id: alice.id,
+            pipeline: "ci",
+            event: "push",
+            pull_request_id: None,
+            branch: "main",
+            head_sha: &oid.to_string(),
+            workflow_path: ".github/workflows/ci.yml",
+            workflow_blobs: &serde_json::json!({".github/workflows/ci.yml":oid.to_string()}),
+            workflow_inputs: None,
+            environment: None,
+            manual: false,
+        },
+        &[alice.id],
+    )
+    .await
+    .unwrap()
+    .id;
+    sqlx::query("UPDATE ci_runs SET status='success',started_at=clock_timestamp(),completed_at=clock_timestamp() WHERE id=$1")
+        .bind(ci).execute(&source.raw).await.unwrap();
+    // Metadata shares the account move, even when the package points at a repository.
+    // Object bytes are not exercised here: cross-region copying is separate acceptance.
+    let package: i64 = sqlx::query_scalar("INSERT INTO packages(owner_kind,owner_user_id,name,package_type,visibility,repo_id,created_at,updated_at) VALUES('user',$1,'move-package','npm','public',$2,0,0) RETURNING id")
+        .bind(alice.id).bind(repo.id).fetch_one(&source.raw).await.unwrap();
+    let version: i64 = sqlx::query_scalar("INSERT INTO package_versions(package_id,name,digest,media_type,manifest,created_at,updated_at) VALUES($1,'1.0.0',$2,'application/json','{}',0,0) RETURNING id")
+        .bind(package).bind(format!("sha256:{}", "a".repeat(64)))
+        .fetch_one(&source.raw).await.unwrap();
+    let issue_node = codeyard_model::node_id::scoped("I", repo.id, issue).unwrap();
+    let pull_node = codeyard_model::node_id::scoped("PR", repo.id, pull).unwrap();
     let objects = [
         Object {
             kind: ObjectKind::User,
@@ -377,6 +411,7 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_issue_ids() {
         None,
     ));
     let response = app
+        .clone()
         .oneshot(
             Request::builder()
                 .uri("/api/v3/repos/alice/project/issues/7")
@@ -391,6 +426,51 @@ async fn cli_move_rolls_back_a_failed_load_then_preserves_git_and_issue_ids() {
     assert_eq!(body["id"], issue);
     assert_eq!(body["number"], 7);
     assert_eq!(body["title"], "Preserved issue after switch retry");
+    assert_eq!(body["node_id"], issue_node);
+    for (path, expected) in [
+        (
+            "/api/v3/repos/alice/project/pulls/8".to_owned(),
+            serde_json::json!({"id":pull,"number":8,"title":"Preserved pull","node_id":pull_node}),
+        ),
+        (
+            format!("/api/v3/repos/alice/project/actions/runs/{ci}"),
+            serde_json::json!({"id":ci,"status":"completed","conclusion":"success","head_sha":oid.to_string()}),
+        ),
+        (
+            "/api/v3/users/alice/packages/npm/move-package".to_owned(),
+            serde_json::json!({"id":package,"name":"move-package","version_count":1}),
+        ),
+        (
+            format!("/api/v3/users/alice/packages/npm/move-package/versions/{version}"),
+            serde_json::json!({"id":version,"name":"1.0.0"}),
+        ),
+    ] {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(&path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{path}");
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1 << 20).await.unwrap())
+                .unwrap();
+        for (field, value) in expected.as_object().unwrap() {
+            assert_eq!(&body[field], value, "{path}: {body}");
+        }
+    }
+    for table in [
+        "issues",
+        "pull_requests",
+        "ci_runs",
+        "packages",
+        "package_versions",
+    ] {
+        let remaining: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+            .fetch_one(&source.raw)
+            .await
+            .unwrap();
+        assert_eq!(remaining, 0, "{table} was not released from the source");
+    }
     listener.stop().await;
     directory.close().await;
     registry.finish().await;

@@ -1087,7 +1087,8 @@ Cost: four PostgreSQL nodes per 10 million accounts.
 cells close at half their limit. Every table declares how its rows reach an owner, by an
 owner column or through a repository or another row; a test fails when a table has none,
 the way `codeyard db copy` already walks the catalog. `codeyard cell move` freezes the
-account (reads work; a per-account trigger refuses writes, also from background workers),
+account (reads work; a per-account trigger refuses writes, also from background workers;
+GitHub REST 503 responses include retry guidance and `Retry-After`),
 copies its repositories with Git and its rows in one target transaction with deferred
 foreign keys, switches the directory, waits out the routers' route cache, and turns the
 source rows into stubs (`backend/db/cluster/src/moves.rs`). A receiving copy stays
