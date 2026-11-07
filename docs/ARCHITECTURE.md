@@ -1034,6 +1034,13 @@ Each cell writes an outbox table in the same transaction as the change. A worker
 events to other cells, at least once and idempotent by event id; global services read the
 outbox by cursor. No message bus until the consumers need one.
 
+Cross-cell mention notices carry public repository metadata only. Visibility, deletion and
+direct membership changes reclaim their outbox deliveries to withdraw recipient stubs.
+Inbox projections also check the source's current public state over authenticated RPC;
+private, deleted or unavailable sources contribute no notice payload or unread badge.
+The stub alone never authorizes an inbox read. Source checks pass; runtime acceptance of
+this privacy change is pending in [Cluster readiness](CLUSTER_PLAN.md).
+
 | Feature | Where it lives | Fed by | Lag |
 |---|---|---|---|
 | Notifications, email | inbox in the home cell; the resource's cell finds recipients and sends one batch per home cell | outbox delivery | seconds |
