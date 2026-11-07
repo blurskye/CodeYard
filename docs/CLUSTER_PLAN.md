@@ -515,6 +515,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
       a router sends the token to its issuing cell.
     Job df0177cea8d847309db8022760c6f687 passes the 10 move tests, the 11 cells cluster
     tests (with `cells_moves`), the other 189 database tests and the library tests.
+    End-to-end rounds on this branch: PgBouncer 17 passed (228a251a), replica 18 (03370c95),
+    quorum 20 (9b813575), cells 5 (8f11fc48). Cluster (9bbbc657): 48 passed, 7 skipped
+    because the builder has no delegated cgroup v2 for CI runs, and 1 failed: a `gh api` ref
+    create got 503 right after a restarted primary rejoined; the same step passed in 695ea386.
     Not written: the bounded, resumable object copy between regions (a move between
     regions copies no package or artifact bytes yet), moves of repositories placed on
     cluster storage nodes (refused before the freeze), and the automatic region move.
