@@ -280,8 +280,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     needs the previous release binary. (4) Directory shards move between clusters
     (`cell directory move-shard`): each shard keeps its own object copies, writes hold the
     map row until they commit, and the database test moves shards while lookups run without
-    a miss. Runtime STAGE5_SHARDS. (5) Presence is set by hand (`cell directory
-    presence`), and routers in a present region send reads to the home cell's regional web
+    a miss; job 1c765ab87a7d480d8e09d95f28068432 passes all 186 database tests.
+    (5) Presence is set by hand (`cell directory presence`), and routers in a present region send reads to the home cell's regional web
     nodes, falling back home; writes go home (`cells_regions`). Automatic presence: routers
     stamp their region on forwarded requests, a cell counts its authenticated requests per
     account, region and day (only from trusted proxies), and once an hour one web node
@@ -453,7 +453,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     a freeze that also stops the source cell's own background writers, not only routers.
     Each is a design decision for the owner before the move is built.
 
-    Stage 7, written so far (Runtime STAGE7_RUN): (2) packing is a geometric repack with a
+    Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
+    database and the cluster search tests): (2) packing is a geometric repack with a
     multi-pack index, a bitmap (not for pool forks) and a split commit-graph instead of
     `git gc` (`backend/git/src/maintenance.rs`). (3) Search matches substrings through
     `pg_trgm` GIN indexes on names, descriptions, titles, bodies, paths and file text; file

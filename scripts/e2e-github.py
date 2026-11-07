@@ -991,6 +991,9 @@ jobs:
         env = dict(self.env, GH_CONFIG_DIR=str(self.directory / "config-device"), BROWSER="true")
         command = subprocess.Popen(["gh", "auth", *args], env=env, stdin=subprocess.DEVNULL,
                                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+        # gh polls until its device code expires; a missed code must not hold the run that long.
+        deadline = threading.Timer(60, command.kill)
+        deadline.start()
         try:
             output = ""
             code = None
@@ -998,8 +1001,10 @@ jobs:
                 line = command.stdout.readline()
                 assert line, "gh exited before printing a one-time code: " + output
                 output += line
-                found = re.search(r"code: ([A-Z0-9]{4}-[A-Z0-9]{4})", line)
+                # Codes carry the issuing cell's prefix: 0-ABCD-1234.
+                found = re.search(r"code: ((?:[0-9]{1,5}-)?[A-Z0-9]{4}-[A-Z0-9]{4})", line)
                 code = found.group(1) if found else None
+            deadline.cancel()
             token = re.search(r'name="csrf_token" value="([0-9a-f]{64})"', self.page("/logout")).group(1)
             body = self.directory / "device-approval"
             body.write_text(urllib.parse.urlencode({"csrf_token": token, "user_code": code, "decision": "approve"}))
@@ -1008,6 +1013,7 @@ jobs:
                           "--body-file", body, "--content-type", "application/x-www-form-urlencoded", "--status", "200"])
             assert command.wait(timeout=120) == 0, command.stdout.read()
         finally:
+            deadline.cancel()
             if command.poll() is None:
                 command.kill()
 
