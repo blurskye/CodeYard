@@ -701,11 +701,27 @@ native_operation!(crate::postgres::pull_requests::records::create_pull_request_w
     crate::sqlite::pull_requests::records::create_pull_request_with_head,
     fn create_pull_request_with_head(pool: &DbPool, input: NewPullRequest<'_>, foreign: Option<&codeyard_db_core::cells::repositories::Admission>) -> Result<PullRequest>);
 
-pub(crate) async fn check_foreign_head(
+/// Ask the fork's home before the creation transaction starts, so no lock is held across
+/// the network. The read can outlive the operation's proof, so an expired proof is asked
+/// for again before the transaction checks it.
+pub(crate) async fn read_foreign_head(
     pool: &DbPool,
+    foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+) -> Result<Option<codeyard_db_core::cells::repositories::Source>> {
+    let Some(foreign) = foreign else {
+        return Ok(None);
+    };
+    let current = foreign.read(pool).await?;
+    codeyard_db_core::cells::authorization::refresh(pool).await;
+    Ok(Some(current))
+}
+
+/// Compares the locked head row with the home's answer from `read_foreign_head`.
+pub(crate) fn check_foreign_head(
     input: &NewPullRequest<'_>,
     head: &Repository,
     foreign: Option<&codeyard_db_core::cells::repositories::Admission>,
+    current: Option<&codeyard_db_core::cells::repositories::Source>,
 ) -> Result<()> {
     let Some(foreign) = foreign else {
         anyhow::ensure!(
@@ -714,13 +730,13 @@ pub(crate) async fn check_foreign_head(
         );
         return Ok(());
     };
+    let current = current.ok_or(codeyard_support::credentials::AccountRestricted)?;
     anyhow::ensure!(
         head.is_stub
             && foreign.actor.user_id == input.author_id
             && foreign.source.repository.id == head.id,
         codeyard_support::credentials::AccountRestricted
     );
-    let current = foreign.read(pool).await?;
     anyhow::ensure!(
         current.repository.id == head.id
             && current.repository.home_cell == head.home_cell

@@ -294,7 +294,7 @@ impl Routes {
     }
 }
 
-/// Keep the resource cell's credential cache warm without retaining the credential.
+/// Pick a stable web node for a credential from its hash, without retaining the credential.
 pub fn web_node<'a>(cell: &'a Cell, credential: &str) -> Result<&'a str> {
     ensure!(
         !cell.web_urls.is_empty() && credential.len() <= 4096,

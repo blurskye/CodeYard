@@ -231,31 +231,16 @@ impl GitSshHandler {
             .await?
             .map(|key| KeyIdentity::Deploy(key.id))),
             (None, None) => {
-                use codeyard_db_core::cells::authorization::{self, Proof, Query};
+                use codeyard_db_core::cells::authorization::{self, Proof};
                 let proof = Proof::Ssh { fingerprint };
-                if authorization::authorize(&self.pool, &proof)
+                Ok(authorization::admit(&self.pool, &proof)
                     .await?
-                    .is_none()
-                {
-                    return Ok(None);
-                }
-                let hash = proof.hash();
-                Ok(authorization::lookup(
-                    &self.pool,
-                    &Query {
-                        kind: "ssh",
-                        id: None,
-                        hash: Some(&hash),
-                        write: false,
-                    },
-                )
-                .await?
-                .and_then(|credential| {
-                    credential
-                        .answer
-                        .credential_id
-                        .map(|id| KeyIdentity::Account(Box::new(credential.user), id))
-                }))
+                    .and_then(|credential| {
+                        credential
+                            .answer
+                            .credential_id
+                            .map(|id| KeyIdentity::Account(Box::new(credential.user), id))
+                    }))
             }
             _ => Ok(None),
         }

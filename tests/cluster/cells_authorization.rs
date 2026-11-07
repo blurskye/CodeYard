@@ -309,10 +309,13 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     let invitation: serde_json::Value = response.json().await.unwrap();
     assert_eq!(invitation["invitee"]["login"], "bob");
     assert_eq!(
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM foreign_credentials")
-            .fetch_one(&zero.raw)
-            .await
-            .unwrap(),
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM personal_access_tokens WHERE user_id=$1"
+        )
+        .bind(user.id)
+        .fetch_one(&zero.raw)
+        .await
+        .unwrap(),
         0
     );
     let response = client
@@ -1045,7 +1048,16 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .send().await.unwrap();
     let status = created_pull.status();
     let created_pull: serde_json::Value = created_pull.json().await.unwrap();
-    assert_eq!(status, 201, "{created_pull}");
+    assert_eq!(
+        status,
+        201,
+        "{created_pull}\n{}",
+        log.text()
+            .lines()
+            .filter(|line| line.contains("WARN") || line.contains("ERROR"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
     assert_eq!(created_pull["head"]["repo"]["id"], fork_id);
     assert_eq!(created_pull["head"]["sha"], foreign_tip);
     let number = created_pull["number"].as_i64().unwrap() as i32;
@@ -1500,6 +1512,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     let replay = codeyard_db_core::cells::notices::Event {
         id: notices[0].0,
         notice: serde_json::from_str(&notices[0].2).unwrap(),
+        withdrawn: false,
     };
     let sender = zero.pool.foreign_authorization().unwrap();
     sender.send_notice(&replay).await.unwrap();
@@ -1514,6 +1527,15 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         assert!(sender.send_notice(&hostile).await.is_err());
     }
     assert_eq!(delivered().await, (1, 1));
+    // Keep a direct grant through the privacy change, then revoke it over HTTP below.
+    codeyard_db_repos::repositories::access::grant_repo_access(
+        &zero.pool,
+        user.id,
+        open.id,
+        codeyard_db_core::models::AccessLevel::Write,
+    )
+    .await
+    .unwrap();
     // A repository that turns private before delivery sends nothing.
     mention("open", "Mention before privacy").await;
     let response = client
@@ -1524,7 +1546,60 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
+    // The delivered public stub is still stale: reads must ask the live source before
+    // returning a list, thread, badge, stream payload or email, even before outbox replay.
+    assert!(inbox().await.is_empty());
+    let thread = client
+        .get(format!(
+            "{}/api/v3/notifications/threads/{}",
+            bob_http.url(),
+            threads[0]["id"].as_str().unwrap()
+        ))
+        .bearer_auth(&value)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(thread.status(), 404);
+    assert_eq!(
+        codeyard_db_repos::notifications::records::count_header_unread(&one.pool, user.id)
+            .await
+            .unwrap(),
+        0
+    );
+    let notification: i64 =
+        sqlx::query_scalar("SELECT id FROM notifications WHERE user_id=$1 AND kind='mention'")
+            .bind(user.id)
+            .fetch_one(&one.raw)
+            .await
+            .unwrap();
+    assert!(
+        !codeyard_db_repos::notifications::records::notification_email_allowed(
+            &one.pool,
+            notification
+        )
+        .await
+        .unwrap()
+    );
+    assert!(codeyard_db_repos::notifications::records::get_notification(
+        &one.pool,
+        user.id,
+        notification
+    )
+    .await
+    .unwrap()
+    .is_none());
     drain(&zero.pool).await;
+    assert!(inbox().await.is_empty());
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT is_private FROM repositories WHERE id=$1 AND is_stub"
+    )
+    .bind(open.id)
+    .fetch_one(&one.raw)
+    .await
+    .unwrap());
+    // A delayed duplicate must not recreate the inbox entry or undo its withdrawal.
+    sender.send_notice(&replay).await.unwrap();
+    assert!(inbox().await.is_empty());
     assert_eq!(
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM cell_outbox WHERE topic='notice' AND delivered_at IS NULL"
@@ -1535,6 +1610,62 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         0
     );
     assert_eq!(delivered().await, (1, 1));
+    // Revoking a member reclaims even already-delivered notice events. The recipient
+    // cannot regain the notice while this second withdrawal waits in the outbox.
+    let response = client
+        .delete(format!(
+            "{}/api/v3/repos/alice/open/collaborators/bob",
+            http.url()
+        ))
+        .bearer_auth(&alice_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM cell_outbox WHERE topic='notice' AND root_id=$1 AND delivered_at IS NULL"
+        )
+        .bind(open.id)
+        .fetch_one(&zero.raw)
+        .await
+        .unwrap(),
+        2
+    );
+    assert!(inbox().await.is_empty());
+    drain(&zero.pool).await;
+    assert!(inbox().await.is_empty());
+    assert_eq!(delivered().await, (1, 1));
+    let deleted = codeyard_repos_core::repositories::lifecycle::provision(
+        (&zero.pool, None),
+        root.path(),
+        codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(alice.id),
+        "deleted-notice",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    mention("deleted-notice", "Mention before deletion").await;
+    drain(&zero.pool).await;
+    assert_eq!(inbox().await.len(), 1);
+    let response = client
+        .delete(format!("{}/api/v3/repos/alice/deleted-notice", http.url()))
+        .bearer_auth(&alice_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 204);
+    assert!(inbox().await.is_empty());
+    drain(&zero.pool).await;
+    assert!(sqlx::query_scalar::<_, bool>(
+        "SELECT is_private FROM repositories WHERE id=$1 AND is_stub"
+    )
+    .bind(deleted.id)
+    .fetch_one(&one.raw)
+    .await
+    .unwrap());
     let source_by_id = zero
         .pool
         .foreign_authorization()
@@ -1849,10 +1980,11 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         home: Prefix::new(1),
         hash: token_hash(&value),
     };
-    let answer = authorization::authorize(&zero.pool, &proof)
+    let answer = authorization::admit(&zero.pool, &proof)
         .await
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .answer;
     assert_eq!(answer.user.id, user.id);
     assert_eq!(answer.credential_id, Some(token.id));
     assert!(answer.write);
@@ -1866,7 +1998,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
             .unwrap()
             .is_stub
     );
-    let ssh_answer = authorization::authorize(
+    let ssh_answer = authorization::admit(
         &zero.pool,
         &Proof::Ssh {
             fingerprint: ssh_key.fingerprint.clone(),
@@ -1876,14 +2008,9 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .unwrap()
     .unwrap();
     assert_eq!(ssh_answer.user.id, user.id);
-    assert_eq!(ssh_answer.credential_id, Some(ssh_key.id));
-    let seconds: f64 = sqlx::query_scalar(
-        "SELECT EXTRACT(EPOCH FROM expires_at-validated_at)::float8 FROM foreign_credentials",
-    )
-    .fetch_one(&zero.raw)
-    .await
-    .unwrap();
-    assert!((0.0..60.0).contains(&seconds));
+    assert_eq!(ssh_answer.answer.credential_id, Some(ssh_key.id));
+    assert!(ssh_answer.current());
+    assert!(chrono::Utc::now() - ssh_answer.answer.heartbeat < chrono::Duration::seconds(2));
     let response = client
         .post(format!("{}/api/v3/repos/alice/private/issues", http.url()))
         .bearer_auth(&value)
@@ -1907,7 +2034,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     assert_eq!(response.status(), 200);
     assert!(!response.bytes().await.unwrap().is_empty());
     // A browser from the home cell uses its own synchronizer at the resource cell.
-    let session_answer = authorization::authorize(
+    let session_answer = authorization::admit(
         &zero.pool,
         &Proof::Session {
             home: Prefix::new(1),
@@ -1917,7 +2044,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
     .await
     .unwrap()
     .unwrap();
-    let authorization::Authority::Session { csrf } = session_answer.authority else {
+    let authorization::Authority::Session { csrf } = session_answer.answer.authority else {
         panic!("session authority")
     };
     let response = client
@@ -1939,10 +2066,6 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         0
     );
     codeyard_db_identity::users::sessions::delete_session(&one.pool, &session)
-        .await
-        .unwrap();
-    sqlx::query("UPDATE foreign_credentials SET expires_at=validated_at WHERE kind='session'")
-        .execute(&zero.raw)
         .await
         .unwrap();
     let response = client
@@ -2069,15 +2192,7 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .execute(&one.raw)
         .await
         .unwrap();
-    assert!(authorization::authorize(&zero.pool, &proof)
-        .await
-        .unwrap()
-        .is_some());
-    sqlx::query("UPDATE foreign_credentials SET expires_at=validated_at")
-        .execute(&zero.raw)
-        .await
-        .unwrap();
-    assert!(authorization::authorize(&zero.pool, &proof)
+    assert!(authorization::admit(&zero.pool, &proof)
         .await
         .unwrap()
         .is_none());
@@ -2096,15 +2211,13 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .unwrap();
     // The private mention check above adds one issue; the revoked token adds none.
     assert_eq!(count, 3);
-    drop(client);
-    http.stop().await;
     // Cell-key revocation is live at the receiver, even when a route is cached.
     let replacement = NodeKey::generate();
     directory
         .register_cell(cell(Prefix::ZERO, &replacement, vec![]))
         .await
         .unwrap();
-    assert!(authorization::authorize(&zero.pool, &proof).await.is_err());
+    assert!(authorization::admit(&zero.pool, &proof).await.is_err());
     assert!(zero
         .pool
         .foreign_authorization()
@@ -2120,9 +2233,42 @@ async fn foreign_account_rpc_requires_live_cell_keys_and_expires_revoked_home_an
         .send_pointer(&replay)
         .await
         .is_err());
+    directory
+        .register_cell(cell(
+            Prefix::ZERO,
+            &zero_key,
+            vec![zero_home.address.to_string()],
+        ))
+        .await
+        .unwrap();
+    home.stop().await;
+    let response = client
+        .post(format!("{}/api/v3/repos/alice/private/issues", http.url()))
+        .bearer_auth(&value)
+        .json(&serde_json::json!({"title":"partitioned home"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        503,
+        "a partition must not resurrect a formerly admitted credential"
+    );
+    let response = client
+        .get(format!("{}/api/v3/user", http.url()))
+        .bearer_auth(&alice_token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        200,
+        "local identities keep working during a remote partition"
+    );
+    drop(client);
+    http.stop().await;
     bob_http.stop().await;
     zero_home.stop().await;
-    home.stop().await;
     directory_listener.stop().await;
     directory.close().await;
     one.finish().await;

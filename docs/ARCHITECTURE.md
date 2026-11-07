@@ -1012,9 +1012,14 @@ listing that forgets the filter shows a stub as an account.
 - Credentials live in the home cell and carry it: cookies `<prefix>.<random>`, tokens
   `cy_pat_<prefix>_<64 hex>` (the secret scanner accepts both forms), OAuth and device
   codes likewise. A value without a prefix belongs to cell 0.
-- A cell given a foreign credential asks the home cell for the account, scopes and CSRF
-  token and caches the answer for 60 seconds, so revocation reaches every cell within a
-  minute. The router picks the web node by a hash of the credential to keep that cache warm.
+- A cell given a foreign credential asks the home primary for the account, scopes and
+  CSRF token on each admission. The home selects the credential and its cell-local
+  heartbeat in one snapshot. An answer belongs only to the current operation; there is
+  no shared foreign-credential cache. The published age bound defaults to 2 seconds,
+  including a 250 ms clock-error allowance. Wall and monotonic deadlines are checked
+  after waits; an expired or unavailable proof grants nothing. Home reads currently
+  stay on primary, not an identity replica. This replacement passes source checks;
+  runtime acceptance is pending in [Cluster readiness](CLUSTER_PLAN.md).
 - Permission checks stay in the resource's cell, where members, teams and collaborators
   are rows.
 - A cross-cell pull request lives in the base repository's cell, which fetches the head
@@ -1041,6 +1046,14 @@ Each cell writes an outbox table in the same transaction as the change. A worker
 events to other cells, at least once and idempotent by event id; global services read the
 outbox by cursor. No message bus until the consumers need one.
 
+Cross-cell mention notices carry public repository metadata only. Visibility, deletion and
+direct membership changes reclaim their outbox deliveries to withdraw recipient stubs.
+Inbox projections also check the source's current public state over authenticated RPC;
+private, deleted or unavailable sources contribute no notice payload or unread badge.
+The stub alone never authorizes an inbox read. Source checks, both-engine HTTP contracts,
+two-cell privacy/deletion/member-revocation checks and notification polling pass; see
+[Cluster readiness](CLUSTER_PLAN.md).
+
 | Feature | Where it lives | Fed by | Lag |
 |---|---|---|---|
 | Notifications, email | inbox in the home cell; the resource's cell finds recipients and sends one batch per home cell | outbox delivery | seconds |
@@ -1052,6 +1065,17 @@ outbox by cursor. No message bus until the consumers need one.
 | Dependency graph, "used by" | each cell parses manifests; the search index keeps each public repository's packages and answers dependents | outbox delivery | under a minute |
 | Security advisories | one dataset copied to every cell and matched locally | pull | minutes |
 | Stars, follows | rows and count in the target's cell, a pointer in the actor's home cell | outbox delivery | seconds |
+
+### Disposable content cache
+
+`backend/cache` has an always-on bounded local LRU and optional standalone or Cluster
+Valkey through the Redis protocol. It is native-only and off remotely by default.
+The Markdown API resolves access and references before lookup; keys include the entire
+rendering input. No sessions, permissions, locks or rate limits use the cache. Remote
+failure is a miss, calls have a 50 ms budget, all values expire, and slot-split batches
+retain partial misses in order. Single-flight and per-family recompute limits bound
+cold work. [Cache configuration and contracts](../backend/cache/README.md) describe the
+opt-in service and the external tests. Source checks and runtime are pending.
 
 ### CI
 

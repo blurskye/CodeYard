@@ -429,8 +429,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     - **Cell (never moves), 43:** account_moves; actions_oidc_key; actions_settings; anonymous_sessions;
       auth_login_limits; cell_outbox; cell_prefixes; cell_region_policy; cell_request_counts;
       cluster_leases; cluster_scaling_policies; cluster_ssh_host_key; download_rate_limit;
-      email_outbox; email_settings; file_reason_limits; foreign_credentials; github_api_limits;
-      graphql_rate_limits; issue_attribute_guard; issue_relation_guard; join_tokens;
+      email_outbox; email_settings; file_reason_limits; github_api_limits;
+      graphql_rate_limits; identity_heartbeat; issue_attribute_guard; issue_relation_guard;
+      join_tokens;
       node_configuration; node_drain_repositories; nodes; notification_events; oauth_states;
       pending_object_deletions; repo_language_cache; repo_storage_history;
       repository_committed_refs; repository_move_nodes; repository_moves; repository_replicas;
@@ -523,6 +524,39 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     regions copies no package or artifact bytes yet), moves of repositories placed on
     cluster storage nodes (refused before the freeze), and the automatic region move.
 
+    Stage 7 side lane:
+    - Notice withdrawal and live source checks pass runtime
+      cfc7a969e5824a269d9273e69619239c: 54 library tests, both stub HTTP contracts,
+      all 239 cluster tests, 47 notification collaboration tests and all 5 polling
+      tests, without ignores. Both baselines add separate notice-refresh trigger/index
+      blocks. Tests cover privacy, deletion, membership revocation and source outage.
+      The earlier public cells notice flow passed, but unrelated maintainer-PR and
+      dependency-graph failures prevented an overall e2e pass; no full pass is claimed.
+    - Home credential answers now select the credential and cell-local heartbeat in
+      one snapshot on the primary. Operation-owned proofs replace the shared 60-second
+      cache; both baselines replace `foreign_credentials` with `identity_heartbeat`.
+      The only ownership-catalog changes remove the former Cell rule and add the latter.
+      `IDENTITY_MAXIMUM_AGE_MS` defaults to 2000, including the 250 ms clock allowance.
+      No identity-replica routing is enabled. Tests cover stale/revoked snapshots,
+      isolated operations, home loss and PostgreSQL lock-wait expiry. A native database
+      operation that outlives its proof first asks the home once more; a refusal stays
+      denied and the response is 503. Spawned follow-up work keeps the operation's proofs
+      with their original deadlines. A foreign request whose home is down answers 503,
+      so the cells acceptance run expects a refused star there instead of a queued one.
+    - `backend/cache` owns the bounded local LRU, optional Redis standalone/Cluster,
+      slot batches, deadlines, breaker and single-flight. Markdown authorizes before
+      lookup; no access decision uses the cache. Compose Valkey is off by default.
+      `scripts/with-valkey.sh` runs the remote contracts against disposable standalone
+      and three-shard Cluster servers whose ACL allows only the cache's commands on `cy:*`
+      keys. TLS is not covered.
+    Check, Clippy and WASM aa256156a7a8454c97c33fccd79a22c3 pass. Runtime
+    bf65e0b8d276407ca766fc295d1cf9b6 passes 255 library tests, the store, both-engine
+    identity, Valkey and repository targets, and 238 of 239 cluster tests. Cross-cell pull
+    creation (`cells_authorization.rs:1051`) passed in 4255851c2bd643b4bd8b13f8d3a889e2
+    but answered 503 here: the row committed and the fork head fetch failed. The cells e2e
+    still fails on the maintainer pull head ("Head repository storage is unavailable")
+    and the dependency-graph snapshot (422).
+
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
     multi-pack index, a bitmap (not for pool forks) and a split commit-graph instead of
@@ -539,11 +573,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     (1, part) `DATABASE_DIRECT_URL` carries the serving, maintenance and
     package-collection leases and migrations past a transaction-pooling PgBouncer, and the
     PgBouncer e2e round sets it. Not written: keyset paging (the GitHub API pages by
-    number, and OFFSET is already capped at 1,000); the privacy gap where a delivered
-    cross-cell notice stays visible after its repository turns private (the recipient's
-    stub is never refreshed); read routing from the session's last write position (token
+    number, and OFFSET is already capped at 1,000); read routing from the session's last
+    write position (token
     clients carry no position, so a primary-free check needs shared state such as the
-    optional cache); item 4, the heartbeat-proved credential read; item 5, the cache.
+    optional cache). Items 4 and 5 are the side lane above.
     The e2e run (job 34215ceffd2d4150b4cc419834481210) stopped at its 140-minute cap in
     the PostgreSQL round's `gh auth login` check, which waited for a device code without
     the cell prefix; that check and a profile 503 for signed-out visitors are fixed, and the
@@ -575,8 +608,7 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     was removed or weakened.
 
     Owner follow-ups, outside this acceptance work:
-    committed range renewal; foreign-cache expiry after PostgreSQL row-lock waits;
-    scheduled bounded expired directory-claim collection.
+    committed range renewal; scheduled bounded expired directory-claim collection.
 
 ## Decisions that settle the open questions
 

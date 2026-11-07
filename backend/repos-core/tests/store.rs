@@ -165,7 +165,7 @@ impl codeyard_db_core::cells::authorization::Home for ForeignPublicationHome {
             Ok((self.enabled.load(std::sync::atomic::Ordering::SeqCst)
                 && matches!(proof, codeyard_db_core::cells::authorization::Proof::Token { home, hash }
                     if *home == self.answer.home && hash == &"a".repeat(64)))
-                .then(|| self.answer.clone()))
+                .then(|| { let mut answer = self.answer.clone(); answer.heartbeat = chrono::Utc::now(); answer }))
         })
     }
     fn user<'a>(
@@ -179,6 +179,10 @@ impl codeyard_db_core::cells::authorization::Home for ForeignPublicationHome {
 
 #[tokio::test]
 async fn foreign_publication_keeps_token_proof_live_grants_and_workflow_scope() {
+    codeyard_db_core::cells::authorization::scope(foreign_publication_contract()).await;
+}
+
+async fn foreign_publication_contract() {
     use codeyard_db_core::models::AccessLevel;
     use codeyard_db_core::{
         cells::authorization, queries::credentials::Actor,
@@ -198,6 +202,7 @@ async fn foreign_publication_keeps_token_proof_live_grants_and_workflow_scope() 
     let credential_id = *home.ids().start() + 9;
     let provider = std::sync::Arc::new(ForeignPublicationHome {
         answer: authorization::Answer {
+            heartbeat: chrono::Utc::now(),
             home,
             user: user.clone(),
             credential_id: Some(credential_id),
@@ -294,13 +299,6 @@ async fn foreign_publication_keeps_token_proof_live_grants_and_workflow_scope() 
     provider
         .enabled
         .store(false, std::sync::atomic::Ordering::SeqCst);
-    let codeyard_db_core::DbPool::Sqlite(native) = &a.pool else {
-        unreachable!()
-    };
-    sqlx::query("UPDATE foreign_credentials SET expires_at=validated_at")
-        .execute(native)
-        .await
-        .unwrap();
     assert!(publish(actor.clone()).await.is_err());
     assert_eq!(f.store.refs().await.unwrap()["refs/heads/main"], base);
     provider

@@ -154,7 +154,9 @@ async fn credential_account(
     let local = codeyard_identity::cells::Local {
         pool: state.pool.clone(),
     };
-    Ok(local.resolve(proof).await?.map(|answer| answer.user.id))
+    // A foreign answer is kept only inside an operation scope; this runs outside the request's.
+    let answer = codeyard_db_core::cells::authorization::scope(local.resolve(proof)).await?;
+    Ok(answer.map(|answer| answer.user.id))
 }
 
 /// Prime home answers before any adapter looks up a foreign token or browser session.
@@ -167,22 +169,42 @@ pub async fn foreign_authorization(
     if state.pool.foreign_authorization().is_none() {
         return next.run(request).await;
     }
+    use codeyard_db_core::cells::authorization::authorize;
     let local = codeyard_identity::cells::Local {
         pool: state.pool.clone(),
     };
+    // Another cell answers for a foreign credential and for a token whose account moved.
+    let mut foreign = Vec::new();
     for proof in credential_proofs(request.headers()).into_iter().flatten() {
-        let answered = match local.remote(&proof).await {
-            Ok(false) => Ok(None),
-            Ok(true) => {
-                codeyard_db_core::cells::authorization::authorize(&state.pool, &proof).await
-            }
-            Err(error) => Err(error),
-        };
-        if answered.is_err() {
-            return codeyard_model::github_error::Error::unavailable(()).into_response();
+        match local.remote(&proof).await {
+            Ok(true) => foreign.push(proof),
+            Ok(false) => {}
+            Err(_) => return codeyard_model::github_error::Error::unavailable(()).into_response(),
         }
     }
-    next.run(request).await
+    codeyard_db_core::cells::authorization::scope(async {
+        for proof in &foreign {
+            if authorize(&state.pool, proof).await.is_err() {
+                return codeyard_model::github_error::Error::unavailable(()).into_response();
+            }
+        }
+        let response = next.run(request).await;
+        if codeyard_db_core::cells::authorization::ensure_current().is_err() {
+            // Long operations (including forwarding a fork) may outlive admission.
+            // Ask the primary again before exposing their response; never renew an
+            // old snapshot just because the downstream work completed.
+            for proof in &foreign {
+                if !matches!(authorize(&state.pool, proof).await, Ok(Some(_))) {
+                    return codeyard_model::github_error::Error::unavailable(()).into_response();
+                }
+            }
+            if codeyard_db_core::cells::authorization::ensure_current().is_err() {
+                return codeyard_model::github_error::Error::unavailable(()).into_response();
+            }
+        }
+        response
+    })
+    .await
 }
 
 fn client_key(request: &Request, trusted_proxies: &HashSet<IpAddr>) -> Option<String> {

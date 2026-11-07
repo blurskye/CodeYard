@@ -75,7 +75,9 @@ impl Actor {
 // Resolve identity without retaining a credential before its account lock. The caller
 // then uses the shared live-session check in the same package transaction.
 pub(crate) fn session_account_query(now: &str) -> String {
-    format!("SELECT u.id FROM users u WHERE NOT u.is_banned AND NOT u.must_change_password AND ((NOT u.is_stub AND EXISTS(SELECT 1 FROM sessions s WHERE s.user_id=u.id AND s.id=$1)) OR (u.is_stub AND EXISTS(SELECT 1 FROM foreign_credentials f WHERE f.user_id=u.id AND f.kind='session' AND f.credential_hash=$2 AND f.expires_at>{now}))) LIMIT 2")
+    let proofs =
+        codeyard_db_core::cells::authorization::session_relation(now == "clock_timestamp()");
+    format!("SELECT u.id FROM users u WHERE NOT u.is_banned AND NOT u.must_change_password AND ((NOT u.is_stub AND EXISTS(SELECT 1 FROM sessions s WHERE s.user_id=u.id AND s.id=$1)) OR (u.is_stub AND EXISTS(SELECT 1 FROM {proofs} f WHERE f.user_id=u.id AND f.kind='session' AND f.credential_hash=$2 AND f.expires_at>{now}))) LIMIT 2")
 }
 
 pub(crate) fn read_condition(actor: &Actor, repository_access: &str) -> String {

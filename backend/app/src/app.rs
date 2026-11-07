@@ -17,6 +17,7 @@ const DEFAULT_GRAPHQL_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::
 #[derive(Clone)]
 pub struct AppState {
     pub pool: DbPool,
+    pub content_cache: Arc<codeyard_cache::Cache>,
     pub repos_path: PathBuf,
     pub cluster: Option<codeyard_repos_core::context::NodeContext>,
     pub secret_encryptor: Option<Arc<SecretEncryptor>>,
@@ -68,6 +69,16 @@ impl AppState {
             notification_broadcaster.clone(),
         ));
         let oidc_keys = Arc::new(codeyard_ci::oidc::SigningKeys::new(pool.clone()));
+        let content_cache = codeyard_cache::Config::from_env(pool.cell_id().get())
+            .and_then(codeyard_cache::Cache::new)
+            .unwrap_or_else(|_| {
+                tracing::warn!("Invalid content cache configuration; using the local tier");
+                codeyard_cache::Cache::new(codeyard_cache::Config::local(
+                    "local",
+                    pool.cell_id().get(),
+                ))
+                .expect("fixed local cache configuration")
+            });
         Self {
             metrics_token_hash: std::env::var("METRICS_TOKEN")
                 .ok()
@@ -77,6 +88,7 @@ impl AppState {
             storage_min_free_bytes: 1024 * 1024 * 1024,
             storage_readiness: Arc::new(tokio::sync::Semaphore::new(1)),
             pool,
+            content_cache: Arc::new(content_cache),
             oidc_keys,
             repos_path,
             cluster,

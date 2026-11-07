@@ -4437,19 +4437,11 @@ CREATE TABLE cell_prefixes (prefix INTEGER PRIMARY KEY CHECK(prefix BETWEEN 0 AN
 -- cell with one asks the account's new home instead of failing.
 CREATE TABLE moved_credentials (token_hash TEXT PRIMARY KEY CHECK (length(token_hash)=64));
 
--- Short-lived home-cell authorization answers; stub rows own no personal credentials.
-CREATE TABLE foreign_credentials (
-    slot INTEGER PRIMARY KEY CHECK (slot BETWEEN 0 AND 9999),
-    cache_key TEXT NOT NULL UNIQUE CHECK (length(cache_key)=64),
-    credential_hash TEXT NOT NULL CHECK (length(credential_hash)=64),
-    kind TEXT NOT NULL CHECK (kind IN ('token','session','ssh')),
-    credential_id BIGINT,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    answer TEXT NOT NULL CHECK (length(answer)<=131072),
-    validated_at TIMESTAMPTZ NOT NULL,
-    expires_at TIMESTAMPTZ NOT NULL
+-- Cell-local identity freshness, replicated in the same database as credentials.
+CREATE TABLE identity_heartbeat (
+    id INTEGER PRIMARY KEY CHECK (id=1),
+    committed_at TIMESTAMPTZ NOT NULL
 );
-CREATE INDEX foreign_credentials_identity ON foreign_credentials(kind,credential_id,expires_at);
 
 -- A user's home keeps discovery pointers; the resource cell still checks every read.
 CREATE TABLE remote_pointers (
@@ -5241,3 +5233,26 @@ CREATE TRIGGER webhook_deliveries_move_guard BEFORE INSERT OR UPDATE OR DELETE O
     FOR EACH ROW EXECUTE FUNCTION account_move_guard('webhook_id@webhooks.id>repo_id:r','webhook_id@webhooks.id>org_id:o');
 CREATE TRIGGER webhooks_move_guard BEFORE INSERT OR UPDATE OR DELETE ON webhooks
     FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r','org_id:o');
+
+-- Delivered notices remain the durable recipient inventory. Reclaiming them invalidates
+-- an in-flight lease, so an older delivery cannot acknowledge a visibility change.
+CREATE INDEX cell_outbox_notice_repository ON cell_outbox(root_id) WHERE topic='notice';
+CREATE FUNCTION refresh_remote_notices() RETURNS TRIGGER AS $$
+DECLARE repository BIGINT;
+BEGIN
+    -- A move copies or releases rows; it sends no notice again and withdraws none.
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN NULL;
+    END IF;
+    IF TG_TABLE_NAME='repositories' THEN repository := OLD.id;
+    ELSE repository := OLD.repo_id;
+    END IF;
+    UPDATE cell_outbox SET delivered_at=NULL,next_attempt_at=clock_timestamp(),attempts=attempts+1
+      WHERE topic='notice' AND root_kind='repository' AND root_id=repository;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+CREATE TRIGGER refresh_remote_notice_visibility AFTER UPDATE OF is_private,is_internal OR DELETE ON repositories
+    FOR EACH ROW EXECUTE FUNCTION refresh_remote_notices();
+CREATE TRIGGER refresh_remote_notice_membership AFTER UPDATE OR DELETE ON repo_access
+    FOR EACH ROW EXECUTE FUNCTION refresh_remote_notices();

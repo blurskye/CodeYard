@@ -4,6 +4,7 @@ use crate::repositories::store::local::live_write;
 use crate::repositories::store::local::record_branch_update;
 use crate::repositories::store::local::record_secret_bypasses;
 use crate::repositories::store::local::LocalStore;
+use codeyard_db_core::cells::authorization::inherit;
 use codeyard_repos::protection::BranchWrite;
 use codeyard_repos::protection::History;
 use codeyard_repos::protection::WriteVia;
@@ -24,11 +25,11 @@ impl LocalStore {
         let (store, pool, old, new) = (self.clone(), pool.clone(), old.to_owned(), new.to_owned());
         Box::pin(async move {
             // Finish metadata and HEAD updates even if the HTTP client leaves after the ref moves.
-            tokio::spawn(async move {
+            tokio::spawn(inherit(async move {
                 store
                     .rename_branch_owned(&pool, repo, authority, &old, &new)
                     .await
-            })
+            }))
             .await
             .map_err(|_| RepoError::applied_followup_failed())?
         })

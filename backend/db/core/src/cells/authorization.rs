@@ -1,5 +1,10 @@
 //! Home-cell proofs and bounded, short-lived authorization answers. No personal credentials
 //! are inserted into a stub's native credential tables.
+pub mod freshness;
+pub mod heartbeat;
+mod scope;
+pub use scope::{ensure_current, inherit, scope};
+
 use crate::{models::User, DbPool};
 use anyhow::{ensure, Result};
 use chrono::{DateTime, Utc};
@@ -7,10 +12,8 @@ use codeyard_support::{cells::Prefix, token_hash::token_hash};
 use futures_util::future::BoxFuture;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
-pub const CACHE_SECONDS: i64 = 59;
-const CACHE_SLOTS: u32 = 10000;
 const MAXIMUM_ANSWER_BYTES: usize = 128 * 1024;
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -45,9 +48,6 @@ impl Proof {
             Self::Session { value, .. } => token_hash(value),
             Self::Ssh { fingerprint } => token_hash(fingerprint),
         }
-    }
-    fn key(&self) -> Result<String> {
-        Ok(token_hash(&serde_json::to_string(self)?))
     }
     pub fn kind(&self) -> &'static str {
         match self {
@@ -225,6 +225,8 @@ impl Authority {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Answer {
+    /// Read with the credential in the home database's snapshot, never stamped on receipt.
+    pub heartbeat: DateTime<Utc>,
     pub home: Prefix,
     pub user: User,
     pub credential_id: Option<i64>,
@@ -381,6 +383,9 @@ pub trait Home: Send + Sync {
         Box::pin(async { anyhow::bail!("Remote resource reads are unavailable") })
     }
 
+    fn notice_public(&self, _repository: i64) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async { anyhow::bail!("Notice visibility is unavailable") })
+    }
     fn send_notice<'a>(&'a self, _event: &'a super::notices::Event) -> BoxFuture<'a, Result<()>> {
         Box::pin(async { anyhow::bail!("Notice delivery is unavailable") })
     }
@@ -409,105 +414,60 @@ pub trait Home: Send + Sync {
 }
 pub type Provider = Arc<dyn Home>;
 
-#[derive(sqlx::FromRow)]
-struct Cached {
-    answer: String,
-    user_id: i64,
-    home_cell: i32,
-}
-const CURRENT_POSTGRES: &str = "expires_at>clock_timestamp()";
-const CURRENT_SQLITE: &str = "expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')";
-async fn cached(pool: &DbPool, key: &str) -> Result<Option<Answer>> {
-    let row: Option<Cached> = match pool {
-        DbPool::Postgres(pool)=>sqlx::query_as(&format!("SELECT f.answer,f.user_id,u.home_cell FROM foreign_credentials f JOIN users u ON u.id=f.user_id WHERE f.cache_key=$1 AND u.is_stub AND NOT u.is_banned AND NOT u.must_change_password AND f.{CURRENT_POSTGRES}" )).bind(key).fetch_optional(pool).await?,
-        DbPool::Sqlite(pool)=>sqlx::query_as(&format!("SELECT f.answer,f.user_id,u.home_cell FROM foreign_credentials f JOIN users u ON u.id=f.user_id WHERE f.cache_key=$1 AND u.is_stub AND NOT u.is_banned AND NOT u.must_change_password AND f.{CURRENT_SQLITE}" )).bind(key).fetch_optional(pool).await?,
-    };
-    row.map(|row| {
-        ensure!(
-            row.answer.len() <= MAXIMUM_ANSWER_BYTES,
-            "Cached account is too large"
-        );
-        let answer: Answer = serde_json::from_str(&row.answer)?;
-        ensure!(
-            answer.user.id == row.user_id && i32::from(answer.home.get()) == row.home_cell,
-            "Cached account home changed"
-        );
-        Ok(answer)
-    })
-    .transpose()
-}
-/// The cache deadline starts before the RPC, so a slow response cannot extend revocation.
-/// A fixed slot count bounds memory on disk and contention is confined to that slot.
+/// Ask the home on every admission. Only this operation retains the answer; another
+/// request must obtain a new snapshot even if it presents the same credential.
 pub async fn authorize(pool: &DbPool, proof: &Proof) -> Result<Option<Answer>> {
     proof.validate()?;
-    let key = proof.key()?;
-    if let Some(answer) = cached(pool, &key).await? {
-        return Ok(Some(answer));
-    }
+    scope::forget(proof.kind(), &proof.hash());
     let Some(provider) = pool.foreign_authorization() else {
         return Ok(None);
     };
-    let now: DateTime<Utc> = match pool {
-        DbPool::Postgres(pool) => {
-            sqlx::query_scalar("SELECT clock_timestamp()")
-                .fetch_one(pool)
-                .await?
-        }
-        DbPool::Sqlite(pool) => {
-            sqlx::query_scalar("SELECT strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
-                .fetch_one(pool)
-                .await?
-        }
-    };
-    let answer = tokio::time::timeout(Duration::from_secs(10), provider.authorize(proof)).await??;
+    let policy = freshness::policy()?;
+    let read = policy
+        .start(Utc::now(), std::time::Instant::now())
+        .ok_or_else(|| anyhow::anyhow!("Identity freshness is unavailable"))?;
+    let answer = tokio::time::timeout(policy.maximum_age(), provider.authorize(proof)).await??;
     let Some(answer) = answer else {
         return Ok(None);
     };
     answer.validate(pool, proof)?;
-    let deadline = (now + chrono::Duration::seconds(CACHE_SECONDS))
-        .min(answer.expires_at.unwrap_or(DateTime::<Utc>::MAX_UTC));
-    let serialized = serde_json::to_string(&answer)?;
+    let deadline = read
+        .prove(
+            answer.heartbeat,
+            answer.expires_at,
+            Utc::now(),
+            std::time::Instant::now(),
+        )
+        .ok_or_else(|| anyhow::anyhow!("Identity snapshot is stale"))?;
     ensure!(
-        serialized.len() <= MAXIMUM_ANSWER_BYTES,
+        serde_json::to_vec(&answer)?.len() <= MAXIMUM_ANSWER_BYTES,
         "Foreign account is too large"
     );
-    // A failed credential-cache insert may retain harmless metadata; no local credential is created.
+    // Metadata may survive a failed admission. It never grants access by itself.
     super::stubs::user(pool, answer.home, &answer.user).await?;
-    let slot = u32::from_str_radix(&key[..8], 16)? % CACHE_SLOTS;
-    const INSERT:&str="INSERT INTO foreign_credentials(slot,cache_key,kind,credential_id,user_id,answer,validated_at,expires_at,credential_hash) SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9 FROM users WHERE id=$5 AND is_stub AND home_cell=$10 AND NOT is_banned AND NOT must_change_password ON CONFLICT(slot) DO UPDATE SET cache_key=excluded.cache_key,kind=excluded.kind,credential_id=excluded.credential_id,credential_hash=excluded.credential_hash,user_id=excluded.user_id,answer=excluded.answer,validated_at=excluded.validated_at,expires_at=excluded.expires_at WHERE foreign_credentials.validated_at<=excluded.validated_at";
-    match pool {
-        DbPool::Postgres(pool) => {
-            sqlx::query(INSERT)
-                .bind(i64::from(slot))
-                .bind(&key)
-                .bind(proof.kind())
-                .bind(answer.credential_id)
-                .bind(answer.user.id)
-                .bind(serialized)
-                .bind(now)
-                .bind(deadline)
-                .bind(proof.hash())
-                .bind(i32::from(answer.home.get()))
-                .execute(pool)
-                .await?;
-        }
-        DbPool::Sqlite(pool) => {
-            sqlx::query(INSERT)
-                .bind(i64::from(slot))
-                .bind(&key)
-                .bind(proof.kind())
-                .bind(answer.credential_id)
-                .bind(answer.user.id)
-                .bind(serialized)
-                .bind(now.to_rfc3339_opts(chrono::SecondsFormat::Micros, true))
-                .bind(deadline.to_rfc3339_opts(chrono::SecondsFormat::Micros, true))
-                .bind(proof.hash())
-                .bind(i32::from(answer.home.get()))
-                .execute(pool)
-                .await?;
-        }
-    }
-    cached(pool, &key).await
+    ensure!(
+        deadline.current(Utc::now(), std::time::Instant::now()),
+        "Identity proof expired"
+    );
+    scope::retain(scope::Verified {
+        proof: proof.clone(),
+        answer: answer.clone(),
+        kind: proof.kind(),
+        hash: proof.hash(),
+        deadline,
+        refused: false,
+    })?;
+    Ok(lookup(
+        pool,
+        &Query {
+            kind: proof.kind(),
+            id: answer.credential_id,
+            hash: Some(&proof.hash()),
+            write: false,
+        },
+    )
+    .await?
+    .map(|credential| credential.answer))
 }
 
 /// Whether a token issued here belongs to an account that has since moved to another cell.
@@ -519,27 +479,70 @@ pub async fn moved_token(pool: &DbPool, hash: &str) -> Result<bool> {
     })
 }
 
-/// A cache lookup carries the exact credential hash through native transactions.
+/// Called before each native database operation, outside its transaction. An operation
+/// that outlived its proof asks the home once more instead of reusing the old answer; the
+/// operation's own transaction still checks the new deadline.
+pub async fn refresh(pool: &DbPool) {
+    if scope::any_expired() {
+        ask_again(pool).await;
+    }
+}
+/// Boxed because admission itself runs native operations, which call `refresh`.
+fn ask_again(pool: &DbPool) -> BoxFuture<'_, ()> {
+    Box::pin(async move {
+        for old in scope::take_expired() {
+            if !matches!(authorize(pool, &old.proof).await, Ok(Some(_))) {
+                scope::restore(old);
+            }
+        }
+    })
+}
+
+/// Standalone admission for callers that retain the typed result themselves (Git/SSH).
+pub async fn admit(pool: &DbPool, proof: &Proof) -> Result<Option<Credential>> {
+    scope(async {
+        if authorize(pool, proof).await?.is_none() {
+            return Ok(None);
+        }
+        lookup(
+            pool,
+            &Query {
+                kind: proof.kind(),
+                id: None,
+                hash: Some(&proof.hash()),
+                write: false,
+            },
+        )
+        .await
+    })
+    .await
+}
+
+/// An operation lookup carries the exact credential hash through native transactions.
 pub struct Query<'a> {
     pub kind: &'static str,
     pub id: Option<i64>,
     pub hash: Option<&'a str>,
     pub write: bool,
 }
-#[derive(sqlx::FromRow)]
-struct CredentialRow {
-    answer: String,
-    credential_hash: String,
-    #[sqlx(flatten)]
-    user: User,
-}
 pub struct Credential {
     pub answer: Answer,
     pub hash: String,
     pub user: User,
+    deadline: freshness::Deadline,
 }
 impl Credential {
+    pub fn current(&self) -> bool {
+        self.deadline.current(Utc::now(), std::time::Instant::now())
+    }
+    pub fn deadline(&self) -> freshness::Deadline {
+        self.deadline
+    }
+
     pub fn token(&self) -> Option<crate::models::PersonalAccessToken> {
+        if !self.current() {
+            return None;
+        }
         Some(crate::models::PersonalAccessToken {
             id: self.answer.credential_id?,
             token_hash: self.hash.clone(),
@@ -553,54 +556,51 @@ impl Credential {
         })
     }
 }
-fn credential(row: Option<CredentialRow>, query: &Query<'_>) -> Result<Option<Credential>> {
-    let Some(row) = row else { return Ok(None) };
+fn credential(user: Option<User>, proof: scope::Verified) -> Result<Option<Credential>> {
+    let Some(user) = user else { return Ok(None) };
+    // The user predicate can be evaluated before a row lock wait. Check both clocks
+    // after that wait, retaining the original deadline rather than renewing it.
+    ensure!(proof.current(), "Identity proof expired");
     ensure!(
-        row.answer.len() <= MAXIMUM_ANSWER_BYTES,
-        "Cached account is too large"
+        user.id == proof.answer.user.id
+            && user.is_stub
+            && user.home_cell == i32::from(proof.answer.home.get()),
+        "Foreign account home changed"
     );
-    let answer: Answer = serde_json::from_str(&row.answer)?;
-    ensure!(
-        answer.user.id == row.user.id
-            && row.user.is_stub
-            && i32::from(answer.home.get()) == row.user.home_cell,
-        "Cached account home changed"
-    );
-    if query.write && !answer.write {
-        return Ok(None);
-    }
     Ok(Some(Credential {
-        answer,
-        hash: row.credential_hash,
-        user: row.user,
+        answer: proof.answer,
+        hash: proof.hash,
+        user,
+        deadline: proof.deadline,
     }))
 }
-fn credential_query(current: &str, lock: &str) -> String {
-    format!("SELECT f.answer,f.credential_hash,u.* FROM foreign_credentials f JOIN users u ON u.id=f.user_id WHERE f.kind=$1 AND (CAST($2 AS BIGINT) IS NULL OR f.credential_id=$2) AND (CAST($3 AS TEXT) IS NULL OR f.credential_hash=$3) AND f.{current} AND u.is_stub AND NOT u.is_banned AND NOT u.must_change_password ORDER BY f.validated_at DESC LIMIT 1{lock}")
-}
+const CREDENTIAL_USER: &str =
+    "SELECT * FROM users WHERE id=$1 AND is_stub AND NOT is_banned AND NOT must_change_password";
 pub async fn postgres(
     connection: &mut sqlx::PgConnection,
     query: &Query<'_>,
 ) -> Result<Option<Credential>> {
-    let row = sqlx::query_as(&credential_query(CURRENT_POSTGRES, " FOR SHARE OF f,u"))
-        .bind(query.kind)
-        .bind(query.id)
-        .bind(query.hash)
+    let Some(proof) = scope::find(query) else {
+        return Ok(None);
+    };
+    let user = sqlx::query_as(&format!("{CREDENTIAL_USER} FOR SHARE"))
+        .bind(proof.answer.user.id)
         .fetch_optional(connection)
         .await?;
-    credential(row, query)
+    credential(user, proof)
 }
 pub async fn sqlite(
     connection: &mut sqlx::SqliteConnection,
     query: &Query<'_>,
 ) -> Result<Option<Credential>> {
-    let row = sqlx::query_as(&credential_query(CURRENT_SQLITE, ""))
-        .bind(query.kind)
-        .bind(query.id)
-        .bind(query.hash)
+    let Some(proof) = scope::find(query) else {
+        return Ok(None);
+    };
+    let user = sqlx::query_as(CREDENTIAL_USER)
+        .bind(proof.answer.user.id)
         .fetch_optional(connection)
         .await?;
-    credential(row, query)
+    credential(user, proof)
 }
 pub async fn lookup(pool: &DbPool, query: &Query<'_>) -> Result<Option<Credential>> {
     match pool {
@@ -636,7 +636,8 @@ fn permits(
     permission: &Permission<'_>,
     classic_allowed: bool,
 ) -> Result<bool> {
-    if permission.write && !credential.answer.write {
+    // Repository and organization policy reads may themselves wait for row locks.
+    if !credential.current() || (permission.write && !credential.answer.write) {
         return Ok(false);
     }
     if matches!(credential.answer.authority, Authority::Classic) && !classic_allowed {
@@ -738,7 +739,13 @@ pub async fn permits_sqlite(
     )
 }
 
-/// SQL projections of the same cached bounds, for queries that retain their credential
+/// Only operation-owned session identities; the package transaction still locks and
+/// rechecks the account through `session` before using it.
+pub fn session_relation(postgres: bool) -> String {
+    scope::relation(postgres, "session")
+}
+
+/// SQL projections of operation-owned bounds, for queries that retain their credential
 /// and read their resource rows in one statement. Aliases `r` and `u` are native rows.
 pub fn repository_condition(
     postgres: bool,
@@ -816,5 +823,6 @@ pub fn repository_condition(
         oauth.join(" OR ")
     };
     let classic="NOT EXISTS(SELECT 1 FROM organization_token_policies p WHERE p.org_id=r.owner_org_id AND NOT p.classic_allowed)";
-    format!("EXISTS(SELECT 1 FROM foreign_credentials fc WHERE fc.kind='token' AND fc.credential_id=CAST({token} AS BIGINT) AND fc.credential_hash={hash} AND fc.user_id=u.id AND u.is_stub AND NOT u.is_banned AND NOT u.must_change_password AND fc.expires_at>{now} AND {enabled} AND CASE {kind} WHEN 'classic' THEN {classic} WHEN 'oauth' THEN ({oauth}) WHEN 'fine_grained' THEN ({fine}) WHEN 'app' THEN ({fine}) WHEN 'job' THEN ({job}) ELSE FALSE END)")
+    let proofs = scope::relation(postgres, "token");
+    format!("EXISTS(SELECT 1 FROM {proofs} fc WHERE fc.kind='token' AND fc.credential_id=CAST({token} AS BIGINT) AND fc.credential_hash={hash} AND fc.user_id=u.id AND u.is_stub AND NOT u.is_banned AND NOT u.must_change_password AND fc.expires_at>{now} AND {enabled} AND CASE {kind} WHEN 'classic' THEN {classic} WHEN 'oauth' THEN ({oauth}) WHEN 'fine_grained' THEN ({fine}) WHEN 'app' THEN ({fine}) WHEN 'job' THEN ({job}) ELSE FALSE END)")
 }

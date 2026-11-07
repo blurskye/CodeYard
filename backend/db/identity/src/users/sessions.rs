@@ -91,13 +91,11 @@ pub async fn get_browser_session(pool: &DbPool, id: &str) -> Result<Option<Brows
     if foreign_session(pool, id) {
         return Ok(codeyard_db_core::cells::authorization::session(pool, id)
             .await?
-            .and_then(|credential| {
-                Some(BrowserSession {
-                    id: id.to_owned(),
-                    user_id: Some(credential.user.id),
-                    expires_at: credential.answer.expires_at?,
-                    created_at: credential.user.created_at,
-                })
+            .map(|credential| BrowserSession {
+                id: id.to_owned(),
+                user_id: Some(credential.user.id),
+                expires_at: credential.deadline().wall(),
+                created_at: credential.user.created_at,
             }));
     }
     match pool {

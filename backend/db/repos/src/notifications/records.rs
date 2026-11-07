@@ -82,6 +82,27 @@ native_operation!(crate::postgres::notifications::records::notification_delivery
     crate::sqlite::notifications::records::notification_delivery,
     fn notification_delivery(pool: &DbPool, session_id: &str, user_id: i64, notification_id: Option<i64>) -> Result<Option<NotificationDelivery>>);
 
+/// Lock-free badge projection, bounded independently of inbox size. A home failure
+/// hides its contribution rather than letting metadata grant access.
+pub(crate) async fn foreign_unread(pool: &DbPool, user: i64) -> Result<i64> {
+    const SQL: &str = "SELECT r.id,COUNT(*) FROM notifications n JOIN repositories r ON r.id=n.scope_repository_id JOIN users u ON u.id=n.user_id WHERE n.user_id=$1 AND n.read_at IS NULL AND n.done_at IS NULL AND r.is_stub AND NOT r.is_private AND NOT r.is_internal AND NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password GROUP BY r.id ORDER BY r.id LIMIT 100";
+    let rows: Vec<(i64, i64)> = match pool {
+        DbPool::Postgres(pool) => sqlx::query_as(SQL).bind(user).fetch_all(pool).await?,
+        DbPool::Sqlite(pool) => sqlx::query_as(SQL).bind(user).fetch_all(pool).await?,
+    };
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+    let home = pool.foreign_authorization();
+    let mut count = 0;
+    for (repository, unread) in rows {
+        if codeyard_db_core::cells::notices::readable_until(home.as_ref(), repository, deadline)
+            .await
+        {
+            count += unread;
+        }
+    }
+    Ok(count)
+}
+
 /// An exclusive boundary in persisted (created_at,id) order.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct NotificationCursor {
@@ -93,6 +114,8 @@ pub struct NotificationCursor {
 /// when a query first reaches it, under row locks, and SQLite decides every scope of the
 /// recipient in its first statement.
 pub(crate) struct NotificationScopes {
+    pub home: Option<codeyard_db_core::cells::authorization::Provider>,
+    pub remote_deadline: tokio::time::Instant,
     pub classic_token: bool,
     pub high_water: i64,
     pub readable: std::collections::BTreeMap<i64, bool>,

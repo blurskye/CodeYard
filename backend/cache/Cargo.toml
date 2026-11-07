@@ -1,0 +1,17 @@
+[package]
+name = "codeyard-cache"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+description = "Disposable content cache with a bounded local tier"
+
+[dependencies]
+anyhow.workspace = true
+futures-util.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["std", "aws_lc_rs", "tls12"] }
+redis = { version = "=0.32.7", default-features = false, features = ["cluster-async", "tokio-rustls-comp", "tls-rustls-webpki-roots", "disable-client-setinfo"] }
+
+[lints]
+workspace = true

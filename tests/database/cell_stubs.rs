@@ -9,6 +9,35 @@ use codeyard_support::cells::Prefix;
 use serde_json::Value;
 use tower::ServiceExt;
 
+struct NoticeHome(std::sync::atomic::AtomicU8);
+impl codeyard_db_core::cells::authorization::Home for NoticeHome {
+    fn authorize<'a>(
+        &'a self,
+        _: &'a codeyard_db_core::cells::authorization::Proof,
+    ) -> futures_util::future::BoxFuture<
+        'a,
+        anyhow::Result<Option<codeyard_db_core::cells::authorization::Answer>>,
+    > {
+        Box::pin(async { Ok(None) })
+    }
+    fn user<'a>(
+        &'a self,
+        _: &'a str,
+    ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<codeyard_db_core::models::User>>>
+    {
+        Box::pin(async { Ok(None) })
+    }
+    fn notice_public(&self, _: i64) -> futures_util::future::BoxFuture<'_, anyhow::Result<bool>> {
+        Box::pin(async move {
+            match self.0.load(std::sync::atomic::Ordering::SeqCst) {
+                0 => Ok(false),
+                1 => Ok(true),
+                _ => anyhow::bail!("Home is unreachable"),
+            }
+        })
+    }
+}
+
 async fn credentials(pool: &DbPool, user: i64, session: &str) -> bool {
     let expiry = chrono::Utc::now() + chrono::Duration::hours(1);
     match pool {
@@ -495,6 +524,66 @@ async fn contract(pg: bool) {
             assert_eq!(members.len(), 1, "{path}: {body}");
             assert_eq!(members[0][field], "native", "{path}: {body}");
         }
+    }
+    // The same stale stub must not authorize either engine's inbox, badges or emails.
+    let home = std::sync::Arc::new(NoticeHome(std::sync::atomic::AtomicU8::new(1)));
+    pool.set_foreign_authorization(home.clone());
+    let notice = codeyard_db_repos::notifications::records::create_notification(
+        pool,
+        codeyard_db_core::queries::notifications::records::NewNotification {
+            user_id: native.id,
+            actor_id: None,
+            repo_id: Some(repository.id),
+            kind: "mention",
+            title: "Remote notice",
+            body: Some("Private after delivery"),
+            link: None,
+            metadata: &serde_json::json!({"number":1,"subject":"Remote notice"}),
+        },
+    )
+    .await
+    .unwrap();
+    for state in [1, 0, 2] {
+        home.0.store(state, std::sync::atomic::Ordering::SeqCst);
+        let response = router
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/v3/notifications")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 1048576).await.unwrap())
+                .unwrap();
+        assert_eq!(
+            body.as_array().unwrap().len(),
+            usize::from(state == 1),
+            "{body}"
+        );
+        assert_eq!(
+            codeyard_db_repos::notifications::records::count_header_unread(pool, native.id)
+                .await
+                .unwrap(),
+            i64::from(state == 1)
+        );
+        assert_eq!(
+            codeyard_db_repos::notifications::records::notification_email_allowed(pool, notice.id)
+                .await
+                .unwrap(),
+            state == 1
+        );
+        assert_eq!(
+            codeyard_db_repos::notifications::records::get_notification(pool, native.id, notice.id)
+                .await
+                .unwrap()
+                .is_some(),
+            state == 1
+        );
     }
     database.finish().await;
 }

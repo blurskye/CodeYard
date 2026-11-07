@@ -304,7 +304,7 @@ async fn a_moved_users_token_follows_the_user_to_the_new_home() {
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["login"], "bob", "{body}");
 
-    // Revoking the token at the new home stops it everywhere within the cache lifetime.
+    // Revoking the token at the new home stops it everywhere: each request asks the home.
     sqlx::query("DELETE FROM personal_access_tokens WHERE user_id=$1")
         .bind(alice)
         .execute(&target.raw)
@@ -317,10 +317,6 @@ async fn a_moved_users_token_follows_the_user_to_the_new_home() {
         .await
         .unwrap();
     assert_eq!(response.status(), 401);
-    sqlx::query("DELETE FROM foreign_credentials")
-        .execute(&source.raw)
-        .await
-        .unwrap();
     let response = client
         .post(format!("{}/api/v3/repos/carol/board/issues", router.url()))
         .bearer_auth(&alice_token)

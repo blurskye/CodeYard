@@ -150,6 +150,12 @@ impl Home for Native {
     ) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move { self.identity().receive_pointer(event, admission).await })
     }
+    fn notice_public(&self, repository: i64) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(codeyard_db_core::cells::notices::public(
+            &self.state.pool,
+            repository,
+        ))
+    }
     fn receive_notice<'a>(
         &'a self,
         event: &'a codeyard_db_core::cells::notices::Event,

@@ -152,6 +152,7 @@ async fn subscription(
 }
 async fn manage_subscription(
     connection: &mut sqlx::SqliteConnection,
+    scopes: &NotificationScopes,
     user: i64,
     id: i64,
     changes: Option<(bool, bool)>,
@@ -167,7 +168,19 @@ async fn manage_subscription(
     };
     let condition = crate::sqlite::notifications::records::scope_readable_condition();
     let allowed:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {condition})")).bind(user).bind(thread.scope_repository_id).fetch_one(&mut *connection).await?;
-    if !allowed {
+    let stub: bool = sqlx::query_scalar("SELECT is_stub FROM repositories WHERE id=?1")
+        .bind(thread.scope_repository_id)
+        .fetch_optional(&mut *connection)
+        .await?
+        .unwrap_or(false);
+    if !allowed
+        || (stub
+            && !codeyard_db_core::cells::notices::readable(
+                scopes.home.as_ref(),
+                thread.scope_repository_id,
+            )
+            .await)
+    {
         return Ok(ThreadInbox::default());
     }
     let updated = if let Some((subscribed, ignored)) = changes {
@@ -198,7 +211,15 @@ pub(super) async fn perform(
     if let Some(repo) = repository {
         let condition = crate::sqlite::notifications::records::scope_readable_condition();
         let allowed:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {condition})")).bind(user).bind(repo).fetch_one(&mut *connection).await?;
-        if !allowed {
+        let stub: bool = sqlx::query_scalar("SELECT is_stub FROM repositories WHERE id=?1")
+            .bind(repo)
+            .fetch_optional(&mut *connection)
+            .await?
+            .unwrap_or(false);
+        if !allowed
+            || (stub
+                && !codeyard_db_core::cells::notices::readable(scopes.home.as_ref(), repo).await)
+        {
             return Ok(ThreadInbox::default());
         }
     }
@@ -228,14 +249,25 @@ pub(super) async fn perform(
                 ..Default::default()
             })
         }
-        ThreadAction::GetSubscription(id) => manage_subscription(connection, user, id, None).await,
+        ThreadAction::GetSubscription(id) => {
+            manage_subscription(connection, scopes, user, id, None).await
+        }
         ThreadAction::SetSubscription {
             thread_id,
             subscribed,
             ignored,
-        } => manage_subscription(connection, user, thread_id, Some((subscribed, ignored))).await,
+        } => {
+            manage_subscription(
+                connection,
+                scopes,
+                user,
+                thread_id,
+                Some((subscribed, ignored)),
+            )
+            .await
+        }
         ThreadAction::DeleteSubscription(id) => {
-            manage_subscription(connection, user, id, Some((false, false))).await
+            manage_subscription(connection, scopes, user, id, Some((false, false))).await
         }
         action @ (ThreadAction::Get(_) | ThreadAction::Read(_) | ThreadAction::Done(_)) => {
             let id = match action {

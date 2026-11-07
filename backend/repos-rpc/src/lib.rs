@@ -3,6 +3,7 @@ use anyhow::Result;
 use codeyard_cluster_core::link::read_frame;
 use codeyard_cluster_core::link::write_frame;
 use codeyard_cluster_core::link::Link;
+use codeyard_db_core::cells::authorization::inherit;
 use codeyard_db_core::limits::MAX_JSON;
 use codeyard_repos_core::context::NodeContext;
 use codeyard_repos_core::wire::invalid;
@@ -77,7 +78,7 @@ impl SessionGate {
         F: Future + Send + 'static,
         F::Output: Send + 'static,
     {
-        tokio::spawn(self.running.track_future(work))
+        tokio::spawn(inherit(self.running.track_future(work)))
     }
 
     /// Refuses sessions from now on. Sessions already admitted keep running.

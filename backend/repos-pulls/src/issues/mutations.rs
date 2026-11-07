@@ -1,5 +1,6 @@
 use crate::issues::database_error;
 use crate::issues::OperationError;
+use codeyard_db_core::cells::authorization::inherit;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::create::create_and_broadcast_notification;
 use codeyard_notifications::create::notify_subscribers;
@@ -92,7 +93,7 @@ pub async fn close_duplicate(
     duplicate: i64,
 ) -> Result<codeyard_db_core::models::Issue, OperationError> {
     let (pool, broadcaster, actor) = (pool.clone(), broadcaster.clone(), actor.into());
-    tokio::spawn(async move {
+    tokio::spawn(inherit(async move {
         let user = crate::issues::actor(&pool, actor.user_id).await?;
         let (repository, owner) = crate::issues::repository(&pool, repo).await?;
         let (previous, saved) =
@@ -131,7 +132,7 @@ pub async fn close_duplicate(
             .await;
         }
         Ok(saved)
-    })
+    }))
     .await
     .unwrap_or_else(|_| {
         Err(OperationError::Unavailable {
@@ -171,7 +172,7 @@ pub async fn create_issue_with_metadata(
     metadata: codeyard_db_repos::issues::OwnedIssueMetadata,
 ) -> Result<codeyard_db_core::models::Issue, OperationError> {
     let (pool, broadcaster, actor) = (pool.clone(), broadcaster.clone(), actor.into());
-    tokio::spawn(async move {
+    tokio::spawn(inherit(async move {
         create_issue_owned(
             &pool,
             &broadcaster,
@@ -182,7 +183,7 @@ pub async fn create_issue_with_metadata(
             metadata.borrowed(),
         )
         .await
-    })
+    }))
     .await
     .unwrap_or_else(|_| {
         Err(OperationError::Unavailable {

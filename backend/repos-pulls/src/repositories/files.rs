@@ -1,6 +1,7 @@
 //! Web editor and API file writes: check who may write where, then have the store
 //! commit the file and move the branch, failing if it changed since the editor loaded.
 use codeyard_ci_engine::runs::CiRuns;
+use codeyard_db_core::cells::authorization::inherit;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitInfo;
@@ -648,7 +649,7 @@ async fn publish_commit(
         new_branch.map(str::to_owned),
     );
     // Once publication starts, client cancellation must not abandon accepted-write follow-ups.
-    tokio::spawn(async move {
+    tokio::spawn(inherit(async move {
     let (pool, store, ci, repository, prepared, new_branch) = (
         &pool, &store, &ci, &repository, &prepared, new_branch.as_deref(),
     );
@@ -728,7 +729,7 @@ async fn publish_commit(
         commit,
         actor: user,
     })
-    }).await.map_err(|_| WriteError {
+    })).await.map_err(|_| WriteError {
         kind: WriteFailure::SavedFollowupFailed,
         message: "File publication was interrupted; check the branch before retrying.".into(),
     })?

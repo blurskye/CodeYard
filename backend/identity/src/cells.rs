@@ -295,6 +295,13 @@ impl Local {
     async fn answer(&self, proof: &Proof) -> Result<Option<Answer>> {
         proof.validate()?;
         let pool = &self.pool;
+        use codeyard_db_core::cells::authorization::{freshness, heartbeat};
+        let read = freshness::policy()?
+            .start(chrono::Utc::now(), std::time::Instant::now())
+            .ok_or_else(|| anyhow::anyhow!("Identity freshness is unavailable"))?;
+        let Some(heartbeat) = heartbeat::primary(pool, proof).await? else {
+            return Ok(None);
+        };
         let (user, id, write, expires_at, authority) = match proof {
             Proof::Token { hash, .. } => {
                 // A token issued by another cell is native here after its account moved.
@@ -481,7 +488,18 @@ impl Local {
         {
             return Ok(None);
         }
+        anyhow::ensure!(
+            read.prove(
+                heartbeat,
+                expires_at,
+                chrono::Utc::now(),
+                std::time::Instant::now()
+            )
+            .is_some(),
+            "Identity proof expired"
+        );
         let mut answer = Answer {
+            heartbeat,
             home: pool.cell_id(),
             user,
             credential_id: id,

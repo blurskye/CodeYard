@@ -46,6 +46,7 @@ enum Request {
     Snapshot(codeyard_db_core::cells::repositories::SnapshotRequest),
     Pointer(codeyard_db_core::cells::pointers::Event),
     Notice(Box<codeyard_db_core::cells::notices::Event>),
+    NoticePublic(i64),
     Push(codeyard_db_core::cells::pulls::Event),
     Subscribe {
         binding: codeyard_db_core::cells::pulls::Binding,
@@ -72,6 +73,7 @@ enum Reply {
     PullSnapshot(Option<codeyard_db_core::cells::repositories::Snapshot>),
     PullGrant(Option<codeyard_db_core::cells::pulls::Grant>),
     Done,
+    NoticePublic(bool),
     Unavailable,
 }
 pub struct Remote {
@@ -835,6 +837,26 @@ impl Home for Remote {
             Ok(())
         })
     }
+    fn notice_public(&self, repository: i64) -> BoxFuture<'_, Result<bool>> {
+        Box::pin(async move {
+            let _slot = self.slots.clone().try_acquire_owned()?;
+            let object = Object {
+                kind: ObjectKind::Repository,
+                id: repository,
+            };
+            object.validate()?;
+            let Some(cell) = self.routes.by_object(object).await? else {
+                return Ok(false);
+            };
+            match self
+                .exchange(&cell, &Request::NoticePublic(repository))
+                .await?
+            {
+                Reply::NoticePublic(public) => Ok(public),
+                _ => anyhow::bail!("Notice visibility is unavailable"),
+            }
+        })
+    }
     fn send_notice<'a>(
         &'a self,
         event: &'a codeyard_db_core::cells::notices::Event,
@@ -951,6 +973,19 @@ impl codeyard_db_core::cells::notices::Admission for NoticeAdmission {
         event: &'a codeyard_db_core::cells::notices::Event,
     ) -> BoxFuture<'a, Result<codeyard_support::cells::Prefix>> {
         Box::pin(async move {
+            if event.withdrawn {
+                // A deleted source has no directory home. Withdrawal can only narrow an
+                // existing stub owned by this authenticated cell, never insert metadata.
+                let caller = enrolled(&self.directory, self.peer).await?;
+                event.validate(caller)?;
+                ensure!(
+                    matches!(self.directory.request(&DirectoryRequest::Home {
+                    object: event.notice.recipient(),
+                }).await?, DirectoryReply::Home(Some(home)) if home == self.recipient),
+                    "Notice recipient has another home"
+                );
+                return Ok(caller);
+            }
             roots(
                 &self.directory,
                 self.peer,
@@ -1067,7 +1102,7 @@ impl rpc::Service for Accounts {
         bytes: &'a [u8],
         output: &'a mut (dyn tokio::io::AsyncWrite + Unpin + Send),
     ) -> BoxFuture<'a, Result<()>> {
-        Box::pin(async move {
+        Box::pin(codeyard_db_core::cells::authorization::scope(async move {
             use codeyard_cluster_core::link::write_frame;
             use tokio::io::AsyncReadExt;
             self.admitted(peer).await?;
@@ -1158,13 +1193,13 @@ impl rpc::Service for Accounts {
             write_frame(output, b"", 32768).await?;
             write_frame(output, &serde_json::to_vec(&snapshot)?, 128 * 1024).await?;
             Ok(())
-        })
+        }))
     }
     fn admit<'a>(&'a self, peer: PublicKey) -> BoxFuture<'a, Result<()>> {
         Box::pin(async move { self.admitted(peer).await })
     }
     fn handle<'a>(&'a self, peer: PublicKey, bytes: &'a [u8]) -> BoxFuture<'a, Result<Vec<u8>>> {
-        Box::pin(async move {
+        Box::pin(codeyard_db_core::cells::authorization::scope(async move {
             self.admitted(peer).await?;
             let request: Request = serde_json::from_slice(bytes)?;
             let reply = match request {
@@ -1264,6 +1299,12 @@ impl rpc::Service for Accounts {
                         Err(_) => Reply::Unavailable,
                     }
                 }
+                Request::NoticePublic(repository) => {
+                    match self.home.notice_public(repository).await {
+                        Ok(public) => Reply::NoticePublic(public),
+                        Err(_) => Reply::Unavailable,
+                    }
+                }
                 Request::Notice(event) => {
                     let admission = NoticeAdmission {
                         directory: self.directory.clone(),
@@ -1302,7 +1343,7 @@ impl rpc::Service for Accounts {
             };
             self.admitted(peer).await?;
             Ok(serde_json::to_vec(&reply)?)
-        })
+        }))
     }
 }
 pub async fn listen(

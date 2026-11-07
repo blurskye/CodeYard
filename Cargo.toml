@@ -157,7 +157,7 @@ debug = false
 
 [workspace]
 resolver = "2"
-members = ["backend/cells/router", "backend/repos-rpc", "backend/ci-engine", "backend/webhooks", "backend/cluster", "backend/cluster/core", "backend/ci", "backend/repos", "backend/storage", "backend/ssh", "backend/test-support", "backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app",
+members = ["backend/cache", "backend/cells/router", "backend/repos-rpc", "backend/ci-engine", "backend/webhooks", "backend/cluster", "backend/cluster/core", "backend/ci", "backend/repos", "backend/storage", "backend/ssh", "backend/test-support", "backend/api/rest", "backend/api/graphql", "backend/api/repos", "backend/api/github", "backend/api/http", "backend/app",
     "backend/repos-core", "backend/repos-pulls", "backend/notifications", "backend/identity", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/directory", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
 default-members = [".", "backend/cells/router", "backend/api/github-graphql", "backend/ci/runner", "backend/db/actions", "backend/db/cluster", "backend/db/directory", "backend/db/core", "backend/db/identity", "backend/db/orgs", "backend/db/repos", "backend/db/security", "backend/git", "backend/model", "backend/support", "webui"]
 
@@ -190,6 +190,7 @@ codeyard-api-repos = { path = "backend/api/repos" }
 codeyard-api-github = { path = "backend/api/github" }
 codeyard-api-http = { path = "backend/api/http" }
 codeyard-app = { path = "backend/app" }
+codeyard-cache = { path = "backend/cache" }
 codeyard-notifications = { path = "backend/notifications" }
 codeyard-identity = { path = "backend/identity" }
 codeyard-db-cluster = { path = "backend/db/cluster" }

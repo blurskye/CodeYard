@@ -4222,19 +4222,11 @@ CREATE TABLE cell_prefixes (prefix INTEGER PRIMARY KEY CHECK(prefix =0));
 -- cell with one asks the account's new home instead of failing.
 CREATE TABLE moved_credentials (token_hash TEXT PRIMARY KEY CHECK (length(token_hash)=64));
 
--- Short-lived home-cell authorization answers; stub rows own no personal credentials.
-CREATE TABLE foreign_credentials (
-    slot INTEGER PRIMARY KEY CHECK (slot BETWEEN 0 AND 9999),
-    cache_key TEXT NOT NULL UNIQUE CHECK (length(cache_key)=64),
-    credential_hash TEXT NOT NULL CHECK (length(credential_hash)=64),
-    kind TEXT NOT NULL CHECK (kind IN ('token','session','ssh')),
-    credential_id INTEGER,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    answer TEXT NOT NULL CHECK (length(answer)<=131072),
-    validated_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL
+-- Cell-local identity freshness, selected in the same snapshot as credentials.
+CREATE TABLE identity_heartbeat (
+    id INTEGER PRIMARY KEY CHECK (id=1),
+    committed_at TEXT NOT NULL
 );
-CREATE INDEX foreign_credentials_identity ON foreign_credentials(kind,credential_id,expires_at);
 
 -- A user's home keeps discovery pointers; the resource cell still checks every read.
 CREATE TABLE remote_pointers (
@@ -4370,3 +4362,21 @@ CREATE TABLE remote_pull_requests (
 );
 CREATE INDEX remote_pull_requests_head ON remote_pull_requests(head_repo_id,head_branch,base_repo_id,number);
 CREATE INDEX remote_pull_requests_publisher ON remote_pull_requests(publisher_id);
+
+CREATE INDEX cell_outbox_notice_repository ON cell_outbox(root_id) WHERE topic='notice';
+CREATE TRIGGER refresh_remote_notice_visibility AFTER UPDATE OF is_private,is_internal ON repositories BEGIN
+    UPDATE cell_outbox SET delivered_at=NULL,next_attempt_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),attempts=attempts+1
+      WHERE topic='notice' AND root_kind='repository' AND root_id=OLD.id;
+END;
+CREATE TRIGGER refresh_remote_notice_deletion AFTER DELETE ON repositories BEGIN
+    UPDATE cell_outbox SET delivered_at=NULL,next_attempt_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),attempts=attempts+1
+      WHERE topic='notice' AND root_kind='repository' AND root_id=OLD.id;
+END;
+CREATE TRIGGER refresh_remote_notice_membership_update AFTER UPDATE ON repo_access BEGIN
+    UPDATE cell_outbox SET delivered_at=NULL,next_attempt_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),attempts=attempts+1
+      WHERE topic='notice' AND root_kind='repository' AND root_id=OLD.repo_id;
+END;
+CREATE TRIGGER refresh_remote_notice_membership_delete AFTER DELETE ON repo_access BEGIN
+    UPDATE cell_outbox SET delivered_at=NULL,next_attempt_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),attempts=attempts+1
+      WHERE topic='notice' AND root_kind='repository' AND root_id=OLD.repo_id;
+END;

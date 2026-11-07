@@ -172,12 +172,11 @@ async fn deliver(pool: &DbPool, consumer: Option<&dyn Consumer>) -> Result<bool>
                 let notice: super::notices::Notice = serde_json::from_str(&payload)?;
                 notice.validate(native.cell_id())?;
                 ensure!(kind == "repository" && root == notice.repository.id, Refusal::Denied);
-                // A repository that went private or was deleted since the mention sends nothing.
+                // Replayed notices refresh recipients after privacy, grant or deletion changes.
                 let public: Option<bool> = sqlx::query_scalar("SELECT NOT is_private AND NOT is_internal FROM repositories WHERE id=$1 AND NOT is_stub")
                     .bind(root).fetch_optional(native).await?;
-                if public != Some(true) { return Ok(()); }
                 let home = native.foreign_authorization().ok_or(Refusal::Unavailable)?;
-                return home.send_notice(&super::notices::Event { id, notice }).await;
+                return home.send_notice(&super::notices::Event { id, notice, withdrawn: public != Some(true) }).await;
             }
             if topic == POINTER_TOPIC {
                 let change: super::pointers::Change = serde_json::from_str(&payload)?;

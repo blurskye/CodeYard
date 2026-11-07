@@ -356,7 +356,7 @@ async fn markdown(
             .await?;
         }
     }
-    render(input.text, references).await
+    render_cached(&state, input.text, references).await
 }
 pub(super) async fn resolve_references(
     state: &AppState,
@@ -391,11 +391,12 @@ pub(super) async fn resolve_references(
     .map_err(Error::unavailable)
 }
 
-async fn raw_markdown(body: String) -> Result<Response> {
+async fn raw_markdown(State(state): State<Arc<AppState>>, body: String) -> Result<Response> {
     if body.len() > 400 * 1024 {
         return Err(Error::validation("Markdown", "text", "invalid"));
     }
-    render(
+    render_cached(
+        &state,
         body,
         codeyard_webui::components::references::References::default(),
     )
@@ -405,12 +406,44 @@ pub(super) async fn render(
     text: String,
     references: codeyard_webui::components::references::References,
 ) -> Result<Response> {
-    let html = tokio::task::spawn_blocking(move || {
+    let html = render_html(text, references).await?;
+    Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response())
+}
+
+async fn render_html(
+    text: String,
+    references: codeyard_webui::components::references::References,
+) -> Result<String> {
+    tokio::task::spawn_blocking(move || {
         codeyard_webui::components::parse_markdown(&text, &references)
     })
     .await
-    .map_err(Error::unavailable)?;
-    Ok(([(header::CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response())
+    .map_err(Error::unavailable)
+}
+
+async fn render_cached(
+    state: &AppState,
+    text: String,
+    references: codeyard_webui::components::references::References,
+) -> Result<Response> {
+    // Repository access and reference audience resolution have already run. The complete
+    // resolved references are content, not cached authority, and participate in the key.
+    let options = serde_json::to_vec(&references).map_err(Error::unavailable)?;
+    let key = state.content_cache.key(
+        codeyard_cache::Family::Markdown,
+        &[b"markdown-v1", text.as_bytes(), &options],
+    );
+    let html = state
+        .content_cache
+        .get_or_try_init(&key, std::time::Duration::from_secs(300), || async {
+            render_html(text, references).await.map(String::into_bytes)
+        })
+        .await?;
+    Ok((
+        [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        html.to_vec(),
+    )
+        .into_response())
 }
 
 async fn emojis() -> Json<Value> {
