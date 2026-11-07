@@ -1,0 +1,82 @@
+{{- if .Values.postgres.cnpg.enabled }}
+{{- $fullname := include "codeyard.fullname" . -}}
+{{- $cnpg := .Values.postgres.cnpg -}}
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: {{ $fullname }}-pg
+  labels:
+    {{- include "codeyard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  instances: {{ $cnpg.instances }}
+  imageName: {{ $cnpg.imageName | quote }}
+  primaryUpdateStrategy: unsupervised
+  certificates:
+    # PgBouncer presents the server certificate, so it must name the pooler Service too.
+    serverAltDNSNames:
+      - {{ $fullname }}-pgbouncer
+      - {{ $fullname }}-pgbouncer.{{ .Release.Namespace }}
+      - {{ $fullname }}-pgbouncer.{{ .Release.Namespace }}.svc
+  bootstrap:
+    initdb:
+      database: codeyard
+      owner: codeyard
+      dataChecksums: true
+  postgresql:
+    # Fail closed: commits wait for a standby, and only a standby with every confirmed
+    # commit may be promoted.
+    synchronous:
+      method: any
+      number: {{ $cnpg.synchronousStandbys }}
+      dataDurability: required
+      failoverQuorum: true
+    {{- with $cnpg.parameters }}
+    parameters:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  storage:
+    size: {{ $cnpg.storage.size }}
+    {{- if ne $cnpg.storage.storageClass nil }}
+    storageClass: {{ $cnpg.storage.storageClass | quote }}
+    {{- end }}
+  {{- with $cnpg.resources }}
+  resources:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with $cnpg.affinity }}
+  affinity:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Pooler
+metadata:
+  name: {{ $fullname }}-pgbouncer
+  labels:
+    {{- include "codeyard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgbouncer
+spec:
+  cluster:
+    name: {{ $fullname }}-pg
+  instances: {{ $cnpg.pooler.instances }}
+  type: rw
+  pgbouncer:
+    poolMode: transaction
+    {{- with $cnpg.pooler.parameters }}
+    parameters:
+      {{- toYaml . | nindent 6 }}
+    {{- end }}
+  template:
+    spec:
+      containers: []
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    cnpg.io/poolerName: {{ $fullname }}-pgbouncer
+{{- end }}
