@@ -12,7 +12,11 @@ kept=$(sed -n 's/^kept //p' "$out" | tail -n 1)
 if [[ -n $kept && -d $kept ]]; then
     while IFS= read -r log; do
         echo "==== $log"
-        grep -n -E 'dependency unavailable|mutation failed|unavailable|refused|panicked| ERROR ' "$log" | cut -c1-1500 | head -n 80
+        if [[ ${2:-cluster} == cluster ]]; then
+            grep -n -E 'dependency unavailable|mutation failed|unavailable|refused|panicked| ERROR ' "$log" | cut -c1-1500 | head -n 80
+        else
+            grep -n -v -E 'INFO (tower_http|codeyard_api_http::access)' "$log" | cut -c1-700 | head -n 250
+        fi
     done < <(find "$kept" -name server.log | sort)
     while IFS= read -r log; do
         echo "==== $log"
