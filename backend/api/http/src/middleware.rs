@@ -183,14 +183,24 @@ pub async fn foreign_authorization(
         })
         .collect();
     codeyard_db_core::cells::authorization::scope(async {
-        for proof in foreign {
-            if authorize(&state.pool, &proof).await.is_err() {
+        for proof in &foreign {
+            if authorize(&state.pool, proof).await.is_err() {
                 return codeyard_model::github_error::Error::unavailable(()).into_response();
             }
         }
         let response = next.run(request).await;
         if codeyard_db_core::cells::authorization::ensure_current().is_err() {
-            return codeyard_model::github_error::Error::unavailable(()).into_response();
+            // Long operations (including forwarding a fork) may outlive admission.
+            // Ask the primary again before exposing their response; never renew an
+            // old snapshot just because the downstream work completed.
+            for proof in &foreign {
+                if !matches!(authorize(&state.pool, proof).await, Ok(Some(_))) {
+                    return codeyard_model::github_error::Error::unavailable(()).into_response();
+                }
+            }
+            if codeyard_db_core::cells::authorization::ensure_current().is_err() {
+                return codeyard_model::github_error::Error::unavailable(()).into_response();
+            }
         }
         response
     })

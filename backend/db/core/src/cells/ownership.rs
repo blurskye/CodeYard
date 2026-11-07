@@ -217,7 +217,6 @@ pub const TABLES: &[(&str, Rule)] = &[
         Owned(&[Parent("token_id", "personal_access_tokens")]),
     ),
     ("follows", Owned(&[Account("following_id")])),
-    ("identity_heartbeat", Cell),
     ("gist_comments", Owned(&[Repository("repo_id")])),
     ("gist_identifiers", Shared),
     ("gist_stars", Owned(&[Repository("repo_id")])),
@@ -256,6 +255,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("global_advisories", Shared),
     ("gpg_keys", Owned(&[Account("user_id")])),
     ("graphql_rate_limits", Cell),
+    ("identity_heartbeat", Cell),
     (
         "immutable_release_owner_names",
         Owned(&[Account("owner_id")]),

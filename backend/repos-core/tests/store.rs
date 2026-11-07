@@ -179,6 +179,10 @@ impl codeyard_db_core::cells::authorization::Home for ForeignPublicationHome {
 
 #[tokio::test]
 async fn foreign_publication_keeps_token_proof_live_grants_and_workflow_scope() {
+    codeyard_db_core::cells::authorization::scope(foreign_publication_contract()).await;
+}
+
+async fn foreign_publication_contract() {
     use codeyard_db_core::models::AccessLevel;
     use codeyard_db_core::{
         cells::authorization, queries::credentials::Actor,
@@ -216,7 +220,7 @@ async fn foreign_publication_keeps_token_proof_live_grants_and_workflow_scope() 
         home,
         hash: "a".repeat(64),
     };
-    assert!(authorization::admit(&a.pool, &proof)
+    assert!(authorization::authorize(&a.pool, &proof)
         .await
         .unwrap()
         .is_some());
@@ -300,7 +304,7 @@ async fn foreign_publication_keeps_token_proof_live_grants_and_workflow_scope() 
     provider
         .enabled
         .store(true, std::sync::atomic::Ordering::SeqCst);
-    assert!(authorization::admit(&a.pool, &proof)
+    assert!(authorization::authorize(&a.pool, &proof)
         .await
         .unwrap()
         .is_some());

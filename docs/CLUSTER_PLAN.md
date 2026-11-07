@@ -515,6 +515,13 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     added the cache, Redis and CRC16 without changing existing package versions.
     Remote contracts need external Valkey endpoints. `s7-cache-test.sh` is prepared;
     it waits for the active identity test job and the cache source checks.
+    Runtime 280f2198cf0543ff861b236ead01ffe7 finishes with four failed targets:
+    the ownership catalog order, foreign browser CSRF, the publication fixture's
+    missing operation scope, and a fork response outliving its admission proof.
+    Fixes sort the heartbeat classification, bound browser sessions by the proof
+    deadline, retain the fixture's proof in its operation and ask the home again
+    before exposing an expired operation's response. These fixes await checks.
+    Cache workspace and WASM pass; Clippy is still running.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
