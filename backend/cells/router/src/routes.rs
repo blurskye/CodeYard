@@ -216,9 +216,11 @@ impl Routes {
     /// cell of its prefix.
     pub async fn token_home(&self, prefix: Prefix, hash: &str) -> Result<Option<ReadyCell>> {
         let key = Key::new(KeyKind::Credential, hash).map_err(|_| Failure::Invalid)?;
-        match self.location(&key).await? {
-            Some(location) => self.cell(location.cell).await,
-            None => self.cell(prefix).await,
+        match self.location(&key).await {
+            Ok(Some(location)) => self.cell(location.cell).await,
+            // The chosen cell authenticates the token, so when the directory cannot be asked
+            // the issuing cell is still a safe choice.
+            Ok(None) | Err(_) => self.cell(prefix).await,
         }
     }
     pub async fn by_name(&self, name: &str) -> Result<Option<ReadyCell>> {
