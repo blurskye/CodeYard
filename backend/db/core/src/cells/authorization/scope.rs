@@ -17,6 +17,9 @@ pub(super) struct Verified {
     pub deadline: Deadline,
     /// The home was asked again after expiry and did not confirm; never ask twice.
     pub refused: bool,
+    /// One part of the operation is asking the home again. The proof stays in place, so
+    /// the operation's concurrent parts (GraphQL fields) keep using it until it runs out.
+    pub renewing: bool,
 }
 impl Verified {
     /// A proof the home refused is never current, even before its old deadline.
@@ -24,7 +27,9 @@ impl Verified {
         !self.refused && self.deadline.current(Utc::now(), Instant::now())
     }
     fn due(&self, margin: Duration) -> bool {
-        !self.refused && self.deadline.remaining(Utc::now(), Instant::now()) <= margin
+        !self.refused
+            && !self.renewing
+            && self.deadline.remaining(Utc::now(), Instant::now()) <= margin
     }
 }
 
@@ -55,30 +60,35 @@ pub(super) fn any_due(margin: Duration) -> bool {
         .unwrap_or(false)
 }
 
-/// Remove and return the due proofs, so asking for them again cannot recurse.
-pub(super) fn take_due(margin: Duration) -> Vec<Verified> {
+/// Mark the due proofs as being asked for again and return copies. The proofs stay in
+/// the operation, so its other parts keep working, and a nested call does not ask twice.
+pub(super) fn start_renewal(margin: Duration) -> Vec<Verified> {
     PROOFS
         .try_with(|proofs| {
             let mut proofs = proofs.borrow_mut();
-            let (due, kept) = proofs.drain(..).partition(|proof| proof.due(margin));
-            *proofs = kept;
+            let mut due = Vec::new();
+            for proof in proofs.iter_mut().filter(|proof| proof.due(margin)) {
+                proof.renewing = true;
+                due.push(proof.clone());
+            }
             due
         })
         .unwrap_or_default()
 }
 
-/// Put back a proof the home did not confirm. A refused one stays denied and the
+/// End a renewal the home did not confirm. A refused proof stays denied and the
 /// request's final check answers 503 instead of exposing the response; one the home
-/// could not be asked about stays usable until its own deadline.
-pub(super) fn restore(mut proof: Verified, refused: bool) {
-    proof.refused = refused;
+/// could not be asked about stays usable until its own deadline. A confirmed renewal
+/// already replaced the proof, so it is not touched here.
+pub(super) fn finish_renewal(old: &Verified, refused: bool) {
     let _ = PROOFS.try_with(|proofs| {
-        let mut proofs = proofs.borrow_mut();
-        if !proofs
-            .iter()
-            .any(|old| old.kind == proof.kind && old.hash == proof.hash)
+        for proof in proofs
+            .borrow_mut()
+            .iter_mut()
+            .filter(|proof| proof.renewing && proof.kind == old.kind && proof.hash == old.hash)
         {
-            proofs.push(proof);
+            proof.renewing = false;
+            proof.refused |= refused;
         }
     });
 }

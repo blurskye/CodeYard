@@ -1079,8 +1079,10 @@ engine_pair!(
 );
 
 async fn three_voters_keep_a_majority_and_recover_a_missed_write(pool: &DbPool) {
+    // The writes that must succeed keep the default 10-second write timeout: the fan-out
+    // already returns at a majority, and a 2-second budget for receive, two fsynced
+    // prepares and the vote poll was missed under a full parallel test run.
     let stores = Stores::with_voters(pool, 3).await;
-    set_timeout(pool, 2).await.unwrap();
     for voter in &stores.fixture.voters {
         let held = codeyard_db_cluster::cluster::writes::held_voters(pool, *voter)
             .await
@@ -1102,7 +1104,12 @@ async fn three_voters_keep_a_majority_and_recover_a_missed_write(pool: &DbPool) 
         "{status:?}: {}",
         String::from_utf8_lossy(&errors)
     );
-    assert!(String::from_utf8_lossy(&output).contains("ok refs/heads/main"));
+    assert!(
+        String::from_utf8_lossy(&output).contains("ok refs/heads/main"),
+        "{}{}",
+        String::from_utf8_lossy(&output),
+        String::from_utf8_lossy(&errors)
+    );
     let write = last_write(pool, stores.fixture.repo).await;
     assert_eq!(write.required_votes, 2);
     assert!(write.finished);

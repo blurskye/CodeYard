@@ -6,13 +6,15 @@ use codeyard_db_core::{
 };
 use codeyard_support::cells::Prefix;
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     Arc,
 };
 struct Provider {
     answer: Answer,
     live: AtomicBool,
     calls: AtomicUsize,
+    /// Milliseconds each answer waits, for a home that is slow to answer.
+    delay: AtomicU64,
 }
 impl Home for Provider {
     fn user<'a>(
@@ -33,6 +35,10 @@ impl Home for Provider {
     ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<Answer>>> {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::SeqCst);
+            let delay = self.delay.load(Ordering::SeqCst);
+            if delay > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+            }
             Ok(self.live.load(Ordering::SeqCst).then(|| {
                 let mut answer = self.answer.clone();
                 if answer.heartbeat == chrono::DateTime::<chrono::Utc>::MAX_UTC {
@@ -64,6 +70,7 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
         answer,
         live: AtomicBool::new(true),
         calls: AtomicUsize::new(0),
+        delay: AtomicU64::new(0),
     });
     pool.set_foreign_authorization(provider.clone());
     let value = format!("1.{}", "f".repeat(64));
@@ -515,6 +522,7 @@ async fn renewal(pool: &DbPool, answer: Answer, user: i64) {
         answer: answer.clone(),
         live: AtomicBool::new(true),
         calls: AtomicUsize::new(0),
+        delay: AtomicU64::new(0),
     });
     pool.set_foreign_authorization(provider.clone());
     let proof = Proof::Token {
@@ -554,6 +562,24 @@ async fn renewal(pool: &DbPool, answer: Answer, user: i64) {
                 .unwrap(),
             "a task outside the operation has no proof"
         );
+        // In the second half of its life the proof is asked for again by one part of the
+        // operation, while a concurrent part (another GraphQL field) keeps using it.
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        provider.delay.store(300, Ordering::SeqCst);
+        let (renewed, concurrent) = tokio::join!(
+            codeyard_db_repos::graphql::admit_query(pool, &actor),
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                visible(pool.clone(), hash.clone()).await
+            }
+        );
+        provider.delay.store(0, Ordering::SeqCst);
+        assert!(renewed.is_ok());
+        assert!(
+            concurrent,
+            "the proof stays usable while it is asked for again"
+        );
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         assert!(authorization::ensure_current().is_err());
         assert!(
@@ -562,7 +588,7 @@ async fn renewal(pool: &DbPool, answer: Answer, user: i64) {
                 .is_ok(),
             "an expired proof is asked for again before the next operation"
         );
-        assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+        assert_eq!(provider.calls.load(Ordering::SeqCst), 3);
         authorization::ensure_current().unwrap();
         provider.live.store(false, Ordering::SeqCst);
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
@@ -576,7 +602,7 @@ async fn renewal(pool: &DbPool, answer: Answer, user: i64) {
         }
         assert_eq!(
             provider.calls.load(Ordering::SeqCst),
-            3,
+            4,
             "a refusal is not asked again"
         );
         assert!(authorization::ensure_current().is_err());
@@ -612,6 +638,7 @@ async fn contract(pg: bool) {
         },
         live: AtomicBool::new(true),
         calls: AtomicUsize::new(0),
+        delay: AtomicU64::new(0),
     });
     pool.set_foreign_authorization(provider.clone());
     let metadata = codeyard_identity::cells::resolve_user(pool, &remote.username)
@@ -731,6 +758,7 @@ async fn contract(pg: bool) {
         answer: forged,
         live: AtomicBool::new(true),
         calls: AtomicUsize::new(0),
+        delay: AtomicU64::new(0),
     }));
     assert!(authorization::authorize(
         pool,
@@ -756,6 +784,7 @@ async fn contract(pg: bool) {
         answer: private,
         live: AtomicBool::new(true),
         calls: AtomicUsize::new(0),
+        delay: AtomicU64::new(0),
     }));
     assert!(authorization::authorize(
         pool,
@@ -775,6 +804,7 @@ async fn contract(pg: bool) {
         answer: private_metadata.clone(),
         live: AtomicBool::new(true),
         calls: AtomicUsize::new(0),
+        delay: AtomicU64::new(0),
     }));
     assert!(
         codeyard_identity::cells::resolve_user(pool, "private-metadata")
@@ -795,6 +825,7 @@ async fn contract(pg: bool) {
         answer: stale,
         live: AtomicBool::new(true),
         calls: AtomicUsize::new(0),
+        delay: AtomicU64::new(0),
     }));
     assert!(authorization::authorize(pool, &proof).await.is_err());
     {

@@ -419,6 +419,12 @@ pub type Provider = Arc<dyn Home>;
 pub async fn authorize(pool: &DbPool, proof: &Proof) -> Result<Option<Answer>> {
     proof.validate()?;
     scope::forget(proof.kind(), &proof.hash());
+    ask(pool, proof).await
+}
+
+/// One question to the home. A confirmed answer replaces the operation's earlier proof
+/// of the same credential; the caller decides what a refusal does to that proof.
+async fn ask(pool: &DbPool, proof: &Proof) -> Result<Option<Answer>> {
     let Some(provider) = pool.foreign_authorization() else {
         return Ok(None);
     };
@@ -456,6 +462,7 @@ pub async fn authorize(pool: &DbPool, proof: &Proof) -> Result<Option<Answer>> {
         hash: proof.hash(),
         deadline,
         refused: false,
+        renewing: false,
     })?;
     Ok(lookup(
         pool,
@@ -491,15 +498,17 @@ pub async fn refresh(pool: &DbPool) {
         ask_again(pool, margin).await;
     }
 }
-/// Boxed because admission itself runs native operations, which call `refresh`.
+/// Boxed because admission itself runs native operations, which call `refresh`. The
+/// old proof stays in the operation while the home is asked: GraphQL resolves fields
+/// concurrently in one task, and a field must not find the proof missing meanwhile.
 fn ask_again(pool: &DbPool, margin: std::time::Duration) -> BoxFuture<'_, ()> {
     Box::pin(async move {
-        for old in scope::take_due(margin) {
-            match authorize(pool, &old.proof).await {
+        for old in scope::start_renewal(margin) {
+            match ask(pool, &old.proof).await {
                 Ok(Some(_)) => {}
                 // The home could not answer; the old proof keeps its own deadline.
-                Err(_) if old.current() => scope::restore(old, false),
-                _ => scope::restore(old, true),
+                Err(_) if old.current() => scope::finish_renewal(&old, false),
+                _ => scope::finish_renewal(&old, true),
             }
         }
     })
