@@ -485,11 +485,16 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     `IDENTITY_MAXIMUM_AGE_MS` (2000) and `IDENTITY_CLOCK_ERROR_MS` (250), but no running
     reader consumes that configuration yet. It is not wired into readers;
     the old foreign cache remains until the snapshot/RPC/transaction replacement is complete.
-    The next unchecked source change rejects expired foreign proofs after PostgreSQL
-    user-row lock waits and after repository/policy reads, with a real lock-wait regression
-    in the database contract. This is not the heartbeat replacement: it still uses the
-    old cache's deadline, and snapshot/RPC integration and cache removal remain open.
-    The optional content cache is not started.
+    Foreign proofs now reject expiry after PostgreSQL user-row lock waits and after
+    repository/policy reads. Workspace fccfcb3a68684eec9227aded28d5586d, Clippy
+    65a4644af98741149d6cd19687ebeef8 and WASM e8886cf24abb453b8147cc7e87430afa pass;
+    runtime 988f12f45c6f46e68acbd6e1d6c24f40 runs the real lock-wait regression,
+    both-engine authorization contracts, core library and cluster tests.
+    This still uses the old cache deadline, not a heartbeat snapshot. Before adding an
+    identity-heartbeat table, the owner must assign its cell-local entry to the stage-6
+    lane or permit this lane to edit `cells/ownership.rs`: its exhaustive table test
+    rejects unclassified tables, and this lane is forbidden to edit that file.
+    Snapshot/RPC integration, cache removal and the optional content cache remain open.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a
@@ -502,8 +507,8 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     package-collection leases and migrations past a transaction-pooling PgBouncer, and the
     PgBouncer e2e round sets it. Not written: `tsvector` ranking (it would change matching
     from substrings to words, an owner choice); keyset paging (the GitHub API pages by
-    number, and OFFSET is already capped at 1,000); acceptance of the notice privacy fix
-    above; read routing from the session's last write position (token
+    number, and OFFSET is already capped at 1,000); read routing from the session's last
+    write position (token
     clients carry no position, so a primary-free check needs shared state such as the
     optional cache); item 4, the heartbeat-proved credential read; item 5, the cache.
     The e2e run (job 34215ceffd2d4150b4cc419834481210) stopped at its 140-minute cap in
