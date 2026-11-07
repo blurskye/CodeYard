@@ -208,6 +208,12 @@ spec:
             {{- end }}
             {{- end }}
           {{- if ne $role "runner" }}
+          lifecycle:
+            preStop:
+              # Keep serving while Services and the ingress drop this pod, so a rolling
+              # restart does not send requests to a closed listener.
+              exec:
+                command: ["sleep", "5"]
           ports:
             - name: cluster
               containerPort: 7445

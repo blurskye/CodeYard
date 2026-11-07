@@ -66,6 +66,7 @@ grep -q 'type: OnDelete' "$work/storage.yaml"
 # Git push sockets and the SSH host key need a sticky /tmp, which only a memory emptyDir is.
 resource "$work/all.yaml" Deployment codeyard-ssh > "$work/ssh.yaml"
 grep -q 'value: /tmp/host_key' "$work/ssh.yaml"
+resource "$work/all.yaml" Deployment codeyard-web | grep -q 'preStop:'
 for file in ssh.yaml storage.yaml; do grep -q 'medium: Memory' "$work/$file"; done
 if grep -q 'medium: Memory' "$work/runner.yaml"; then
     echo 'Runner /tmp should stay on disk' >&2

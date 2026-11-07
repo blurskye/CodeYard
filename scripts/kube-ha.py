@@ -616,6 +616,13 @@ def step_kill(forge):
 def step_drain(forge):
     primary = pg_cluster()["status"]["currentPrimary"]
     node = kube_json("get", "pod", primary)["spec"]["nodeName"]
+    # Draining evicts every pod on the node; only go ahead when they are all ours.
+    others = [f"{pod['metadata']['namespace']}/{pod['metadata']['name']}"
+              for pod in kube_json("get", "pods", "--all-namespaces", "--field-selector",
+                                   f"spec.nodeName={node}", namespaced=False)["items"]
+              if pod["metadata"]["namespace"] != NS
+              and not any(owner["kind"] == "DaemonSet" for owner in pod["metadata"].get("ownerReferences", []))]
+    expect(not others, f"{node} also runs {', '.join(others)}; not draining it")
     before = web_restarts()
     drained = None
     try:
