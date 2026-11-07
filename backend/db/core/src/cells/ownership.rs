@@ -1,19 +1,37 @@
 //! Where every table's rows belong, so an account move (architecture stage 6) knows which
-//! rows to copy. A row belongs to the first non-null reference in its rule: an account, a
-//! repository (its owner's), or a parent row. Rows whose references are all null stay with
-//! the cell. `Cell` tables hold this cell's machines, queues, limits and caches and never
-//! move; `Shared` tables hold reference data or content that any cell may hold, and a move
-//! copies only the rows its moved rows point at. The test below fails when a table in either
-//! schema has no rule, or a rule names a missing column or table.
+//! rows to copy and which writes its freeze refuses. A row belongs to the first non-null
+//! reference in its rule: an account, a repository (its owner's), or a parent row. Rows whose
+//! references are all null stay with the cell. `Cell` tables hold this cell's machines,
+//! queues, limits and caches and never move; `Shared` tables hold reference data or content
+//! that any cell may hold, and a move copies only the rows its moved rows point at. The tests
+//! below fail when a table in either schema has no rule, a rule names a missing column or
+//! table, or the PostgreSQL baseline's move guard for a table differs from its rule.
+use codeyard_model::cells::ObjectKind;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Reference {
-    /// A user or organization id.
-    Account(&'static str),
+    /// A user id.
+    User(&'static str),
+    /// An organization id.
+    Organization(&'static str),
+    /// An account id whose kind (`user` or `org`) is in the first column.
+    Owner(&'static str, &'static str),
     /// A repository id; the repository's owner decides.
     Repository(&'static str),
     /// The id of a row in another table, whose rule decides.
     Parent(&'static str, &'static str),
+}
+
+impl Reference {
+    pub fn column(self) -> &'static str {
+        match self {
+            User(column)
+            | Organization(column)
+            | Owner(_, column)
+            | Repository(column)
+            | Parent(column, _) => column,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -23,26 +41,27 @@ pub enum Rule {
     Shared,
 }
 
-use Reference::{Account, Parent, Repository};
+use Reference::{Organization, Owner, Parent, Repository, User};
 use Rule::{Cell, Owned, Shared};
 
 pub const TABLES: &[(&str, Rule)] = &[
+    ("account_moves", Cell),
     (
         "action_runner_group_repositories",
         Owned(&[Repository("repo_id")]),
     ),
-    ("action_runner_groups", Owned(&[Account("org_id")])),
+    ("action_runner_groups", Owned(&[Organization("org_id")])),
     (
         "action_runner_remove_tokens",
-        Owned(&[Repository("repo_id"), Account("org_id")]),
+        Owned(&[Repository("repo_id"), Organization("org_id")]),
     ),
     (
         "action_runner_tokens",
-        Owned(&[Repository("repo_id"), Account("org_id")]),
+        Owned(&[Repository("repo_id"), Organization("org_id")]),
     ),
     (
         "action_runners",
-        Owned(&[Repository("repo_id"), Account("org_id")]),
+        Owned(&[Repository("repo_id"), Organization("org_id")]),
     ),
     (
         "actions_blob_grants",
@@ -78,7 +97,7 @@ pub const TABLES: &[(&str, Rule)] = &[
         Owned(&[Parent("token_id", "personal_access_tokens")]),
     ),
     ("actions_oidc_key", Cell),
-    ("actions_oidc_org_settings", Owned(&[Account("org_id")])),
+    ("actions_oidc_org_settings", Owned(&[Organization("org_id")])),
     (
         "actions_oidc_properties",
         Owned(&[Parent(
@@ -92,7 +111,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ),
     (
         "actions_policies",
-        Owned(&[Repository("repo_id"), Account("org_id")]),
+        Owned(&[Repository("repo_id"), Organization("org_id")]),
     ),
     ("actions_replays", Owned(&[Parent("run_id", "ci_runs")])),
     ("actions_run_concurrency", Owned(&[Repository("repo_id")])),
@@ -118,20 +137,20 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("anonymous_sessions", Cell),
     ("artifact_attestations", Owned(&[Repository("repo_id")])),
     ("artifact_metadata", Owned(&[Repository("repo_id")])),
-    ("artifact_metadata_jobs", Owned(&[Account("org_id")])),
-    ("artifact_metadata_records", Owned(&[Account("org_id")])),
+    ("artifact_metadata_jobs", Owned(&[Organization("org_id")])),
+    ("artifact_metadata_records", Owned(&[Organization("org_id")])),
     ("attestation_bundles", Shared),
     (
         "attestation_subjects",
         Owned(&[Parent("attestation_id", "artifact_attestations")]),
     ),
-    ("audit_log", Owned(&[Account("org_id")])),
+    ("audit_log", Owned(&[Organization("org_id")])),
     ("auth_login_limits", Cell),
     ("branch_protection_rules", Owned(&[Repository("repo_id")])),
     ("branch_redirects", Owned(&[Repository("repo_id")])),
     ("cell_outbox", Cell),
     ("cell_prefixes", Cell),
-    ("cell_presence", Owned(&[Account("organization_id")])),
+    ("cell_presence", Owned(&[Organization("organization_id")])),
     ("cell_region_policy", Cell),
     ("cell_request_counts", Cell),
     (
@@ -165,7 +184,7 @@ pub const TABLES: &[(&str, Rule)] = &[
         Owned(&[Parent("alert_id", "code_scanning_alerts")]),
     ),
     ("code_scanning_uploads", Owned(&[Repository("repo_id")])),
-    ("code_security_configurations", Owned(&[Account("org_id")])),
+    ("code_security_configurations", Owned(&[Organization("org_id")])),
     ("codeql_databases", Owned(&[Repository("repo_id")])),
     ("commit_comments", Owned(&[Repository("repo_id")])),
     ("commit_status_history", Owned(&[Repository("repo_id")])),
@@ -204,7 +223,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("download_rate_limit", Cell),
     ("email_outbox", Cell),
     ("email_settings", Cell),
-    ("email_tokens", Owned(&[Account("user_id")])),
+    ("email_tokens", Owned(&[User("user_id")])),
     ("events", Owned(&[Repository("repo_id")])),
     ("file_reason_limits", Cell),
     ("files", Shared),
@@ -216,7 +235,7 @@ pub const TABLES: &[(&str, Rule)] = &[
         "fine_grained_tokens",
         Owned(&[Parent("token_id", "personal_access_tokens")]),
     ),
-    ("follows", Owned(&[Account("following_id")])),
+    ("follows", Owned(&[User("following_id")])),
     ("foreign_credentials", Cell),
     ("gist_comments", Owned(&[Repository("repo_id")])),
     ("gist_identifiers", Shared),
@@ -237,28 +256,28 @@ pub const TABLES: &[(&str, Rule)] = &[
     ),
     (
         "github_app_installations",
-        Owned(&[Account("org_id"), Account("user_id")]),
+        Owned(&[Organization("org_id"), User("user_id")]),
     ),
-    ("github_app_manifests", Owned(&[Account("user_id")])),
+    ("github_app_manifests", Owned(&[User("user_id")])),
     (
         "github_app_repositories",
         Owned(&[Parent("installation_id", "github_app_installations")]),
     ),
     (
         "github_app_requests",
-        Owned(&[Account("org_id"), Account("user_id")]),
+        Owned(&[Organization("org_id"), User("user_id")]),
     ),
     (
         "github_app_tokens",
         Owned(&[Parent("token_id", "personal_access_tokens")]),
     ),
-    ("github_apps", Owned(&[Account("owner_id")])),
+    ("github_apps", Owned(&[User("owner_id")])),
     ("global_advisories", Shared),
-    ("gpg_keys", Owned(&[Account("user_id")])),
+    ("gpg_keys", Owned(&[User("user_id")])),
     ("graphql_rate_limits", Cell),
     (
         "immutable_release_owner_names",
-        Owned(&[Account("owner_id")]),
+        Owned(&[Owner("owner_kind", "owner_id")]),
     ),
     (
         "immutable_release_publications",
@@ -271,12 +290,12 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("interaction_contributors", Owned(&[Repository("repo_id")])),
     (
         "interaction_limits",
-        Owned(&[Repository("repo_id"), Account("org_id"), Account("user_id")]),
+        Owned(&[Repository("repo_id"), Organization("org_id"), User("user_id")]),
     ),
     ("interaction_pull_bypass", Owned(&[Repository("repo_id")])),
     (
         "interaction_pull_caps",
-        Owned(&[Repository("repo_id"), Account("org_id")]),
+        Owned(&[Repository("repo_id"), Organization("org_id")]),
     ),
     ("issue_assignees", Owned(&[Parent("issue_id", "issues")])),
     ("issue_attribute_guard", Cell),
@@ -286,7 +305,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ),
     (
         "issue_attributes",
-        Owned(&[Account("owner_user_id"), Account("owner_org_id")]),
+        Owned(&[User("owner_user_id"), Organization("owner_org_id")]),
     ),
     ("issue_comment_pins", Owned(&[Parent("issue_id", "issues")])),
     ("issue_comments", Owned(&[Parent("issue_id", "issues")])),
@@ -314,40 +333,40 @@ pub const TABLES: &[(&str, Rule)] = &[
         "notification_thread_subscriptions",
         Owned(&[Parent("thread_id", "notification_threads")]),
     ),
-    ("notification_threads", Owned(&[Account("user_id")])),
-    ("notifications", Owned(&[Account("user_id")])),
-    ("oauth_accounts", Owned(&[Account("user_id")])),
-    ("oauth_app_grants", Owned(&[Account("user_id")])),
+    ("notification_threads", Owned(&[User("user_id")])),
+    ("notifications", Owned(&[User("user_id")])),
+    ("oauth_accounts", Owned(&[User("user_id")])),
+    ("oauth_app_grants", Owned(&[User("user_id")])),
     (
         "oauth_app_tokens",
         Owned(&[Parent("token_id", "personal_access_tokens")]),
     ),
-    ("oauth_applications", Owned(&[Account("owner_id")])),
+    ("oauth_applications", Owned(&[User("owner_id")])),
     ("oauth_states", Cell),
-    ("org_actions_keys", Owned(&[Account("org_id")])),
-    ("org_actions_settings", Owned(&[Account("org_id")])),
+    ("org_actions_keys", Owned(&[Organization("org_id")])),
+    ("org_actions_settings", Owned(&[Organization("org_id")])),
     (
         "org_actions_value_repositories",
         Owned(&[Repository("repo_id")]),
     ),
-    ("org_actions_values", Owned(&[Account("org_id")])),
-    ("org_dependabot_access", Owned(&[Account("org_id")])),
+    ("org_actions_values", Owned(&[Organization("org_id")])),
+    ("org_dependabot_access", Owned(&[Organization("org_id")])),
     (
         "org_dependabot_access_repositories",
         Owned(&[Repository("repo_id")]),
     ),
-    ("org_dependabot_keys", Owned(&[Account("org_id")])),
+    ("org_dependabot_keys", Owned(&[Organization("org_id")])),
     (
         "org_dependabot_secret_repositories",
         Owned(&[Repository("repo_id")]),
     ),
-    ("org_dependabot_secrets", Owned(&[Account("org_id")])),
-    ("org_memberships", Owned(&[Account("org_id")])),
-    ("org_private_registries", Owned(&[Account("org_id")])),
-    ("organization_blocks", Owned(&[Account("org_id")])),
+    ("org_dependabot_secrets", Owned(&[Organization("org_id")])),
+    ("org_memberships", Owned(&[Organization("org_id")])),
+    ("org_private_registries", Owned(&[Organization("org_id")])),
+    ("organization_blocks", Owned(&[Organization("org_id")])),
     (
         "organization_external_property_installations",
-        Owned(&[Account("org_id")]),
+        Owned(&[Organization("org_id")]),
     ),
     (
         "organization_external_property_values",
@@ -359,19 +378,19 @@ pub const TABLES: &[(&str, Rule)] = &[
     ),
     (
         "organization_immutable_releases",
-        Owned(&[Account("org_id")]),
+        Owned(&[Organization("org_id")]),
     ),
-    ("organization_invitations", Owned(&[Account("org_id")])),
-    ("organization_member_history", Owned(&[Account("org_id")])),
+    ("organization_invitations", Owned(&[Organization("org_id")])),
+    ("organization_member_history", Owned(&[Organization("org_id")])),
     (
         "organization_repository_properties",
-        Owned(&[Account("org_id")]),
+        Owned(&[Organization("org_id")]),
     ),
-    ("organization_role_assignments", Owned(&[Account("org_id")])),
+    ("organization_role_assignments", Owned(&[Organization("org_id")])),
     ("organization_roles", Shared),
-    ("organization_settings", Owned(&[Account("org_id")])),
-    ("organization_token_policies", Owned(&[Account("org_id")])),
-    ("organizations", Owned(&[Account("id")])),
+    ("organization_settings", Owned(&[Organization("org_id")])),
+    ("organization_token_policies", Owned(&[Organization("org_id")])),
+    ("organizations", Owned(&[Organization("id")])),
     ("osv_advisories", Shared),
     ("osv_packages", Shared),
     (
@@ -399,13 +418,13 @@ pub const TABLES: &[(&str, Rule)] = &[
     ),
     (
         "packages",
-        Owned(&[Account("owner_user_id"), Account("owner_org_id")]),
+        Owned(&[User("owner_user_id"), Organization("owner_org_id")]),
     ),
     ("pages_builds", Owned(&[Repository("id")])),
     ("pages_deployments", Owned(&[Repository("id")])),
     ("pages_sites", Owned(&[Repository("repo_id")])),
     ("pending_object_deletions", Cell),
-    ("personal_access_tokens", Owned(&[Account("user_id")])),
+    ("personal_access_tokens", Owned(&[User("user_id")])),
     ("pinned_issues", Owned(&[Repository("repo_id")])),
     (
         "pr_assignees",
@@ -442,7 +461,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("project_views", Owned(&[Parent("project_id", "projects")])),
     (
         "projects",
-        Owned(&[Account("owner_user_id"), Account("owner_org_id")]),
+        Owned(&[User("owner_user_id"), Organization("owner_org_id")]),
     ),
     ("pull_request_async_merges", Owned(&[Repository("repo_id")])),
     (
@@ -458,7 +477,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("reactions", Owned(&[Repository("repo_id")])),
     (
         "registry_namespaces",
-        Owned(&[Account("owner_user_id"), Account("owner_org_id")]),
+        Owned(&[User("owner_user_id"), Organization("owner_org_id")]),
     ),
     ("release_assets", Owned(&[Parent("release_id", "releases")])),
     (
@@ -466,7 +485,7 @@ pub const TABLES: &[(&str, Rule)] = &[
         Owned(&[Parent("release_id", "releases")]),
     ),
     ("releases", Owned(&[Repository("repo_id")])),
-    ("remote_pointers", Owned(&[Account("user_id")])),
+    ("remote_pointers", Owned(&[User("user_id")])),
     ("remote_pull_requests", Owned(&[Repository("base_repo_id")])),
     ("repo_access", Owned(&[Repository("repo_id")])),
     ("repo_actions_keys", Owned(&[Repository("repo_id")])),
@@ -498,7 +517,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ),
     (
         "repository_exports",
-        Owned(&[Account("owner_user_id"), Account("owner_org_id")]),
+        Owned(&[User("owner_user_id"), Organization("owner_org_id")]),
     ),
     ("repository_features", Owned(&[Repository("repo_id")])),
     (
@@ -532,7 +551,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("repository_replicas", Cell),
     (
         "repository_rule_suites",
-        Owned(&[Repository("repo_id"), Account("org_id")]),
+        Owned(&[Repository("repo_id"), Organization("org_id")]),
     ),
     (
         "repository_ruleset_versions",
@@ -540,7 +559,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ),
     (
         "repository_rulesets",
-        Owned(&[Repository("owner_repo_id"), Account("owner_org_id")]),
+        Owned(&[Repository("owner_repo_id"), Organization("owner_org_id")]),
     ),
     (
         "repository_security_replies",
@@ -574,18 +593,18 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("secret_scanning_locations", Owned(&[Repository("repo_id")])),
     (
         "secret_scanning_pattern_configs",
-        Owned(&[Account("org_id")]),
+        Owned(&[Organization("org_id")]),
     ),
     (
         "secret_scanning_patterns",
-        Owned(&[Repository("repo_id"), Account("org_id")]),
+        Owned(&[Repository("repo_id"), Organization("org_id")]),
     ),
     ("secret_scanning_settings", Owned(&[Repository("repo_id")])),
-    ("sessions", Owned(&[Account("user_id")])),
+    ("sessions", Owned(&[User("user_id")])),
     ("signature_verifications", Shared),
     ("signup_requests", Cell),
-    ("ssh_keys", Owned(&[Account("user_id")])),
-    ("ssh_signing_keys", Owned(&[Account("user_id")])),
+    ("ssh_keys", Owned(&[User("user_id")])),
+    ("ssh_signing_keys", Owned(&[User("user_id")])),
     ("stars", Owned(&[Repository("repo_id")])),
     ("storage_object_copies", Cell),
     ("storage_objects", Shared),
@@ -593,17 +612,17 @@ pub const TABLES: &[(&str, Rule)] = &[
     ("team_invitations", Owned(&[Parent("team_id", "teams")])),
     ("team_memberships", Owned(&[Parent("team_id", "teams")])),
     ("team_repo_access", Owned(&[Repository("repo_id")])),
-    ("teams", Owned(&[Account("org_id")])),
+    ("teams", Owned(&[Organization("org_id")])),
     ("timeline_events", Owned(&[Repository("repo_id")])),
     ("topics", Shared),
-    ("two_factor_auth", Owned(&[Account("user_id")])),
-    ("two_factor_recovery_codes", Owned(&[Account("user_id")])),
+    ("two_factor_auth", Owned(&[User("user_id")])),
+    ("two_factor_recovery_codes", Owned(&[User("user_id")])),
     ("upload_rate_limit", Cell),
-    ("user_blocks", Owned(&[Account("user_id")])),
-    ("user_emails", Owned(&[Account("user_id")])),
-    ("user_profile_settings", Owned(&[Account("user_id")])),
-    ("user_social_accounts", Owned(&[Account("user_id")])),
-    ("users", Owned(&[Account("id")])),
+    ("user_blocks", Owned(&[User("user_id")])),
+    ("user_emails", Owned(&[User("user_id")])),
+    ("user_profile_settings", Owned(&[User("user_id")])),
+    ("user_social_accounts", Owned(&[User("user_id")])),
+    ("users", Owned(&[User("id")])),
     ("vulnerability_jobs", Owned(&[Repository("repo_id")])),
     ("vulnerability_settings", Cell),
     ("watches", Owned(&[Repository("repo_id")])),
@@ -613,7 +632,7 @@ pub const TABLES: &[(&str, Rule)] = &[
     ),
     (
         "webhooks",
-        Owned(&[Repository("repo_id"), Account("org_id")]),
+        Owned(&[Repository("repo_id"), Organization("org_id")]),
     ),
 ];
 
@@ -624,10 +643,99 @@ pub fn rule(table: &str) -> Option<Rule> {
         .map(|index| TABLES[index].1)
 }
 
+/// The column a parent reference points at; every parent is keyed by `id` except these.
+pub fn parent_key(table: &str) -> &'static str {
+    match table {
+        "fine_grained_tokens" => "token_id",
+        "github_app_hooks" => "app_id",
+        _ => "id",
+    }
+}
+
+/// The condition that selects the rows of `table` (aliased `t0`) belonging to the account
+/// bound as `$1`, or `None` when the table's rows never move with an account. Repository
+/// stubs are never selected: their rows live in another cell.
+pub fn owned_rows(table: &str, account: ObjectKind) -> Option<String> {
+    match rule(table)? {
+        Owned(references) => Some(condition(references, account, 0)),
+        Cell | Shared => None,
+    }
+}
+
+fn condition(references: &[Reference], account: ObjectKind, depth: usize) -> String {
+    let row = format!("t{depth}");
+    let organization = account == ObjectKind::Organization;
+    let mut arms = String::from("CASE");
+    for reference in references {
+        let column = reference.column();
+        let test = match *reference {
+            User(column) if !organization => format!("{row}.{column}=$1"),
+            Organization(column) if organization => format!("{row}.{column}=$1"),
+            User(_) | Organization(_) => "FALSE".to_owned(),
+            Owner(kind, column) => format!(
+                "({row}.{kind}='{}' AND {row}.{column}=$1)",
+                if organization { "org" } else { "user" }
+            ),
+            Repository(column) => format!(
+                "{row}.{column} IN (SELECT r{depth}.id FROM repositories r{depth} WHERE NOT r{depth}.is_stub AND r{depth}.{}=$1)",
+                if organization { "owner_org_id" } else { "owner_user_id" }
+            ),
+            Parent(column, parent) => {
+                let Some(Owned(parents)) = rule(parent) else {
+                    return "FALSE".to_owned();
+                };
+                let next = depth + 1;
+                format!(
+                    "{row}.{column} IN (SELECT t{next}.{} FROM {parent} t{next} WHERE {})",
+                    parent_key(parent),
+                    condition(parents, account, next)
+                )
+            }
+        };
+        arms.push_str(&format!(" WHEN {row}.{column} IS NOT NULL THEN {test}"));
+    }
+    arms.push_str(" ELSE FALSE END");
+    arms
+}
+
+/// The arguments of the table's `account_move_guard` trigger: one path per account a row can
+/// reach. A path follows parent rows (`column@table.key>`) to an account column (`column:u`,
+/// `column:o`, `column:k.kind_column`) or a repository column (`column:r`).
+pub fn guard_paths(table: &str) -> Vec<String> {
+    // A repository's own row does not exist before its insert, so its guard reads the owner.
+    if table == "repositories" {
+        return vec!["owner_user_id:u".to_owned(), "owner_org_id:o".to_owned()];
+    }
+    let mut paths = Vec::new();
+    if let Some(Owned(references)) = rule(table) {
+        collect_paths(references, "", &mut paths);
+    }
+    paths
+}
+
+fn collect_paths(references: &[Reference], prefix: &str, paths: &mut Vec<String>) {
+    for reference in references {
+        match *reference {
+            User(column) => paths.push(format!("{prefix}{column}:u")),
+            Organization(column) => paths.push(format!("{prefix}{column}:o")),
+            Owner(kind, column) => paths.push(format!("{prefix}{column}:k.{kind}")),
+            Repository(column) => paths.push(format!("{prefix}{column}:r")),
+            Parent(column, parent) => {
+                if let Some(Owned(parents)) = rule(parent) {
+                    let prefix = format!("{prefix}{column}@{parent}.{}>", parent_key(parent));
+                    collect_paths(parents, &prefix, paths);
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    const POSTGRES: &str = include_str!("../../../../../schema/postgres/0001.schema.sql");
 
     /// Table name to its column definitions, from a baseline's `CREATE TABLE` statements.
     fn tables(schema: &str) -> BTreeMap<String, String> {
@@ -656,8 +764,8 @@ mod tests {
         }
         match rule(table) {
             Some(Owned(references)) => references.iter().any(|reference| match reference {
-                Account(_) | Repository(_) => true,
                 Parent(_, parent) => reaches_owner(parent, depth + 1),
+                _ => true,
             }),
             _ => false,
         }
@@ -669,9 +777,7 @@ mod tests {
             TABLES.windows(2).all(|pair| pair[0].0 < pair[1].0),
             "keep TABLES sorted"
         );
-        let postgres = tables(include_str!(
-            "../../../../../schema/postgres/0001.schema.sql"
-        ));
+        let postgres = tables(POSTGRES);
         let sqlite = tables(include_str!("../../../../../schema/sqlite/0001.schema.sql"));
         assert!(postgres.len() > 250 && sqlite.len() > 250);
         for (engine, schema) in [("postgres", &postgres), ("sqlite", &sqlite)] {
@@ -681,10 +787,24 @@ mod tests {
                 if let Owned(references) = rule {
                     assert!(!references.is_empty(), "{table}");
                     for reference in references {
-                        let (Account(column) | Repository(column) | Parent(column, _)) = reference;
-                        assert!(has_column(body, column), "{engine} {table} lacks {column}");
-                        if let Parent(_, parent) = reference {
-                            assert!(postgres.contains_key(*parent), "{table} names {parent}");
+                        assert!(
+                            has_column(body, reference.column()),
+                            "{engine} {table} lacks {}",
+                            reference.column()
+                        );
+                        match reference {
+                            Parent(column, parent) => {
+                                assert!(postgres.contains_key(*parent), "{table} names {parent}");
+                                if engine == "postgres" {
+                                    let key = parent_key(parent);
+                                    assert!(
+                                        body.contains(&format!("{parent}({key})")),
+                                        "{table}.{column} does not reference {parent}({key})"
+                                    );
+                                }
+                            }
+                            Owner(kind, _) => assert!(has_column(body, kind), "{table} {kind}"),
+                            _ => {}
                         }
                     }
                     assert!(reaches_owner(table, 0), "{table} never reaches an owner");
@@ -697,5 +817,64 @@ mod tests {
                 "{table} is not in the schema"
             );
         }
+    }
+
+    /// Every owned PostgreSQL table carries the freeze guard with exactly its rule's paths,
+    /// and no other table does.
+    #[test]
+    fn the_move_guard_covers_every_owned_table() {
+        let mut guarded = BTreeMap::new();
+        for statement in POSTGRES.split("CREATE TRIGGER ").skip(1) {
+            let statement = statement.split(";\n").next().unwrap_or_default();
+            let Some((_, arguments)) = statement.split_once("EXECUTE FUNCTION account_move_guard(")
+            else {
+                continue;
+            };
+            let table = statement
+                .split(" ON ")
+                .nth(1)
+                .and_then(|rest| rest.split_whitespace().next())
+                .unwrap_or_default()
+                .to_owned();
+            let paths: Vec<String> = arguments
+                .trim_end_matches(')')
+                .split(',')
+                .map(|path| path.trim().trim_matches('\'').to_owned())
+                .collect();
+            assert!(guarded.insert(table.clone(), paths).is_none(), "{table} twice");
+        }
+        for (table, rule) in TABLES {
+            match rule {
+                Owned(_) => assert_eq!(
+                    guarded.remove(*table),
+                    Some(guard_paths(table)),
+                    "{table} move guard"
+                ),
+                Cell | Shared => assert!(!guarded.contains_key(*table), "{table} is not owned"),
+            }
+        }
+        assert!(guarded.is_empty(), "guards on unknown tables: {guarded:?}");
+    }
+
+    #[test]
+    fn owned_rows_follow_the_first_reference_and_the_account_kind() {
+        let user = owned_rows("issue_comments", ObjectKind::User).unwrap();
+        assert_eq!(
+            user,
+            "CASE WHEN t0.issue_id IS NOT NULL THEN t0.issue_id IN (SELECT t1.id FROM issues t1 WHERE CASE WHEN t1.repo_id IS NOT NULL THEN t1.repo_id IN (SELECT r1.id FROM repositories r1 WHERE NOT r1.is_stub AND r1.owner_user_id=$1) ELSE FALSE END) ELSE FALSE END"
+        );
+        let organization = owned_rows("webhooks", ObjectKind::Organization).unwrap();
+        assert!(organization.contains("WHEN t0.org_id IS NOT NULL THEN t0.org_id=$1"));
+        assert!(organization.contains("r0.owner_org_id=$1"));
+        assert!(owned_rows("nodes", ObjectKind::User).is_none());
+        assert!(owned_rows("files", ObjectKind::User).is_none());
+        assert_eq!(
+            guard_paths("webhook_deliveries"),
+            ["webhook_id@webhooks.id>repo_id:r", "webhook_id@webhooks.id>org_id:o"]
+        );
+        assert_eq!(
+            guard_paths("immutable_release_owner_names"),
+            ["owner_id:k.owner_kind"]
+        );
     }
 }

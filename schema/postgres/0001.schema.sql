@@ -88,7 +88,7 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(255) NOT NULL UNIQUE,
     email VARCHAR(255) UNIQUE,
     password_hash VARCHAR(255),
-    avatar_file_id UUID REFERENCES files(id) ON DELETE SET NULL,
+    avatar_file_id UUID REFERENCES files(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     display_name VARCHAR(255),
     bio TEXT,
     location VARCHAR(255),
@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 -- files is created before users, so its user foreign key is added here.
 ALTER TABLE files ADD CONSTRAINT fk_files_user_id
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE;
 
 --------------------------------------------------------------------------------
 -- PART 2B: NODE CONFIGURATION & ACCESS REQUESTS
@@ -159,7 +159,7 @@ CREATE TABLE IF NOT EXISTS signup_requests (
     email VARCHAR(255),
     password_hash VARCHAR(255) NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending | approved | rejected
-    reviewed_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_by BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     reviewed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -173,7 +173,7 @@ CREATE TABLE IF NOT EXISTS signup_requests (
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS oauth_accounts (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     provider VARCHAR(50) NOT NULL,
     provider_user_id VARCHAR(255) NOT NULL,
     access_token TEXT,
@@ -190,7 +190,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     id VARCHAR(70) PRIMARY KEY,
     read_primary_until BIGINT NOT NULL DEFAULT 0,
     ordinal BIGSERIAL NOT NULL UNIQUE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     user_agent TEXT,
     ip_address INET,
     expires_at TIMESTAMPTZ NOT NULL,
@@ -234,7 +234,7 @@ CREATE INDEX IF NOT EXISTS idx_oauth_states_expires_at ON oauth_states(expires_a
 CREATE TABLE IF NOT EXISTS personal_access_tokens (
     id BIGSERIAL PRIMARY KEY,
     read_primary_until BIGINT NOT NULL DEFAULT 0,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name VARCHAR(100) NOT NULL CHECK (length(name) > 0),
     token_hash VARCHAR(64) NOT NULL UNIQUE,
     scope TEXT NOT NULL CHECK (scope IN ('read', 'write')),
@@ -247,7 +247,7 @@ CREATE INDEX idx_personal_access_tokens_user ON personal_access_tokens(user_id);
 
 CREATE TABLE IF NOT EXISTS ssh_keys (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name VARCHAR(255) NOT NULL,
     fingerprint VARCHAR(255) NOT NULL,
     public_key TEXT NOT NULL,
@@ -266,7 +266,7 @@ CREATE INDEX IF NOT EXISTS idx_ssh_keys_user_id ON ssh_keys(user_id);
 -- The encrypted TOTP secret, the last accepted time step (a code works once) and the hashed
 -- one-time recovery codes. users.two_factor_enabled is kept in step.
 CREATE TABLE two_factor_auth (
-    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     totp_secret_encrypted BYTEA NOT NULL,
     totp_nonce BYTEA NOT NULL,
     last_used_step BIGINT,
@@ -274,7 +274,7 @@ CREATE TABLE two_factor_auth (
 );
 
 CREATE TABLE two_factor_recovery_codes (
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     code_hash TEXT NOT NULL CHECK (char_length(code_hash) = 64),
     PRIMARY KEY (user_id, code_hash)
 );
@@ -289,7 +289,7 @@ CREATE TABLE IF NOT EXISTS organizations (
     name VARCHAR(255) NOT NULL UNIQUE,
     display_name VARCHAR(255),
     description TEXT,
-    avatar_file_id UUID REFERENCES files(id) ON DELETE SET NULL,
+    avatar_file_id UUID REFERENCES files(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     billing_email VARCHAR(255),
     is_verified BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -299,8 +299,8 @@ CREATE TABLE IF NOT EXISTS organizations (
 
 CREATE TABLE IF NOT EXISTS org_memberships (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     role VARCHAR(20) NOT NULL DEFAULT 'member', -- owner, admin, member
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
@@ -310,7 +310,7 @@ CREATE TABLE IF NOT EXISTS org_memberships (
 -- Presence regions this cell settled with the directory for its organizations from counted
 -- member requests. Presence set by hand is never removed from the directory automatically.
 CREATE TABLE cell_presence (
-    organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    organization_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     region TEXT NOT NULL CHECK(octet_length(region) BETWEEN 1 AND 63),
     added_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY(organization_id,region)
@@ -321,10 +321,10 @@ CREATE INDEX IF NOT EXISTS idx_org_memberships_user_id ON org_memberships(user_i
 -- invitee accepts; a decline or a cancellation deletes the row.
 CREATE TABLE IF NOT EXISTS organization_invitations (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     role VARCHAR(20) NOT NULL DEFAULT 'member', -- owner, admin, member
-    invited_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    invited_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     email VARCHAR(255),
     expires_at TIMESTAMPTZ NOT NULL DEFAULT (NOW()+INTERVAL '7 days'),
@@ -341,7 +341,7 @@ CREATE INDEX IF NOT EXISTS idx_organization_invitations_user_id ON organization_
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS teams (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name VARCHAR(255) NOT NULL,
     slug VARCHAR(255) NOT NULL,
     description TEXT,
@@ -350,14 +350,14 @@ CREATE TABLE IF NOT EXISTS teams (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     default_permission SMALLINT NOT NULL DEFAULT 1 CHECK (default_permission BETWEEN 1 AND 5),
     notifications_enabled BOOLEAN NOT NULL DEFAULT TRUE,
-    parent_team_id BIGINT REFERENCES teams(id) ON DELETE SET NULL CHECK (parent_team_id IS NULL OR parent_team_id<>id),
+    parent_team_id BIGINT REFERENCES teams(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE CHECK (parent_team_id IS NULL OR parent_team_id<>id),
     UNIQUE(org_id, slug)
 );
 
 CREATE TABLE IF NOT EXISTS team_memberships (
     id BIGSERIAL PRIMARY KEY,
-    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     role VARCHAR(20) NOT NULL DEFAULT 'member', -- maintainer, member
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(team_id, user_id)
@@ -372,15 +372,15 @@ CREATE TABLE IF NOT EXISTS repositories (
     home_cell INTEGER NOT NULL DEFAULT 0 CHECK (home_cell BETWEEN 0 AND 65535),
     is_stub BOOLEAN NOT NULL DEFAULT FALSE,
     owner_kind VARCHAR(10) NOT NULL DEFAULT 'user', -- user, org
-    owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+    owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name VARCHAR(255) NOT NULL,
     description TEXT,
     website VARCHAR(255),
     is_private BOOLEAN NOT NULL DEFAULT FALSE,
     is_archived BOOLEAN NOT NULL DEFAULT FALSE,
     is_fork BOOLEAN NOT NULL DEFAULT FALSE,
-    forked_from_id BIGINT REFERENCES repositories(id) ON DELETE SET NULL,
+    forked_from_id BIGINT REFERENCES repositories(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     -- Canonical Git refs can contain 1024 bytes.
     default_branch VARCHAR(1024) NOT NULL DEFAULT 'main',
     disk_path TEXT NOT NULL,
@@ -437,8 +437,8 @@ CREATE INDEX IF NOT EXISTS idx_repositories_search_order
 -- User-level repo access
 CREATE TABLE IF NOT EXISTS repo_access (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     access_level SMALLINT NOT NULL DEFAULT 1, -- 0=none, 1=read, 2=triage, 3=write, 4=maintain, 5=admin
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(user_id, repo_id)
@@ -448,8 +448,8 @@ CREATE INDEX IF NOT EXISTS idx_repo_access_repo_id ON repo_access(repo_id);
 -- Team-level repo access
 CREATE TABLE IF NOT EXISTS team_repo_access (
     id BIGSERIAL PRIMARY KEY,
-    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     permission SMALLINT NOT NULL DEFAULT 1, -- 1=read, 2=triage, 3=write, 4=maintain, 5=admin
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(team_id, repo_id)
@@ -459,14 +459,14 @@ CREATE INDEX IF NOT EXISTS idx_team_repo_access_repo_id ON team_repo_access(repo
 -- Deploy keys (repo-specific SSH keys)
 CREATE TABLE IF NOT EXISTS deploy_keys (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name VARCHAR(255) NOT NULL,
     fingerprint VARCHAR(255) NOT NULL,
     public_key TEXT NOT NULL,
     read_only BOOLEAN NOT NULL DEFAULT TRUE,
     last_used_at TIMESTAMPTZ,
     -- The account that added the key, which its pushes are attributed to.
-    created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(repo_id, fingerprint)
 );
@@ -477,7 +477,7 @@ CREATE INDEX IF NOT EXISTS idx_deploy_keys_fingerprint ON deploy_keys(fingerprin
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS repo_languages (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     language VARCHAR(100) NOT NULL,
     bytes BIGINT NOT NULL,
     percentage DOUBLE PRECISION NOT NULL,
@@ -490,7 +490,7 @@ CREATE TABLE IF NOT EXISTS repo_languages (
 -- Topics group repositories on Explore. Writes keep at most 20 per repository, a count that a
 -- constraint cannot check.
 CREATE TABLE IF NOT EXISTS repository_topics (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     topic VARCHAR(35) NOT NULL CHECK (topic ~ '^[a-z0-9-]{1,35}$'),
     PRIMARY KEY (repo_id, topic)
 );
@@ -499,7 +499,7 @@ CREATE INDEX IF NOT EXISTS idx_repository_topics_topic ON repository_topics(topi
 
 CREATE TABLE IF NOT EXISTS repo_storage_history (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     size_bytes BIGINT NOT NULL,
     recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -511,8 +511,8 @@ CREATE INDEX IF NOT EXISTS idx_repo_storage_history_recorded_at ON repo_storage_
 -- Each row is one branch update. Commit counts come from Git's own range count.
 CREATE TABLE IF NOT EXISTS repository_pushes (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     branch VARCHAR(1024) NOT NULL,
     commit_count INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -524,7 +524,7 @@ CREATE INDEX IF NOT EXISTS idx_repository_pushes_actor ON repository_pushes(acto
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS branch_protection_rules (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     pattern VARCHAR(255) NOT NULL, -- branch name or pattern like 'main', 'release/*'
     require_pull_request BOOLEAN NOT NULL DEFAULT FALSE,
     required_approving_reviews INTEGER NOT NULL DEFAULT 0,
@@ -552,13 +552,13 @@ CREATE TABLE IF NOT EXISTS branch_protection_rules (
 
 CREATE TABLE IF NOT EXISTS commit_statuses (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     sha VARCHAR(40) NOT NULL,
     context TEXT NOT NULL,
     state VARCHAR(20) NOT NULL, -- pending, success, failure, error
     description TEXT,
     target_url TEXT,
-    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     ci_run_id BIGINT,
@@ -570,7 +570,7 @@ CREATE TABLE IF NOT EXISTS commit_statuses (
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS labels (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name VARCHAR(50) NOT NULL,
     color VARCHAR(7) NOT NULL DEFAULT '#6b7280',
     description TEXT,
@@ -581,7 +581,7 @@ CREATE TABLE IF NOT EXISTS labels (
 
 CREATE TABLE IF NOT EXISTS milestones (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number INTEGER NOT NULL,
     title VARCHAR(255) NOT NULL,
     description TEXT,
@@ -591,7 +591,7 @@ CREATE TABLE IF NOT EXISTS milestones (
     closed_issues INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     closed_at TIMESTAMPTZ,
-    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     due_on TIMESTAMPTZ,
     UNIQUE(repo_id, number)
@@ -602,17 +602,17 @@ CREATE TABLE IF NOT EXISTS milestones (
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS issues (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number INTEGER NOT NULL,
-    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     title VARCHAR(255) NOT NULL,
     body TEXT NOT NULL DEFAULT '',
     state VARCHAR(10) NOT NULL DEFAULT 'open',
     state_reason VARCHAR(20), -- completed, not_planned, reopened
     locked BOOLEAN NOT NULL DEFAULT FALSE,
     lock_reason VARCHAR(20),
-    milestone_id BIGINT REFERENCES milestones(id) ON DELETE SET NULL,
-    closed_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    milestone_id BIGINT REFERENCES milestones(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    closed_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     closed_at TIMESTAMPTZ,
@@ -626,21 +626,21 @@ CREATE INDEX IF NOT EXISTS idx_issues_updated_at ON issues(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_issues_milestone_id ON issues(milestone_id);
 
 CREATE TABLE IF NOT EXISTS issue_labels (
-    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    label_id BIGINT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    label_id BIGINT NOT NULL REFERENCES labels(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY (issue_id, label_id)
 );
 
 CREATE TABLE IF NOT EXISTS issue_assignees (
-    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY (issue_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS issue_comments (
     id BIGSERIAL PRIMARY KEY,
-    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     body TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -655,13 +655,13 @@ CREATE INDEX IF NOT EXISTS idx_issue_comments_created_at ON issue_comments(creat
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS pull_requests (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number INTEGER NOT NULL,
-    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     title VARCHAR(255) NOT NULL,
     body TEXT NOT NULL DEFAULT '',
     state VARCHAR(10) NOT NULL DEFAULT 'open',
-    head_repo_id BIGINT REFERENCES repositories(id) ON DELETE SET NULL,
+    head_repo_id BIGINT REFERENCES repositories(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     workflows_approved_sha VARCHAR(40),
     head_branch VARCHAR(255) NOT NULL,
     head_sha VARCHAR(40) NOT NULL,
@@ -672,11 +672,11 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     is_draft BOOLEAN NOT NULL DEFAULT FALSE,
     mergeable BOOLEAN,
     merged BOOLEAN NOT NULL DEFAULT FALSE,
-    merged_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    closed_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    merged_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    closed_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     merge_commit_sha VARCHAR(40),
     stack_id BIGINT,
-    milestone_id BIGINT REFERENCES milestones(id) ON DELETE SET NULL,
+    milestone_id BIGINT REFERENCES milestones(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     additions INTEGER NOT NULL DEFAULT 0,
     deletions INTEGER NOT NULL DEFAULT 0,
     changed_files INTEGER NOT NULL DEFAULT 0,
@@ -688,9 +688,9 @@ CREATE TABLE IF NOT EXISTS pull_requests (
     locked BOOLEAN NOT NULL DEFAULT FALSE,
     lock_reason TEXT CHECK (lock_reason IN ('off-topic','too heated','resolved','spam')),
     maintainer_can_modify BOOLEAN NOT NULL DEFAULT FALSE,
-    maintainer_edit_granted_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    maintainer_edit_granted_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     source_issue_id BIGINT CHECK(source_issue_id>0),
-    head_publisher_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    head_publisher_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     UNIQUE(repo_id, number)
 );
 CREATE INDEX IF NOT EXISTS idx_pull_requests_author_id ON pull_requests(author_id,created_at DESC,id DESC);
@@ -704,21 +704,21 @@ CREATE INDEX IF NOT EXISTS idx_pull_requests_repo_stack ON pull_requests(repo_id
 CREATE INDEX IF NOT EXISTS idx_pull_requests_milestone_id ON pull_requests(milestone_id);
 
 CREATE TABLE IF NOT EXISTS pr_labels (
-    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
-    label_id BIGINT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    label_id BIGINT NOT NULL REFERENCES labels(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY (pull_request_id, label_id)
 );
 
 CREATE TABLE IF NOT EXISTS pr_assignees (
-    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY (pull_request_id, user_id)
 );
 
 CREATE TABLE IF NOT EXISTS pr_reviewers (
     id BIGSERIAL PRIMARY KEY,
-    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     as_code_owner BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE(pull_request_id, user_id)
 );
@@ -726,10 +726,10 @@ CREATE TABLE IF NOT EXISTS pr_reviewers (
 -- What changed on an issue or pull request, shown between its comments.
 CREATE TABLE IF NOT EXISTS timeline_events (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     subject_kind VARCHAR(20) NOT NULL CHECK (subject_kind IN ('issue','pull_request')),
     subject_id BIGINT NOT NULL,
-    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     kind VARCHAR(20) NOT NULL,
     detail VARCHAR(255) NOT NULL DEFAULT '',
     previous VARCHAR(255) NOT NULL DEFAULT '',
@@ -740,8 +740,8 @@ CREATE INDEX IF NOT EXISTS idx_timeline_events_repo_id ON timeline_events(repo_i
 
 CREATE TABLE IF NOT EXISTS reactions (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     subject_kind VARCHAR(20) NOT NULL CHECK (subject_kind IN ('issue','issue_comment','pull_request','pr_comment','pr_review','release','commit_comment')),
     subject_id BIGINT NOT NULL,
     content VARCHAR(10) NOT NULL CHECK (content IN ('+1','-1','laugh','hooray','confused','heart','rocket','eyes')),
@@ -754,12 +754,12 @@ CREATE INDEX IF NOT EXISTS idx_reactions_repo_id ON reactions(repo_id);
 
 CREATE TABLE IF NOT EXISTS pr_reviews (
     id BIGSERIAL PRIMARY KEY,
-    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
-    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     state VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending, approved, changes_requested, commented, dismissed
     body TEXT,
     commit_sha VARCHAR(40),
-    dismissed_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    dismissed_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     dismissed_reason TEXT,
     dismissed_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -774,19 +774,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_pr_reviews_one_pending ON pr_reviews(pull_
 
 CREATE TABLE IF NOT EXISTS pr_comments (
     id BIGSERIAL PRIMARY KEY,
-    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
-    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     body TEXT NOT NULL,
     path TEXT,
     line INTEGER,
     side VARCHAR(5), -- LEFT, RIGHT
     commit_sha VARCHAR(40),
     diff_base_sha TEXT CHECK (length(diff_base_sha)=40),
-    in_reply_to_comment_id BIGINT REFERENCES pr_comments(id) ON DELETE CASCADE,
+    in_reply_to_comment_id BIGINT REFERENCES pr_comments(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     resolved_at TIMESTAMPTZ,
-    resolved_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    resolved_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     -- The review this comment was filed in. A pending review's comments stay private to its author.
-    review_id BIGINT REFERENCES pr_reviews(id) ON DELETE CASCADE,
+    review_id BIGINT REFERENCES pr_reviews(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     start_line INTEGER CHECK(start_line>0),
@@ -804,8 +804,8 @@ CREATE INDEX IF NOT EXISTS idx_pr_comments_review_id ON pr_comments(review_id);
 -- Files a reader marked as viewed on a pull request. The mark keeps the file's blob id, so a
 -- later push that changes the file leaves it unviewed.
 CREATE TABLE IF NOT EXISTS pull_request_viewed_files (
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     path TEXT NOT NULL,
     blob_sha TEXT NOT NULL
 );
@@ -815,7 +815,7 @@ CREATE TABLE IF NOT EXISTS pull_request_viewed_files (
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS releases (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     tag_name VARCHAR(255) NOT NULL,
     target_commitish VARCHAR(255) NOT NULL DEFAULT 'main',
     name VARCHAR(255),
@@ -823,7 +823,7 @@ CREATE TABLE IF NOT EXISTS releases (
     is_draft BOOLEAN NOT NULL DEFAULT FALSE,
     is_prerelease BOOLEAN NOT NULL DEFAULT FALSE,
     is_latest BOOLEAN NOT NULL DEFAULT FALSE,
-    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    author_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     published_at TIMESTAMPTZ,
     is_immutable BOOLEAN NOT NULL DEFAULT FALSE,
@@ -837,8 +837,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_releases_one_latest ON releases(repo_id) W
 
 CREATE TABLE IF NOT EXISTS release_assets (
     id BIGSERIAL PRIMARY KEY,
-    release_id BIGINT NOT NULL REFERENCES releases(id) ON DELETE CASCADE,
-    file_id UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    release_id BIGINT NOT NULL REFERENCES releases(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    file_id UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name VARCHAR(255) NOT NULL,
     label VARCHAR(255),
     content_type VARCHAR(100) NOT NULL,
@@ -853,8 +853,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_release_assets_name ON release_assets(rele
 -- PART 15: SOCIAL (Stars, Watches, Follows)
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS stars (
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (user_id, repo_id)
 );
@@ -862,8 +862,8 @@ CREATE TABLE IF NOT EXISTS stars (
 CREATE INDEX IF NOT EXISTS idx_stars_repo_id ON stars(repo_id);
 
 CREATE TABLE IF NOT EXISTS watches (
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     level VARCHAR(20) NOT NULL DEFAULT 'watching', -- watching, custom, ignoring
     -- Comma-separated events a custom watch wants: issues, pulls.
     events VARCHAR(40) NOT NULL DEFAULT '',
@@ -874,8 +874,8 @@ CREATE TABLE IF NOT EXISTS watches (
 CREATE INDEX IF NOT EXISTS idx_watches_repo_id ON watches(repo_id);
 
 CREATE TABLE IF NOT EXISTS follows (
-    follower_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    following_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    follower_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    following_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (follower_id, following_id),
     CHECK (follower_id != following_id)
@@ -887,11 +887,11 @@ CREATE INDEX IF NOT EXISTS idx_follows_following_id ON follows(following_id,foll
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS repo_secrets (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name VARCHAR(255) NOT NULL,
     encrypted_value BYTEA NOT NULL,
     nonce BYTEA NOT NULL,
-    created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(repo_id, name)
@@ -902,8 +902,8 @@ CREATE TABLE IF NOT EXISTS repo_secrets (
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS audit_log (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
-    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     action VARCHAR(100) NOT NULL,
     target_type VARCHAR(50),
     target_id BIGINT,
@@ -923,8 +923,8 @@ CREATE INDEX IF NOT EXISTS idx_audit_log_created_at ON audit_log(created_at);
 --------------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS upload_rate_limit (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    file_id UUID REFERENCES files(id) ON DELETE SET NULL,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    file_id UUID REFERENCES files(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     file_size BIGINT NOT NULL,
     reason VARCHAR(50),
     ip_address INET,
@@ -942,6 +942,10 @@ CREATE INDEX idx_upload_rate_limit_confirmed ON upload_rate_limit(confirmed_at) 
 -- Quota reservations remain charges; only verified stored bytes become chart additions.
 CREATE FUNCTION record_upload_confirmation() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     UPDATE upload_rate_limit SET confirmed_at=NEW.confirmed_at WHERE file_id=NEW.id AND confirmed_at IS NULL;
     RETURN NEW;
 END;
@@ -952,8 +956,8 @@ EXECUTE FUNCTION record_upload_confirmation();
 
 CREATE TABLE IF NOT EXISTS download_rate_limit (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    file_id UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    file_id UUID NOT NULL REFERENCES files(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     reason VARCHAR(50),
     ip_address INET,
     downloaded_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -981,7 +985,7 @@ CREATE INDEX notification_events_transaction ON notification_events(transaction_
 
 CREATE TABLE notification_threads (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     scope_repository_id BIGINT NOT NULL CHECK(scope_repository_id>0),
     subject_type TEXT NOT NULL,
     subject_key TEXT NOT NULL,
@@ -992,9 +996,9 @@ CREATE INDEX notification_threads_subject ON notification_threads(scope_reposito
 
 CREATE TABLE IF NOT EXISTS notifications (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    repo_id BIGINT REFERENCES repositories(id) ON DELETE SET NULL,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT REFERENCES repositories(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     kind VARCHAR(64) NOT NULL,
     title TEXT NOT NULL,
     body TEXT,
@@ -1008,7 +1012,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     -- Repository the notification was about, kept after the repository is gone
     -- so its notifications stay hidden; 0 = not about a repository.
     scope_repository_id BIGINT NOT NULL CHECK (scope_repository_id >= 0),
-    thread_id BIGINT REFERENCES notification_threads(id) ON DELETE SET NULL
+    thread_id BIGINT REFERENCES notification_threads(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE INDEX IF NOT EXISTS idx_notifications_scope ON notifications(user_id, scope_repository_id);
@@ -1028,6 +1032,10 @@ CREATE UNIQUE INDEX notifications_cell_event ON notifications((metadata->>'sourc
 -- Update stars count
 CREATE OR REPLACE FUNCTION update_repo_stars_count() RETURNS TRIGGER AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     IF TG_OP = 'INSERT' THEN
         UPDATE repositories SET stars_count = stars_count + 1 WHERE id = NEW.repo_id;
     ELSIF TG_OP = 'DELETE' THEN
@@ -1043,6 +1051,10 @@ CREATE TRIGGER trigger_update_stars_count
 -- Update watchers count. Ignoring a repository does not count as watching it.
 CREATE OR REPLACE FUNCTION update_repo_watchers_count() RETURNS TRIGGER AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     IF TG_OP IN ('DELETE', 'UPDATE') AND OLD.level IN ('watching','custom') THEN
         UPDATE repositories SET watchers_count = watchers_count - 1 WHERE id = OLD.repo_id;
     END IF;
@@ -1059,6 +1071,10 @@ CREATE TRIGGER trigger_update_watchers_count
 -- Update forks count
 CREATE OR REPLACE FUNCTION update_repo_forks_count() RETURNS TRIGGER AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     IF TG_OP = 'INSERT' AND NOT NEW.is_stub AND NEW.forked_from_id IS NOT NULL THEN
         UPDATE repositories SET forks_count = forks_count + 1 WHERE id = NEW.forked_from_id;
     ELSIF TG_OP = 'DELETE' AND NOT OLD.is_stub AND OLD.forked_from_id IS NOT NULL THEN
@@ -1074,7 +1090,7 @@ CREATE TRIGGER trigger_update_forks_count
 -- Get next issue/PR number
 -- Issues and pull requests share one number sequence per repository.
 CREATE TABLE IF NOT EXISTS repository_discussion_counters (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     next_number BIGINT NOT NULL CHECK (next_number BETWEEN 1 AND 2147483648)
 );
 
@@ -1124,9 +1140,9 @@ ON CONFLICT (reason) DO NOTHING;
 CREATE TABLE IF NOT EXISTS ci_runs (
     id BIGSERIAL PRIMARY KEY,
     run_id UUID NOT NULL UNIQUE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    triggered_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    pull_request_id BIGINT REFERENCES pull_requests(id) ON DELETE SET NULL,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    triggered_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    pull_request_id BIGINT REFERENCES pull_requests(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     mode VARCHAR(20) NOT NULL, -- local, podman, kubernetes
     pipeline VARCHAR(20) NOT NULL DEFAULT 'ci', -- ci, cd, full
     event VARCHAR(50) NOT NULL,
@@ -1160,7 +1176,7 @@ CREATE TABLE IF NOT EXISTS ci_runs (
     attempt INTEGER NOT NULL DEFAULT 1 CHECK (attempt >= 1),
     engine TEXT CHECK (engine IN ('codeyard-actions','act')),
     workflow_run_number BIGINT,
-    workflow_run_id BIGINT REFERENCES ci_runs(id) ON DELETE CASCADE,
+    workflow_run_id BIGINT REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     workflow_run_attempt INTEGER,
     log_version BIGINT NOT NULL DEFAULT 0,
     log_expires_at BIGINT CHECK (log_expires_at IS NULL OR completed_at IS NOT NULL),
@@ -1188,8 +1204,8 @@ CREATE TABLE check_run_identities (id BIGSERIAL PRIMARY KEY);
 -- actions-runs: observed executions, not synthetic workflow plans
 CREATE TABLE actions_jobs (
     id BIGSERIAL PRIMARY KEY,
-    check_run_id BIGINT NOT NULL UNIQUE REFERENCES check_run_identities(id),
-    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
+    check_run_id BIGINT NOT NULL UNIQUE REFERENCES check_run_identities(id) DEFERRABLE INITIALLY IMMEDIATE,
+    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     generation TEXT NOT NULL,
     workflow_path TEXT NOT NULL,
     workflow_name TEXT,
@@ -1208,8 +1224,8 @@ CREATE TABLE actions_jobs (
 );
 
 CREATE TABLE ci_log_chunks (
-    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
-    job_id BIGINT REFERENCES actions_jobs(id) ON DELETE CASCADE,
+    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    job_id BIGINT REFERENCES actions_jobs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     sequence BIGINT NOT NULL CHECK (sequence >= 0),
     request_hash TEXT NOT NULL CHECK (length(request_hash) = 64),
     first_line BIGINT NOT NULL CHECK (first_line > 0),
@@ -1224,6 +1240,10 @@ CREATE TABLE ci_log_chunks (
 );
 CREATE FUNCTION ci_log_chunk_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     INSERT INTO pending_object_deletions(object_key,delete_after)
     VALUES(OLD.object_key,clock_timestamp()+INTERVAL '7 days') ON CONFLICT(object_key) DO NOTHING;
     RETURN OLD;
@@ -1237,12 +1257,12 @@ CREATE INDEX ci_log_chunks_range ON ci_log_chunks(run_id, first_line);
 
 CREATE TABLE IF NOT EXISTS ci_deployments (
     id BIGSERIAL PRIMARY KEY,
-    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     environment VARCHAR(255) NOT NULL,
     environment_key TEXT NOT NULL,
     status VARCHAR(20) NOT NULL DEFAULT 'pending', -- pending, approved, in_progress, success, failed, cancelled
-    approved_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    approved_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     approved_at TIMESTAMPTZ,
     started_at TIMESTAMPTZ,
     completed_at TIMESTAMPTZ,
@@ -1254,12 +1274,12 @@ CREATE INDEX IF NOT EXISTS idx_ci_deployments_repo_env ON ci_deployments(repo_id
 CREATE INDEX ci_deployments_environment_waiting ON ci_deployments(repo_id,environment_key,status,run_id) WHERE status IN ('pending','approved');
 
 -- commit_statuses is created before ci_runs, so its link to ci_runs is added here.
-ALTER TABLE commit_statuses ADD FOREIGN KEY (ci_run_id) REFERENCES ci_runs(id) ON DELETE SET NULL;
+ALTER TABLE commit_statuses ADD FOREIGN KEY (ci_run_id) REFERENCES ci_runs(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE;
 
 -- Commits a push actually delivered, so CI can run them after a later force-push.
 CREATE TABLE IF NOT EXISTS ci_accepted_pushes (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     reference TEXT NOT NULL,
     sha VARCHAR(40) NOT NULL,
     accepted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -1304,13 +1324,13 @@ CREATE TABLE IF NOT EXISTS nodes (
     CONSTRAINT nodes_status_check CHECK (status IN ('pending', 'active', 'revoked'))
 );
 
-ALTER TABLE repositories ADD CONSTRAINT repositories_storage_node_id_fkey FOREIGN KEY (storage_node_id) REFERENCES nodes(id);
+ALTER TABLE repositories ADD CONSTRAINT repositories_storage_node_id_fkey FOREIGN KEY (storage_node_id) REFERENCES nodes(id) DEFERRABLE INITIALLY IMMEDIATE;
 
 -- Only a hash of each invite secret is stored.
 CREATE TABLE node_drain_repositories (
-    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
-    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    target_node_id BIGINT NOT NULL REFERENCES nodes(id),
+    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    target_node_id BIGINT NOT NULL REFERENCES nodes(id) DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(node_id,repository_id,target_node_id)
 );
 
@@ -1325,23 +1345,23 @@ CREATE TABLE storage_objects (
 );
 CREATE INDEX storage_objects_deleted ON storage_objects(deleted_at);
 CREATE TABLE storage_object_copies (
-    object_key TEXT NOT NULL REFERENCES storage_objects(object_key) ON DELETE CASCADE,
-    node_id BIGINT NOT NULL REFERENCES nodes(id),
+    object_key TEXT NOT NULL REFERENCES storage_objects(object_key) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    node_id BIGINT NOT NULL REFERENCES nodes(id) DEFERRABLE INITIALLY IMMEDIATE,
     ready INTEGER NOT NULL DEFAULT 0 CHECK(ready IN (-1,0,1)),
     PRIMARY KEY(object_key,node_id)
 );
 CREATE INDEX storage_object_copies_node ON storage_object_copies(node_id,ready,object_key);
 
 CREATE TABLE repository_moves (
-    repository_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
-    source_node_id BIGINT NOT NULL REFERENCES nodes(id),
-    target_node_id BIGINT NOT NULL REFERENCES nodes(id),
+    repository_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    source_node_id BIGINT NOT NULL REFERENCES nodes(id) DEFERRABLE INITIALLY IMMEDIATE,
+    target_node_id BIGINT NOT NULL REFERENCES nodes(id) DEFERRABLE INITIALLY IMMEDIATE,
     targets JSONB NOT NULL,
     terms JSONB NOT NULL
 );
 CREATE TABLE repository_move_nodes (
-    node_id BIGINT PRIMARY KEY REFERENCES nodes(id),
-    repository_id BIGINT NOT NULL REFERENCES repository_moves(repository_id) ON DELETE CASCADE
+    node_id BIGINT PRIMARY KEY REFERENCES nodes(id) DEFERRABLE INITIALLY IMMEDIATE,
+    repository_id BIGINT NOT NULL REFERENCES repository_moves(repository_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE cluster_scaling_policies (
@@ -1353,7 +1373,7 @@ CREATE TABLE cluster_scaling_policies (
 
 CREATE TABLE cluster_leases (
     name TEXT PRIMARY KEY,
-    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE,
+    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     expires_at TIMESTAMPTZ NOT NULL,
     evaluated_at TIMESTAMPTZ
 );
@@ -1363,7 +1383,7 @@ CREATE TABLE IF NOT EXISTS join_tokens (
     token_hash TEXT NOT NULL UNIQUE CHECK (token_hash ~ '^[0-9a-f]{64}$'),
     roles TEXT[] NOT NULL CHECK (cardinality(roles) > 0 AND roles <@ ARRAY['web', 'ssh', 'storage', 'runner']),
     reusable BOOLEAN NOT NULL DEFAULT FALSE,
-    created_by_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    created_by_id BIGINT REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     max_uses INTEGER CHECK (max_uses IS NULL OR max_uses BETWEEN 1 AND 1000),
     requires_approval BOOLEAN NOT NULL DEFAULT FALSE,
     expires_at TIMESTAMPTZ NOT NULL,
@@ -1375,8 +1395,8 @@ CREATE TABLE IF NOT EXISTS join_tokens (
 -- A copy of a repository held by another node. It goes with its repository. applied_version -1
 -- means nothing has been copied yet.
 CREATE TABLE IF NOT EXISTS repository_replicas (
-    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    node_id BIGINT NOT NULL REFERENCES nodes(id),
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    node_id BIGINT NOT NULL REFERENCES nodes(id) DEFERRABLE INITIALLY IMMEDIATE,
     applied_version BIGINT NOT NULL DEFAULT -1 CHECK (applied_version >= -1),
     synced_at TIMESTAMPTZ,
     PRIMARY KEY (repository_id, node_id)
@@ -1388,15 +1408,15 @@ WHERE applied_version < 0 AND synced_at IS NULL;
 
 -- Quorum decisions are independent of the attempted-write cache version.
 CREATE TABLE repository_write_control (
-    repository_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repository_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     term BIGINT NOT NULL DEFAULT 1 CHECK (term > 0),
     committed_version BIGINT NOT NULL DEFAULT 0 CHECK (committed_version >= 0),
     serving INTEGER NOT NULL DEFAULT 0 CHECK (serving IN (0,1))
 );
 
 CREATE TABLE repository_voters (
-    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT,
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT DEFERRABLE INITIALLY IMMEDIATE,
     term BIGINT NOT NULL CHECK (term > 0),
     applied_version BIGINT NOT NULL DEFAULT -1 CHECK (applied_version >= -1),
     PRIMARY KEY (repository_id, node_id)
@@ -1404,9 +1424,9 @@ CREATE TABLE repository_voters (
 
 CREATE TABLE repository_writes (
     id TEXT PRIMARY KEY,
-    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     term BIGINT NOT NULL,
-    primary_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT,
+    primary_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT DEFERRABLE INITIALLY IMMEDIATE,
     base_version BIGINT NOT NULL,
     required_votes BIGINT NOT NULL CHECK (required_votes > 0),
     deadline TIMESTAMPTZ NOT NULL,
@@ -1421,7 +1441,7 @@ CREATE UNIQUE INDEX idx_repository_writes_unfinished ON repository_writes(reposi
 WHERE finished = 0;
 
 CREATE TABLE repository_write_refs (
-    write_id TEXT NOT NULL REFERENCES repository_writes(id) ON DELETE CASCADE,
+    write_id TEXT NOT NULL REFERENCES repository_writes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('oid','symbolic')),
     old_target TEXT,
@@ -1430,14 +1450,14 @@ CREATE TABLE repository_write_refs (
 );
 
 CREATE TABLE repository_write_votes (
-    write_id TEXT NOT NULL REFERENCES repository_writes(id) ON DELETE CASCADE,
-    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT,
+    write_id TEXT NOT NULL REFERENCES repository_writes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT DEFERRABLE INITIALLY IMMEDIATE,
     durable_at TIMESTAMPTZ NOT NULL,
     PRIMARY KEY (write_id, node_id)
 );
 
 CREATE TABLE repository_committed_refs (
-    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('oid','symbolic')),
     target TEXT NOT NULL,
@@ -1470,6 +1490,10 @@ CREATE TRIGGER repository_visibility_floor BEFORE INSERT OR UPDATE OF is_private
 
 CREATE OR REPLACE FUNCTION narrow_descendant_fork_visibility() RETURNS TRIGGER AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     IF NEW.is_private AND NOT OLD.is_private AND EXISTS (
         SELECT 1 FROM repositories WHERE forked_from_id=NEW.id AND (NOT is_private OR NOT visibility_locked)
     ) THEN
@@ -1490,8 +1514,8 @@ CREATE TRIGGER repository_fork_visibility_narrowing AFTER UPDATE OF is_private O
 -- Webhooks on a repository or an organization, their encrypted secrets, and recent deliveries.
 CREATE TABLE IF NOT EXISTS webhooks (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE,
-    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     payload_url VARCHAR(2048) NOT NULL,
     content_type VARCHAR(64) NOT NULL CHECK (content_type IN ('application/json','application/x-www-form-urlencoded')),
     encrypted_secret BYTEA,
@@ -1499,7 +1523,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
     events VARCHAR(1024) NOT NULL,
     active BOOLEAN NOT NULL DEFAULT TRUE,
     ssl_verify BOOLEAN NOT NULL DEFAULT TRUE,
-    created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     username VARCHAR(1024),
@@ -1515,7 +1539,7 @@ CREATE INDEX IF NOT EXISTS idx_webhooks_org_id ON webhooks(org_id);
 
 CREATE TABLE IF NOT EXISTS webhook_deliveries (
     id BIGSERIAL PRIMARY KEY,
-    webhook_id BIGINT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE,
+    webhook_id BIGINT NOT NULL REFERENCES webhooks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     guid VARCHAR(64) NOT NULL,
     event VARCHAR(64) NOT NULL,
     action VARCHAR(100),
@@ -1558,10 +1582,10 @@ CREATE TABLE IF NOT EXISTS email_outbox (
     next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     last_error VARCHAR(1000),
     sent_at TIMESTAMPTZ,
-    organization_invitation_id BIGINT REFERENCES organization_invitations(id) ON DELETE SET NULL,
+    organization_invitation_id BIGINT REFERENCES organization_invitations(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     -- A notification email is sent only while its recipient can still read the notification.
-    notification_id BIGINT REFERENCES notifications(id) ON DELETE CASCADE,
-    link_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    notification_id BIGINT REFERENCES notifications(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    link_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     link_purpose VARCHAR(10) CHECK (link_purpose IN ('verify','reset','secondary')),
     link_token_hash TEXT CHECK (char_length(link_token_hash)=64),
     CHECK ((link_user_id IS NULL)=(link_purpose IS NULL) AND (link_user_id IS NULL)=(link_token_hash IS NULL))
@@ -1569,7 +1593,7 @@ CREATE TABLE IF NOT EXISTS email_outbox (
 CREATE INDEX email_outbox_link ON email_outbox(link_user_id,link_purpose,sent_at) WHERE link_user_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS email_tokens (
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     purpose VARCHAR(10) NOT NULL CHECK (purpose IN ('verify', 'reset')),
     email VARCHAR(255) NOT NULL,
     token_hash TEXT NOT NULL UNIQUE CHECK (char_length(token_hash) = 64),
@@ -1578,7 +1602,7 @@ CREATE TABLE IF NOT EXISTS email_tokens (
 );
 
 CREATE TABLE IF NOT EXISTS repo_language_cache (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     branch TEXT NOT NULL,
     storage_node_id BIGINT,
     write_version BIGINT NOT NULL,
@@ -1605,7 +1629,7 @@ CREATE TABLE IF NOT EXISTS actions_settings (
 INSERT INTO actions_settings(id) VALUES(1);
 
 CREATE TABLE IF NOT EXISTS repo_actions_settings (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     enabled BOOLEAN NOT NULL DEFAULT TRUE,
     run_timeout_minutes INTEGER CHECK (run_timeout_minutes BETWEEN 1 AND 10080),
     job_cpus INTEGER CHECK (job_cpus BETWEEN 1 AND 1024),
@@ -1679,13 +1703,17 @@ CREATE INDEX IF NOT EXISTS idx_commit_statuses_ci_run_id ON commit_statuses(ci_r
 CREATE INDEX IF NOT EXISTS idx_auth_login_limits_expiry ON auth_login_limits (window_ends_at);
 
 CREATE TABLE repository_star_days (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     day DATE NOT NULL,
     stars INTEGER NOT NULL CHECK (stars >= 0),
     PRIMARY KEY (repo_id, day)
 );
 CREATE FUNCTION record_repository_star_day() RETURNS TRIGGER AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     INSERT INTO repository_star_days (repo_id,day,stars) VALUES (NEW.repo_id,(NEW.created_at AT TIME ZONE 'UTC')::date,1)
     ON CONFLICT(repo_id,day) DO UPDATE SET stars=repository_star_days.stars+1;
     RETURN NEW;
@@ -1694,8 +1722,8 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER record_repository_star_day AFTER INSERT ON stars FOR EACH ROW EXECUTE FUNCTION record_repository_star_day();
 
 CREATE TABLE pull_request_stacks (
-    id BIGINT PRIMARY KEY REFERENCES pull_requests(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    id BIGINT PRIMARY KEY REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number INTEGER NOT NULL,
     base_branch VARCHAR(255) NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
@@ -1703,14 +1731,14 @@ CREATE TABLE pull_request_stacks (
 );
 
 CREATE TABLE user_social_accounts (
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     provider TEXT NOT NULL CHECK (length(provider) BETWEEN 1 AND 50),
     url TEXT NOT NULL CHECK (length(url) BETWEEN 1 AND 255),
     PRIMARY KEY (user_id, url)
 );
 
 CREATE TABLE user_profile_settings (
-    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     company TEXT CHECK (length(company) <= 255),
     twitter_username TEXT CHECK (length(twitter_username) <= 255),
     hireable BOOLEAN,
@@ -1720,7 +1748,7 @@ CREATE TABLE user_profile_settings (
 
 CREATE TABLE ssh_signing_keys (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 100),
     key TEXT NOT NULL CHECK (length(key) <= 32768),
     fingerprint TEXT NOT NULL UNIQUE,
@@ -1730,7 +1758,7 @@ CREATE TABLE ssh_signing_keys (
 CREATE INDEX idx_ssh_signing_keys_user ON ssh_signing_keys(user_id, id);
 
 CREATE TABLE user_emails (
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     email TEXT NOT NULL CHECK (length(email) BETWEEN 1 AND 255),
     verified BOOLEAN NOT NULL DEFAULT FALSE,
     verification_hash TEXT UNIQUE CHECK (length(verification_hash)=64),
@@ -1756,8 +1784,8 @@ $$ LANGUAGE plpgsql;
 CREATE TRIGGER users_primary_email BEFORE INSERT OR UPDATE OF email ON users FOR EACH ROW EXECUTE FUNCTION guard_primary_email();
 
 CREATE TABLE user_blocks (
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    blocked_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    blocked_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY (user_id,blocked_id),
     CHECK (user_id<>blocked_id)
@@ -1772,8 +1800,8 @@ CREATE TABLE signature_verifications (
 
 CREATE TABLE gpg_keys (
     id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    primary_key_id BIGINT REFERENCES gpg_keys(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    primary_key_id BIGINT REFERENCES gpg_keys(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT CHECK (length(name)<=100),
     fingerprint TEXT NOT NULL UNIQUE,
     key_id TEXT NOT NULL,
@@ -1783,17 +1811,17 @@ CREATE INDEX idx_gpg_keys_user ON gpg_keys(user_id,primary_key_id,id);
 CREATE INDEX idx_gpg_keys_key_id ON gpg_keys(key_id);
 
 CREATE TABLE interaction_limits (
-    user_id BIGINT UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    org_id BIGINT UNIQUE REFERENCES organizations(id) ON DELETE CASCADE,
-    repo_id BIGINT UNIQUE REFERENCES repositories(id) ON DELETE CASCADE,
+    user_id BIGINT UNIQUE REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    org_id BIGINT UNIQUE REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT UNIQUE REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     restriction TEXT NOT NULL CHECK (restriction IN ('existing_users','contributors_only','collaborators_only')),
     expires_at TIMESTAMPTZ NOT NULL,
     CHECK ((user_id IS NOT NULL)::integer+(org_id IS NOT NULL)::integer+(repo_id IS NOT NULL)::integer=1)
 );
 
 CREATE TABLE interaction_contributors (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     write_version BIGINT NOT NULL,
     default_branch TEXT NOT NULL,
     storage_node_id BIGINT,
@@ -1803,8 +1831,8 @@ CREATE TABLE interaction_contributors (
 );
 
 CREATE TABLE interaction_pull_caps (
-    org_id BIGINT UNIQUE REFERENCES organizations(id) ON DELETE CASCADE,
-    repo_id BIGINT UNIQUE REFERENCES repositories(id) ON DELETE CASCADE,
+    org_id BIGINT UNIQUE REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT UNIQUE REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     enabled BOOLEAN NOT NULL DEFAULT FALSE,
     max_open_pull_requests INTEGER NOT NULL DEFAULT 1 CHECK (max_open_pull_requests BETWEEN 1 AND 1000),
     include_drafts BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1812,8 +1840,8 @@ CREATE TABLE interaction_pull_caps (
 );
 
 CREATE TABLE interaction_pull_bypass (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(repo_id,user_id)
 );
 CREATE INDEX idx_pull_cap_author ON pull_requests(author_id,state,repo_id,is_draft);
@@ -1824,8 +1852,8 @@ CREATE TABLE gist_identifiers (
 );
 
 CREATE TABLE gists (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
-    id TEXT NOT NULL UNIQUE REFERENCES gist_identifiers(id) CHECK (length(id)=32),
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    id TEXT NOT NULL UNIQUE REFERENCES gist_identifiers(id) DEFERRABLE INITIALLY IMMEDIATE CHECK (length(id)=32),
     is_public BOOLEAN NOT NULL DEFAULT FALSE,
     description TEXT NOT NULL DEFAULT '' CHECK (length(description)<=65535),
     ready BOOLEAN NOT NULL DEFAULT FALSE,
@@ -1840,8 +1868,8 @@ CREATE TABLE gists (
 CREATE INDEX idx_gists_updated ON gists(updated_at DESC,id DESC);
 
 CREATE TABLE gist_stars (
-    repo_id BIGINT NOT NULL REFERENCES gists(repo_id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES gists(repo_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY(repo_id,user_id)
 );
@@ -1849,8 +1877,8 @@ CREATE INDEX idx_gist_stars_user ON gist_stars(user_id,repo_id);
 
 CREATE TABLE gist_comments (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES gists(repo_id) ON DELETE CASCADE,
-    user_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    repo_id BIGINT NOT NULL REFERENCES gists(repo_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     body TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 65535),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -1858,9 +1886,9 @@ CREATE TABLE gist_comments (
 CREATE INDEX idx_gist_comments_repo ON gist_comments(repo_id,id);
 
 CREATE TABLE issue_comment_pins (
-    issue_id BIGINT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
-    comment_id BIGINT NOT NULL UNIQUE REFERENCES issue_comments(id) ON DELETE CASCADE,
-    pinned_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    issue_id BIGINT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    comment_id BIGINT NOT NULL UNIQUE REFERENCES issue_comments(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    pinned_by BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     pinned_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
@@ -1869,8 +1897,8 @@ INSERT INTO issue_attribute_guard VALUES(1);
 
 CREATE TABLE issue_attributes (
     id BIGSERIAL PRIMARY KEY,
-    owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+    owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     kind TEXT NOT NULL CHECK(kind IN ('type','field')),
     name TEXT NOT NULL CHECK(length(trim(name)) BETWEEN 1 AND 128),
     description TEXT,
@@ -1888,7 +1916,7 @@ CREATE UNIQUE INDEX issue_attribute_org_name ON issue_attributes(owner_org_id,ki
 
 CREATE TABLE issue_attribute_options (
     id BIGSERIAL PRIMARY KEY,
-    attribute_id BIGINT NOT NULL REFERENCES issue_attributes(id) ON DELETE CASCADE,
+    attribute_id BIGINT NOT NULL REFERENCES issue_attributes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     color TEXT NOT NULL CHECK(color IN ('gray','blue','green','yellow','orange','red','pink','purple')),
     priority BIGINT NOT NULL,
@@ -1897,14 +1925,14 @@ CREATE TABLE issue_attribute_options (
 CREATE UNIQUE INDEX issue_attribute_option_name ON issue_attribute_options(attribute_id,lower(name));
 
 CREATE TABLE issue_type_assignments (
-    issue_id BIGINT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
-    attribute_id BIGINT NOT NULL REFERENCES issue_attributes(id) ON DELETE CASCADE
+    issue_id BIGINT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    attribute_id BIGINT NOT NULL REFERENCES issue_attributes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE issue_field_values (
     id BIGSERIAL PRIMARY KEY,
-    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    attribute_id BIGINT NOT NULL REFERENCES issue_attributes(id) ON DELETE CASCADE,
+    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    attribute_id BIGINT NOT NULL REFERENCES issue_attributes(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     value_json TEXT NOT NULL CHECK(value_json::jsonb IS NOT NULL),
     UNIQUE(issue_id,attribute_id)
 );
@@ -1914,8 +1942,8 @@ INSERT INTO issue_relation_guard VALUES (1);
 
 CREATE TABLE issue_relations (
     kind TEXT NOT NULL CHECK (kind IN ('parent','blocks','related')),
-    source_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    target_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    source_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    target_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     position BIGINT NOT NULL DEFAULT 0 CHECK (position>=0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY(kind,source_id,target_id),
@@ -1928,21 +1956,21 @@ CREATE INDEX issue_relations_added_source ON issue_relations(kind,source_id,crea
 CREATE INDEX issue_relations_added_target ON issue_relations(kind,target_id,created_at,source_id);
 
 CREATE TABLE pr_comment_pins (
-    pull_request_id BIGINT PRIMARY KEY REFERENCES pull_requests(id) ON DELETE CASCADE,
-    comment_id BIGINT NOT NULL UNIQUE REFERENCES pr_comments(id) ON DELETE CASCADE,
-    pinned_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    pull_request_id BIGINT PRIMARY KEY REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    comment_id BIGINT NOT NULL UNIQUE REFERENCES pr_comments(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    pinned_by BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     pinned_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- issues: reviewable agent proposals
 CREATE TABLE repository_issue_suggestions (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     enabled BOOLEAN NOT NULL DEFAULT FALSE
 );
 
 CREATE TABLE issue_suggestions (
     id BIGSERIAL PRIMARY KEY,
-    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     action TEXT NOT NULL CHECK(action IN ('set_type','add_label','add_field','add_assignee','close_issue')),
     slot TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','applied','approved','dismissed','replaced','invalidated')),
@@ -1951,9 +1979,9 @@ CREATE TABLE issue_suggestions (
     value_json TEXT NOT NULL CHECK(value_json::jsonb IS NOT NULL),
     rationale TEXT,
     confidence TEXT CHECK(confidence IN ('LOW','MEDIUM','HIGH')),
-    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    issue_event_id BIGINT REFERENCES timeline_events(id) ON DELETE SET NULL,
-    resolved_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    issue_event_id BIGINT REFERENCES timeline_events(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    resolved_by BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1964,6 +1992,10 @@ CREATE INDEX issue_suggestions_target ON issue_suggestions(action,target_id) WHE
 CREATE UNIQUE INDEX issue_suggestions_current_actor_slot ON issue_suggestions(issue_id,actor_id,slot) WHERE state='pending';
 CREATE FUNCTION issue_suggestion_target_deleted() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     IF TG_ARGV[0]='attribute' THEN
         UPDATE issue_suggestions SET state='invalidated',updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE target_id=OLD.id AND state='pending' AND action=CASE WHEN OLD.kind='type' THEN 'set_type' ELSE 'add_field' END;
     ELSE
@@ -1978,6 +2010,10 @@ CREATE TRIGGER issue_suggestion_assignee_deleted AFTER DELETE ON users FOR EACH 
 CREATE TRIGGER issue_suggestion_duplicate_deleted AFTER DELETE ON issues FOR EACH ROW EXECUTE FUNCTION issue_suggestion_target_deleted('close_issue');
 CREATE FUNCTION issue_suggestion_definition_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     UPDATE issue_suggestions SET state='invalidated',updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE target_id=NEW.id AND state='pending' AND ((NEW.kind='type' AND OLD.is_enabled AND NOT NEW.is_enabled AND action='set_type') OR (NEW.kind='field' AND action='add_field'));
     RETURN NEW;
 END;
@@ -1987,8 +2023,8 @@ CREATE TRIGGER issue_suggestion_definition_changed AFTER UPDATE ON issue_attribu
 -- pulls
 CREATE TABLE events (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     kind TEXT NOT NULL,
     payload JSONB NOT NULL,
     is_public BOOLEAN NOT NULL,
@@ -2000,17 +2036,17 @@ CREATE INDEX events_actor ON events(actor_id,created_at DESC,id DESC);
 
 -- pulls
 CREATE TABLE activity_feed_tokens (
-    api_token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
+    api_token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     value TEXT NOT NULL UNIQUE
 );
 
 -- pulls
 CREATE TABLE pull_request_async_merges (
     uuid TEXT PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
-    token_id BIGINT REFERENCES personal_access_tokens(id) ON DELETE SET NULL,
-    worker_node_id BIGINT REFERENCES nodes(id) ON DELETE SET NULL,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    token_id BIGINT REFERENCES personal_access_tokens(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    worker_node_id BIGINT REFERENCES nodes(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     owner TEXT NOT NULL,
     name TEXT NOT NULL,
     number INTEGER NOT NULL,
@@ -2024,7 +2060,7 @@ CREATE UNIQUE INDEX pull_request_async_pending ON pull_request_async_merges(pull
 CREATE INDEX pull_request_async_expiry ON pull_request_async_merges(expires_at);
 
 CREATE TABLE notification_thread_subscriptions (
-    thread_id BIGINT PRIMARY KEY REFERENCES notification_threads(id) ON DELETE CASCADE,
+    thread_id BIGINT PRIMARY KEY REFERENCES notification_threads(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     is_explicit BOOLEAN NOT NULL DEFAULT FALSE,
     subscribed BOOLEAN NOT NULL DEFAULT TRUE,
     ignored BOOLEAN NOT NULL DEFAULT FALSE,
@@ -2056,15 +2092,15 @@ CREATE UNIQUE INDEX pull_requests_source_issue ON pull_requests(source_issue_id)
 CREATE UNIQUE INDEX pr_comments_source_issue ON pr_comments(source_issue_comment_id) WHERE source_issue_comment_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS actions_runtime_tokens (
-    run_id BIGINT PRIMARY KEY REFERENCES ci_runs(id) ON DELETE CASCADE,
+    run_id BIGINT PRIMARY KEY REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     token_hash TEXT NOT NULL UNIQUE,
     backend_id TEXT NOT NULL UNIQUE
 );
 
 CREATE TABLE IF NOT EXISTS actions_objects (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    run_id BIGINT REFERENCES ci_runs(id) ON DELETE SET NULL,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    run_id BIGINT REFERENCES ci_runs(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     kind TEXT NOT NULL CHECK (kind IN ('cache','artifact')),
     scope TEXT NOT NULL,
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 512),
@@ -2082,6 +2118,10 @@ CREATE INDEX IF NOT EXISTS actions_objects_expiry ON actions_objects(expires_at)
 CREATE INDEX IF NOT EXISTS actions_objects_run ON actions_objects(run_id);
 CREATE OR REPLACE FUNCTION actions_run_delete() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     DELETE FROM actions_objects WHERE run_id=OLD.id AND (kind='artifact' OR NOT finalized);
     RETURN OLD;
 END;
@@ -2090,7 +2130,7 @@ CREATE TRIGGER actions_run_delete BEFORE DELETE ON ci_runs
     FOR EACH ROW EXECUTE FUNCTION actions_run_delete();
 
 CREATE TABLE IF NOT EXISTS actions_blob_parts (
-    object_id BIGINT NOT NULL REFERENCES actions_objects(id) ON DELETE CASCADE,
+    object_id BIGINT NOT NULL REFERENCES actions_objects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     block_id TEXT NOT NULL,
     object_key TEXT NOT NULL UNIQUE,
     size BIGINT NOT NULL CHECK (size >= 0),
@@ -2099,6 +2139,10 @@ CREATE TABLE IF NOT EXISTS actions_blob_parts (
 );
 CREATE OR REPLACE FUNCTION actions_blob_delete() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     INSERT INTO pending_object_deletions(object_key,delete_after)
     VALUES(OLD.object_key,clock_timestamp()+INTERVAL '7 days') ON CONFLICT(object_key) DO NOTHING;
     RETURN OLD;
@@ -2109,16 +2153,16 @@ CREATE TRIGGER actions_blob_delete AFTER DELETE ON actions_blob_parts
 
 CREATE TABLE IF NOT EXISTS actions_blob_grants (
     token_hash TEXT PRIMARY KEY,
-    object_id BIGINT NOT NULL REFERENCES actions_objects(id) ON DELETE CASCADE,
-    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
+    object_id BIGINT NOT NULL REFERENCES actions_objects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     write BOOLEAN NOT NULL,
     expires_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS actions_blob_grants_expiry ON actions_blob_grants(expires_at);
 
 CREATE TABLE actions_github_tokens (
-    token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
-    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
+    token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     job TEXT NOT NULL,
     permissions TEXT NOT NULL,
     revoked_at BIGINT
@@ -2146,6 +2190,10 @@ CREATE TRIGGER actions_bot_session BEFORE INSERT ON sessions
     FOR EACH ROW EXECUTE FUNCTION actions_bot_session();
 CREATE FUNCTION actions_github_tokens_delete() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     DELETE FROM personal_access_tokens WHERE id IN (SELECT token_id FROM actions_github_tokens WHERE run_id=OLD.id);
     RETURN OLD;
 END;
@@ -2155,7 +2203,7 @@ CREATE TRIGGER actions_github_tokens_delete BEFORE DELETE ON ci_runs
 
 -- actions-runs
 CREATE TABLE org_actions_settings (
-    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     cache_size_gib INTEGER CHECK (cache_size_gib IS NULL OR cache_size_gib>0),
     cache_retention_days INTEGER CHECK (cache_retention_days IS NULL OR cache_retention_days>0),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -2164,7 +2212,7 @@ CREATE TABLE org_actions_settings (
 
 CREATE TABLE actions_workflows (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     path TEXT NOT NULL,
     name TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active','disabled_manually')),
@@ -2177,7 +2225,7 @@ CREATE TABLE actions_workflows (
 -- graphql
 CREATE TABLE graphql_rate_limits (
     token_id BIGINT PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     used INTEGER NOT NULL CHECK (used BETWEEN 1 AND 5000),
     reset_at TIMESTAMPTZ NOT NULL
 );
@@ -2186,15 +2234,15 @@ CREATE INDEX ci_runs_workflow_run ON ci_runs(workflow_run_id,workflow_run_attemp
 CREATE INDEX ci_runs_logical_latest ON ci_runs(repo_id,(COALESCE(workflow_run_id,id)) DESC,id DESC);
 
 CREATE TABLE actions_run_metadata (
-    run_id BIGINT PRIMARY KEY REFERENCES ci_runs(id) ON DELETE CASCADE,
-    workflow_id BIGINT NOT NULL REFERENCES actions_workflows(id),
+    run_id BIGINT PRIMARY KEY REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    workflow_id BIGINT NOT NULL REFERENCES actions_workflows(id) DEFERRABLE INITIALLY IMMEDIATE,
     head_repository JSONB,
     head_owner TEXT
 );
 CREATE INDEX actions_jobs_run ON actions_jobs(run_id,id);
 
 CREATE TABLE actions_steps (
-    job_id BIGINT NOT NULL REFERENCES actions_jobs(id) ON DELETE CASCADE,
+    job_id BIGINT NOT NULL REFERENCES actions_jobs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number INTEGER NOT NULL CHECK(number>0),
     name TEXT NOT NULL,
     status TEXT NOT NULL CHECK(status IN ('in_progress','completed')),
@@ -2206,7 +2254,7 @@ CREATE TABLE actions_steps (
 );
 
 CREATE TABLE actions_step_summaries (
-    job_id BIGINT NOT NULL REFERENCES actions_jobs(id) ON DELETE CASCADE,
+    job_id BIGINT NOT NULL REFERENCES actions_jobs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number INTEGER NOT NULL CHECK (number > 0 AND number <= 10000),
     markdown TEXT NOT NULL,
     bytes INTEGER NOT NULL CHECK (bytes >= 0 AND bytes <= 65536),
@@ -2214,7 +2262,7 @@ CREATE TABLE actions_step_summaries (
 );
 
 CREATE TABLE actions_job_states (
-    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
+    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     generation TEXT NOT NULL,
     workflow_path TEXT NOT NULL,
     state JSONB NOT NULL,
@@ -2224,9 +2272,9 @@ CREATE TABLE actions_job_states (
 CREATE TABLE actions_log_downloads (
     token_hash TEXT PRIMARY KEY,
     resource TEXT NOT NULL,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
-    job_id BIGINT REFERENCES actions_jobs(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    job_id BIGINT REFERENCES actions_jobs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     step_number INTEGER,
     log_version BIGINT NOT NULL,
     max_log_id BIGINT NOT NULL,
@@ -2236,8 +2284,8 @@ CREATE TABLE actions_log_downloads (
 CREATE INDEX actions_log_downloads_expiry ON actions_log_downloads(expires_at);
 
 CREATE TABLE actions_replays (
-    run_id BIGINT PRIMARY KEY REFERENCES ci_runs(id) ON DELETE CASCADE,
-    source_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
+    run_id BIGINT PRIMARY KEY REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    source_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     data JSONB,
     debug BOOLEAN NOT NULL DEFAULT FALSE
 );
@@ -2245,14 +2293,14 @@ CREATE TABLE actions_replays (
 -- git
 CREATE TABLE commit_status_history (
     id BIGSERIAL PRIMARY KEY,
-    status_id BIGINT NOT NULL REFERENCES commit_statuses(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    status_id BIGINT NOT NULL REFERENCES commit_statuses(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     sha TEXT NOT NULL,
     context TEXT NOT NULL,
     state TEXT NOT NULL,
     description TEXT,
     target_url TEXT,
-    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX idx_commit_status_history_page ON commit_status_history(repo_id, sha, id DESC);
@@ -2260,6 +2308,10 @@ CREATE INDEX idx_commit_status_history_latest ON commit_status_history(status_id
 CREATE INDEX idx_commit_status_history_context ON commit_status_history(repo_id, sha, context, id DESC);
 CREATE FUNCTION record_commit_status_history() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     INSERT INTO commit_status_history(status_id,repo_id,sha,context,state,description,target_url,creator_id,created_at)
         VALUES(NEW.id,NEW.repo_id,NEW.sha,NEW.context,NEW.state,NEW.description,NEW.target_url,NEW.creator_id,clock_timestamp());
     RETURN NEW;
@@ -2274,8 +2326,8 @@ CREATE VIEW commit_statuses_latest AS
 
 CREATE TABLE commit_comments (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    author_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    author_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     sha TEXT NOT NULL CHECK (sha ~ '^[0-9a-f]{40}$'),
     body TEXT NOT NULL CHECK (char_length(body) BETWEEN 1 AND 65536),
     path TEXT CHECK (path IS NULL OR octet_length(path) BETWEEN 1 AND 4096),
@@ -2288,6 +2340,9 @@ CREATE TABLE commit_comments (
 CREATE INDEX commit_comments_repository ON commit_comments(repo_id,id);
 CREATE INDEX commit_comments_commit ON commit_comments(repo_id,sha,id);
 CREATE FUNCTION delete_commit_comment_reactions() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
     DELETE FROM reactions WHERE subject_kind='commit_comment' AND subject_id=OLD.id;
     RETURN OLD;
 END $$;
@@ -2295,7 +2350,11 @@ CREATE TRIGGER commit_comment_reactions AFTER DELETE ON commit_comments FOR EACH
 
 CREATE INDEX pull_requests_commit_associations ON pull_requests(repo_id,id DESC) WHERE state='open' OR merged;
 CREATE FUNCTION touch_milestone_updated_at() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN NEW.updated_at=clock_timestamp(); RETURN NEW; END;
+BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+    NEW.updated_at=clock_timestamp(); RETURN NEW; END;
 $$;
 CREATE TRIGGER milestones_updated BEFORE UPDATE ON milestones FOR EACH ROW EXECUTE FUNCTION touch_milestone_updated_at();
 
@@ -2308,19 +2367,27 @@ CREATE TABLE topics (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
 );
 CREATE FUNCTION register_repository_topic() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     INSERT INTO topics(name) VALUES (NEW.topic) ON CONFLICT DO NOTHING;
     RETURN NEW;
 END $$;
 CREATE TRIGGER repository_topic_catalog AFTER INSERT ON repository_topics FOR EACH ROW EXECUTE FUNCTION register_repository_topic();
 CREATE FUNCTION touch_label_timestamp() RETURNS TRIGGER LANGUAGE plpgsql AS $$ BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     IF (OLD.name,OLD.color,OLD.description) IS DISTINCT FROM (NEW.name,NEW.color,NEW.description) THEN NEW.updated_at=clock_timestamp(); END IF;
     RETURN NEW;
 END $$;
 CREATE TRIGGER label_timestamp BEFORE UPDATE OF name,color,description ON labels FOR EACH ROW EXECUTE FUNCTION touch_label_timestamp();
 
 CREATE TABLE team_invitations (
-    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    invitation_id BIGINT NOT NULL REFERENCES organization_invitations(id) ON DELETE CASCADE,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    invitation_id BIGINT NOT NULL REFERENCES organization_invitations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     role TEXT NOT NULL CHECK (role IN ('member','maintainer')),
     PRIMARY KEY (team_id, invitation_id)
 );
@@ -2330,13 +2397,17 @@ CREATE INDEX teams_parent ON teams(parent_team_id,id);
 -- Reads must never expand unrelated tenants' hierarchies. Maintain the indexed closure
 -- on hierarchy writes, which already serialize through organization authority.
 CREATE TABLE team_ancestors (
-    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
-    ancestor_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    ancestor_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(team_id,ancestor_id)
 );
 CREATE INDEX team_ancestors_ancestor ON team_ancestors(ancestor_id,team_id);
 CREATE FUNCTION refresh_team_ancestors() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     DELETE FROM team_ancestors WHERE team_id IN (
         WITH RECURSIVE subtree(id) AS (
             SELECT NEW.id UNION SELECT t.id FROM teams t JOIN subtree s ON t.parent_team_id=s.id
@@ -2382,7 +2453,7 @@ GROUP BY a.team_id,g.repo_id;
 -- Actions runners
 CREATE TABLE action_runner_groups (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     visibility TEXT NOT NULL DEFAULT 'all' CHECK(visibility IN ('all','private','selected')),
     is_default BOOLEAN NOT NULL DEFAULT false,
@@ -2394,18 +2465,18 @@ CREATE UNIQUE INDEX action_runner_groups_name ON action_runner_groups(org_id,low
 CREATE UNIQUE INDEX action_runner_groups_default ON action_runner_groups(org_id) WHERE is_default;
 
 CREATE TABLE action_runner_group_repositories (
-    group_id BIGINT NOT NULL REFERENCES action_runner_groups(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    group_id BIGINT NOT NULL REFERENCES action_runner_groups(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(group_id,repo_id)
 );
 CREATE INDEX action_runner_group_repositories_repo ON action_runner_group_repositories(repo_id);
 
 CREATE TABLE action_runners (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
-    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE,
-    group_id BIGINT REFERENCES action_runner_groups(id) ON DELETE SET NULL,
-    node_id BIGINT UNIQUE REFERENCES nodes(id) ON DELETE SET NULL,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    group_id BIGINT REFERENCES action_runner_groups(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    node_id BIGINT UNIQUE REFERENCES nodes(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     os TEXT NOT NULL DEFAULT 'unknown',
     labels TEXT NOT NULL DEFAULT '[]',
@@ -2418,33 +2489,33 @@ CREATE UNIQUE INDEX action_runners_repo_name ON action_runners(repo_id,lower(nam
 CREATE INDEX action_runners_group ON action_runners(group_id);
 
 CREATE TABLE action_runner_tokens (
-    token_hash TEXT PRIMARY KEY REFERENCES join_tokens(token_hash) ON DELETE CASCADE,
-    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
-    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE,
-    group_id BIGINT REFERENCES action_runner_groups(id) ON DELETE SET NULL,
-    runner_id BIGINT REFERENCES action_runners(id) ON DELETE CASCADE,
+    token_hash TEXT PRIMARY KEY REFERENCES join_tokens(token_hash) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    group_id BIGINT REFERENCES action_runner_groups(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    runner_id BIGINT REFERENCES action_runners(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     CHECK((org_id IS NOT NULL AND repo_id IS NULL) OR (org_id IS NULL AND repo_id IS NOT NULL))
 );
 
 CREATE TABLE action_runner_remove_tokens (
     token_hash TEXT PRIMARY KEY,
-    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
-    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE,
+    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     expires_at TIMESTAMPTZ NOT NULL,
     CHECK((org_id IS NOT NULL AND repo_id IS NULL) OR (org_id IS NULL AND repo_id IS NOT NULL))
 );
 
 CREATE TABLE repo_actions_keys (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     key_id TEXT NOT NULL UNIQUE,
     encrypted_key BYTEA NOT NULL CHECK (octet_length(encrypted_key)=48),
     nonce BYTEA NOT NULL CHECK (octet_length(nonce)=12)
 );
 
 CREATE TABLE repo_actions_variables (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 255),
     value TEXT NOT NULL CHECK (octet_length(value)<=49152),
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
@@ -2455,7 +2526,7 @@ CREATE TABLE repo_actions_variables (
 -- apps
 CREATE TABLE oauth_applications (
     id BIGSERIAL PRIMARY KEY,
-    owner_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    owner_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     client_id TEXT NOT NULL UNIQUE,
     secret_hash TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -2473,7 +2544,7 @@ CREATE TABLE oauth_app_grants (
     expires_at BIGINT NOT NULL,
     interval BIGINT NOT NULL DEFAULT 5,
     last_poll BIGINT NOT NULL DEFAULT 0,
-    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     session_id TEXT,
     denied BOOLEAN NOT NULL DEFAULT FALSE,
     kind TEXT NOT NULL CHECK (kind IN ('device','web')),
@@ -2484,7 +2555,7 @@ CREATE TABLE oauth_app_grants (
 CREATE INDEX oauth_app_grants_expiry ON oauth_app_grants(expires_at);
 
 CREATE TABLE oauth_app_tokens (
-    token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
+    token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     client_id TEXT NOT NULL,
     scopes TEXT NOT NULL
 );
@@ -2494,28 +2565,28 @@ CREATE INDEX oauth_app_tokens_client ON oauth_app_tokens(client_id);
 -- user and expiry; this row marks the token fine-grained and holds its bounds. The owning
 -- organization has no foreign key: deleting it must not turn the token into a classic one.
 CREATE TABLE fine_grained_tokens (
-    token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
+    token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     owner_org_id BIGINT,
     description TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 1024),
     repository_access TEXT NOT NULL CHECK (repository_access IN ('public','all','selected')),
     permissions TEXT NOT NULL CHECK (length(permissions) <= 4096),
     status TEXT NOT NULL CHECK (status IN ('pending','approved','denied','revoked')),
     reason TEXT CHECK (reason IS NULL OR length(reason) <= 1024),
-    reviewed_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    reviewed_by BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     reviewed_at TIMESTAMPTZ,
     requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX fine_grained_tokens_org ON fine_grained_tokens(owner_org_id, status);
 CREATE TABLE fine_grained_token_repositories (
-    token_id BIGINT NOT NULL REFERENCES fine_grained_tokens(token_id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    token_id BIGINT NOT NULL REFERENCES fine_grained_tokens(token_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY (token_id, repo_id)
 );
 CREATE INDEX fine_grained_token_repositories_repo ON fine_grained_token_repositories(repo_id);
 -- An organization without a row uses the defaults: fine-grained tokens allowed after owner
 -- approval, classic tokens allowed, and a 366-day maximum. A NULL maximum allows no expiry.
 CREATE TABLE organization_token_policies (
-    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     fine_grained_allowed BOOLEAN NOT NULL DEFAULT TRUE,
     fine_grained_approval BOOLEAN NOT NULL DEFAULT TRUE,
     classic_allowed BOOLEAN NOT NULL DEFAULT TRUE,
@@ -2525,9 +2596,9 @@ CREATE TABLE organization_token_policies (
 -- apps: GitHub Apps and installations
 CREATE TABLE github_apps (
     id BIGSERIAL PRIMARY KEY,
-    owner_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    bot_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    client_id TEXT NOT NULL UNIQUE REFERENCES oauth_applications(client_id) ON DELETE CASCADE,
+    owner_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    bot_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    client_id TEXT NOT NULL UNIQUE REFERENCES oauth_applications(client_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     slug TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     description TEXT NOT NULL,
@@ -2542,12 +2613,12 @@ CREATE TABLE github_apps (
 
 CREATE TABLE github_app_installations (
     id BIGSERIAL PRIMARY KEY,
-    app_id BIGINT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE,
-    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+    app_id BIGINT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     all_repos BOOLEAN NOT NULL,
     suspended_at TIMESTAMPTZ,
-    suspended_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    suspended_by BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     CHECK ((user_id IS NULL) <> (org_id IS NULL)),
@@ -2555,13 +2626,13 @@ CREATE TABLE github_app_installations (
 );
 
 CREATE TABLE github_app_repositories (
-    installation_id BIGINT NOT NULL REFERENCES github_app_installations(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    installation_id BIGINT NOT NULL REFERENCES github_app_installations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(installation_id,repo_id)
 );
 
 CREATE TABLE github_app_tokens (
-    token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
+    token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     -- Retain credential bounds after an account/organization cascade removes its installation.
     -- Dropping this marker would turn a scoped user token back into an unscoped OAuth token.
     installation_id BIGINT NOT NULL,
@@ -2574,16 +2645,16 @@ CREATE INDEX github_app_tokens_installation ON github_app_tokens(installation_id
 -- apps: account installation requests
 CREATE TABLE github_app_requests (
     id BIGSERIAL PRIMARY KEY,
-    app_id BIGINT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    app_id BIGINT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     UNIQUE(app_id,org_id,user_id)
 );
 
 -- apps: webhook configuration and recorded attempts
 CREATE TABLE github_app_hooks (
-    app_id BIGINT PRIMARY KEY REFERENCES github_apps(id) ON DELETE CASCADE,
+    app_id BIGINT PRIMARY KEY REFERENCES github_apps(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     payload_url TEXT NOT NULL CHECK(length(payload_url)<=2048),
     content_type TEXT NOT NULL CHECK(content_type IN ('application/json','application/x-www-form-urlencoded')),
     encrypted_secret BYTEA,
@@ -2598,7 +2669,7 @@ CREATE TABLE github_app_hooks (
 
 CREATE TABLE github_app_deliveries (
     id BIGSERIAL PRIMARY KEY,
-    webhook_id BIGINT NOT NULL REFERENCES github_app_hooks(app_id) ON DELETE CASCADE,
+    webhook_id BIGINT NOT NULL REFERENCES github_app_hooks(app_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     guid TEXT NOT NULL,
     event TEXT NOT NULL,
     action TEXT,
@@ -2619,7 +2690,7 @@ CREATE INDEX github_app_deliveries_hook ON github_app_deliveries(webhook_id,id);
 CREATE INDEX github_app_deliveries_expiry ON github_app_deliveries(delivered_at, id);
 
 CREATE TABLE github_app_callbacks (
-    app_id BIGINT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE,
+    app_id BIGINT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     uri TEXT NOT NULL,
     PRIMARY KEY(app_id,uri)
 );
@@ -2629,8 +2700,8 @@ CREATE TABLE github_app_manifests (
     conversion_hash TEXT UNIQUE,
     manifest TEXT NOT NULL,
     state TEXT NOT NULL,
-    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-    session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+    user_id BIGINT REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     expires_at BIGINT NOT NULL,
     CHECK((user_id IS NULL)=(session_id IS NULL))
 );
@@ -2659,7 +2730,7 @@ CREATE TRIGGER github_app_bot_session BEFORE INSERT OR UPDATE OF user_id ON sess
 -- deploy
 CREATE TABLE deployment_environments (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     name_key TEXT NOT NULL,
     wait_timer BIGINT NOT NULL DEFAULT 0 CHECK (wait_timer BETWEEN 0 AND 43200),
@@ -2673,7 +2744,7 @@ CREATE TABLE deployment_environments (
 
 CREATE TABLE deployment_branch_policies (
     id BIGSERIAL PRIMARY KEY,
-    environment_id BIGINT NOT NULL REFERENCES deployment_environments(id) ON DELETE CASCADE,
+    environment_id BIGINT NOT NULL REFERENCES deployment_environments(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     kind TEXT NOT NULL CHECK (kind IN ('branch','tag')),
     UNIQUE(environment_id,name,kind)
@@ -2681,8 +2752,8 @@ CREATE TABLE deployment_branch_policies (
 
 CREATE TABLE repository_deployments (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     sha TEXT NOT NULL,
     reference TEXT NOT NULL,
     task TEXT NOT NULL DEFAULT 'deploy',
@@ -2701,8 +2772,8 @@ CREATE INDEX repository_deployments_inactivation ON repository_deployments(repo_
 
 CREATE TABLE deployment_statuses (
     id BIGSERIAL PRIMARY KEY,
-    deployment_id BIGINT NOT NULL REFERENCES repository_deployments(id) ON DELETE CASCADE,
-    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    deployment_id BIGINT NOT NULL REFERENCES repository_deployments(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    creator_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     state TEXT NOT NULL CHECK (state IN ('error','failure','inactive','in_progress','queued','pending','success')),
     description TEXT NOT NULL DEFAULT '' CHECK (length(description)<=140),
     environment TEXT NOT NULL,
@@ -2715,20 +2786,20 @@ CREATE INDEX deployment_statuses_deployment ON deployment_statuses(deployment_id
 -- packages
 CREATE TABLE registry_namespaces (
     namespace TEXT PRIMARY KEY,
-    owner_user_id BIGINT UNIQUE REFERENCES users(id) ON DELETE CASCADE,
-    owner_org_id BIGINT UNIQUE REFERENCES organizations(id) ON DELETE CASCADE,
+    owner_user_id BIGINT UNIQUE REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    owner_org_id BIGINT UNIQUE REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     CHECK ((owner_user_id IS NOT NULL) <> (owner_org_id IS NOT NULL))
 );
 
 CREATE TABLE packages (
     id BIGSERIAL PRIMARY KEY,
     owner_kind TEXT NOT NULL CHECK (owner_kind IN ('user','org')),
-    owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+    owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     package_type TEXT NOT NULL CHECK (package_type IN ('container','npm','maven','nuget','rubygems')),
     visibility TEXT NOT NULL DEFAULT 'private' CHECK (visibility IN ('public','private')),
-    repo_id BIGINT REFERENCES repositories(id) ON DELETE SET NULL,
+    repo_id BIGINT REFERENCES repositories(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at BIGINT NOT NULL,
     updated_at BIGINT NOT NULL,
     deleted_at BIGINT,
@@ -2739,7 +2810,7 @@ CREATE TABLE packages (
 
 CREATE TABLE package_versions (
     id BIGSERIAL PRIMARY KEY,
-    package_id BIGINT NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
+    package_id BIGINT NOT NULL REFERENCES packages(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     digest TEXT NOT NULL,
     media_type TEXT NOT NULL,
@@ -2752,9 +2823,9 @@ CREATE TABLE package_versions (
 );
 
 CREATE TABLE package_tags (
-    package_id BIGINT NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
+    package_id BIGINT NOT NULL REFERENCES packages(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     tag TEXT NOT NULL,
-    version_id BIGINT NOT NULL REFERENCES package_versions(id) ON DELETE CASCADE,
+    version_id BIGINT NOT NULL REFERENCES package_versions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(package_id,tag)
 );
 CREATE INDEX package_tags_version ON package_tags(version_id);
@@ -2768,24 +2839,24 @@ CREATE TABLE package_blobs (
 );
 
 CREATE TABLE package_blob_grants (
-    package_id BIGINT NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
-    digest TEXT NOT NULL REFERENCES package_blobs(digest) ON DELETE CASCADE,
+    package_id BIGINT NOT NULL REFERENCES packages(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    digest TEXT NOT NULL REFERENCES package_blobs(digest) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     expires_at BIGINT NOT NULL,
     PRIMARY KEY(package_id,digest)
 );
 
 CREATE TABLE package_version_blobs (
-    version_id BIGINT NOT NULL REFERENCES package_versions(id) ON DELETE CASCADE,
-    digest TEXT NOT NULL REFERENCES package_blobs(digest),
+    version_id BIGINT NOT NULL REFERENCES package_versions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    digest TEXT NOT NULL REFERENCES package_blobs(digest) DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(version_id,digest)
 );
 CREATE INDEX package_version_blobs_digest ON package_version_blobs(digest);
 
 CREATE TABLE package_files (
-    package_id BIGINT NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
+    package_id BIGINT NOT NULL REFERENCES packages(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     path TEXT NOT NULL,
-    version_id BIGINT NOT NULL REFERENCES package_versions(id) ON DELETE CASCADE,
-    digest TEXT NOT NULL REFERENCES package_blobs(digest),
+    version_id BIGINT NOT NULL REFERENCES package_versions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    digest TEXT NOT NULL REFERENCES package_blobs(digest) DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(package_id,path)
 );
 CREATE INDEX package_files_path ON package_files(path,package_id);
@@ -2793,8 +2864,8 @@ CREATE INDEX package_files_version ON package_files(version_id);
 
 CREATE TABLE package_uploads (
     id TEXT PRIMARY KEY,
-    package_id BIGINT NOT NULL REFERENCES packages(id) ON DELETE CASCADE,
-    token_id BIGINT NOT NULL REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
+    package_id BIGINT NOT NULL REFERENCES packages(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    token_id BIGINT NOT NULL REFERENCES personal_access_tokens(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     uploaded_bytes BIGINT NOT NULL DEFAULT 0,
     chunks TEXT NOT NULL DEFAULT '[]',
     charge_id UUID,
@@ -2803,7 +2874,7 @@ CREATE TABLE package_uploads (
 
 CREATE TABLE package_registry_tokens (
     hash TEXT PRIMARY KEY,
-    token_id BIGINT REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
+    token_id BIGINT REFERENCES personal_access_tokens(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     resources TEXT NOT NULL,
     write BOOLEAN NOT NULL,
     expires_at BIGINT NOT NULL,
@@ -2813,12 +2884,12 @@ CREATE TABLE package_registry_tokens (
 -- projects
 CREATE TABLE projects (
     id BIGSERIAL PRIMARY KEY,
-    owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+    owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     owner_kind TEXT GENERATED ALWAYS AS (CASE WHEN owner_org_id IS NULL THEN 'user' ELSE 'org' END) STORED,
     owner_id BIGINT GENERATED ALWAYS AS (COALESCE(owner_user_id, owner_org_id)) STORED,
     number BIGINT NOT NULL,
-    creator_id BIGINT NOT NULL REFERENCES users(id),
+    creator_id BIGINT NOT NULL REFERENCES users(id) DEFERRABLE INITIALLY IMMEDIATE,
     title TEXT NOT NULL,
     description TEXT,
     public BOOLEAN NOT NULL DEFAULT false,
@@ -2834,7 +2905,7 @@ CREATE TABLE projects (
 
 CREATE TABLE project_fields (
     id BIGSERIAL PRIMARY KEY,
-    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     data_type TEXT NOT NULL CHECK (data_type IN ('title','text','number','date','single_select','iteration')),
     configuration TEXT NOT NULL,
@@ -2846,7 +2917,7 @@ CREATE UNIQUE INDEX project_fields_name_folded ON project_fields(project_id, tra
 
 -- migrations
 CREATE TABLE repository_imports (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     generation TEXT NOT NULL,
     vcs_url TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('importing','complete','error')),
@@ -2854,7 +2925,7 @@ CREATE TABLE repository_imports (
 );
 
 CREATE TABLE pages_sites (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     build_type TEXT NOT NULL CHECK (build_type IN ('legacy','workflow')),
     branch TEXT, path TEXT CHECK (path IN ('/','/docs')), cname TEXT UNIQUE,
     https_enforced BOOLEAN NOT NULL DEFAULT FALSE, is_public BOOLEAN NOT NULL DEFAULT FALSE,
@@ -2862,30 +2933,30 @@ CREATE TABLE pages_sites (
 );
 
 CREATE TABLE pages_builds (
-    id BIGSERIAL PRIMARY KEY, repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL, commit_sha TEXT NOT NULL,
+    id BIGSERIAL PRIMARY KEY, repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE, commit_sha TEXT NOT NULL,
     status TEXT NOT NULL, error TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX pages_builds_repo ON pages_builds(repo_id,id);
 
 CREATE TABLE pages_deployments (
-    id BIGSERIAL PRIMARY KEY, repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    id BIGSERIAL PRIMARY KEY, repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     commit_sha TEXT NOT NULL, environment TEXT NOT NULL, status TEXT NOT NULL,
     artifact_id BIGINT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX pages_deployments_repo ON pages_deployments(repo_id,id);
 
 CREATE TABLE repository_private_reporting (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
-    enabled_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    enabled_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE TABLE repository_security_reports (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    reporter_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    reporter_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 255),
     body TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 65536),
     state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','closed')),
@@ -2897,8 +2968,8 @@ CREATE INDEX idx_security_reports_reporter ON repository_security_reports(repo_i
 
 CREATE TABLE repository_security_replies (
     id BIGSERIAL PRIMARY KEY,
-    report_id BIGINT NOT NULL REFERENCES repository_security_reports(id) ON DELETE CASCADE,
-    author_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    report_id BIGINT NOT NULL REFERENCES repository_security_reports(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    author_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     body TEXT NOT NULL CHECK (length(body) BETWEEN 1 AND 65536),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -2906,14 +2977,14 @@ CREATE INDEX idx_security_replies_report ON repository_security_replies(report_i
 
 CREATE TABLE repository_advisories (
     id BIGSERIAL PRIMARY KEY, ghsa_id TEXT NOT NULL UNIQUE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    author_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    author_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     state TEXT NOT NULL CHECK (state IN ('triage','draft','published','closed')),
     document TEXT NOT NULL,
-    report_id BIGINT UNIQUE REFERENCES repository_security_reports(id) ON DELETE SET NULL,
-    private_fork_id BIGINT UNIQUE REFERENCES repositories(id) ON DELETE SET NULL,
+    report_id BIGINT UNIQUE REFERENCES repository_security_reports(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    private_fork_id BIGINT UNIQUE REFERENCES repositories(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     cve_requested_at TIMESTAMPTZ, published_at TIMESTAMPTZ, closed_at TIMESTAMPTZ,
-    publisher_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    publisher_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     report_accepted BOOLEAN NOT NULL DEFAULT FALSE,
     revision BIGINT NOT NULL DEFAULT 0 CHECK (revision >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -2922,32 +2993,32 @@ CREATE INDEX repository_advisories_repo ON repository_advisories(repo_id,id);
 
 -- dependabot
 CREATE TABLE repo_dependabot_keys (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     key_id TEXT NOT NULL UNIQUE,
     encrypted_key BYTEA NOT NULL CHECK (octet_length(encrypted_key)=48),
     nonce BYTEA NOT NULL CHECK (octet_length(nonce)=12)
 );
 
 CREATE TABLE repo_dependabot_secrets (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 255),
     encrypted_value BYTEA NOT NULL,
     nonce BYTEA NOT NULL CHECK (octet_length(nonce)=12),
-    created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    created_by_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY(repo_id, name)
 );
 
 CREATE TABLE org_dependabot_keys (
-    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     key_id TEXT NOT NULL UNIQUE,
     encrypted_key BYTEA NOT NULL CHECK (octet_length(encrypted_key)=48),
     nonce BYTEA NOT NULL CHECK (octet_length(nonce)=12)
 );
 
 CREATE TABLE org_dependabot_secrets (
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 255),
     visibility TEXT NOT NULL CHECK (visibility IN ('all','private','selected')),
     encrypted_value BYTEA NOT NULL,
@@ -2960,8 +3031,8 @@ CREATE TABLE org_dependabot_secrets (
 CREATE TABLE org_dependabot_secret_repositories (
     org_id BIGINT NOT NULL,
     name TEXT NOT NULL,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    FOREIGN KEY(org_id, name) REFERENCES org_dependabot_secrets(org_id, name) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    FOREIGN KEY(org_id, name) REFERENCES org_dependabot_secrets(org_id, name) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(org_id, name, repo_id)
 );
 CREATE INDEX org_dependabot_secret_repositories_repo ON org_dependabot_secret_repositories(repo_id);
@@ -2969,7 +3040,7 @@ CREATE INDEX org_dependabot_secret_repositories_repo ON org_dependabot_secret_re
 -- Dependency graph
 CREATE TABLE dependency_snapshots (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     sha TEXT NOT NULL,
     reference TEXT NOT NULL,
     correlator TEXT NOT NULL,
@@ -2984,7 +3055,7 @@ CREATE INDEX dependency_snapshots_sha ON dependency_snapshots(repo_id,sha,detect
 
 CREATE TABLE dependency_sbom_reports (
     id TEXT PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     body TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -2992,14 +3063,14 @@ CREATE INDEX dependency_sbom_reports_repository ON dependency_sbom_reports(repo_
 
 -- actions-admin: organization and environment values.
 CREATE TABLE org_actions_keys (
-    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     key_id TEXT NOT NULL UNIQUE,
     encrypted_key BYTEA NOT NULL CHECK (octet_length(encrypted_key)=48),
     nonce BYTEA NOT NULL CHECK (octet_length(nonce)=12)
 );
 
 CREATE TABLE org_actions_values (
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     kind TEXT NOT NULL CHECK (kind IN ('secret','variable')),
     name TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 255 AND name=upper(name)),
     value TEXT NOT NULL DEFAULT '' CHECK (octet_length(value)<=49152),
@@ -3016,9 +3087,9 @@ CREATE TABLE org_actions_value_repositories (
     org_id BIGINT NOT NULL,
     kind TEXT NOT NULL,
     name TEXT NOT NULL,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(org_id,kind,name,repo_id),
-    FOREIGN KEY(org_id,kind,name) REFERENCES org_actions_values(org_id,kind,name) ON DELETE CASCADE ON UPDATE CASCADE
+    FOREIGN KEY(org_id,kind,name) REFERENCES org_actions_values(org_id,kind,name) ON DELETE CASCADE ON UPDATE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE INDEX org_actions_value_repo ON org_actions_value_repositories(repo_id);
 
@@ -3034,7 +3105,7 @@ CREATE TABLE repo_environment_values (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY(repo_id,environment,kind,name),
     CHECK ((kind='secret' AND value='' AND encrypted_value IS NOT NULL AND octet_length(encrypted_value) BETWEEN 16 AND 49168 AND nonce IS NOT NULL AND octet_length(nonce)=12) OR (kind='variable' AND encrypted_value IS NULL AND nonce IS NULL)),
-    FOREIGN KEY(repo_id,environment) REFERENCES deployment_environments(repo_id,name_key) ON DELETE CASCADE ON UPDATE CASCADE
+    FOREIGN KEY(repo_id,environment) REFERENCES deployment_environments(repo_id,name_key) ON DELETE CASCADE ON UPDATE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 -- actions-admin: signed attestation evidence, not a trust-verification verdict.
@@ -3045,8 +3116,8 @@ CREATE TABLE attestation_bundles (
 
 CREATE TABLE artifact_attestations (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    bundle_hash TEXT NOT NULL REFERENCES attestation_bundles(hash),
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    bundle_hash TEXT NOT NULL REFERENCES attestation_bundles(hash) DEFERRABLE INITIALLY IMMEDIATE,
     predicate_type TEXT NOT NULL CHECK (octet_length(predicate_type) BETWEEN 1 AND 2048),
     initiator TEXT NOT NULL CHECK (initiator IN ('user','workflow')),
     created_at TIMESTAMPTZ NOT NULL,
@@ -3054,7 +3125,7 @@ CREATE TABLE artifact_attestations (
 );
 
 CREATE TABLE attestation_subjects (
-    attestation_id BIGINT NOT NULL REFERENCES artifact_attestations(id) ON DELETE CASCADE,
+    attestation_id BIGINT NOT NULL REFERENCES artifact_attestations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     digest TEXT NOT NULL CHECK (digest ~ '^(sha256:[0-9a-f]{64}|sha512:[0-9a-f]{128})$'),
     PRIMARY KEY(attestation_id,digest)
 );
@@ -3064,7 +3135,7 @@ CREATE VIEW repo_attestations AS SELECT a.id,a.repo_id,b.bundle,a.predicate_type
 
 CREATE TABLE artifact_metadata (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     digest TEXT NOT NULL CHECK (length(digest)=71 AND left(digest,7)='sha256:'),
     name TEXT NOT NULL,
     version TEXT,
@@ -3074,15 +3145,15 @@ CREATE INDEX artifact_metadata_digest ON artifact_metadata(digest,repo_id);
 
 CREATE TABLE artifact_metadata_records (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    artifact_id BIGINT NOT NULL REFERENCES artifact_metadata(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    artifact_id BIGINT NOT NULL REFERENCES artifact_metadata(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     kind TEXT NOT NULL CHECK (kind IN ('deployment','storage')),
     identity TEXT NOT NULL,
     cluster TEXT NOT NULL DEFAULT '',
     logical_environment TEXT NOT NULL DEFAULT '',
     physical_environment TEXT NOT NULL DEFAULT '',
     document TEXT NOT NULL,
-    attestation_id BIGINT REFERENCES artifact_attestations(id) ON DELETE SET NULL,
+    attestation_id BIGINT REFERENCES artifact_attestations(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(org_id,kind,identity)
@@ -3093,11 +3164,11 @@ CREATE INDEX artifact_metadata_record_attestation ON artifact_metadata_records(a
 
 CREATE TABLE artifact_metadata_jobs (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     cluster TEXT NOT NULL,
-    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     token_id BIGINT NOT NULL,
-    scoped_repo BIGINT REFERENCES repositories(id) ON DELETE CASCADE,
+    scoped_repo BIGINT REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     input TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('pending','processing','completed','failed')),
     started_at TIMESTAMPTZ,
@@ -3116,8 +3187,8 @@ CREATE INDEX artifact_metadata_job_history ON artifact_metadata_jobs(actor_id,or
 CREATE TABLE code_scanning_uploads (
     sequence BIGSERIAL PRIMARY KEY,
     id TEXT NOT NULL UNIQUE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     ref_name TEXT NOT NULL,
     commit_sha TEXT NOT NULL,
     sarif TEXT NOT NULL,
@@ -3132,8 +3203,8 @@ CREATE INDEX code_scanning_uploads_pending ON code_scanning_uploads(processing_s
 
 CREATE TABLE code_scanning_analyses (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    upload_id TEXT NOT NULL REFERENCES code_scanning_uploads(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    upload_id TEXT NOT NULL REFERENCES code_scanning_uploads(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     upload_sequence BIGINT NOT NULL,
     ref_name TEXT NOT NULL,
     commit_sha TEXT NOT NULL,
@@ -3150,14 +3221,14 @@ CREATE INDEX code_scanning_analyses_repository ON code_scanning_analyses(repo_id
 
 CREATE TABLE code_scanning_alerts (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number BIGINT NOT NULL,
     fingerprint TEXT NOT NULL,
     tool_key TEXT NOT NULL,
     tool TEXT NOT NULL,
     rule TEXT NOT NULL,
     state TEXT NOT NULL DEFAULT 'open' CHECK(state IN ('open','fixed','dismissed')),
-    dismissed_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    dismissed_by BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     dismissed_at TIMESTAMPTZ,
     dismissed_reason TEXT,
     dismissed_comment TEXT,
@@ -3169,7 +3240,7 @@ CREATE TABLE code_scanning_alerts (
 );
 
 CREATE TABLE code_scanning_instances (
-    alert_id BIGINT NOT NULL REFERENCES code_scanning_alerts(id) ON DELETE CASCADE,
+    alert_id BIGINT NOT NULL REFERENCES code_scanning_alerts(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     ref_name TEXT NOT NULL,
     category TEXT NOT NULL,
     commit_sha TEXT NOT NULL,
@@ -3182,7 +3253,7 @@ CREATE TABLE code_scanning_instances (
 
 CREATE TABLE code_security_configurations (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     settings TEXT NOT NULL,
     default_for_new_repos TEXT NOT NULL DEFAULT 'none' CHECK(default_for_new_repos IN ('all','none','public','private_and_internal')),
@@ -3194,20 +3265,20 @@ CREATE TABLE code_security_configurations (
 CREATE INDEX code_security_configurations_page ON code_security_configurations(org_id,id DESC);
 
 CREATE TABLE repository_security_settings (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
-    configuration_id BIGINT REFERENCES code_security_configurations(id) ON DELETE SET NULL,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    configuration_id BIGINT REFERENCES code_security_configurations(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     security_and_analysis TEXT NOT NULL DEFAULT '{}'
 );
 CREATE INDEX repository_security_configuration ON repository_security_settings(configuration_id);
 
 CREATE TABLE code_scanning_alert_counters (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     next_number BIGINT NOT NULL DEFAULT 1
 );
 
 CREATE TABLE code_scanning_analysis_findings (
-    analysis_id BIGINT NOT NULL REFERENCES code_scanning_analyses(id) ON DELETE CASCADE,
-    alert_id BIGINT NOT NULL REFERENCES code_scanning_alerts(id) ON DELETE CASCADE,
+    analysis_id BIGINT NOT NULL REFERENCES code_scanning_analyses(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    alert_id BIGINT NOT NULL REFERENCES code_scanning_alerts(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     result_index BIGINT NOT NULL,
     rule TEXT NOT NULL,
     message TEXT NOT NULL,
@@ -3226,8 +3297,8 @@ CREATE INDEX code_scanning_instances_open ON code_scanning_instances(alert_id,(C
 CREATE UNIQUE INDEX organization_invitations_email ON organization_invitations(org_id,lower(email)) WHERE email IS NOT NULL;
 
 CREATE TABLE organization_member_history (
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     role TEXT NOT NULL,
     removed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY(org_id,user_id)
@@ -3235,8 +3306,8 @@ CREATE TABLE organization_member_history (
 CREATE UNIQUE INDEX email_outbox_organization_invitation ON email_outbox(organization_invitation_id) WHERE organization_invitation_id IS NOT NULL;
 
 CREATE TABLE organization_blocks (
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     PRIMARY KEY(org_id,user_id)
 );
@@ -3261,13 +3332,13 @@ CREATE UNIQUE INDEX organization_teams_owner_id ON teams(org_id,id);
 
 CREATE TABLE organization_role_assignments (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    role_id BIGINT NOT NULL REFERENCES organization_roles(id),
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    role_id BIGINT NOT NULL REFERENCES organization_roles(id) DEFERRABLE INITIALLY IMMEDIATE,
     user_id BIGINT,
     team_id BIGINT,
     CHECK ((user_id IS NULL) <> (team_id IS NULL)),
-    FOREIGN KEY(org_id,user_id) REFERENCES org_memberships(org_id,user_id) ON DELETE CASCADE,
-    FOREIGN KEY(org_id,team_id) REFERENCES teams(org_id,id) ON DELETE CASCADE
+    FOREIGN KEY(org_id,user_id) REFERENCES org_memberships(org_id,user_id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    FOREIGN KEY(org_id,team_id) REFERENCES teams(org_id,id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE UNIQUE INDEX organization_role_users ON organization_role_assignments(org_id,user_id,role_id) WHERE user_id IS NOT NULL;
 CREATE UNIQUE INDEX organization_role_teams ON organization_role_assignments(org_id,team_id,role_id) WHERE team_id IS NOT NULL;
@@ -3276,7 +3347,7 @@ CREATE INDEX organization_role_members ON organization_role_assignments(org_id,r
 -- Organization repository property definitions and tenant-scoped explicit values.
 CREATE TABLE organization_repository_properties (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     property_name TEXT NOT NULL CHECK(property_name ~ '^[A-Za-z0-9_-]{1,75}$'),
     value_type TEXT NOT NULL CHECK(value_type IN ('string','single_select','multi_select','true_false','url')),
     required BOOLEAN NOT NULL DEFAULT FALSE,
@@ -3297,13 +3368,13 @@ CREATE TABLE repository_property_values (
     definition_id BIGINT NOT NULL,
     value TEXT NOT NULL CHECK(json_typeof(value::JSON) IN ('string','array')),
     PRIMARY KEY(repo_id,definition_id),
-    FOREIGN KEY(org_id,repo_id) REFERENCES repositories(owner_org_id,id) ON DELETE CASCADE,
-    FOREIGN KEY(org_id,definition_id) REFERENCES organization_repository_properties(org_id,id) ON DELETE CASCADE
+    FOREIGN KEY(org_id,repo_id) REFERENCES repositories(owner_org_id,id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    FOREIGN KEY(org_id,definition_id) REFERENCES organization_repository_properties(org_id,id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE INDEX repository_property_definition_values ON repository_property_values(definition_id,repo_id);
 
 CREATE TABLE organization_settings (
-    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     company TEXT,
     email TEXT,
     twitter_username TEXT,
@@ -3321,8 +3392,8 @@ CREATE TABLE organization_settings (
 -- pulls: team identities remain requests as membership changes.
 CREATE TABLE pr_team_reviewers (
     id BIGSERIAL PRIMARY KEY,
-    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE,
-    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    pull_request_id BIGINT NOT NULL REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     as_code_owner BOOLEAN NOT NULL DEFAULT FALSE,
     UNIQUE(pull_request_id, team_id)
 );
@@ -3331,9 +3402,9 @@ CREATE INDEX pr_team_reviewers_team ON pr_team_reviewers(team_id);
 CREATE TABLE repository_exports (
     id BIGSERIAL PRIMARY KEY,
     guid TEXT NOT NULL UNIQUE,
-    owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
-    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    owner_user_id BIGINT REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     repositories TEXT NOT NULL CHECK (jsonb_typeof(repositories::jsonb)='array'),
     options TEXT NOT NULL CHECK (jsonb_typeof(options::jsonb)='object'),
     state TEXT NOT NULL CHECK (state IN ('pending','exporting','exported','failed')),
@@ -3344,14 +3415,18 @@ CREATE TABLE repository_exports (
 );
 
 CREATE TABLE repository_migration_locks (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
-    migration_id BIGINT NOT NULL REFERENCES repository_exports(id) ON DELETE CASCADE
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    migration_id BIGINT NOT NULL REFERENCES repository_exports(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE INDEX repository_exports_user ON repository_exports(owner_user_id,id);
 CREATE INDEX repository_exports_active_actor ON repository_exports(actor_id, updated_at) WHERE state IN ('pending','exporting');
 CREATE INDEX repository_exports_org ON repository_exports(owner_org_id,id);
 CREATE FUNCTION repository_exports_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     INSERT INTO pending_object_deletions(object_key,delete_after)
     VALUES('migrations/' || OLD.guid,CURRENT_TIMESTAMP + INTERVAL '1 hour')
     ON CONFLICT(object_key) DO UPDATE SET delete_after=GREATEST(pending_object_deletions.delete_after,excluded.delete_after);
@@ -3363,11 +3438,11 @@ FOR EACH ROW EXECUTE FUNCTION repository_exports_cleanup();
 
 CREATE TABLE project_items (
     id BIGSERIAL PRIMARY KEY,
-    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    creator_id BIGINT NOT NULL REFERENCES users(id),
-    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE,
-    issue_id BIGINT REFERENCES issues(id) ON DELETE CASCADE,
-    pull_request_id BIGINT REFERENCES pull_requests(id) ON DELETE CASCADE,
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    creator_id BIGINT NOT NULL REFERENCES users(id) DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    issue_id BIGINT REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    pull_request_id BIGINT REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     draft_title TEXT,
     draft_body TEXT,
     field_values TEXT NOT NULL DEFAULT '{}',
@@ -3386,9 +3461,9 @@ CREATE TABLE project_items (
 
 CREATE TABLE project_views (
     id BIGSERIAL PRIMARY KEY,
-    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number BIGINT NOT NULL,
-    creator_id BIGINT NOT NULL REFERENCES users(id),
+    creator_id BIGINT NOT NULL REFERENCES users(id) DEFERRABLE INITIALLY IMMEDIATE,
     configuration TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
@@ -3396,8 +3471,8 @@ CREATE TABLE project_views (
 );
 
 CREATE TABLE project_repositories (
-    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(project_id, repo_id)
 );
 
@@ -3412,7 +3487,7 @@ CREATE INDEX github_api_limits_expiry ON github_api_limits(reset_at);
 
 -- secret-scanning
 CREATE TABLE secret_scanning_settings (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     enabled BOOLEAN NOT NULL DEFAULT false,
     push_protection BOOLEAN NOT NULL DEFAULT false,
     next_number BIGINT NOT NULL DEFAULT 1,
@@ -3420,19 +3495,19 @@ CREATE TABLE secret_scanning_settings (
 );
 
 CREATE TABLE secret_scanning_alerts (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number BIGINT NOT NULL,
     secret_hash TEXT NOT NULL,
     secret_type TEXT NOT NULL,
     display_name TEXT NOT NULL,
     encrypted_secret BYTEA NOT NULL,
     nonce BYTEA NOT NULL,
-    assigned_to BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    assigned_to BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     validity TEXT CHECK (validity IN ('active','inactive')),
     state TEXT NOT NULL DEFAULT 'open' CHECK (state IN ('open','resolved')),
     resolution TEXT CHECK (resolution IN ('false_positive','wont_fix','revoked','used_in_tests','pattern_deleted','pattern_edited')),
     resolution_comment TEXT,
-    resolved_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    resolved_by BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     resolved_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -3454,14 +3529,14 @@ CREATE TABLE secret_scanning_locations (
     start_column BIGINT NOT NULL,
     end_column BIGINT NOT NULL,
     PRIMARY KEY (repo_id, alert_number, commit_sha, path_digest, start_line, start_column),
-    FOREIGN KEY (repo_id, alert_number) REFERENCES secret_scanning_alerts(repo_id, number) ON DELETE CASCADE
+    FOREIGN KEY (repo_id, alert_number) REFERENCES secret_scanning_alerts(repo_id, number) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE secret_scanning_jobs (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     head_sha TEXT,
-    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     scan_type TEXT NOT NULL CHECK (scan_type IN ('backfill','incremental','pattern_update','custom_pattern_backfill')),
     pattern_name TEXT,
     pattern_scope TEXT CHECK (pattern_scope IN ('repository','organization')),
@@ -3477,7 +3552,7 @@ CREATE INDEX secret_scanning_jobs_pending ON secret_scanning_jobs(status, id);
 CREATE INDEX secret_scanning_jobs_history ON secret_scanning_jobs(repo_id, id DESC);
 
 CREATE TABLE secret_scanning_commits (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     commit_sha TEXT NOT NULL,
     -- TRUE once the commit's ancestors were scanned too, not only its own tree.
     ancestry_complete BOOLEAN NOT NULL DEFAULT FALSE,
@@ -3486,8 +3561,8 @@ CREATE TABLE secret_scanning_commits (
 
 CREATE TABLE secret_scanning_bypasses (
     id TEXT PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    actor_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     secret_hash TEXT NOT NULL,
     token_type TEXT NOT NULL,
     reason TEXT CHECK (reason IN ('false_positive','used_in_tests','will_fix_later')),
@@ -3499,8 +3574,8 @@ CREATE INDEX secret_scanning_bypasses_unused_expiry ON secret_scanning_bypasses(
 
 CREATE TABLE secret_scanning_patterns (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE,
-    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     document TEXT NOT NULL,
     CHECK ((repo_id IS NULL) <> (org_id IS NULL)),
@@ -3509,14 +3584,14 @@ CREATE TABLE secret_scanning_patterns (
 );
 
 CREATE TABLE secret_scanning_pattern_configs (
-    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     version TEXT NOT NULL,
     document TEXT NOT NULL
 );
 
 -- Repository feature switches with GitHub's defaults; a repository without a row has them all.
 CREATE TABLE repository_features (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     wiki_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     has_issues BOOLEAN NOT NULL DEFAULT TRUE,
     has_projects BOOLEAN NOT NULL DEFAULT TRUE,
@@ -3530,13 +3605,13 @@ CREATE TABLE repository_features (
 
 -- discussions
 CREATE TABLE repository_discussion_settings (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     enabled BOOLEAN NOT NULL DEFAULT false
 );
 
 CREATE TABLE discussion_categories (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     slug TEXT NOT NULL,
     emoji TEXT NOT NULL,
@@ -3549,47 +3624,47 @@ CREATE TABLE discussion_categories (
 
 CREATE TABLE discussions (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number INTEGER NOT NULL,
     title TEXT NOT NULL,
     body TEXT NOT NULL,
-    author_id BIGINT NOT NULL REFERENCES users(id),
+    author_id BIGINT NOT NULL REFERENCES users(id) DEFERRABLE INITIALLY IMMEDIATE,
     category_id BIGINT NOT NULL,
     locked BOOLEAN NOT NULL DEFAULT false,
     answer_id BIGINT,
     answer_chosen_at TIMESTAMPTZ,
-    answer_chosen_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    answer_chosen_by BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(category_id,repo_id) REFERENCES discussion_categories(id,repo_id),
+    FOREIGN KEY(category_id,repo_id) REFERENCES discussion_categories(id,repo_id) DEFERRABLE INITIALLY IMMEDIATE,
     UNIQUE(repo_id,number)
 );
 
 CREATE TABLE discussion_comments (
     id BIGSERIAL PRIMARY KEY,
-    discussion_id BIGINT NOT NULL REFERENCES discussions(id) ON DELETE CASCADE,
-    author_id BIGINT NOT NULL REFERENCES users(id),
+    discussion_id BIGINT NOT NULL REFERENCES discussions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    author_id BIGINT NOT NULL REFERENCES users(id) DEFERRABLE INITIALLY IMMEDIATE,
     body TEXT NOT NULL,
-    reply_to_id BIGINT REFERENCES discussion_comments(id) ON DELETE CASCADE,
+    reply_to_id BIGINT REFERENCES discussion_comments(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     is_answer BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
-ALTER TABLE discussions ADD FOREIGN KEY(answer_id) REFERENCES discussion_comments(id) ON DELETE SET NULL;
+ALTER TABLE discussions ADD FOREIGN KEY(answer_id) REFERENCES discussion_comments(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE;
 CREATE INDEX discussion_comments_thread ON discussion_comments(discussion_id,reply_to_id,id);
 CREATE UNIQUE INDEX discussion_one_answer ON discussion_comments(discussion_id) WHERE is_answer;
 
 -- The discussion category a release asked for (discussion_category_name), and the discussion
 -- it started once published. Deleting that discussion removes the link.
 CREATE TABLE release_discussions (
-    release_id BIGINT PRIMARY KEY REFERENCES releases(id) ON DELETE CASCADE,
-    category_id BIGINT NOT NULL REFERENCES discussion_categories(id) ON DELETE CASCADE,
-    discussion_id BIGINT UNIQUE REFERENCES discussions(id) ON DELETE CASCADE
+    release_id BIGINT PRIMARY KEY REFERENCES releases(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    category_id BIGINT NOT NULL REFERENCES discussion_categories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    discussion_id BIGINT UNIQUE REFERENCES discussions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE discussion_labels (
-    discussion_id BIGINT NOT NULL REFERENCES discussions(id) ON DELETE CASCADE,
-    label_id BIGINT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,
+    discussion_id BIGINT NOT NULL REFERENCES discussions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    label_id BIGINT NOT NULL REFERENCES labels(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(discussion_id,label_id)
 );
 
@@ -3609,7 +3684,7 @@ CREATE TABLE osv_advisories (
 );
 
 CREATE TABLE osv_packages (
-    advisory TEXT NOT NULL REFERENCES osv_advisories(id) ON DELETE CASCADE,
+    advisory TEXT NOT NULL REFERENCES osv_advisories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     ecosystem TEXT NOT NULL,
     name TEXT NOT NULL,
     PRIMARY KEY(advisory,ecosystem,name)
@@ -3617,7 +3692,7 @@ CREATE TABLE osv_packages (
 CREATE INDEX osv_packages_lookup ON osv_packages(ecosystem,name);
 
 CREATE TABLE vulnerability_jobs (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     generation BIGINT NOT NULL,
     next_scan TIMESTAMPTZ NOT NULL,
     lease_until TIMESTAMPTZ
@@ -3625,6 +3700,10 @@ CREATE TABLE vulnerability_jobs (
 CREATE INDEX vulnerability_jobs_due ON vulnerability_jobs(next_scan, repo_id);
 CREATE FUNCTION repository_vulnerability_job() RETURNS TRIGGER LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     IF NOT NEW.is_gist THEN
         INSERT INTO vulnerability_jobs(repo_id,generation,next_scan) VALUES(NEW.id,1,clock_timestamp());
     END IF;
@@ -3636,7 +3715,7 @@ CREATE TRIGGER repository_vulnerability_job AFTER INSERT ON repositories FOR EAC
 -- Actions job annotations
 CREATE TABLE actions_job_annotations (
     id BIGSERIAL PRIMARY KEY,
-    job_id BIGINT NOT NULL REFERENCES actions_jobs(id) ON DELETE CASCADE,
+    job_id BIGINT NOT NULL REFERENCES actions_jobs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     annotation JSONB NOT NULL
 );
 CREATE INDEX actions_job_annotations_job ON actions_job_annotations(job_id,id);
@@ -3644,10 +3723,10 @@ CREATE INDEX actions_job_annotations_job ON actions_job_annotations(job_id,id);
 -- CodeQL databases
 CREATE TABLE codeql_databases (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     language TEXT NOT NULL,
     name TEXT NOT NULL,
-    uploader_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    uploader_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     object_key TEXT NOT NULL UNIQUE,
     size BIGINT NOT NULL CHECK (size > 0),
     created_at TIMESTAMPTZ NOT NULL,
@@ -3656,6 +3735,10 @@ CREATE TABLE codeql_databases (
 );
 CREATE FUNCTION codeql_database_cleanup() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     IF TG_OP = 'DELETE' OR OLD.object_key <> NEW.object_key THEN
         INSERT INTO pending_object_deletions(object_key,delete_after)
         VALUES(OLD.object_key,NOW()+INTERVAL '7 days') ON CONFLICT(object_key) DO NOTHING;
@@ -3668,28 +3751,28 @@ FOR EACH ROW EXECUTE FUNCTION codeql_database_cleanup();
 
 -- Organization settings and migration authors
 CREATE TABLE organization_immutable_releases (
-    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     enforced_repositories TEXT NOT NULL CHECK (enforced_repositories IN ('all','selected','none'))
 );
 
 CREATE TABLE organization_immutable_release_repositories (
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY (org_id, repo_id)
 );
 
 CREATE TABLE organization_external_property_installations (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     display_name TEXT NOT NULL,
-    installation_id BIGINT NOT NULL REFERENCES github_app_installations(id) ON DELETE CASCADE,
+    installation_id BIGINT NOT NULL REFERENCES github_app_installations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     UNIQUE (org_id, display_name),
     UNIQUE (org_id, installation_id)
 );
 
 CREATE TABLE organization_external_property_values (
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     property_name TEXT NOT NULL,
     value_json TEXT NOT NULL,
     PRIMARY KEY (org_id, repo_id, property_name)
@@ -3697,7 +3780,7 @@ CREATE TABLE organization_external_property_values (
 
 CREATE TABLE repository_import_authors (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     author_name TEXT NOT NULL,
     author_email TEXT NOT NULL,
     identity_hash TEXT NOT NULL CHECK(length(identity_hash)=64),
@@ -3707,19 +3790,19 @@ CREATE TABLE repository_import_authors (
 );
 
 CREATE TABLE project_teams (
-    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE,
+    project_id BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    team_id BIGINT NOT NULL REFERENCES teams(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(project_id, team_id)
 );
 
 -- checks: publisher-owned runs, annotations and repository preferences.
 CREATE TABLE check_suites (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     publisher TEXT NOT NULL,
     app_id BIGINT,
     -- A workflow run's suite; its status and conclusion are read from the run.
-    ci_run_id BIGINT UNIQUE REFERENCES ci_runs(id) ON DELETE CASCADE,
+    ci_run_id BIGINT UNIQUE REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     head_sha TEXT NOT NULL,
     head_branch TEXT,
     status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','in_progress','completed')),
@@ -3731,9 +3814,9 @@ CREATE TABLE check_suites (
 CREATE INDEX check_suites_ref ON check_suites(repo_id,head_sha,id);
 
 CREATE TABLE check_runs (
-    id BIGINT PRIMARY KEY REFERENCES check_run_identities(id),
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    suite_id BIGINT NOT NULL REFERENCES check_suites(id) ON DELETE CASCADE,
+    id BIGINT PRIMARY KEY REFERENCES check_run_identities(id) DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    suite_id BIGINT NOT NULL REFERENCES check_suites(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'queued' CHECK (status IN ('queued','in_progress','completed')),
     conclusion TEXT,
@@ -3747,22 +3830,22 @@ CREATE INDEX check_runs_publisher_latest ON check_runs(repo_id,name,id);
 
 CREATE TABLE check_annotations (
     id BIGSERIAL PRIMARY KEY,
-    run_id BIGINT NOT NULL REFERENCES check_runs(id) ON DELETE CASCADE,
+    run_id BIGINT NOT NULL REFERENCES check_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     data JSONB NOT NULL
 );
 CREATE INDEX check_annotations_run ON check_annotations(run_id,id);
 
 CREATE TABLE check_suite_preferences (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    app_id BIGINT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    app_id BIGINT NOT NULL REFERENCES github_apps(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     setting BOOLEAN NOT NULL,
     PRIMARY KEY(repo_id,app_id)
 );
 
 CREATE TABLE actions_policies (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE,
-    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
+    repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     data TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -3773,14 +3856,14 @@ CREATE INDEX actions_policies_org ON actions_policies(org_id);
 
 CREATE TABLE actions_deployment_reviews (
     id BIGSERIAL PRIMARY KEY,
-    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
+    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     -- Historical identity: deleting the live environment must not delete an approval.
     environment_id BIGINT NOT NULL,
     environment_name TEXT NOT NULL,
-    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     state TEXT NOT NULL CHECK (state IN ('approved','rejected')),
     comment TEXT NOT NULL,
-    deployment_id BIGINT REFERENCES repository_deployments(id) ON DELETE SET NULL,
+    deployment_id BIGINT REFERENCES repository_deployments(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(run_id,environment_id)
 );
@@ -3788,9 +3871,9 @@ CREATE TABLE actions_deployment_reviews (
 -- repos: collaborator invitations.
 CREATE TABLE repository_invitations (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    invitee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    inviter_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    invitee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    inviter_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     permission SMALLINT NOT NULL CHECK (permission BETWEEN 1 AND 5),
     state TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','accepted','declined','cancelled','expired')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -3805,7 +3888,7 @@ CREATE INDEX idx_repositories_org_fork_source ON repositories(owner_org_id,forke
 
 CREATE TABLE repository_autolinks (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     key_prefix TEXT NOT NULL CHECK (length(key_prefix) BETWEEN 1 AND 80),
     url_template TEXT NOT NULL CHECK (length(url_template) BETWEEN 1 AND 4096),
     is_alphanumeric BOOLEAN NOT NULL DEFAULT TRUE,
@@ -3814,8 +3897,8 @@ CREATE TABLE repository_autolinks (
 
 CREATE TABLE repository_ref_activities (
     id BIGSERIAL PRIMARY KEY,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     operation_id TEXT NOT NULL CHECK (length(operation_id)=36),
     reference TEXT NOT NULL CHECK (length(reference) BETWEEN 1 AND 1024),
     before_sha TEXT NOT NULL CHECK (length(before_sha)=40),
@@ -3829,14 +3912,14 @@ CREATE INDEX idx_ref_activities_reference ON repository_ref_activities(repo_id,r
 CREATE INDEX idx_ref_activities_actor ON repository_ref_activities(repo_id,actor_id,id);
 
 CREATE TABLE repository_traffic_keys (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     day TEXT NOT NULL CHECK(length(day)=10),
     salt TEXT NOT NULL CHECK(length(salt)=64),
     PRIMARY KEY(repo_id,day)
 );
 
 CREATE TABLE repository_traffic_visitors (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     day TEXT NOT NULL CHECK(length(day)=10),
     fingerprint TEXT NOT NULL CHECK(length(fingerprint)=64),
     visitor TEXT NOT NULL,
@@ -3844,7 +3927,7 @@ CREATE TABLE repository_traffic_visitors (
 );
 
 CREATE TABLE repository_traffic_counts (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     day TEXT NOT NULL CHECK(length(day)=10),
     kind TEXT NOT NULL CHECK(kind IN ('view','clone')),
     visitor TEXT NOT NULL,
@@ -3863,7 +3946,7 @@ CREATE INDEX idx_repository_traffic_visitors_retention ON repository_traffic_vis
 CREATE INDEX idx_repository_traffic_keys_retention ON repository_traffic_keys(day);
 
 CREATE TABLE repository_immutable_releases (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 -- Publication and namespace history outlive deletion, so an old immutable tag cannot be reused.
@@ -3872,7 +3955,7 @@ CREATE TABLE immutable_release_publications (
     tag_name TEXT NOT NULL CHECK(length(tag_name) BETWEEN 1 AND 255),
     tag_oid TEXT NOT NULL CHECK(length(tag_oid)=40),
     commit_sha TEXT NOT NULL CHECK(length(commit_sha)=40),
-    release_id BIGINT UNIQUE REFERENCES releases(id) ON DELETE SET NULL,
+    release_id BIGINT UNIQUE REFERENCES releases(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     signer_key TEXT NOT NULL CHECK(length(signer_key)=64),
     attestation TEXT NOT NULL CHECK(length(attestation)<=2097152),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -3897,6 +3980,10 @@ CREATE TABLE immutable_release_owner_names (
 CREATE INDEX idx_immutable_release_owner_names_name ON immutable_release_owner_names(name_key);
 CREATE FUNCTION immutable_release_capture_names() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     IF TG_TABLE_NAME='repositories' THEN
         IF EXISTS(SELECT 1 FROM immutable_release_publications WHERE repo_id=NEW.id) THEN
             INSERT INTO immutable_release_repository_names(repo_id,owner_kind,owner_id,name_key)
@@ -3934,11 +4021,11 @@ CREATE TRIGGER immutable_release_guard_organization BEFORE UPDATE OF name ON org
 
 -- repos dependency security
 CREATE TABLE repository_dependency_security (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     alerts_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     updates_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    alerts_actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
-    updates_actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    alerts_actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    updates_actor_id BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     owner_kind TEXT NOT NULL CHECK(owner_kind IN ('user','org')),
     owner_id BIGINT NOT NULL CHECK(owner_id>0),
     private_consent BOOLEAN NOT NULL DEFAULT FALSE,
@@ -3959,12 +4046,20 @@ CREATE TABLE repository_dependency_security (
 CREATE INDEX idx_dependency_security_due ON repository_dependency_security(next_scan_at,repo_id) WHERE alerts_enabled;
 CREATE FUNCTION dependency_security_reauthorize() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     UPDATE repository_dependency_security SET alerts_actor_id=NULL,updates_enabled=FALSE,updates_actor_id=NULL,private_consent=FALSE,generation=generation+1,lease_nonce=NULL,lease_until=NULL,next_scan_at=NULL,last_status='paused',last_error='Repository ownership or privacy changed; a current administrator must reauthorize dependency security.' WHERE repo_id=NEW.id AND alerts_enabled;
     RETURN NEW;
 END $$;
 CREATE TRIGGER dependency_security_reauthorize AFTER UPDATE OF owner_kind,owner_user_id,owner_org_id,is_private ON repositories FOR EACH ROW WHEN(OLD.owner_kind IS DISTINCT FROM NEW.owner_kind OR OLD.owner_user_id IS DISTINCT FROM NEW.owner_user_id OR OLD.owner_org_id IS DISTINCT FROM NEW.owner_org_id OR (NOT OLD.is_private AND NEW.is_private)) EXECUTE FUNCTION dependency_security_reauthorize();
 CREATE FUNCTION dependency_security_default() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     UPDATE repository_dependency_security SET generation=generation+1,next_scan_at=NOW(),last_status=CASE WHEN lease_nonce IS NULL THEN 'queued' ELSE last_status END WHERE repo_id=NEW.id AND alerts_enabled AND alerts_actor_id IS NOT NULL;
     RETURN NEW;
 END $$;
@@ -3972,20 +4067,20 @@ CREATE TRIGGER dependency_security_default AFTER UPDATE OF default_branch ON rep
 
 -- Dependabot repository access
 CREATE TABLE org_dependabot_access (
-    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     default_level TEXT NOT NULL CHECK(default_level IN ('public','internal'))
 );
 
 CREATE TABLE org_dependabot_access_repositories (
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(org_id,repo_id)
 );
 CREATE INDEX org_dependabot_access_repositories_repo ON org_dependabot_access_repositories(repo_id);
 
 -- Private registries
 CREATE TABLE org_private_registries (
-    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     configuration TEXT NOT NULL,
     encrypted_value BYTEA,
@@ -4000,11 +4095,11 @@ CREATE TABLE org_private_registries (
 CREATE TABLE global_advisories (
     ghsa_id TEXT PRIMARY KEY,
     document TEXT NOT NULL,
-    osv_id TEXT REFERENCES osv_advisories(id)
+    osv_id TEXT REFERENCES osv_advisories(id) DEFERRABLE INITIALLY IMMEDIATE
 );
 
 CREATE TABLE dependabot_alerts (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number BIGINT NOT NULL,
     ghsa_id TEXT NOT NULL,
     manifest TEXT NOT NULL,
@@ -4020,7 +4115,7 @@ CREATE TABLE dependabot_alerts (
     updated_at TIMESTAMPTZ NOT NULL,
     fixed_at TIMESTAMPTZ,
     dismissed_at TIMESTAMPTZ,
-    dismissed_by BIGINT REFERENCES users(id) ON DELETE SET NULL,
+    dismissed_by BIGINT REFERENCES users(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     dismissed_reason TEXT,
     dismissed_comment TEXT,
     PRIMARY KEY(repo_id,number),
@@ -4029,7 +4124,7 @@ CREATE TABLE dependabot_alerts (
 
 -- Actions concurrency groups
 CREATE TABLE actions_concurrency_groups (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name_key TEXT NOT NULL,
     name TEXT NOT NULL,
     last_acquired_at TIMESTAMPTZ,
@@ -4038,21 +4133,21 @@ CREATE TABLE actions_concurrency_groups (
 );
 
 CREATE TABLE actions_run_concurrency (
-    run_id BIGINT PRIMARY KEY REFERENCES ci_runs(id) ON DELETE CASCADE,
+    run_id BIGINT PRIMARY KEY REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     repo_id BIGINT NOT NULL,
     name_key TEXT NOT NULL,
     holding BOOLEAN NOT NULL DEFAULT FALSE,
     request_order BIGINT NOT NULL DEFAULT 0,
     cancel_in_progress BOOLEAN NOT NULL DEFAULT FALSE,
-    FOREIGN KEY(repo_id, name_key) REFERENCES actions_concurrency_groups(repo_id, name_key) ON DELETE CASCADE
+    FOREIGN KEY(repo_id, name_key) REFERENCES actions_concurrency_groups(repo_id, name_key) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE INDEX actions_run_concurrency_group ON actions_run_concurrency(repo_id, name_key);
 
 -- Organization rulesets
 CREATE TABLE repository_rulesets (
     id BIGSERIAL PRIMARY KEY,
-    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE,
-    owner_repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE,
+    owner_org_id BIGINT REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    owner_repo_id BIGINT REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     definition TEXT NOT NULL CHECK(octet_length(definition)<=262144),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -4063,7 +4158,7 @@ CREATE INDEX repository_rulesets_repo ON repository_rulesets(owner_repo_id,id);
 
 CREATE TABLE repository_ruleset_versions (
     id BIGSERIAL PRIMARY KEY,
-    ruleset_id BIGINT NOT NULL REFERENCES repository_rulesets(id) ON DELETE CASCADE,
+    ruleset_id BIGINT NOT NULL REFERENCES repository_rulesets(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     definition TEXT NOT NULL CHECK(octet_length(definition)<=262144),
     -- Historical principal metadata, not a live authority grant; deletion does not rewrite it.
     actor_id BIGINT CHECK(actor_id IS NULL OR actor_id>0),
@@ -4074,8 +4169,8 @@ CREATE INDEX repository_ruleset_versions_rule ON repository_ruleset_versions(rul
 
 CREATE TABLE repository_rule_suites (
     id BIGSERIAL PRIMARY KEY,
-    org_id BIGINT REFERENCES organizations(id) ON DELETE SET NULL,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    org_id BIGINT REFERENCES organizations(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     repository_name TEXT NOT NULL CHECK(length(repository_name)<=255),
     actor_id BIGINT CHECK(actor_id IS NULL OR actor_id>0),
     actor_name TEXT CHECK(length(actor_name)<=255),
@@ -4095,7 +4190,7 @@ CREATE INDEX repository_rule_suites_repo ON repository_rule_suites(repo_id,id DE
 -- deployments: custom App protection rules and attempt-scoped decisions
 CREATE TABLE deployment_protection_rules (
     id BIGSERIAL PRIMARY KEY,
-    environment_id BIGINT NOT NULL REFERENCES deployment_environments(id) ON DELETE CASCADE,
+    environment_id BIGINT NOT NULL REFERENCES deployment_environments(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     app_id BIGINT NOT NULL,
     app_owner_id BIGINT NOT NULL,
     slug TEXT NOT NULL,
@@ -4105,7 +4200,7 @@ CREATE TABLE deployment_protection_rules (
 
 -- App removal must not turn an outstanding approval into permission to deploy.
 CREATE TABLE deployment_protection_gates (
-    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
+    run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     rule_id BIGINT NOT NULL,
     app_id BIGINT NOT NULL,
     environment_name TEXT NOT NULL,
@@ -4124,71 +4219,71 @@ CREATE TABLE actions_oidc_key (
 );
 
 CREATE TABLE actions_oidc_jobs (
-    token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
+    token_id BIGINT PRIMARY KEY REFERENCES personal_access_tokens(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     workflow TEXT NOT NULL,
     workflow_name TEXT NOT NULL,
     environment TEXT
 );
 
 CREATE TABLE actions_oidc_repo_settings (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     use_default BOOLEAN NOT NULL,
     claim_keys TEXT
 );
 
 CREATE TABLE actions_oidc_org_settings (
-    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE,
+    org_id BIGINT PRIMARY KEY REFERENCES organizations(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     use_default BOOLEAN NOT NULL DEFAULT false,
     claim_keys TEXT
 );
 
 CREATE TABLE actions_oidc_properties (
-    definition_id BIGINT PRIMARY KEY REFERENCES organization_repository_properties(id) ON DELETE CASCADE
+    definition_id BIGINT PRIMARY KEY REFERENCES organization_repository_properties(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 
 -- Issue management
 CREATE TABLE pinned_issues (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-    issue_id BIGINT NOT NULL UNIQUE REFERENCES issues(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    issue_id BIGINT NOT NULL UNIQUE REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     slot INTEGER NOT NULL CHECK(slot BETWEEN 1 AND 3),
     PRIMARY KEY(repo_id, slot)
 );
 
 CREATE TABLE issue_redirects (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     number INTEGER NOT NULL,
-    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(repo_id, number)
 );
 CREATE INDEX idx_issue_redirects_issue_root ON issue_redirects(issue_id, repo_id);
 
 CREATE TABLE issue_duplicates (
-    issue_id BIGINT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE,
-    duplicate_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+    issue_id BIGINT PRIMARY KEY REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    duplicate_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     CHECK(issue_id <> duplicate_id)
 );
 
 CREATE TABLE issue_linked_branches (
     id BIGSERIAL PRIMARY KEY,
-    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    issue_id BIGINT NOT NULL REFERENCES issues(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     name TEXT NOT NULL,
     UNIQUE(issue_id, repo_id, name)
 );
 
 CREATE TABLE ci_schedule_runs (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     workflow_path TEXT NOT NULL,
     cron TEXT NOT NULL,
     minute BIGINT NOT NULL,
     -- Deleting the run keeps the minute, so another node does not queue it again.
-    run_id BIGINT REFERENCES ci_runs(id) ON DELETE SET NULL,
+    run_id BIGINT REFERENCES ci_runs(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY (repo_id, workflow_path, cron)
 );
 
 -- Branch renames.
 CREATE TABLE branch_redirects (
-    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     old_name TEXT NOT NULL,
     new_name TEXT NOT NULL,
     PRIMARY KEY(repo_id, old_name)
@@ -4196,9 +4291,9 @@ CREATE TABLE branch_redirects (
 
 -- Pull request auto-merge: the background check merges once the requirements pass.
 CREATE TABLE pull_request_auto_merges (
-    pull_request_id BIGINT PRIMARY KEY REFERENCES pull_requests(id) ON DELETE CASCADE,
-    enabled_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    token_id BIGINT REFERENCES personal_access_tokens(id) ON DELETE CASCADE,
+    pull_request_id BIGINT PRIMARY KEY REFERENCES pull_requests(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    enabled_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
+    token_id BIGINT REFERENCES personal_access_tokens(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     merge_method TEXT NOT NULL CHECK(merge_method IN ('merge','squash','rebase')),
     commit_title TEXT,
     commit_message TEXT,
@@ -4209,13 +4304,13 @@ CREATE TABLE pull_request_auto_merges (
 
 -- Job-level Actions concurrency. Groups share their names with workflow-level groups.
 CREATE TABLE actions_job_concurrency (
-    job_id BIGINT PRIMARY KEY REFERENCES actions_jobs(id) ON DELETE CASCADE,
+    job_id BIGINT PRIMARY KEY REFERENCES actions_jobs(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     repo_id BIGINT NOT NULL,
     name_key TEXT NOT NULL,
     holding BOOLEAN NOT NULL DEFAULT FALSE,
     request_order BIGINT NOT NULL DEFAULT 0,
     cancelled BOOLEAN NOT NULL DEFAULT FALSE,
-    FOREIGN KEY(repo_id, name_key) REFERENCES actions_concurrency_groups(repo_id, name_key) ON DELETE CASCADE
+    FOREIGN KEY(repo_id, name_key) REFERENCES actions_concurrency_groups(repo_id, name_key) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE INDEX actions_job_concurrency_group ON actions_job_concurrency(repo_id, name_key);
 
@@ -4251,12 +4346,16 @@ CREATE INDEX package_uploads_expiry ON package_uploads(expires_at);
 -- it was judged under right before the branch moves. The triggers are deferred, so a transaction
 -- takes this hot per-repository row only at commit and never holds it while it works.
 CREATE TABLE repository_merge_epochs (
-    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    repo_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     version BIGINT NOT NULL DEFAULT 0 CHECK(version>=0)
 );
 CREATE FUNCTION advance_merge_policy_epoch() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE previous_repo BIGINT; next_repo BIGINT;
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     IF TG_TABLE_NAME='ci_runs' AND TG_OP='UPDATE' THEN
         IF (NEW.repo_id,NEW.head_sha,NEW.workflow_path,NEW.status,NEW.attempt,NEW.created_at)
             IS NOT DISTINCT FROM (OLD.repo_id,OLD.head_sha,OLD.workflow_path,OLD.status,OLD.attempt,OLD.created_at) THEN
@@ -4330,7 +4429,7 @@ CREATE TABLE foreign_credentials (
     credential_hash TEXT NOT NULL CHECK (length(credential_hash)=64),
     kind TEXT NOT NULL CHECK (kind IN ('token','session','ssh')),
     credential_id BIGINT,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     answer TEXT NOT NULL CHECK (length(answer)<=131072),
     validated_at TIMESTAMPTZ NOT NULL,
     expires_at TIMESTAMPTZ NOT NULL
@@ -4339,7 +4438,7 @@ CREATE INDEX foreign_credentials_identity ON foreign_credentials(kind,credential
 
 -- A user's home keeps discovery pointers; the resource cell still checks every read.
 CREATE TABLE remote_pointers (
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     kind TEXT NOT NULL CHECK(kind IN ('membership','star')),
     resource_kind TEXT NOT NULL CHECK(resource_kind IN ('organization','repository')),
     resource_id BIGINT NOT NULL CHECK(resource_id>0),
@@ -4361,6 +4460,10 @@ DECLARE
     active BOOLEAN;
     side INTEGER;
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     FOR side IN 0..1 LOOP
         IF side=0 THEN
             IF TG_OP='INSERT' THEN CONTINUE; END IF;
@@ -4418,6 +4521,10 @@ DECLARE
     row_data JSONB;
     side INTEGER;
 BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release') THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+
     IF NOT COALESCE((SELECT search_index FROM node_configuration WHERE id=1),FALSE) THEN
         RETURN NULL;
     END IF;
@@ -4505,13 +4612,606 @@ CREATE TRIGGER search_team_memberships AFTER INSERT OR UPDATE OR DELETE ON team_
 
 -- Consent belongs to the native head repository; no historical token is stored.
 CREATE TABLE remote_pull_requests (
-    base_repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK(base_repo_id>0),
+    base_repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE CHECK(base_repo_id>0),
     number INTEGER NOT NULL CHECK(number BETWEEN 1 AND 2147483647),
-    head_repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE CHECK(head_repo_id>0),
+    head_repo_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE CHECK(head_repo_id>0),
     head_branch VARCHAR(255) NOT NULL CHECK(length(head_branch) BETWEEN 1 AND 255),
-    publisher_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK(publisher_id>0),
+    publisher_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE CHECK(publisher_id>0),
     PRIMARY KEY(base_repo_id,number),
     CHECK(base_repo_id<>head_repo_id)
 );
 CREATE INDEX remote_pull_requests_head ON remote_pull_requests(head_repo_id,head_branch,base_repo_id,number);
 CREATE INDEX remote_pull_requests_publisher ON remote_pull_requests(publisher_id);
+
+-- Account moves (architecture section 3, stage 6). A move first records a pending row and
+-- waits until every transaction older than that row has ended; from then on each write to a
+-- row the account owns reads the account's move row under a key-share lock in the writing
+-- transaction. The freeze takes that row for update, so it waits for writes in flight, and
+-- later writes see the freeze and are refused. A freeze ends by itself at `expires_at`;
+-- `switched` means the directory already names the new cell. The move's own copy and
+-- release set `codeyard.move` for their transaction, which skips the guard and the triggers
+-- whose side effects belong to new rows (counters, search, pointers, history, cleanup).
+CREATE TABLE account_moves (
+    account_kind TEXT NOT NULL CHECK(account_kind IN ('user','organization')),
+    account_id BIGINT NOT NULL CHECK(account_id>0),
+    target_cell INTEGER NOT NULL CHECK(target_cell BETWEEN 0 AND 65535),
+    state TEXT NOT NULL CHECK(state IN ('pending','frozen','switched')),
+    started_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+    expires_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY(account_kind,account_id)
+);
+
+-- The account a row reaches along one path of its ownership rule (see guard_paths in
+-- backend/db/core/src/cells/ownership.rs), or nothing when a reference on the way is null.
+CREATE FUNCTION account_move_owner(path TEXT, row_data JSONB, OUT kind TEXT, OUT id BIGINT)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+    hop TEXT;
+    parts TEXT[];
+    value TEXT;
+BEGIN
+    FOREACH hop IN ARRAY string_to_array(path,'>') LOOP
+        parts := regexp_match(hop,'^(\w+)([@:])(\w+)(?:\.(\w+))?$');
+        value := row_data->>parts[1];
+        IF value IS NULL THEN
+            RETURN;
+        END IF;
+        IF parts[2]='@' THEN
+            EXECUTE format('SELECT to_jsonb(t) FROM %I t WHERE t.%I=$1::BIGINT',parts[3],parts[4])
+                INTO row_data USING value;
+            IF row_data IS NULL THEN
+                RETURN;
+            END IF;
+        ELSIF parts[3]='u' THEN
+            kind := 'user';
+            id := value::BIGINT;
+            RETURN;
+        ELSIF parts[3]='o' THEN
+            kind := 'organization';
+            id := value::BIGINT;
+            RETURN;
+        ELSIF parts[3]='k' THEN
+            kind := CASE row_data->>parts[4] WHEN 'user' THEN 'user' WHEN 'org' THEN 'organization' END;
+            id := value::BIGINT;
+            RETURN;
+        ELSE
+            SELECT CASE WHEN r.owner_kind='org' THEN 'organization' ELSE 'user' END,
+                CASE WHEN r.owner_kind='org' THEN r.owner_org_id ELSE r.owner_user_id END
+                INTO kind,id FROM repositories r WHERE r.id=value::BIGINT;
+            RETURN;
+        END IF;
+    END LOOP;
+END;
+$$;
+
+CREATE FUNCTION account_move_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    side INTEGER;
+    row_data JSONB;
+    path TEXT;
+    account RECORD;
+    freeze RECORD;
+BEGIN
+    IF current_setting('codeyard.move',true) IN ('load','release')
+        OR NOT EXISTS(SELECT 1 FROM account_moves) THEN
+        RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+    END IF;
+    FOR side IN 0..1 LOOP
+        IF (side=0 AND TG_OP='INSERT') OR (side=1 AND TG_OP='DELETE') THEN
+            CONTINUE;
+        END IF;
+        row_data := CASE WHEN side=0 THEN to_jsonb(OLD) ELSE to_jsonb(NEW) END;
+        FOREACH path IN ARRAY TG_ARGV LOOP
+            CONTINUE WHEN row_data->>((regexp_match(path,'^\w+'))[1]) IS NULL;
+            SELECT * INTO account FROM account_move_owner(path,row_data);
+            CONTINUE WHEN account.id IS NULL;
+            SELECT m.state,m.expires_at INTO freeze FROM account_moves m
+                WHERE m.account_kind=account.kind AND m.account_id=account.id FOR KEY SHARE;
+            IF FOUND AND (freeze.state='switched'
+                OR (freeze.state='frozen' AND freeze.expires_at>clock_timestamp())) THEN
+                RAISE EXCEPTION 'This account is moving to another cell; try again in a few minutes'
+                    USING ERRCODE='55000', CONSTRAINT='account_moving';
+            END IF;
+        END LOOP;
+    END LOOP;
+    RETURN CASE WHEN TG_OP='DELETE' THEN OLD ELSE NEW END;
+END;
+$$;
+CREATE TRIGGER action_runner_group_repositories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON action_runner_group_repositories
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER action_runner_groups_move_guard BEFORE INSERT OR UPDATE OR DELETE ON action_runner_groups
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER action_runner_remove_tokens_move_guard BEFORE INSERT OR UPDATE OR DELETE ON action_runner_remove_tokens
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r','org_id:o');
+CREATE TRIGGER action_runner_tokens_move_guard BEFORE INSERT OR UPDATE OR DELETE ON action_runner_tokens
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r','org_id:o');
+CREATE TRIGGER action_runners_move_guard BEFORE INSERT OR UPDATE OR DELETE ON action_runners
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r','org_id:o');
+CREATE TRIGGER actions_blob_grants_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_blob_grants
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('object_id@actions_objects.id>repo_id:r');
+CREATE TRIGGER actions_blob_parts_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_blob_parts
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('object_id@actions_objects.id>repo_id:r');
+CREATE TRIGGER actions_concurrency_groups_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_concurrency_groups
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER actions_deployment_reviews_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_deployment_reviews
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER actions_github_tokens_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_github_tokens
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER actions_job_annotations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_job_annotations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('job_id@actions_jobs.id>run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER actions_job_concurrency_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_job_concurrency
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER actions_job_states_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_job_states
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER actions_jobs_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_jobs
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER actions_log_downloads_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_log_downloads
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER actions_objects_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_objects
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER actions_oidc_jobs_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_oidc_jobs
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('token_id@personal_access_tokens.id>user_id:u');
+CREATE TRIGGER actions_oidc_org_settings_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_oidc_org_settings
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER actions_oidc_properties_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_oidc_properties
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('definition_id@organization_repository_properties.id>org_id:o');
+CREATE TRIGGER actions_oidc_repo_settings_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_oidc_repo_settings
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER actions_policies_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_policies
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r','org_id:o');
+CREATE TRIGGER actions_replays_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_replays
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER actions_run_concurrency_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_run_concurrency
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER actions_run_metadata_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_run_metadata
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER actions_runtime_tokens_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_runtime_tokens
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER actions_step_summaries_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_step_summaries
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('job_id@actions_jobs.id>run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER actions_steps_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_steps
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('job_id@actions_jobs.id>run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER actions_workflows_move_guard BEFORE INSERT OR UPDATE OR DELETE ON actions_workflows
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER activity_feed_tokens_move_guard BEFORE INSERT OR UPDATE OR DELETE ON activity_feed_tokens
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('api_token_id@personal_access_tokens.id>user_id:u');
+CREATE TRIGGER artifact_attestations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON artifact_attestations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER artifact_metadata_move_guard BEFORE INSERT OR UPDATE OR DELETE ON artifact_metadata
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER artifact_metadata_jobs_move_guard BEFORE INSERT OR UPDATE OR DELETE ON artifact_metadata_jobs
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER artifact_metadata_records_move_guard BEFORE INSERT OR UPDATE OR DELETE ON artifact_metadata_records
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER attestation_subjects_move_guard BEFORE INSERT OR UPDATE OR DELETE ON attestation_subjects
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('attestation_id@artifact_attestations.id>repo_id:r');
+CREATE TRIGGER audit_log_move_guard BEFORE INSERT OR UPDATE OR DELETE ON audit_log
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER branch_protection_rules_move_guard BEFORE INSERT OR UPDATE OR DELETE ON branch_protection_rules
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER branch_redirects_move_guard BEFORE INSERT OR UPDATE OR DELETE ON branch_redirects
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER cell_presence_move_guard BEFORE INSERT OR UPDATE OR DELETE ON cell_presence
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('organization_id:o');
+CREATE TRIGGER check_annotations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON check_annotations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('run_id@check_runs.id>repo_id:r');
+CREATE TRIGGER check_runs_move_guard BEFORE INSERT OR UPDATE OR DELETE ON check_runs
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER check_suite_preferences_move_guard BEFORE INSERT OR UPDATE OR DELETE ON check_suite_preferences
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER check_suites_move_guard BEFORE INSERT OR UPDATE OR DELETE ON check_suites
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER ci_accepted_pushes_move_guard BEFORE INSERT OR UPDATE OR DELETE ON ci_accepted_pushes
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER ci_deployments_move_guard BEFORE INSERT OR UPDATE OR DELETE ON ci_deployments
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER ci_log_chunks_move_guard BEFORE INSERT OR UPDATE OR DELETE ON ci_log_chunks
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER ci_runs_move_guard BEFORE INSERT OR UPDATE OR DELETE ON ci_runs
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER ci_schedule_runs_move_guard BEFORE INSERT OR UPDATE OR DELETE ON ci_schedule_runs
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER code_scanning_alert_counters_move_guard BEFORE INSERT OR UPDATE OR DELETE ON code_scanning_alert_counters
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER code_scanning_alerts_move_guard BEFORE INSERT OR UPDATE OR DELETE ON code_scanning_alerts
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER code_scanning_analyses_move_guard BEFORE INSERT OR UPDATE OR DELETE ON code_scanning_analyses
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER code_scanning_analysis_findings_move_guard BEFORE INSERT OR UPDATE OR DELETE ON code_scanning_analysis_findings
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('analysis_id@code_scanning_analyses.id>repo_id:r');
+CREATE TRIGGER code_scanning_instances_move_guard BEFORE INSERT OR UPDATE OR DELETE ON code_scanning_instances
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('alert_id@code_scanning_alerts.id>repo_id:r');
+CREATE TRIGGER code_scanning_uploads_move_guard BEFORE INSERT OR UPDATE OR DELETE ON code_scanning_uploads
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER code_security_configurations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON code_security_configurations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER codeql_databases_move_guard BEFORE INSERT OR UPDATE OR DELETE ON codeql_databases
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER commit_comments_move_guard BEFORE INSERT OR UPDATE OR DELETE ON commit_comments
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER commit_status_history_move_guard BEFORE INSERT OR UPDATE OR DELETE ON commit_status_history
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER commit_statuses_move_guard BEFORE INSERT OR UPDATE OR DELETE ON commit_statuses
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER dependabot_alerts_move_guard BEFORE INSERT OR UPDATE OR DELETE ON dependabot_alerts
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER dependency_sbom_reports_move_guard BEFORE INSERT OR UPDATE OR DELETE ON dependency_sbom_reports
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER dependency_snapshots_move_guard BEFORE INSERT OR UPDATE OR DELETE ON dependency_snapshots
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER deploy_keys_move_guard BEFORE INSERT OR UPDATE OR DELETE ON deploy_keys
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER deployment_branch_policies_move_guard BEFORE INSERT OR UPDATE OR DELETE ON deployment_branch_policies
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('environment_id@deployment_environments.id>repo_id:r');
+CREATE TRIGGER deployment_environments_move_guard BEFORE INSERT OR UPDATE OR DELETE ON deployment_environments
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER deployment_protection_gates_move_guard BEFORE INSERT OR UPDATE OR DELETE ON deployment_protection_gates
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('run_id@ci_runs.id>repo_id:r');
+CREATE TRIGGER deployment_protection_rules_move_guard BEFORE INSERT OR UPDATE OR DELETE ON deployment_protection_rules
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('environment_id@deployment_environments.id>repo_id:r');
+CREATE TRIGGER deployment_statuses_move_guard BEFORE INSERT OR UPDATE OR DELETE ON deployment_statuses
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('deployment_id@repository_deployments.id>repo_id:r');
+CREATE TRIGGER discussion_categories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON discussion_categories
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER discussion_comments_move_guard BEFORE INSERT OR UPDATE OR DELETE ON discussion_comments
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('discussion_id@discussions.id>repo_id:r');
+CREATE TRIGGER discussion_labels_move_guard BEFORE INSERT OR UPDATE OR DELETE ON discussion_labels
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('discussion_id@discussions.id>repo_id:r');
+CREATE TRIGGER discussions_move_guard BEFORE INSERT OR UPDATE OR DELETE ON discussions
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER email_tokens_move_guard BEFORE INSERT OR UPDATE OR DELETE ON email_tokens
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER events_move_guard BEFORE INSERT OR UPDATE OR DELETE ON events
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER fine_grained_token_repositories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON fine_grained_token_repositories
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('token_id@fine_grained_tokens.token_id>token_id@personal_access_tokens.id>user_id:u');
+CREATE TRIGGER fine_grained_tokens_move_guard BEFORE INSERT OR UPDATE OR DELETE ON fine_grained_tokens
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('token_id@personal_access_tokens.id>user_id:u');
+CREATE TRIGGER follows_move_guard BEFORE INSERT OR UPDATE OR DELETE ON follows
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('following_id:u');
+CREATE TRIGGER gist_comments_move_guard BEFORE INSERT OR UPDATE OR DELETE ON gist_comments
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER gist_stars_move_guard BEFORE INSERT OR UPDATE OR DELETE ON gist_stars
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER gists_move_guard BEFORE INSERT OR UPDATE OR DELETE ON gists
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER github_app_callbacks_move_guard BEFORE INSERT OR UPDATE OR DELETE ON github_app_callbacks
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('app_id@github_apps.id>owner_id:u');
+CREATE TRIGGER github_app_deliveries_move_guard BEFORE INSERT OR UPDATE OR DELETE ON github_app_deliveries
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('webhook_id@github_app_hooks.app_id>app_id@github_apps.id>owner_id:u');
+CREATE TRIGGER github_app_hooks_move_guard BEFORE INSERT OR UPDATE OR DELETE ON github_app_hooks
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('app_id@github_apps.id>owner_id:u');
+CREATE TRIGGER github_app_installations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON github_app_installations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o','user_id:u');
+CREATE TRIGGER github_app_manifests_move_guard BEFORE INSERT OR UPDATE OR DELETE ON github_app_manifests
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER github_app_repositories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON github_app_repositories
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('installation_id@github_app_installations.id>org_id:o','installation_id@github_app_installations.id>user_id:u');
+CREATE TRIGGER github_app_requests_move_guard BEFORE INSERT OR UPDATE OR DELETE ON github_app_requests
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o','user_id:u');
+CREATE TRIGGER github_app_tokens_move_guard BEFORE INSERT OR UPDATE OR DELETE ON github_app_tokens
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('token_id@personal_access_tokens.id>user_id:u');
+CREATE TRIGGER github_apps_move_guard BEFORE INSERT OR UPDATE OR DELETE ON github_apps
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_id:u');
+CREATE TRIGGER gpg_keys_move_guard BEFORE INSERT OR UPDATE OR DELETE ON gpg_keys
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER immutable_release_owner_names_move_guard BEFORE INSERT OR UPDATE OR DELETE ON immutable_release_owner_names
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_id:k.owner_kind');
+CREATE TRIGGER immutable_release_publications_move_guard BEFORE INSERT OR UPDATE OR DELETE ON immutable_release_publications
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER immutable_release_repository_names_move_guard BEFORE INSERT OR UPDATE OR DELETE ON immutable_release_repository_names
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER interaction_contributors_move_guard BEFORE INSERT OR UPDATE OR DELETE ON interaction_contributors
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER interaction_limits_move_guard BEFORE INSERT OR UPDATE OR DELETE ON interaction_limits
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r','org_id:o','user_id:u');
+CREATE TRIGGER interaction_pull_bypass_move_guard BEFORE INSERT OR UPDATE OR DELETE ON interaction_pull_bypass
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER interaction_pull_caps_move_guard BEFORE INSERT OR UPDATE OR DELETE ON interaction_pull_caps
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r','org_id:o');
+CREATE TRIGGER issue_assignees_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_assignees
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('issue_id@issues.id>repo_id:r');
+CREATE TRIGGER issue_attribute_options_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_attribute_options
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('attribute_id@issue_attributes.id>owner_user_id:u','attribute_id@issue_attributes.id>owner_org_id:o');
+CREATE TRIGGER issue_attributes_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_attributes
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_user_id:u','owner_org_id:o');
+CREATE TRIGGER issue_comment_pins_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_comment_pins
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('issue_id@issues.id>repo_id:r');
+CREATE TRIGGER issue_comments_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_comments
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('issue_id@issues.id>repo_id:r');
+CREATE TRIGGER issue_duplicates_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_duplicates
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('issue_id@issues.id>repo_id:r');
+CREATE TRIGGER issue_field_values_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_field_values
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('issue_id@issues.id>repo_id:r');
+CREATE TRIGGER issue_labels_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_labels
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('issue_id@issues.id>repo_id:r');
+CREATE TRIGGER issue_linked_branches_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_linked_branches
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER issue_redirects_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_redirects
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER issue_relations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_relations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('source_id@issues.id>repo_id:r');
+CREATE TRIGGER issue_suggestions_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_suggestions
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('issue_id@issues.id>repo_id:r');
+CREATE TRIGGER issue_type_assignments_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issue_type_assignments
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('issue_id@issues.id>repo_id:r');
+CREATE TRIGGER issues_move_guard BEFORE INSERT OR UPDATE OR DELETE ON issues
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER labels_move_guard BEFORE INSERT OR UPDATE OR DELETE ON labels
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER milestones_move_guard BEFORE INSERT OR UPDATE OR DELETE ON milestones
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER notification_thread_subscriptions_move_guard BEFORE INSERT OR UPDATE OR DELETE ON notification_thread_subscriptions
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('thread_id@notification_threads.id>user_id:u');
+CREATE TRIGGER notification_threads_move_guard BEFORE INSERT OR UPDATE OR DELETE ON notification_threads
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER notifications_move_guard BEFORE INSERT OR UPDATE OR DELETE ON notifications
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER oauth_accounts_move_guard BEFORE INSERT OR UPDATE OR DELETE ON oauth_accounts
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER oauth_app_grants_move_guard BEFORE INSERT OR UPDATE OR DELETE ON oauth_app_grants
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER oauth_app_tokens_move_guard BEFORE INSERT OR UPDATE OR DELETE ON oauth_app_tokens
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('token_id@personal_access_tokens.id>user_id:u');
+CREATE TRIGGER oauth_applications_move_guard BEFORE INSERT OR UPDATE OR DELETE ON oauth_applications
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_id:u');
+CREATE TRIGGER org_actions_keys_move_guard BEFORE INSERT OR UPDATE OR DELETE ON org_actions_keys
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER org_actions_settings_move_guard BEFORE INSERT OR UPDATE OR DELETE ON org_actions_settings
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER org_actions_value_repositories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON org_actions_value_repositories
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER org_actions_values_move_guard BEFORE INSERT OR UPDATE OR DELETE ON org_actions_values
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER org_dependabot_access_move_guard BEFORE INSERT OR UPDATE OR DELETE ON org_dependabot_access
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER org_dependabot_access_repositories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON org_dependabot_access_repositories
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER org_dependabot_keys_move_guard BEFORE INSERT OR UPDATE OR DELETE ON org_dependabot_keys
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER org_dependabot_secret_repositories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON org_dependabot_secret_repositories
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER org_dependabot_secrets_move_guard BEFORE INSERT OR UPDATE OR DELETE ON org_dependabot_secrets
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER org_memberships_move_guard BEFORE INSERT OR UPDATE OR DELETE ON org_memberships
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER org_private_registries_move_guard BEFORE INSERT OR UPDATE OR DELETE ON org_private_registries
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER organization_blocks_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organization_blocks
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER organization_external_property_installations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organization_external_property_installations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER organization_external_property_values_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organization_external_property_values
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER organization_immutable_release_repositories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organization_immutable_release_repositories
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER organization_immutable_releases_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organization_immutable_releases
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER organization_invitations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organization_invitations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER organization_member_history_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organization_member_history
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER organization_repository_properties_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organization_repository_properties
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER organization_role_assignments_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organization_role_assignments
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER organization_settings_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organization_settings
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER organization_token_policies_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organization_token_policies
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER organizations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON organizations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('id:o');
+CREATE TRIGGER package_blob_grants_move_guard BEFORE INSERT OR UPDATE OR DELETE ON package_blob_grants
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('package_id@packages.id>owner_user_id:u','package_id@packages.id>owner_org_id:o');
+CREATE TRIGGER package_files_move_guard BEFORE INSERT OR UPDATE OR DELETE ON package_files
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('package_id@packages.id>owner_user_id:u','package_id@packages.id>owner_org_id:o');
+CREATE TRIGGER package_registry_tokens_move_guard BEFORE INSERT OR UPDATE OR DELETE ON package_registry_tokens
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('token_id@personal_access_tokens.id>user_id:u');
+CREATE TRIGGER package_tags_move_guard BEFORE INSERT OR UPDATE OR DELETE ON package_tags
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('package_id@packages.id>owner_user_id:u','package_id@packages.id>owner_org_id:o');
+CREATE TRIGGER package_uploads_move_guard BEFORE INSERT OR UPDATE OR DELETE ON package_uploads
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('package_id@packages.id>owner_user_id:u','package_id@packages.id>owner_org_id:o');
+CREATE TRIGGER package_version_blobs_move_guard BEFORE INSERT OR UPDATE OR DELETE ON package_version_blobs
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('version_id@package_versions.id>package_id@packages.id>owner_user_id:u','version_id@package_versions.id>package_id@packages.id>owner_org_id:o');
+CREATE TRIGGER package_versions_move_guard BEFORE INSERT OR UPDATE OR DELETE ON package_versions
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('package_id@packages.id>owner_user_id:u','package_id@packages.id>owner_org_id:o');
+CREATE TRIGGER packages_move_guard BEFORE INSERT OR UPDATE OR DELETE ON packages
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_user_id:u','owner_org_id:o');
+CREATE TRIGGER pages_builds_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pages_builds
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('id:r');
+CREATE TRIGGER pages_deployments_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pages_deployments
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('id:r');
+CREATE TRIGGER pages_sites_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pages_sites
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER personal_access_tokens_move_guard BEFORE INSERT OR UPDATE OR DELETE ON personal_access_tokens
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER pinned_issues_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pinned_issues
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER pr_assignees_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pr_assignees
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('pull_request_id@pull_requests.id>repo_id:r');
+CREATE TRIGGER pr_comment_pins_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pr_comment_pins
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('pull_request_id@pull_requests.id>repo_id:r');
+CREATE TRIGGER pr_comments_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pr_comments
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('pull_request_id@pull_requests.id>repo_id:r');
+CREATE TRIGGER pr_labels_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pr_labels
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('pull_request_id@pull_requests.id>repo_id:r');
+CREATE TRIGGER pr_reviewers_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pr_reviewers
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('pull_request_id@pull_requests.id>repo_id:r');
+CREATE TRIGGER pr_reviews_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pr_reviews
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('pull_request_id@pull_requests.id>repo_id:r');
+CREATE TRIGGER pr_team_reviewers_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pr_team_reviewers
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('pull_request_id@pull_requests.id>repo_id:r');
+CREATE TRIGGER project_fields_move_guard BEFORE INSERT OR UPDATE OR DELETE ON project_fields
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('project_id@projects.id>owner_user_id:u','project_id@projects.id>owner_org_id:o');
+CREATE TRIGGER project_items_move_guard BEFORE INSERT OR UPDATE OR DELETE ON project_items
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER project_repositories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON project_repositories
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER project_teams_move_guard BEFORE INSERT OR UPDATE OR DELETE ON project_teams
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('project_id@projects.id>owner_user_id:u','project_id@projects.id>owner_org_id:o');
+CREATE TRIGGER project_views_move_guard BEFORE INSERT OR UPDATE OR DELETE ON project_views
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('project_id@projects.id>owner_user_id:u','project_id@projects.id>owner_org_id:o');
+CREATE TRIGGER projects_move_guard BEFORE INSERT OR UPDATE OR DELETE ON projects
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_user_id:u','owner_org_id:o');
+CREATE TRIGGER pull_request_async_merges_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pull_request_async_merges
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER pull_request_auto_merges_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pull_request_auto_merges
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('pull_request_id@pull_requests.id>repo_id:r');
+CREATE TRIGGER pull_request_stacks_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pull_request_stacks
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER pull_request_viewed_files_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pull_request_viewed_files
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('pull_request_id@pull_requests.id>repo_id:r');
+CREATE TRIGGER pull_requests_move_guard BEFORE INSERT OR UPDATE OR DELETE ON pull_requests
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER reactions_move_guard BEFORE INSERT OR UPDATE OR DELETE ON reactions
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER registry_namespaces_move_guard BEFORE INSERT OR UPDATE OR DELETE ON registry_namespaces
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_user_id:u','owner_org_id:o');
+CREATE TRIGGER release_assets_move_guard BEFORE INSERT OR UPDATE OR DELETE ON release_assets
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('release_id@releases.id>repo_id:r');
+CREATE TRIGGER release_discussions_move_guard BEFORE INSERT OR UPDATE OR DELETE ON release_discussions
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('release_id@releases.id>repo_id:r');
+CREATE TRIGGER releases_move_guard BEFORE INSERT OR UPDATE OR DELETE ON releases
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER remote_pointers_move_guard BEFORE INSERT OR UPDATE OR DELETE ON remote_pointers
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER remote_pull_requests_move_guard BEFORE INSERT OR UPDATE OR DELETE ON remote_pull_requests
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('base_repo_id:r');
+CREATE TRIGGER repo_access_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repo_access
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repo_actions_keys_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repo_actions_keys
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repo_actions_settings_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repo_actions_settings
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repo_actions_variables_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repo_actions_variables
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repo_dependabot_keys_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repo_dependabot_keys
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repo_dependabot_secrets_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repo_dependabot_secrets
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repo_environment_values_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repo_environment_values
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repo_languages_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repo_languages
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repo_secrets_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repo_secrets
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repositories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repositories
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_user_id:u','owner_org_id:o');
+CREATE TRIGGER repository_advisories_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_advisories
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_autolinks_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_autolinks
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_dependency_security_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_dependency_security
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_deployments_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_deployments
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_discussion_counters_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_discussion_counters
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_discussion_settings_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_discussion_settings
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_exports_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_exports
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_user_id:u','owner_org_id:o');
+CREATE TRIGGER repository_features_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_features
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_immutable_releases_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_immutable_releases
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_import_authors_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_import_authors
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_imports_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_imports
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_invitations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_invitations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_issue_suggestions_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_issue_suggestions
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_merge_epochs_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_merge_epochs
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_migration_locks_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_migration_locks
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_private_reporting_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_private_reporting
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_property_values_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_property_values
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_pushes_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_pushes
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_ref_activities_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_ref_activities
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_rule_suites_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_rule_suites
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r','org_id:o');
+CREATE TRIGGER repository_ruleset_versions_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_ruleset_versions
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('ruleset_id@repository_rulesets.id>owner_repo_id:r','ruleset_id@repository_rulesets.id>owner_org_id:o');
+CREATE TRIGGER repository_rulesets_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_rulesets
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('owner_repo_id:r','owner_org_id:o');
+CREATE TRIGGER repository_security_replies_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_security_replies
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('report_id@repository_security_reports.id>repo_id:r');
+CREATE TRIGGER repository_security_reports_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_security_reports
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_security_settings_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_security_settings
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_star_days_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_star_days
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_topics_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_topics
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_traffic_counts_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_traffic_counts
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_traffic_keys_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_traffic_keys
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER repository_traffic_visitors_move_guard BEFORE INSERT OR UPDATE OR DELETE ON repository_traffic_visitors
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER secret_scanning_alerts_move_guard BEFORE INSERT OR UPDATE OR DELETE ON secret_scanning_alerts
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER secret_scanning_bypasses_move_guard BEFORE INSERT OR UPDATE OR DELETE ON secret_scanning_bypasses
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER secret_scanning_commits_move_guard BEFORE INSERT OR UPDATE OR DELETE ON secret_scanning_commits
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER secret_scanning_jobs_move_guard BEFORE INSERT OR UPDATE OR DELETE ON secret_scanning_jobs
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER secret_scanning_locations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON secret_scanning_locations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER secret_scanning_pattern_configs_move_guard BEFORE INSERT OR UPDATE OR DELETE ON secret_scanning_pattern_configs
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER secret_scanning_patterns_move_guard BEFORE INSERT OR UPDATE OR DELETE ON secret_scanning_patterns
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r','org_id:o');
+CREATE TRIGGER secret_scanning_settings_move_guard BEFORE INSERT OR UPDATE OR DELETE ON secret_scanning_settings
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER sessions_move_guard BEFORE INSERT OR UPDATE OR DELETE ON sessions
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER ssh_keys_move_guard BEFORE INSERT OR UPDATE OR DELETE ON ssh_keys
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER ssh_signing_keys_move_guard BEFORE INSERT OR UPDATE OR DELETE ON ssh_signing_keys
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER stars_move_guard BEFORE INSERT OR UPDATE OR DELETE ON stars
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER team_ancestors_move_guard BEFORE INSERT OR UPDATE OR DELETE ON team_ancestors
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('team_id@teams.id>org_id:o');
+CREATE TRIGGER team_invitations_move_guard BEFORE INSERT OR UPDATE OR DELETE ON team_invitations
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('team_id@teams.id>org_id:o');
+CREATE TRIGGER team_memberships_move_guard BEFORE INSERT OR UPDATE OR DELETE ON team_memberships
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('team_id@teams.id>org_id:o');
+CREATE TRIGGER team_repo_access_move_guard BEFORE INSERT OR UPDATE OR DELETE ON team_repo_access
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER teams_move_guard BEFORE INSERT OR UPDATE OR DELETE ON teams
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('org_id:o');
+CREATE TRIGGER timeline_events_move_guard BEFORE INSERT OR UPDATE OR DELETE ON timeline_events
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER two_factor_auth_move_guard BEFORE INSERT OR UPDATE OR DELETE ON two_factor_auth
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER two_factor_recovery_codes_move_guard BEFORE INSERT OR UPDATE OR DELETE ON two_factor_recovery_codes
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER user_blocks_move_guard BEFORE INSERT OR UPDATE OR DELETE ON user_blocks
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER user_emails_move_guard BEFORE INSERT OR UPDATE OR DELETE ON user_emails
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER user_profile_settings_move_guard BEFORE INSERT OR UPDATE OR DELETE ON user_profile_settings
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER user_social_accounts_move_guard BEFORE INSERT OR UPDATE OR DELETE ON user_social_accounts
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('user_id:u');
+CREATE TRIGGER users_move_guard BEFORE INSERT OR UPDATE OR DELETE ON users
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('id:u');
+CREATE TRIGGER vulnerability_jobs_move_guard BEFORE INSERT OR UPDATE OR DELETE ON vulnerability_jobs
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER watches_move_guard BEFORE INSERT OR UPDATE OR DELETE ON watches
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r');
+CREATE TRIGGER webhook_deliveries_move_guard BEFORE INSERT OR UPDATE OR DELETE ON webhook_deliveries
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('webhook_id@webhooks.id>repo_id:r','webhook_id@webhooks.id>org_id:o');
+CREATE TRIGGER webhooks_move_guard BEFORE INSERT OR UPDATE OR DELETE ON webhooks
+    FOR EACH ROW EXECUTE FUNCTION account_move_guard('repo_id:r','org_id:o');

@@ -17,13 +17,13 @@ CREATE TABLE directory_cells (
 CREATE INDEX directory_cells_placement ON directory_cells(region,state,database_bytes,id);
 CREATE TABLE directory_cell_prefixes (
     prefix INTEGER PRIMARY KEY CHECK(prefix BETWEEN 0 AND 65535),
-    cell_id INTEGER NOT NULL REFERENCES directory_cells(id),
-    previous_prefix INTEGER UNIQUE REFERENCES directory_cell_prefixes(prefix),
+    cell_id INTEGER NOT NULL REFERENCES directory_cells(id) DEFERRABLE INITIALLY IMMEDIATE,
+    previous_prefix INTEGER UNIQUE REFERENCES directory_cell_prefixes(prefix) DEFERRABLE INITIALLY IMMEDIATE,
     CHECK(previous_prefix IS NULL OR previous_prefix<>prefix)
 );
 CREATE TABLE directory_node_keys (
     public_key TEXT PRIMARY KEY CHECK(length(public_key)=64),
-    cell_id INTEGER NOT NULL REFERENCES directory_cells(id)
+    cell_id INTEGER NOT NULL REFERENCES directory_cells(id) DEFERRABLE INITIALLY IMMEDIATE
 );
 CREATE INDEX directory_node_keys_cell ON directory_node_keys(cell_id,public_key);
 -- Routers can read routes but cannot claim names or report a cell's load.
@@ -74,7 +74,7 @@ CREATE TABLE directory_claims (
     confirmed BOOLEAN NOT NULL DEFAULT FALSE,
     expires_at TIMESTAMPTZ,
     PRIMARY KEY(shard,kind,key_hash),
-    FOREIGN KEY(shard,object_kind,object_id) REFERENCES directory_objects(shard,kind,id) ON DELETE CASCADE,
+    FOREIGN KEY(shard,object_kind,object_id) REFERENCES directory_objects(shard,kind,id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     CHECK((confirmed AND expires_at IS NULL) OR (NOT confirmed AND expires_at IS NOT NULL))
 );
 CREATE INDEX directory_claims_object ON directory_claims(shard,object_kind,object_id,nonce_hash);
@@ -106,7 +106,7 @@ SELECT set_config('search_path', current_setting('search_path') || ',' || quote_
 FROM pg_extension e JOIN pg_namespace n ON n.oid=e.extnamespace WHERE e.extname='pg_trgm';
 CREATE TABLE search_repositories (
     id BIGINT PRIMARY KEY CHECK(id BETWEEN 1 AND 9007199254740991),
-    cell_id INTEGER NOT NULL REFERENCES directory_cells(id),
+    cell_id INTEGER NOT NULL REFERENCES directory_cells(id) DEFERRABLE INITIALLY IMMEDIATE,
     event_id BIGINT NOT NULL,
     attempt BIGINT NOT NULL,
     document JSONB CHECK(document IS NULL OR (jsonb_typeof(document)='object' AND octet_length(document::text)<=524288)),
@@ -133,7 +133,7 @@ CREATE INDEX search_repositories_name_text ON search_repositories USING gin(name
 CREATE INDEX search_repositories_description_text ON search_repositories USING gin(description gin_trgm_ops);
 CREATE INDEX search_repositories_stars ON search_repositories(stars DESC,id DESC) WHERE document IS NOT NULL AND public;
 CREATE TABLE search_readers (
-    repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE,
+    repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     user_id BIGINT NOT NULL CHECK(user_id BETWEEN 1 AND 9007199254740991),
     PRIMARY KEY(repository_id,user_id)
 );
@@ -142,7 +142,7 @@ CREATE TABLE search_issues (
     pull BOOLEAN NOT NULL,
     id BIGINT NOT NULL CHECK(id BETWEEN 1 AND 9007199254740991),
     repository_id BIGINT NOT NULL CHECK(repository_id BETWEEN 1 AND 9007199254740991),
-    cell_id INTEGER NOT NULL REFERENCES directory_cells(id),
+    cell_id INTEGER NOT NULL REFERENCES directory_cells(id) DEFERRABLE INITIALLY IMMEDIATE,
     event_id BIGINT NOT NULL,
     attempt BIGINT NOT NULL,
     document JSONB CHECK(document IS NULL OR (jsonb_typeof(document)='object' AND octet_length(document::text)<=524288)),
@@ -171,18 +171,18 @@ CREATE TABLE search_blobs (
 );
 CREATE INDEX search_blobs_content_text ON search_blobs USING gin(content gin_trgm_ops);
 CREATE TABLE search_code (
-    repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE,
+    repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     path TEXT NOT NULL CHECK(octet_length(path) BETWEEN 1 AND 4096),
     sha TEXT NOT NULL CHECK(length(sha) IN (40,64)),
     size BIGINT NOT NULL CHECK(size>=0),
-    digest BYTEA NOT NULL REFERENCES search_blobs(digest),
+    digest BYTEA NOT NULL REFERENCES search_blobs(digest) DEFERRABLE INITIALLY IMMEDIATE,
     PRIMARY KEY(repository_id,path)
 );
 CREATE INDEX search_code_digest ON search_code(digest);
 CREATE INDEX search_code_path_text ON search_code USING gin(path gin_trgm_ops);
 -- Packages a public repository depends on, or provides (its root npm package), for "used by".
 CREATE TABLE search_packages (
-    repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE,
+    repository_id BIGINT NOT NULL REFERENCES search_repositories(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     ecosystem TEXT NOT NULL CHECK(octet_length(ecosystem) BETWEEN 1 AND 32),
     name TEXT NOT NULL CHECK(octet_length(name) BETWEEN 1 AND 256),
     provided BOOLEAN NOT NULL,
