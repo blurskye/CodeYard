@@ -1,4 +1,4 @@
-//! The cache retains home answers without creating credentials on stub accounts.
+//! Heartbeat proofs belong to one operation and never create local credentials.
 use crate::support::database::Database;
 use codeyard_db_core::{
     cells::authorization::{self, Answer, Authority, Home, Proof},
@@ -33,27 +33,14 @@ impl Home for Provider {
     ) -> futures_util::future::BoxFuture<'a, anyhow::Result<Option<Answer>>> {
         Box::pin(async move {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            Ok(self
-                .live
-                .load(Ordering::SeqCst)
-                .then(|| self.answer.clone()))
+            Ok(self.live.load(Ordering::SeqCst).then(|| {
+                let mut answer = self.answer.clone();
+                if answer.heartbeat == chrono::DateTime::<chrono::Utc>::MAX_UTC {
+                    answer.heartbeat = chrono::Utc::now();
+                }
+                answer
+            }))
         })
-    }
-}
-async fn expire(pool: &DbPool) {
-    match pool {
-        DbPool::Postgres(pool) => {
-            sqlx::query("UPDATE foreign_credentials SET expires_at=validated_at")
-                .execute(pool)
-                .await
-                .unwrap();
-        }
-        DbPool::Sqlite(pool) => {
-            sqlx::query("UPDATE foreign_credentials SET expires_at=validated_at")
-                .execute(pool)
-                .await
-                .unwrap();
-        }
     }
 }
 async fn count(pool: &DbPool, table: &str) -> i64 {
@@ -160,6 +147,10 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
         html.contains(&csrf),
         "The resource page retains the home session's CSRF token"
     );
+    authorization::authorize(pool, &proof)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
         codeyard_db_identity::users::sessions::get_session_user(pool, &value)
             .await
@@ -286,6 +277,10 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
     else {
         panic!("A new collaborator must receive an invitation");
     };
+    authorization::authorize(pool, &proof)
+        .await
+        .unwrap()
+        .unwrap();
     codeyard_db_repos::repositories::collaborators::respond(
         pool,
         (user, value.clone()),
@@ -304,7 +299,10 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
         3
     );
     provider.live.store(false, Ordering::SeqCst);
-    expire(pool).await;
+    assert!(authorization::authorize(pool, &proof)
+        .await
+        .unwrap()
+        .is_none());
     assert!(codeyard_db_repos::packages::count_linked(
         pool,
         Some(codeyard_db_repos::packages::Credential::Session(&value)),
@@ -385,19 +383,14 @@ async fn expires_while_waiting(pool: &DbPool, user: i64, token: i64, hash: &str)
     let DbPool::Postgres(pg) = pool else {
         return;
     };
-    let original: chrono::DateTime<chrono::Utc> =
-        sqlx::query_scalar("SELECT expires_at FROM foreign_credentials WHERE credential_id=$1")
-            .bind(token)
-            .fetch_one(pg)
-            .await
-            .unwrap();
-    let expiry: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
-        "UPDATE foreign_credentials SET expires_at=clock_timestamp()+interval '2 seconds' WHERE credential_id=$1 RETURNING expires_at",
-    )
-    .bind(token)
-    .fetch_one(pg)
-    .await
-    .unwrap();
+    let proof = Proof::Token {
+        home: Prefix::new(1),
+        hash: hash.to_owned(),
+    };
+    authorization::authorize(pool, &proof)
+        .await
+        .unwrap()
+        .unwrap();
     let mut held = pg.begin().await.unwrap();
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
         .bind(user)
@@ -409,62 +402,99 @@ async fn expires_while_waiting(pool: &DbPool, user: i64, token: i64, hash: &str)
         .fetch_one(&mut *connection)
         .await
         .unwrap();
-    let hash = hash.to_owned();
-    let mut waiting = tokio::task::JoinSet::new();
-    waiting.spawn(async move {
-        authorization::postgres(
-            &mut connection,
-            &authorization::Query {
-                kind: "token",
-                id: Some(token),
-                hash: Some(&hash),
-                write: true,
-            },
-        )
-        .await
-    });
-    tokio::time::timeout(std::time::Duration::from_secs(1), async {
-        let mut poll = tokio::time::interval(std::time::Duration::from_millis(10));
-        loop {
-            poll.tick().await;
-            let blocked: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND NOT granted)",
-            )
-            .bind(pid)
-            .fetch_one(pg)
-            .await
-            .unwrap();
-            if blocked {
-                break;
+    let query = authorization::Query {
+        kind: "token",
+        id: Some(token),
+        hash: Some(hash),
+        write: true,
+    };
+    let waiting = authorization::postgres(&mut connection, &query);
+    let release = async {
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            let mut poll = tokio::time::interval(std::time::Duration::from_millis(10));
+            loop {
+                poll.tick().await;
+                let blocked: bool = sqlx::query_scalar(
+                    "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND NOT granted)",
+                )
+                .bind(pid)
+                .fetch_one(pg)
+                .await
+                .unwrap();
+                if blocked {
+                    break;
+                }
             }
-        }
+        })
+        .await
+        .expect("credential query must reach the row lock before its proof expires");
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        held.rollback().await.unwrap();
+    };
+    let (result, ()) = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::join!(waiting, release)
     })
     .await
-    .expect("credential query must reach the row lock before its proof expires");
-    assert!(chrono::Utc::now() < expiry);
-    tokio::time::sleep(
-        (expiry - chrono::Utc::now()).to_std().unwrap_or_default()
-            + std::time::Duration::from_millis(20),
-    )
-    .await;
-    held.rollback().await.unwrap();
-    let result = tokio::time::timeout(std::time::Duration::from_secs(5), waiting.join_next())
-        .await
-        .unwrap()
-        .unwrap()
-        .unwrap()
-        .unwrap();
+    .unwrap();
     assert!(
-        result.is_none(),
+        result.is_err(),
         "a lock wait cannot revive an expired proof"
     );
-    // Restore the original deadline, never extend it, for the remaining contract checks.
-    sqlx::query("UPDATE foreign_credentials SET expires_at=$2 WHERE credential_id=$1")
-        .bind(token)
-        .bind(original)
-        .execute(pg)
+    // A new operation asks the home again; it does not extend the old proof.
+    authorization::authorize(pool, &proof)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+async fn snapshot_contract(database: &Database, user: i64) {
+    use authorization::{freshness::Policy, heartbeat};
+    let pool = database.pool();
+    let value = codeyard_identity::sessions::fresh_id(pool).unwrap();
+    codeyard_db_identity::users::sessions::create_session(
+        pool,
+        &value,
+        user,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let proof = Proof::Session {
+        home: Prefix::ZERO,
+        value: value.clone(),
+    };
+    let heartbeat = heartbeat::primary(pool, &proof).await.unwrap().unwrap();
+    let read = Policy::default()
+        .start(chrono::Utc::now(), std::time::Instant::now())
+        .unwrap();
+    assert!(read
+        .prove(
+            heartbeat,
+            None,
+            chrono::Utc::now(),
+            std::time::Instant::now()
+        )
+        .is_some());
+    database
+        .execute(
+            "UPDATE identity_heartbeat SET committed_at='2000-01-01T00:00:00.000000Z'",
+            &[],
+        )
+        .await;
+    let stale = heartbeat::snapshot(pool, &proof).await.unwrap().unwrap();
+    assert!(read
+        .prove(stale, None, chrono::Utc::now(), std::time::Instant::now())
+        .is_none());
+    // Primary fallback republishes the heartbeat and reads the actual credential again.
+    let home = codeyard_identity::cells::Local { pool: pool.clone() };
+    assert!(home.authorize(&proof).await.unwrap().is_some());
+    codeyard_db_identity::users::sessions::delete_session(pool, &value)
         .await
         .unwrap();
+    assert!(heartbeat::primary(pool, &proof).await.unwrap().is_none());
+    assert!(home.authorize(&proof).await.unwrap().is_none());
 }
 
 async fn contract(pg: bool) {
@@ -474,6 +504,7 @@ async fn contract(pg: bool) {
     let native = codeyard_db_identity::users::accounts::create_user(pool, "local", None)
         .await
         .unwrap();
+    snapshot_contract(&database, native.id).await;
     let mut remote = native.clone();
     remote.id = *Prefix::new(1).ids().start();
     remote.home_cell = 1;
@@ -485,6 +516,7 @@ async fn contract(pg: bool) {
     remote.email_verified = false;
     let provider = Arc::new(Provider {
         answer: Answer {
+            heartbeat: chrono::DateTime::<chrono::Utc>::MAX_UTC,
             home: Prefix::new(1),
             user: remote.clone(),
             credential_id: Some(remote.id + 1),
@@ -502,7 +534,6 @@ async fn contract(pg: bool) {
         .unwrap();
     assert!(metadata.is_stub && metadata.email.is_none() && metadata.password_hash.is_none());
     assert_eq!(metadata.id, remote.id);
-    assert_eq!(count(pool, "foreign_credentials").await, 0);
     let proof = Proof::Token {
         home: Prefix::new(1),
         hash: "a".repeat(64),
@@ -511,6 +542,21 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .is_some());
+    assert!(
+        authorization::scope(authorization::lookup(
+            pool,
+            &authorization::Query {
+                kind: "token",
+                id: provider.answer.credential_id,
+                hash: Some(&proof.hash()),
+                write: false,
+            }
+        ))
+        .await
+        .unwrap()
+        .is_none(),
+        "another operation cannot reuse this proof"
+    );
     let stub = codeyard_db_identity::users::accounts::get_user_by_id(pool, remote.id)
         .await
         .unwrap()
@@ -567,14 +613,11 @@ async fn contract(pg: bool) {
     assert!(authorization::authorize(pool, &proof)
         .await
         .unwrap()
-        .is_some());
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
-    expire(pool).await;
-    assert!(authorization::authorize(pool, &proof)
-        .await
-        .unwrap()
         .is_none());
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        if pg { 4 } else { 2 }
+    );
     assert!(
         codeyard_db_repos::graphql::admit_query(pool, &actor)
             .await
@@ -590,7 +633,10 @@ async fn contract(pg: bool) {
     )
     .await
     .is_err());
-    assert_eq!(provider.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+        provider.calls.load(Ordering::SeqCst),
+        if pg { 4 } else { 2 }
+    );
     // An authoritative peer still cannot convert an existing native row into a foreign account.
     let mut forged = provider.answer.clone();
     forged.user.id = native.id;
@@ -617,7 +663,7 @@ async fn contract(pg: bool) {
             .unwrap()
             .is_stub
     );
-    // Private metadata never crosses this cache boundary, even from an enrolled source.
+    // Private metadata never crosses this identity boundary, even from an enrolled source.
     let mut private = provider.answer.clone();
     private.user.email = Some("private@example.test".into());
     pool.set_foreign_authorization(Arc::new(Provider {
@@ -656,50 +702,71 @@ async fn contract(pg: bool) {
             .is_none()
     );
     sessions(&database, provider.answer.clone(), native.id).await;
-    // If the cache write fails after metadata arrives, the account remains a stub with no credential.
-    let mut half = provider.answer.clone();
-    half.user.id += 20;
-    half.user.username = "halfway".into();
-    half.credential_id = Some(half.user.id + 1);
+    // A reachable home with a stale heartbeat is unavailable, never a cache hit.
+    let mut stale = provider.answer.clone();
+    stale.heartbeat = chrono::Utc::now() - chrono::Duration::seconds(3);
     pool.set_foreign_authorization(Arc::new(Provider {
-        answer: half.clone(),
+        answer: stale,
         live: AtomicBool::new(true),
         calls: AtomicUsize::new(0),
     }));
-    match pool {
-        DbPool::Postgres(pool) => {
-            sqlx::query("CREATE FUNCTION reject_foreign_answer() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected cache failure'; END $$").execute(pool).await.unwrap();
-            sqlx::query("CREATE TRIGGER reject_foreign_answer BEFORE INSERT ON foreign_credentials FOR EACH ROW EXECUTE FUNCTION reject_foreign_answer()").execute(pool).await.unwrap();
-        }
-        DbPool::Sqlite(pool) => {
-            sqlx::query("CREATE TRIGGER reject_foreign_answer BEFORE INSERT ON foreign_credentials BEGIN SELECT RAISE(ABORT,'injected cache failure'); END").execute(pool).await.unwrap();
-        }
+    assert!(authorization::authorize(pool, &proof).await.is_err());
+    {
+        use tower::ServiceExt;
+        let root = tempfile::tempdir().unwrap();
+        let app = database.router(root.path()).await;
+        let token = Prefix::new(1)
+            .token(codeyard_support::tokens::PAT_PREFIX, &"a".repeat(64))
+            .unwrap();
+        let response = app
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/v3/user")
+                    .header("authorization", format!("Bearer {token}"))
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            503,
+            "stale home heartbeat is unavailable over HTTP"
+        );
     }
-    assert!(authorization::authorize(
+    assert!(authorization::lookup(
         pool,
-        &Proof::Token {
-            home: Prefix::new(1),
-            hash: "d".repeat(64)
+        &authorization::Query {
+            kind: "token",
+            id: provider.answer.credential_id,
+            hash: Some(&proof.hash()),
+            write: false,
         }
     )
     .await
-    .is_err());
-    assert!(
-        codeyard_db_identity::users::accounts::get_user_by_id(pool, half.user.id)
+    .unwrap()
+    .is_none());
+    // The old table is gone, not retained as a fallback.
+    let absent = match pool {
+        DbPool::Postgres(pg) => sqlx::query("SELECT 1 FROM foreign_credentials")
+            .execute(pg)
             .await
-            .unwrap()
-            .unwrap()
-            .is_stub
-    );
+            .is_err(),
+        DbPool::Sqlite(sqlite) => sqlx::query("SELECT 1 FROM foreign_credentials")
+            .execute(sqlite)
+            .await
+            .is_err(),
+    };
+    assert!(absent);
     assert_eq!(count(pool, "personal_access_tokens").await, 0);
     assert_eq!(count(pool, "sessions").await, 0);
     database.finish().await;
 }
 #[tokio::test]
 async fn sqlite_foreign_answers_expire_and_do_not_create_local_credentials() {
-    contract(false).await
+    authorization::scope(contract(false)).await
 }
 #[tokio::test]
 async fn postgres_foreign_answers_expire_and_do_not_create_local_credentials() {
-    contract(true).await
+    authorization::scope(contract(true)).await
 }

@@ -501,8 +501,11 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     authorization queries, home answers select a credential and heartbeat together,
     and HTTP/RPC/Git/SSH admission retains bounded proof deadlines. Both baselines
     replace the cache table with `identity_heartbeat`; ownership changes only its Cell
-    classification. This batch is unchecked; fixtures, full wait-path review and tests
-    remain before acceptance. The optional content cache is not started.
+    classification. Workspace 4511a7fa911d4e3cbf70575540f8e486, Clippy
+    9d9f17aef51a444c9b0bcdb1dbb8064b and WASM f6f0292a9ae34b72be8411e7e376a59e
+    pass. Replacement fixtures cover separate operations, stale/revoked snapshots,
+    PostgreSQL lock expiry and HTTP home loss; runtime is next. Home reads currently
+    use the primary, not an identity replica. The optional content cache is not started.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,
     database and the cluster search tests): (2) packing is a geometric repack with a

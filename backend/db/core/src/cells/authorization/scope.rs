@@ -27,6 +27,26 @@ pub async fn scope<T>(work: impl Future<Output = T>) -> T {
     PROOFS.scope(RefCell::new(Vec::new()), work).await
 }
 
+pub(super) fn forget(kind: &str, hash: &str) {
+    let _ = PROOFS.try_with(|proofs| {
+        proofs
+            .borrow_mut()
+            .retain(|proof| proof.kind != kind || proof.hash != hash)
+    });
+}
+
+pub fn ensure_current() -> anyhow::Result<()> {
+    PROOFS
+        .try_with(|proofs| {
+            anyhow::ensure!(
+                proofs.borrow().iter().all(Verified::current),
+                "Identity proof expired"
+            );
+            Ok(())
+        })
+        .unwrap_or(Ok(()))
+}
+
 pub(super) fn retain(proof: Verified) -> anyhow::Result<()> {
     PROOFS
         .try_with(|proofs| {
@@ -43,6 +63,21 @@ pub(super) fn retain(proof: Verified) -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("Foreign identity requires an operation scope"))?
 }
 
+fn sql_text(postgres: bool, value: &str) -> String {
+    // Hex literals do not depend on PostgreSQL's standard_conforming_strings setting.
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(value.len() * 2);
+    for byte in value.bytes() {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 15)]));
+    }
+    if postgres {
+        format!("convert_from(decode('{encoded}','hex'),'UTF8')")
+    } else {
+        format!("CAST(X'{encoded}' AS TEXT)")
+    }
+}
+
 /// A bounded, operation-owned SQL relation for existing one-statement permission
 /// projections. Only public token bounds are included, never session CSRF values.
 pub(super) fn relation(postgres: bool, kind: &str) -> String {
@@ -53,7 +88,7 @@ pub(super) fn relation(postgres: bool, kind: &str) -> String {
                 let expiry = quote(&proof.deadline.wall().to_rfc3339_opts(chrono::SecondsFormat::Micros, true));
                 let expiry = if postgres { format!("CAST({expiry} AS timestamptz)") } else { expiry };
                 let answer = if kind == "token" {
-                    serde_json::to_string(&proof.answer).ok().map(|value| quote(&value)).unwrap_or_else(|| "NULL".into())
+                    sql_text(postgres, &serde_json::json!({"authority": proof.answer.authority, "write": proof.answer.write}).to_string())
                 } else { "NULL".into() };
                 format!("SELECT {} AS kind, CAST({} AS BIGINT) AS credential_id, {} AS credential_hash, CAST({} AS BIGINT) AS user_id, {} AS answer, {} AS expires_at",
                     quote(proof.kind), proof.answer.credential_id.map_or_else(|| "NULL".into(), |id| id.to_string()),

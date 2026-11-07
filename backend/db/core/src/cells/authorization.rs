@@ -3,7 +3,7 @@
 pub mod freshness;
 pub mod heartbeat;
 mod scope;
-pub use scope::scope;
+pub use scope::{ensure_current, scope};
 
 use crate::{models::User, DbPool};
 use anyhow::{ensure, Result};
@@ -418,6 +418,7 @@ pub type Provider = Arc<dyn Home>;
 /// request must obtain a new snapshot even if it presents the same credential.
 pub async fn authorize(pool: &DbPool, proof: &Proof) -> Result<Option<Answer>> {
     proof.validate()?;
+    scope::forget(proof.kind(), &proof.hash());
     let Some(provider) = pool.foreign_authorization() else {
         return Ok(None);
     };
@@ -454,7 +455,17 @@ pub async fn authorize(pool: &DbPool, proof: &Proof) -> Result<Option<Answer>> {
         hash: proof.hash(),
         deadline,
     })?;
-    Ok(Some(answer))
+    Ok(lookup(
+        pool,
+        &Query {
+            kind: proof.kind(),
+            id: answer.credential_id,
+            hash: Some(&proof.hash()),
+            write: false,
+        },
+    )
+    .await?
+    .map(|credential| credential.answer))
 }
 
 /// Standalone admission for callers that retain the typed result themselves (Git/SSH).

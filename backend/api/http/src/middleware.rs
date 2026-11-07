@@ -188,7 +188,11 @@ pub async fn foreign_authorization(
                 return codeyard_model::github_error::Error::unavailable(()).into_response();
             }
         }
-        next.run(request).await
+        let response = next.run(request).await;
+        if codeyard_db_core::cells::authorization::ensure_current().is_err() {
+            return codeyard_model::github_error::Error::unavailable(()).into_response();
+        }
+        response
     })
     .await
 }
