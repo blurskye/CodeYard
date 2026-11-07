@@ -379,6 +379,94 @@ async fn sessions(database: &Database, mut answer: Answer, owner: i64) {
     );
 }
 
+/// Hold the stub row, not the proof row: the proof's SQL expiry predicate can be
+/// evaluated before PostgreSQL waits to acquire the user lock.
+async fn expires_while_waiting(pool: &DbPool, user: i64, token: i64, hash: &str) {
+    let DbPool::Postgres(pg) = pool else {
+        return;
+    };
+    let original: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT expires_at FROM foreign_credentials WHERE credential_id=$1")
+            .bind(token)
+            .fetch_one(pg)
+            .await
+            .unwrap();
+    let expiry: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "UPDATE foreign_credentials SET expires_at=clock_timestamp()+interval '2 seconds' WHERE credential_id=$1 RETURNING expires_at",
+    )
+    .bind(token)
+    .fetch_one(pg)
+    .await
+    .unwrap();
+    let mut held = pg.begin().await.unwrap();
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(user)
+        .fetch_one(&mut *held)
+        .await
+        .unwrap();
+    let mut connection = pg.acquire().await.unwrap();
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *connection)
+        .await
+        .unwrap();
+    let hash = hash.to_owned();
+    let mut waiting = tokio::task::JoinSet::new();
+    waiting.spawn(async move {
+        authorization::postgres(
+            &mut connection,
+            &authorization::Query {
+                kind: "token",
+                id: Some(token),
+                hash: Some(&hash),
+                write: true,
+            },
+        )
+        .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        let mut poll = tokio::time::interval(std::time::Duration::from_millis(10));
+        loop {
+            poll.tick().await;
+            let blocked: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE pid=$1 AND NOT granted)",
+            )
+            .bind(pid)
+            .fetch_one(pg)
+            .await
+            .unwrap();
+            if blocked {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("credential query must reach the row lock before its proof expires");
+    assert!(chrono::Utc::now() < expiry);
+    tokio::time::sleep(
+        (expiry - chrono::Utc::now()).to_std().unwrap_or_default()
+            + std::time::Duration::from_millis(20),
+    )
+    .await;
+    held.rollback().await.unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), waiting.join_next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert!(
+        result.is_none(),
+        "a lock wait cannot revive an expired proof"
+    );
+    // Restore the original deadline, never extend it, for the remaining contract checks.
+    sqlx::query("UPDATE foreign_credentials SET expires_at=$2 WHERE credential_id=$1")
+        .bind(token)
+        .bind(original)
+        .execute(pg)
+        .await
+        .unwrap();
+}
+
 async fn contract(pg: bool) {
     crate::support::fake_webui_bundle::install();
     let mut database = Database::empty(pg).await;
@@ -433,6 +521,13 @@ async fn contract(pg: bool) {
     assert_eq!(count(pool, "ssh_keys").await, 0);
     assert_eq!(provider.calls.load(Ordering::SeqCst), 1);
     let foreign_hash = "a".repeat(64);
+    expires_while_waiting(
+        pool,
+        remote.id,
+        provider.answer.credential_id.unwrap(),
+        &foreign_hash,
+    )
+    .await;
     let credential = codeyard_db_core::queries::users::accounts::AccountCredential::ForeignToken(
         provider.answer.credential_id.unwrap(),
         &foreign_hash,

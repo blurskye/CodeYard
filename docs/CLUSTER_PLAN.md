@@ -472,7 +472,9 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     repositories on both engines. That and polling diagnostics pass workspace
     a419fe0ad7374ae7bd82e6137e89d58b, Clippy fdaec63b4bde452da44fd6ff71352c73
     and WASM d6679477a8f0495abe8eeef4dc753222.
-    Runtime retry cfc7a969e5824a269d9273e69619239c is compiling helpers; no results yet.
+    Runtime retry cfc7a969e5824a269d9273e69619239c remains running after session restart;
+    partial logs still show helper compilation, not test results. No second test job is
+    submitted while it runs.
     `s7-notices-retry.sh` covers the changed targets without repeating unrelated e2e failures.
     Both baseline schemas add separate notice-refresh trigger/index blocks (no FK edits).
     Both-engine HTTP/stub outage tests and two-cell HTTP privacy/deletion tests are added;
@@ -483,6 +485,10 @@ Every item has one answer. Numbers are defaults that an admin can change in sett
     `IDENTITY_MAXIMUM_AGE_MS` (2000) and `IDENTITY_CLOCK_ERROR_MS` (250), but no running
     reader consumes that configuration yet. It is not wired into readers;
     the old foreign cache remains until the snapshot/RPC/transaction replacement is complete.
+    The next unchecked source change rejects expired foreign proofs after PostgreSQL
+    user-row lock waits and after repository/policy reads, with a real lock-wait regression
+    in the database contract. This is not the heartbeat replacement: it still uses the
+    old cache's deadline, and snapshot/RPC integration and cache removal remain open.
     The optional content cache is not started.
 
     Stage 7, written so far (job 1c765ab87a7d480d8e09d95f28068432 passes maintenance,

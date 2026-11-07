@@ -526,6 +526,7 @@ pub struct Query<'a> {
 struct CredentialRow {
     answer: String,
     credential_hash: String,
+    proof_expires_at: DateTime<Utc>,
     #[sqlx(flatten)]
     user: User,
 }
@@ -533,9 +534,18 @@ pub struct Credential {
     pub answer: Answer,
     pub hash: String,
     pub user: User,
+    proof_expires_at: DateTime<Utc>,
 }
 impl Credential {
+    fn current(&self) -> bool {
+        let now = Utc::now();
+        self.proof_expires_at > now && self.answer.expires_at.is_none_or(|expiry| expiry > now)
+    }
+
     pub fn token(&self) -> Option<crate::models::PersonalAccessToken> {
+        if !self.current() {
+            return None;
+        }
         Some(crate::models::PersonalAccessToken {
             id: self.answer.credential_id?,
             token_hash: self.hash.clone(),
@@ -551,6 +561,11 @@ impl Credential {
 }
 fn credential(row: Option<CredentialRow>, query: &Query<'_>) -> Result<Option<Credential>> {
     let Some(row) = row else { return Ok(None) };
+    // PostgreSQL may evaluate the WHERE predicate before waiting for FOR SHARE.
+    // Never let that pre-lock result outlive the proof it selected.
+    if row.proof_expires_at <= Utc::now() {
+        return Ok(None);
+    }
     ensure!(
         row.answer.len() <= MAXIMUM_ANSWER_BYTES,
         "Cached account is too large"
@@ -562,17 +577,20 @@ fn credential(row: Option<CredentialRow>, query: &Query<'_>) -> Result<Option<Cr
             && i32::from(answer.home.get()) == row.user.home_cell,
         "Cached account home changed"
     );
-    if query.write && !answer.write {
+    if (query.write && !answer.write)
+        || answer.expires_at.is_some_and(|expiry| expiry <= Utc::now())
+    {
         return Ok(None);
     }
     Ok(Some(Credential {
         answer,
         hash: row.credential_hash,
         user: row.user,
+        proof_expires_at: row.proof_expires_at,
     }))
 }
 fn credential_query(current: &str, lock: &str) -> String {
-    format!("SELECT f.answer,f.credential_hash,u.* FROM foreign_credentials f JOIN users u ON u.id=f.user_id WHERE f.kind=$1 AND (CAST($2 AS BIGINT) IS NULL OR f.credential_id=$2) AND (CAST($3 AS TEXT) IS NULL OR f.credential_hash=$3) AND f.{current} AND u.is_stub AND NOT u.is_banned AND NOT u.must_change_password ORDER BY f.validated_at DESC LIMIT 1{lock}")
+    format!("SELECT f.answer,f.credential_hash,f.expires_at AS proof_expires_at,u.* FROM foreign_credentials f JOIN users u ON u.id=f.user_id WHERE f.kind=$1 AND (CAST($2 AS BIGINT) IS NULL OR f.credential_id=$2) AND (CAST($3 AS TEXT) IS NULL OR f.credential_hash=$3) AND f.{current} AND u.is_stub AND NOT u.is_banned AND NOT u.must_change_password ORDER BY f.validated_at DESC LIMIT 1{lock}")
 }
 pub async fn postgres(
     connection: &mut sqlx::PgConnection,
@@ -632,7 +650,8 @@ fn permits(
     permission: &Permission<'_>,
     classic_allowed: bool,
 ) -> Result<bool> {
-    if permission.write && !credential.answer.write {
+    // Repository and organization policy reads may themselves wait for row locks.
+    if !credential.current() || (permission.write && !credential.answer.write) {
         return Ok(false);
     }
     if matches!(credential.answer.authority, Authority::Classic) && !classic_allowed {
